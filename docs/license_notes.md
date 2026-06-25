@@ -12,7 +12,7 @@
 | tauri-plugin-dialog | 原生文件/目录选择对话框（路径输入的“选择…”按钮） | Apache-2.0 / MIT（Tauri 官方插件） | Rust crate + npm 包，通过 capabilities 授权 `dialog:default` | 是 | 否 |
 | Python | 后端运行环境 | Python Software Foundation License | 系统运行时；DockStart Full 可选内置 runtime | 当前仓库不内置 | 是，除非 Full 包已随附 runtime |
 
-## V0.1 Lite 计划检测但不内置的工具
+## 当前检测但不内置的工具
 
 | 名称 | 用途 | 许可证 | 集成方式 | 是否内置 | 是否需要用户自行安装 |
 | --- | --- | --- | --- | --- | --- |
@@ -30,6 +30,28 @@
 | Meeko | 是 | 补充 LGPL 合规说明，包括许可证文本、源码获取方式、修改说明和链接边界 |
 | Python 运行时 | 是，作为 Full 版候选内置 runtime | 保留 Python 许可证、版本、来源、sha256 和打包来源说明；默认不提交完整 runtime 或 site-packages |
 
+## Bundled Python Runtime 当前状态
+
+V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示，但当前仓库没有提交完整 Python runtime。
+
+当前约束：
+
+- `resources/python/` 当前只提交 `README.md`；
+- `resources/python/python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/` 等真实 runtime 文件被 `.gitignore` 忽略；
+- `scripts/prepare_bundled_python.py` 只复制本地 Python runtime、计算 `python.exe` sha256、读取版本并更新 `resources/toolchain_manifest.json`；
+- 该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko；
+- Python 解析优先级为 `bundled` → `configured` → `current_environment`；
+- Meeko/RDKit 当前只做 Python import 检测，不做受体准备、配体处理或 PDBQT 生成。
+
+如果后续真正内置 RDKit/Meeko，需要单独审查：
+
+- 许可证文本和随包告知；
+- 源码获取方式；
+- 修改说明；
+- 包体积和更新机制；
+- 与 Python runtime 的版本兼容性；
+- 是否允许随 DockStart Full 一起分发。
+
 ## 本阶段明确不引入
 
 | 名称 | 原因 | 当前处理 |
@@ -37,3 +59,5 @@
 | Open Babel | GPL 许可证与打包策略需要单独确认 | 不作为依赖、不内置、不实现 adapter |
 | PLIP | GPLv2 许可证与集成边界需要单独确认 | 不作为依赖、不内置、不实现 adapter |
 | MGLTools | 暂不内置，后续如需支持必须先确认许可证和分发方式 | 不作为依赖、不内置、不实现 adapter |
+
+当前仍未实现 PDB/PubChem 下载、PDB/SDF/MOL2 自动转 PDBQT、RDKit 配体处理、Meeko 受体/配体准备、Open Babel、PLIP/MGLTools、3D 可视化或药效判断。

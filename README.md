@@ -22,7 +22,7 @@ DockStart Full 的长期方向：
 - 中文引导：关键参数、错误、路径和报告都提供面向初学者的中文说明。
 - 覆盖全过程：逐步覆盖结构获取、分子准备、对接执行、结果解析、报告导出和结果管理。
 
-## 当前 V0.1 Lite MVP
+## 当前状态
 
 V0.1 Lite 已支持：
 
@@ -39,22 +39,46 @@ V0.1 Lite 已支持：
 - 导出 `scores.csv`；
 - 导出 Markdown 报告。
 
-V0.1 Lite 的边界：
+V0.2.3 已支持工具链基础能力：
+
+- 识别可选的 bundled Python runtime 路径：`resources/python/python.exe`；
+- 通过 `resources/toolchain_manifest.json` 检查 bundled Python 的版本、来源和 `sha256`；
+- 在 `ToolchainStatusPage` 中展示 bundled Python 是否存在、解析路径、版本、`sha256` 和当前 Python 来源；
+- Python 解析优先级为 `bundled` → `configured` → `current_environment`；
+- Meeko / RDKit 当前只使用解析后的 Python 做 `import` 检测。
+
+当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
+
+`scripts/prepare_bundled_python.py` 只做本地装配：
+
+- 从本地 Python 目录或 `python.exe` 复制 runtime 文件；
+- 计算 `python.exe` 的 `sha256`；
+- 运行 `python.exe --version` 读取版本；
+- 更新 `resources/toolchain_manifest.json`。
+
+该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko。
+
+当前边界：
 
 - 需要用户自己准备 PDBQT 文件；
 - 需要用户自己安装或配置 AutoDock Vina；
 - 不自动下载 PDB / PubChem；
 - 不自动准备 receptor / ligand；
-- 不提供内置 Python 工具链；
+- 不提交完整 Python runtime；
+- 不调用 RDKit 进行配体处理；
+- 不调用 Meeko 进行受体/配体准备；
 - 不做药效判断。
 
-## 暂不支持
+## 当前暂不支持
 
-V0.1 暂不支持：
+当前仍不支持：
 
 - PDB / PubChem 下载；
 - PDB / SDF / MOL2 自动转 PDBQT；
-- Meeko / RDKit 自动处理；
+- RDKit 配体处理；
+- Meeko 受体 / 配体准备；
+- Open Babel；
+- PLIP / MGLTools；
 - 3D 可视化选框；
 - PLIP / ProLIF 相互作用分析；
 - 分子动力学；
@@ -79,7 +103,13 @@ resources/
 内置工具 > 用户配置路径 > 系统 PATH
 ```
 
-对应架构说明见 [docs/toolchain_design.md](docs/toolchain_design.md)。
+其中 Python runtime 当前使用：
+
+```text
+bundled > configured > current_environment
+```
+
+对应架构说明见 [docs/toolchain_design.md](docs/toolchain_design.md) 和 [docs/toolchain_runtime.md](docs/toolchain_runtime.md)。
 
 ## 项目结构
 
@@ -94,12 +124,14 @@ DockStart/
 ├─ docs/
 │  ├─ license_notes.md
 │  ├─ toolchain_design.md
+│  ├─ toolchain_runtime.md
 │  ├─ user_guide.md
 │  ├─ smoke_test.md
 │  ├─ faq.md
 │  └─ roadmap.md
 ├─ examples/
 │  └─ demo_project/         # 示例项目骨架
+├─ CHANGELOG.md
 ├─ PROJECT.md
 └─ CLAUDE.md
 ```

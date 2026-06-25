@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。
+产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示，但尚未提交完整 Python runtime，也尚未实现 PDB/PubChem 下载、PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 本项目不是新的分子对接算法，也不修改 AutoDock Vina 的打分函数或搜索算法。项目重点是：
 
@@ -68,13 +68,21 @@ ViewerAdapter
 
 ### 2.4 外部工具谨慎集成
 
-AutoDock Vina、Meeko、RDKit 可作为核心优先支持对象。DockStart Full 工具链优先级为：
+AutoDock Vina、Meeko、RDKit 可作为核心优先支持对象，但当前 Meeko/RDKit 仍只做 Python import 检测，不做分子准备或处理。DockStart Full 工具链优先级为：
 
 ```text
 内置工具 > 用户配置路径 > 系统 PATH
 ```
 
 Open Babel、PLIP、MGLTools 等工具许可证或依赖更复杂，暂不进入核心内置包，只能作为外部可选集成继续评估。
+
+Python runtime 当前解析优先级为：
+
+```text
+bundled > configured > current_environment
+```
+
+其中 bundled Python 只表示 `resources/python/python.exe` 存在且可检测。当前仓库只提交 `resources/python/README.md`，真实 runtime 文件被 `.gitignore` 忽略。
 
 ### 2.5 中文新手友好
 
@@ -457,4 +465,28 @@ resources/
 * Meeko 可作为候选内置组件，但必须补充 LGPL 合规说明。
 * Open Babel / MGLTools / PLIP 暂不进入核心内置包。
 
-后续架构设计详见 `docs/toolchain_design.md`。在没有确认许可证和分发边界前，不得把第三方源码或二进制直接复制进发布包。
+后续架构设计详见 `docs/toolchain_design.md` 和 `docs/toolchain_runtime.md`。在没有确认许可证和分发边界前，不得把第三方源码或二进制直接复制进发布包。
+
+### 13.1 V0.2.3 / V0.2.4 当前校准
+
+V0.2.3 的真实含义是“内置 Python runtime 解析与完整性检查”，不是“RDKit/Meeko 已内置”或“自动准备分子已实现”。
+
+当前已经具备：
+
+* `resources/python/python.exe` 的路径解析；
+* `resources/toolchain_manifest.json` 中 `bundled_python` 的版本、来源、`sha256` 记录；
+* ToolchainStatusPage 展示 bundled Python 是否存在、解析路径、版本、`sha256` 和 Python 来源；
+* `scripts/prepare_bundled_python.py` 从本地 Python runtime 复制文件、计算 `python.exe` sha256、读取版本并更新 manifest。
+
+当前明确没有实现：
+
+* PDB/PubChem 下载；
+* PDB/SDF/MOL2 自动转 PDBQT；
+* RDKit 配体处理；
+* Meeko 受体/配体准备；
+* Open Babel；
+* PLIP/MGLTools；
+* 3D 可视化；
+* 药效判断。
+
+`scripts/prepare_bundled_python.py` 不联网、不安装 Python 包、不安装 RDKit、不安装 Meeko。后续如真正内置 RDKit/Meeko，必须单独审查许可证、体积、更新机制和分发策略。

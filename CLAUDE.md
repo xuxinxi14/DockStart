@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示，但尚未提交完整 Python runtime，也尚未实现 PDB/PubChem 下载、PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 第一阶段目标是实现最小闭环：
 
@@ -468,10 +468,33 @@ resources/
 * V0.1 Lite 仍依赖用户已有 PDBQT 和 Vina，不要为了文档定位调整而改业务逻辑。
 * V0.2.0 优先评估内置 Vina。
 * V0.2.1 设计 ToolchainStatusPage。
-* V0.2.2 评估内置 Python 环境。
-* V0.2.3 检测内置 RDKit / Meeko。
-* V0.2.4 才做配体自动准备。
-* V0.2.5 才做受体自动准备。
+* V0.2.2 统一工具链资源路径与打包兼容。
+* V0.2.3 已完成 bundled Python runtime resolution and integrity check。
+* V0.2.4 是路线校准与工具链文档整理，不实现新功能。
+* 后续可继续做离线 runtime 管理，但默认不提交二进制 runtime。
+* PDB/PubChem 下载属于 structure acquisition line，仍未实现。
+* raw 文件管理和 raw → prepared PDBQT 自动准备仍然延后。
+
+Python runtime 当前解析优先级为：
+
+```text
+bundled > configured > current_environment
+```
+
+当前仓库只提交 `resources/python/README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。`scripts/prepare_bundled_python.py` 只复制本地 Python runtime、计算 `python.exe` sha256、读取版本并更新 manifest；它不联网、不安装 Python 包、不安装 RDKit、不安装 Meeko。
+
+Meeko/RDKit 当前只做 import 检测，不做受体/配体准备或分子处理。
+
+当前明确未实现：
+
+* PDB/PubChem 下载；
+* PDB/SDF/MOL2 自动转 PDBQT；
+* RDKit 配体处理；
+* Meeko 受体/配体准备；
+* Open Babel；
+* PLIP/MGLTools；
+* 3D 可视化；
+* 药效判断。
 
 许可证策略：
 

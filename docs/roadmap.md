@@ -45,48 +45,88 @@ DockStart Full 的最终目标：
 - 不做 3D 可视化；
 - 不做相互作用分析。
 
-## V0.2: DockStart Full 工具链基础
+## V0.2: DockStart Full 基础路线
 
-V0.2 的重点从“用户自己安装工具”转向“DockStart 管理工具链”。更多设计见 [toolchain_design.md](toolchain_design.md)。
+V0.2 从“用户自己安装工具”转向“DockStart 管理工具链”，同时为后续结构获取和自动准备留出清晰边界。更多工具链设计见 [toolchain_design.md](toolchain_design.md) 和 [toolchain_runtime.md](toolchain_runtime.md)。
 
-### V0.2.0: 内置 Vina
+### A. Toolchain Line
 
-- 在 `resources/tools/vina/` 中提供平台对应的 Vina 可执行文件；
-- 启动时优先检测内置 Vina；
-- 保留用户自定义 Vina 路径作为覆盖选项；
-- 许可证文本放入 `resources/licenses/`。
+这条线只处理工具链资源、路径解析、manifest、许可证和状态展示，不等于已经实现分子准备。
 
-### V0.2.1: Toolchain 管理
+#### V0.2.0: bundled Vina 路径识别，已完成
 
-- 新增 `ToolchainStatusPage`；
-- 显示内置工具、用户配置路径和 PATH 检测结果；
-- 明确工具来源：内置、用户配置、PATH、缺失；
-- 统一错误提示和修复建议。
+- 建立 `resources/tools/vina/` 和 `resources/licenses/`；
+- 如果存在 `resources/tools/vina/vina.exe`，优先识别为 bundled Vina；
+- Vina 解析优先级为 `bundled` → `configured` → `auto`；
+- 不强制提交真实 `vina.exe`。
 
-### V0.2.2: 工具链资源路径与打包兼容
+#### V0.2.1: 工具链资源路径与打包兼容，已完成
 
 - 统一开发环境和 Tauri 打包环境中的 `resources/` 解析；
-- 确保 manifest、license notes 和工具 README 能进入打包资源；
-- 保持 Vina 内置路径优先级稳定。
+- 支持 Tauri resource dir 下的 packaged resources；
+- 确保 manifest、license notes 和工具 README 能进入打包资源。
 
-### V0.2.3: 内置 Python Runtime 解析
+#### V0.2.2: bundled Vina 装配与许可证检查，已完成
+
+- 新增本地 Vina 装配脚本；
+- 记录 bundled Vina 的版本、来源、`sha256` 和许可证状态；
+- ToolchainStatusPage 显示 Vina package ready / incomplete / missing；
+- 默认不提交真实 Vina 二进制。
+
+#### V0.2.3: bundled Python runtime resolution and integrity check，已完成
 
 - 识别 `resources/python/python.exe`；
-- Python 解析优先级为内置 runtime、用户配置路径、当前环境；
-- Meeko / RDKit 检测优先使用解析后的 Python；
-- 只检测 import 可用性，不安装包、不执行分子处理。
+- Python 解析优先级为 `bundled` → `configured` → `current_environment`；
+- `resources/toolchain_manifest.json` 记录 `bundled_python` 的版本、来源、`sha256` 和准备时间；
+- ToolchainStatusPage 显示 bundled Python 是否存在、路径、版本、`sha256` 和当前 Python 来源；
+- Meeko / RDKit 检测使用解析后的 Python，但当前只做 import 检测；
+- 当前仓库没有提交完整 Python runtime，`resources/python/` 当前只提交 `README.md`。
 
-### V0.2.4: 配体自动准备
+#### V0.2.4: 路线校准与工具链文档整理，当前任务
 
-- 从 SDF / MOL2 / PDB 等输入准备 `ligand.pdbqt`；
-- 记录输入文件、处理参数、输出文件和日志；
-- 失败时给出中文可操作错误。
+- 明确 V0.2.3 是 runtime 解析和完整性检查，不是 RDKit/Meeko 功能接入；
+- 明确 `scripts/prepare_bundled_python.py` 只复制本地 Python runtime、计算 `python.exe` sha256、读取版本并更新 manifest；
+- 明确该脚本不联网、不安装 Python 包、不安装 RDKit、不安装 Meeko；
+- 明确当前仍未实现 PDB/PubChem 下载、PDBQT 自动生成、RDKit/Meeko 分子处理、3D 可视化或药效判断。
 
-### V0.2.5: 受体自动准备
+#### 后续 Toolchain 方向
 
-- 从 PDB 等输入准备 `receptor.pdbqt`；
-- 明确氢、缺失原子、残基、金属离子等处理限制；
-- 记录处理日志和可复现参数。
+- 可选的离线 Python runtime 管理；
+- 可选的 RDKit/Meeko 离线包状态检查；
+- 更完整的工具链版本锁定、来源记录和升级策略；
+- 继续默认不提交大体积二进制 runtime；
+- 真正内置 RDKit/Meeko 前必须单独审查许可证、体积、更新机制和分发方式。
+
+### B. Structure Acquisition Line
+
+这条线处理 raw structure 获取和原始文件管理，与 Toolchain line 分开推进。
+
+#### V0.2.x 后续待做：RCSB PDB 下载
+
+- 通过 PDB ID 下载受体相关 raw 结构；
+- 保存到项目 `raw/` 目录；
+- 记录下载来源、时间和原始文件路径；
+- 不在本轮实现。
+
+#### V0.2.x 后续待做：PubChem CID 下载
+
+- 通过 PubChem CID 获取配体 raw 文件；
+- 保存到项目 `raw/` 目录；
+- 记录 CID、来源和原始文件路径；
+- 不在本轮实现。
+
+#### V0.2.x 后续待做：raw 文件管理
+
+- 管理 `raw/` 中的 PDB/SDF/MOL2 等原始文件；
+- 在 project.json 中记录 raw 来源和 prepared 输出之间的关系；
+- 不在本轮实现。
+
+#### 延后：raw → prepared PDBQT 自动准备
+
+- RDKit 配体处理延后；
+- Meeko 受体/配体准备延后；
+- PDB/SDF/MOL2 自动转 PDBQT 延后；
+- Open Babel、PLIP、MGLTools 暂不接入。
 
 ## V0.3: 结构可视化与可视化 Box 设置
 
