@@ -39,6 +39,20 @@ resources/tools/vina/*.dll
 resources/tools/vina/*.so
 resources/tools/vina/*.dylib
 
+# Optional bundled Python runtime. Keep the README and manifest tracked.
+resources/python/python.exe
+resources/python/python
+resources/python/*.dll
+resources/python/*.pyd
+resources/python/*.zip
+resources/python/python*._pth
+resources/python/pyvenv.cfg
+resources/python/Lib/
+resources/python/DLLs/
+resources/python/Scripts/
+resources/python/site-packages/
+resources/python/Lib/site-packages/
+
 # Runtime docking outputs
 runs/
 

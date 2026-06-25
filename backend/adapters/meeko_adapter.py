@@ -17,8 +17,8 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             name="Meeko",
             status="missing",
             path=python_executable,
-            message="用户配置的 Python 路径不存在，无法检测 Meeko。",
-            source="configured",
+            message="所选 Python 路径不存在，无法检测 Meeko。",
+            source=source,  # type: ignore[arg-type]
         )
 
     command = [

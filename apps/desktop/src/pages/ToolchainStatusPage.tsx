@@ -24,9 +24,9 @@ const sourceText: Record<ToolSource, string> = {
 };
 
 const fullStatusText: Record<ToolchainStatusResponse["full_status"], string> = {
-  ready: "ready：内置工具链可用",
-  partial: "partial：目录已建立，但工具链尚未完整",
-  missing: "missing：工具链目录缺失",
+  ready: "ready：内置 Vina 打包条件已满足",
+  partial: "partial：工具链目录已建立，但 Full 工具链尚未完整",
+  missing: "missing：工具链资源目录缺失",
 };
 
 const runtimeModeText: Record<ToolchainStatusResponse["runtime_mode"], string> = {
@@ -35,19 +35,19 @@ const runtimeModeText: Record<ToolchainStatusResponse["runtime_mode"], string> =
   unknown: "unknown：无法判断运行模式",
 };
 
-const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]>["status"], string> = {
+const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"], string> = {
   ready: "ready：可用于 Full 打包",
-  incomplete: "incomplete：文件存在但许可证或 manifest 尚未完整",
-  missing: "missing：未发现内置 vina.exe",
+  incomplete: "incomplete：文件存在，但 manifest 或完整性信息尚未完整",
+  missing: "missing：未发现内置二进制",
 };
 
-function normalizeTool(item: Partial<ToolCheckResult> | null | undefined): ToolCheckResult | null {
+function normalizeTool(item: Partial<ToolCheckResult> | null | undefined, fallbackKey = "tool"): ToolCheckResult | null {
   if (!item) {
     return null;
   }
   return {
-    key: item.key ?? "vina",
-    name: item.name ?? "AutoDock Vina",
+    key: item.key ?? fallbackKey,
+    name: item.name ?? fallbackKey,
     status: item.status ?? "unknown",
     version: item.version ?? "",
     path: item.path ?? "",
@@ -59,9 +59,9 @@ function normalizeTool(item: Partial<ToolCheckResult> | null | undefined): ToolC
   };
 }
 
-function normalizeIntegrity(
-  item: Partial<NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]>> | null | undefined,
-): NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]> | null {
+function normalizeBinaryIntegrity(
+  item: Partial<NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>> | null | undefined,
+): NonNullable<ToolchainStatusResponse["bundled_python_integrity"]> | null {
   if (!item) {
     return null;
   }
@@ -76,19 +76,32 @@ function normalizeIntegrity(
     manifest_version: item.manifest_version ?? "",
     manifest_source: item.manifest_source ?? "",
     manifest_prepared_at: item.manifest_prepared_at ?? "",
-    license_path: item.license_path ?? "",
-    license_exists: Boolean(item.license_exists),
-    third_party_notices_path: item.third_party_notices_path ?? "",
-    third_party_notices_exists: Boolean(item.third_party_notices_exists),
-    third_party_notices_has_autodock_vina: Boolean(item.third_party_notices_has_autodock_vina),
     warnings: item.warnings ?? [],
     message: item.message ?? "",
   };
 }
 
+function normalizeVinaIntegrity(
+  item: Partial<NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]>> | null | undefined,
+): NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]> | null {
+  const base = normalizeBinaryIntegrity(item);
+  if (!base) {
+    return null;
+  }
+  return {
+    ...base,
+    license_path: item?.license_path ?? "",
+    license_exists: Boolean(item?.license_exists),
+    third_party_notices_path: item?.third_party_notices_path ?? "",
+    third_party_notices_exists: Boolean(item?.third_party_notices_exists),
+    third_party_notices_has_autodock_vina: Boolean(item?.third_party_notices_has_autodock_vina),
+  };
+}
+
 function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ToolchainStatusResponse>;
-  const integrity = normalizeIntegrity(parsed.bundled_vina_integrity);
+  const vinaIntegrity = normalizeVinaIntegrity(parsed.bundled_vina_integrity);
+  const pythonIntegrity = normalizeBinaryIntegrity(parsed.bundled_python_integrity);
   return {
     ok: Boolean(parsed.ok),
     runtime_mode: parsed.runtime_mode ?? "unknown",
@@ -108,13 +121,31 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
       message: parsed.bundled_vina?.message ?? "暂无说明。",
       raw_error: parsed.bundled_vina?.raw_error ?? "",
       sha256: parsed.bundled_vina?.sha256 ?? "",
-      package_status: parsed.bundled_vina?.package_status ?? integrity?.status ?? "missing",
+      package_status: parsed.bundled_vina?.package_status ?? vinaIntegrity?.status ?? "missing",
     },
-    bundled_vina_integrity: integrity,
+    bundled_vina_integrity: vinaIntegrity,
     bundled_vina_package: parsed.bundled_vina_package ?? null,
-    warnings: parsed.warnings ?? integrity?.warnings ?? [],
-    active_vina: normalizeTool(parsed.active_vina),
+    bundled_python: {
+      exists: Boolean(parsed.bundled_python?.exists),
+      path: parsed.bundled_python?.path ?? "",
+      version: parsed.bundled_python?.version ?? "",
+      status: parsed.bundled_python?.status ?? "unknown",
+      message: parsed.bundled_python?.message ?? "暂无说明。",
+      raw_error: parsed.bundled_python?.raw_error ?? "",
+      sha256: parsed.bundled_python?.sha256 ?? "",
+      package_status: parsed.bundled_python?.package_status ?? pythonIntegrity?.status ?? "missing",
+    },
+    bundled_python_integrity: pythonIntegrity,
+    bundled_python_package: parsed.bundled_python_package ?? null,
+    warnings: parsed.warnings ?? [...(vinaIntegrity?.warnings ?? []), ...(pythonIntegrity?.warnings ?? [])],
+    active_vina: normalizeTool(parsed.active_vina, "vina"),
     active_source: parsed.active_source ?? "unknown",
+    resolved_python: normalizeTool(parsed.resolved_python, "python"),
+    python_source: parsed.python_source ?? "unknown",
+    meeko_for_python: normalizeTool(parsed.meeko_for_python, "meeko"),
+    rdkit_for_python: normalizeTool(parsed.rdkit_for_python, "rdkit"),
+    meeko_python_source: parsed.meeko_python_source ?? "unknown",
+    rdkit_python_source: parsed.rdkit_python_source ?? "unknown",
     licenses: {
       exists: Boolean(parsed.licenses?.exists),
       third_party_notices: parsed.licenses?.third_party_notices ?? "",
@@ -124,6 +155,7 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
       exists: Boolean(parsed.resources?.exists),
       tools_dir_exists: Boolean(parsed.resources?.tools_dir_exists),
       vina_dir_exists: Boolean(parsed.resources?.vina_dir_exists),
+      python_dir_exists: Boolean(parsed.resources?.python_dir_exists),
     },
     full_status: parsed.full_status ?? "missing",
     message: parsed.message ?? "",
@@ -133,6 +165,19 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
 
 function buildFrontendError(error: unknown): ToolchainStatusResponse {
   const rawError = error instanceof Error ? error.message : String(error);
+  const frontendTool: ToolCheckResult = {
+    key: "toolchain",
+    name: "工具链状态",
+    status: "error",
+    version: "",
+    path: "",
+    message: "前端未能调用内置工具链状态命令。",
+    raw_error: rawError,
+    source: "unknown",
+    bundled_path: "",
+    is_bundled: false,
+  };
+
   return {
     ok: false,
     runtime_mode: "unknown",
@@ -149,16 +194,34 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
       path: "",
       version: "",
       status: "error",
-      message: "前端未能调用内置工具链状态命令。",
+      message: frontendTool.message,
       raw_error: rawError,
       sha256: "",
       package_status: "missing",
     },
     bundled_vina_integrity: null,
     bundled_vina_package: null,
+    bundled_python: {
+      exists: false,
+      path: "",
+      version: "",
+      status: "error",
+      message: frontendTool.message,
+      raw_error: rawError,
+      sha256: "",
+      package_status: "missing",
+    },
+    bundled_python_integrity: null,
+    bundled_python_package: null,
     warnings: [],
-    active_vina: null,
+    active_vina: frontendTool,
     active_source: "unknown",
+    resolved_python: null,
+    python_source: "unknown",
+    meeko_for_python: null,
+    rdkit_for_python: null,
+    meeko_python_source: "unknown",
+    rdkit_python_source: "unknown",
     licenses: {
       exists: false,
       third_party_notices: "",
@@ -168,12 +231,13 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
       exists: false,
       tools_dir_exists: false,
       vina_dir_exists: false,
+      python_dir_exists: false,
     },
     full_status: "missing",
     message: "读取内置工具链状态失败。",
     error: {
       code: "FRONTEND_TOOLCHAIN_STATUS_ERROR",
-      message: "前端未能调用内置工具链状态命令。",
+      message: frontendTool.message,
       raw_error: rawError,
       suggestion: "请确认当前运行环境是 Tauri 桌面端，并检查 Python 后端入口。",
     },
@@ -192,6 +256,20 @@ function fullStatusClass(status: ToolchainStatusResponse["full_status"]): string
     return "status-missing";
   }
   return "status-error";
+}
+
+function packageStatusClass(status: NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"]): string {
+  if (status === "ready") {
+    return "status-ok";
+  }
+  if (status === "incomplete") {
+    return "status-missing";
+  }
+  return "status-error";
+}
+
+function shortHash(value: string): string {
+  return value ? `${value.slice(0, 16)}...` : "未计算";
 }
 
 export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps) {
@@ -224,8 +302,8 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
         <p className="eyebrow">ToolchainStatusPage</p>
         <h1 id="toolchain-status-title">内置工具链状态</h1>
         <p>
-          这里只检查 DockStart 的内置工具链目录和 AutoDock Vina 解析来源。
-          当前版本不会下载工具，不会生成 PDBQT，也不会改变 docking 主流程。
+          这里只检查 DockStart 的内置工具链目录、AutoDock Vina 和 Python runtime 解析状态。
+          当前版本不会下载工具、不会安装 Python 包，也不会改变 docking 主流程。
         </p>
       </div>
 
@@ -276,11 +354,22 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                 </div>
                 <div>
                   <dt>tools 目录</dt>
-                  <dd>{status.tools_dir || "未获取"}（{booleanText(status.resources.tools_dir_exists)}）</dd>
+                  <dd>
+                    {status.tools_dir || "未获取"}（{booleanText(status.resources.tools_dir_exists)}）
+                  </dd>
+                </div>
+                <div>
+                  <dt>Python 目录</dt>
+                  <dd>
+                    {status.bundled_python.path ? status.bundled_python.path.replace(/[/\\]python\.exe$/i, "") : "未获取"}（
+                    {booleanText(status.resources.python_dir_exists)}）
+                  </dd>
                 </div>
                 <div>
                   <dt>manifest</dt>
-                  <dd>{status.manifest_file || "未获取"}（{booleanText(status.manifest_exists)}）</dd>
+                  <dd>
+                    {status.manifest_file || "未获取"}（{booleanText(status.manifest_exists)}）
+                  </dd>
                 </div>
               </dl>
               {status.manifest_error ? (
@@ -312,12 +401,12 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd>{status.bundled_vina.path || "未获取"}</dd>
                 </div>
                 <div>
-                  <dt>sha256</dt>
-                  <dd>{status.bundled_vina.sha256 || "未计算"}</dd>
-                </div>
-                <div>
                   <dt>版本</dt>
                   <dd>{status.bundled_vina.version || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>sha256</dt>
+                  <dd title={status.bundled_vina.sha256}>{shortHash(status.bundled_vina.sha256)}</dd>
                 </div>
                 <div>
                   <dt>LICENSE</dt>
@@ -328,25 +417,9 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                 </div>
                 <div>
                   <dt>THIRD_PARTY_NOTICES 记录</dt>
-                  <dd>
-                    {booleanText(Boolean(status.bundled_vina_integrity?.third_party_notices_has_autodock_vina))}
-                  </dd>
-                </div>
-                <div>
-                  <dt>manifest sha256</dt>
-                  <dd>{status.bundled_vina_integrity?.manifest_sha256 || "未记录"}</dd>
-                </div>
-                <div>
-                  <dt>说明</dt>
-                  <dd>{status.bundled_vina.message}</dd>
+                  <dd>{booleanText(Boolean(status.bundled_vina_integrity?.third_party_notices_has_autodock_vina))}</dd>
                 </div>
               </dl>
-              {status.bundled_vina.raw_error ? (
-                <details className="raw-error">
-                  <summary>查看 bundled Vina raw_error</summary>
-                  <pre>{status.bundled_vina.raw_error}</pre>
-                </details>
-              ) : null}
             </article>
 
             <article className="tool-card">
@@ -374,12 +447,97 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd>{status.active_vina?.message || "暂无说明。"}</dd>
                 </div>
               </dl>
-              {status.active_vina?.raw_error ? (
+            </article>
+
+            <article className="tool-card">
+              <div className="tool-card-header">
+                <h2>Bundled Python</h2>
+                <span className={`status-badge status-${status.bundled_python.status}`}>
+                  {statusText[status.bundled_python.status] ?? statusText.unknown}
+                </span>
+              </div>
+              <dl className="tool-meta">
+                <div>
+                  <dt>是否存在</dt>
+                  <dd>{booleanText(status.bundled_python.exists)}</dd>
+                </div>
+                <div>
+                  <dt>Full 打包状态</dt>
+                  <dd>
+                    <span className={`status-badge ${packageStatusClass(status.bundled_python.package_status)}`}>
+                      {packageStatusText[status.bundled_python.package_status]}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>路径</dt>
+                  <dd>{status.bundled_python.path || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>版本</dt>
+                  <dd>{status.bundled_python.version || status.bundled_python_integrity?.manifest_version || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>sha256</dt>
+                  <dd title={status.bundled_python.sha256}>{shortHash(status.bundled_python.sha256)}</dd>
+                </div>
+                <div>
+                  <dt>manifest sha256</dt>
+                  <dd title={status.bundled_python_integrity?.manifest_sha256 ?? ""}>
+                    {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>说明</dt>
+                  <dd>{status.bundled_python.message}</dd>
+                </div>
+              </dl>
+              {status.bundled_python.raw_error ? (
                 <details className="raw-error">
-                  <summary>查看 active Vina raw_error</summary>
-                  <pre>{status.active_vina.raw_error}</pre>
+                  <summary>查看 bundled Python raw_error</summary>
+                  <pre>{status.bundled_python.raw_error}</pre>
                 </details>
               ) : null}
+            </article>
+
+            <article className="tool-card">
+              <div className="tool-card-header">
+                <h2>Python / Meeko / RDKit 检测来源</h2>
+                <span className={`status-badge status-${status.resolved_python?.status ?? "unknown"}`}>
+                  {statusText[status.resolved_python?.status ?? "unknown"]}
+                </span>
+              </div>
+              <dl className="tool-meta">
+                <div>
+                  <dt>Python 来源</dt>
+                  <dd>{sourceText[status.python_source] ?? sourceText.unknown}</dd>
+                </div>
+                <div>
+                  <dt>Python 路径</dt>
+                  <dd>{status.resolved_python?.path || "未检测到路径"}</dd>
+                </div>
+                <div>
+                  <dt>Python 版本</dt>
+                  <dd>{status.resolved_python?.version || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>Meeko 检测使用来源</dt>
+                  <dd>
+                    {sourceText[status.meeko_python_source] ?? sourceText.unknown}；
+                    {statusText[status.meeko_for_python?.status ?? "unknown"]}
+                  </dd>
+                </div>
+                <div>
+                  <dt>RDKit 检测使用来源</dt>
+                  <dd>
+                    {sourceText[status.rdkit_python_source] ?? sourceText.unknown}；
+                    {statusText[status.rdkit_for_python?.status ?? "unknown"]}
+                  </dd>
+                </div>
+              </dl>
+              <p className="placeholder-note">
+                当前页面只做 import 检测，不安装 Python 包，也不执行 Meeko/RDKit 分子处理。
+              </p>
             </article>
 
             <article className="tool-card">
@@ -389,7 +547,9 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
               <dl className="tool-meta">
                 <div>
                   <dt>resources/licenses</dt>
-                  <dd>{status.licenses_dir || "未获取"}（{booleanText(status.licenses.exists)}）</dd>
+                  <dd>
+                    {status.licenses_dir || "未获取"}（{booleanText(status.licenses.exists)}）
+                  </dd>
                 </div>
                 <div>
                   <dt>THIRD_PARTY_NOTICES.md</dt>
@@ -411,7 +571,7 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
 
           {status.warnings.length ? (
             <div className="warning-note">
-              <strong>内置 Vina 打包检查提示</strong>
+              <strong>内置工具链检查提示</strong>
               <ul>
                 {status.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>

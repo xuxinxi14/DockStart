@@ -57,3 +57,7 @@ def get_toolchain_manifest_path(project_root: str | Path | None = None) -> Path:
 
 def get_bundled_vina_path(project_root: str | Path | None = None) -> Path:
     return get_toolchain_root(project_root) / "tools" / "vina" / "vina.exe"
+
+
+def get_bundled_python_path(project_root: str | Path | None = None) -> Path:
+    return get_toolchain_root(project_root) / "python" / "python.exe"

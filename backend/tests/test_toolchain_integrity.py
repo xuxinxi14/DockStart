@@ -18,10 +18,13 @@ for import_path in (BACKEND_ROOT, SCRIPTS_ROOT):
 from dockstart_core.settings import SETTINGS_ENV_VAR  # noqa: E402
 from dockstart_core.toolchain import (  # noqa: E402
     calculate_file_sha256,
+    get_bundled_python_integrity,
     get_bundled_vina_integrity,
+    validate_bundled_python_package,
     validate_bundled_vina_package,
 )
 from dockstart_core.toolchain_paths import RESOURCE_DIR_ENV_VAR, TOOLCHAIN_ROOT_ENV_VAR  # noqa: E402
+from prepare_bundled_python import prepare_bundled_python  # noqa: E402
 from prepare_bundled_vina import prepare_bundled_vina  # noqa: E402
 
 
@@ -38,6 +41,31 @@ class ToolchainIntegrityTests(unittest.TestCase):
                         "version": "1.2.7",
                         "binary_path": "resources/tools/vina/vina.exe",
                         "license": "Apache-2.0",
+                        "source": "unit-test",
+                        "bundled": bundled,
+                        "sha256": sha256,
+                        "prepared_at": "2099-01-01T00:00:00+00:00",
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_python_manifest(self, repo_root: Path, sha256: str, bundled: bool = True) -> None:
+        manifest_path = repo_root / "resources" / "toolchain_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "bundled_python": {
+                        "name": "Python",
+                        "version": "3.11.8",
+                        "binary_path": "resources/python/python.exe",
+                        "license": "Python Software Foundation License",
                         "source": "unit-test",
                         "bundled": bundled,
                         "sha256": sha256,
@@ -91,6 +119,37 @@ class ToolchainIntegrityTests(unittest.TestCase):
             self.assertEqual(manifest["bundled_vina"]["version"], "1.2.7")
             self.assertTrue(manifest["bundled_vina"]["bundled"])
 
+    def test_prepare_bundled_python_copies_fake_runtime_and_updates_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repo"
+            source_dir = Path(temp_dir) / "python_runtime"
+            source_dir.mkdir(parents=True)
+            (source_dir / "python.exe").write_bytes(b"fake python binary")
+            (source_dir / "python311.dll").write_bytes(b"fake python dll")
+            (source_dir / "DLLs").mkdir()
+            (source_dir / "DLLs" / "sqlite3.dll").write_bytes(b"fake sqlite dll")
+            (source_dir / "Lib" / "site-packages").mkdir(parents=True)
+            (source_dir / "Lib" / "os.py").write_text("# fake stdlib\n", encoding="utf-8")
+            (source_dir / "Lib" / "site-packages" / "large_package.py").write_text("# ignored\n", encoding="utf-8")
+
+            response = prepare_bundled_python(source_dir, repo_root=root, version="3.11.8", source_label="unit-test")
+
+            target_binary = root / "resources" / "python" / "python.exe"
+            target_dll = root / "resources" / "python" / "python311.dll"
+            target_stdlib = root / "resources" / "python" / "Lib" / "os.py"
+            ignored_package = root / "resources" / "python" / "Lib" / "site-packages" / "large_package.py"
+            manifest = json.loads((root / "resources" / "toolchain_manifest.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(target_binary.is_file())
+            self.assertTrue(target_dll.is_file())
+            self.assertTrue(target_stdlib.is_file())
+            self.assertFalse(ignored_package.exists())
+            self.assertEqual(response["sha256"], calculate_file_sha256(target_binary))
+            self.assertEqual(manifest["bundled_python"]["sha256"], response["sha256"])
+            self.assertEqual(manifest["bundled_python"]["version"], "3.11.8")
+            self.assertTrue(manifest["bundled_python"]["bundled"])
+
     def test_missing_license_returns_incomplete_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "repo"
@@ -127,6 +186,37 @@ class ToolchainIntegrityTests(unittest.TestCase):
             with patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root), SETTINGS_ENV_VAR: str(settings_path)}):
                 os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
                 response = validate_bundled_vina_package()
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["status"], "ready")
+            self.assertEqual(response["warnings"], [])
+
+    def test_missing_bundled_python_returns_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repo"
+            settings_path = Path(temp_dir) / "settings.json"
+
+            with patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root), SETTINGS_ENV_VAR: str(settings_path)}):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                integrity = get_bundled_python_integrity()
+
+            self.assertEqual(integrity["status"], "missing")
+            self.assertFalse(integrity["binary_exists"])
+            self.assertTrue(any("python.exe" in warning for warning in integrity["warnings"]))
+
+    def test_bundled_python_ready_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repo"
+            python_path = root / "resources" / "python" / "python.exe"
+            python_path.parent.mkdir(parents=True)
+            python_path.write_bytes(b"fake python binary")
+            sha256 = calculate_file_sha256(python_path)
+            self._write_python_manifest(root, sha256)
+            settings_path = Path(temp_dir) / "settings.json"
+
+            with patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root), SETTINGS_ENV_VAR: str(settings_path)}):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                response = validate_bundled_python_package()
 
             self.assertTrue(response["ok"])
             self.assertEqual(response["status"], "ready")

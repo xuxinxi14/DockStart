@@ -13,7 +13,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from adapters import meeko_adapter, rdkit_adapter, vina_adapter  # noqa: E402
+from adapters import meeko_adapter, python_adapter, rdkit_adapter, vina_adapter  # noqa: E402
 from adapters.python_adapter import detect as detect_python  # noqa: E402
 from dockstart_core.models import ToolCheckResult  # noqa: E402
 from dockstart_core.settings import (  # noqa: E402
@@ -25,9 +25,11 @@ from dockstart_core.settings import (  # noqa: E402
     save_settings,
 )
 from dockstart_core.toolchain import get_toolchain_status  # noqa: E402
+from dockstart_core.toolchain import get_resolved_python  # noqa: E402
 from dockstart_core.toolchain_paths import (  # noqa: E402
     RESOURCE_DIR_ENV_VAR,
     TOOLCHAIN_ROOT_ENV_VAR,
+    get_bundled_python_path,
     get_bundled_vina_path,
     get_licenses_dir,
     get_runtime_mode,
@@ -88,6 +90,79 @@ class ToolCheckTests(unittest.TestCase):
         self.assertTrue(result.version)
         self.assertTrue(result.path)
         self.assertEqual(result.source, "current_environment")
+
+    def test_bundled_python_takes_priority_over_configured(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="Python 3.11.8\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "python" / "python.exe"
+            configured_path = Path(temp_dir) / "configured" / "python.exe"
+            bundled_path.parent.mkdir(parents=True)
+            configured_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled python", encoding="utf-8")
+            configured_path.write_text("fake configured python", encoding="utf-8")
+
+            with patch.object(python_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = python_adapter.detect(str(configured_path), bundled_path=str(bundled_path))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "bundled")
+        self.assertTrue(result.is_bundled)
+        self.assertEqual(result.path, str(bundled_path.resolve()))
+        self.assertEqual(run_mock.call_args[0][0][0], str(bundled_path.resolve()))
+
+    def test_configured_python_takes_priority_over_current_when_no_bundled(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="Python 3.10.11\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "python" / "python.exe"
+            configured_path = Path(temp_dir) / "configured" / "python.exe"
+            configured_path.parent.mkdir(parents=True)
+            configured_path.write_text("fake configured python", encoding="utf-8")
+
+            with patch.object(python_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = python_adapter.detect(str(configured_path), bundled_path=str(bundled_path))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "configured")
+        self.assertFalse(result.is_bundled)
+        self.assertEqual(result.path, str(configured_path))
+        self.assertEqual(run_mock.call_args[0][0][0], str(configured_path))
+
+    def test_meeko_and_rdkit_use_resolved_bundled_python(self) -> None:
+        python_completed = SimpleNamespace(returncode=0, stdout="Python 3.11.8\n", stderr="")
+        import_completed = SimpleNamespace(returncode=0, stdout="1.0.0\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundled_path = root / "resources" / "python" / "python.exe"
+            bundled_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled python", encoding="utf-8")
+            settings_path = root / "settings.json"
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        TOOLCHAIN_ROOT_ENV_VAR: str(root),
+                        SETTINGS_ENV_VAR: str(settings_path),
+                    },
+                ),
+                patch.object(python_adapter.subprocess, "run", return_value=python_completed),
+            ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                resolved = get_resolved_python("")
+
+            with patch.object(meeko_adapter.subprocess, "run", return_value=import_completed) as meeko_run:
+                meeko_result = meeko_adapter.detect(resolved.path, resolved.source)
+            with patch.object(rdkit_adapter.subprocess, "run", return_value=import_completed) as rdkit_run:
+                rdkit_result = rdkit_adapter.detect(resolved.path, resolved.source)
+
+        self.assertEqual(resolved.source, "bundled")
+        self.assertEqual(meeko_result.source, "bundled")
+        self.assertEqual(rdkit_result.source, "bundled")
+        self.assertEqual(meeko_run.call_args[0][0][0], str(bundled_path.resolve()))
+        self.assertEqual(rdkit_run.call_args[0][0][0], str(bundled_path.resolve()))
 
     def test_vina_missing_returns_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -191,6 +266,7 @@ class ToolCheckTests(unittest.TestCase):
                 self.assertEqual(get_runtime_mode(), "dev")
                 self.assertEqual(get_toolchain_root(), root / "resources")
                 self.assertEqual(get_bundled_vina_path(), root / "resources" / "tools" / "vina" / "vina.exe")
+                self.assertEqual(get_bundled_python_path(), root / "resources" / "python" / "python.exe")
                 self.assertEqual(get_licenses_dir(), root / "resources" / "licenses")
                 self.assertEqual(get_toolchain_manifest_path(), root / "resources" / "toolchain_manifest.json")
 
@@ -208,6 +284,7 @@ class ToolCheckTests(unittest.TestCase):
                 self.assertEqual(get_runtime_mode(), "packaged")
                 self.assertEqual(get_toolchain_root(), resource_dir / "resources")
                 self.assertEqual(get_bundled_vina_path(), resource_dir / "resources" / "tools" / "vina" / "vina.exe")
+                self.assertEqual(get_bundled_python_path(), resource_dir / "resources" / "python" / "python.exe")
 
     def test_toolchain_status_returns_structured_result(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")

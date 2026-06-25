@@ -34,8 +34,8 @@ def check_all_tools() -> list[ToolCheckResult]:
         "Python",
         lambda: python_adapter.detect(configured_python),
     )
-    selected_python = configured_python or python_result.path
-    python_source = "configured" if configured_python else "current_environment"
+    selected_python = python_result.path or configured_python
+    python_source = python_result.source
 
     return [
         python_result,

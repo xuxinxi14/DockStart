@@ -2,12 +2,22 @@
   "schema_version": 1,
   "toolchain_name": "DockStart Full",
   "status": "partial",
-  "description": "DockStart 内置工具链目录规范。当前提交只建立 Vina 内置路径识别，不随仓库强制提交 vina.exe。",
+  "description": "DockStart 内置工具链目录规范。当前提交建立 Vina 与 Python runtime 的内置路径识别，不随仓库强制提交二进制运行时。",
   "bundled_vina": {
     "name": "AutoDock Vina",
     "version": "",
     "binary_path": "resources/tools/vina/vina.exe",
     "license": "Apache-2.0",
+    "source": "",
+    "bundled": false,
+    "sha256": "",
+    "prepared_at": ""
+  },
+  "bundled_python": {
+    "name": "Python",
+    "version": "",
+    "binary_path": "resources/python/python.exe",
+    "license": "Python Software Foundation License",
     "source": "",
     "bundled": false,
     "sha256": "",
@@ -26,10 +36,24 @@
         "configured",
         "auto"
       ]
+    },
+    "python": {
+      "name": "Python",
+      "role": "runtime",
+      "bundled_path": "resources/python/python.exe",
+      "required_for_mvp_run": false,
+      "bundled_by_default": false,
+      "license": "Python Software Foundation License",
+      "resolution_priority": [
+        "bundled",
+        "configured",
+        "current_environment"
+      ]
     }
   },
   "licenses": {
     "autodock_vina": "resources/licenses/AutoDock-Vina_LICENSE.txt",
+    "python": "",
     "third_party_notices": "resources/licenses/THIRD_PARTY_NOTICES.md"
   }
 }

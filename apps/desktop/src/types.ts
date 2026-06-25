@@ -24,10 +24,11 @@ export type ToolCheckResult = {
 
 export type ToolchainFullStatus = "partial" | "ready" | "missing";
 export type ToolchainRuntimeMode = "dev" | "packaged" | "unknown";
-export type BundledVinaPackageStatus = "ready" | "incomplete" | "missing";
+export type BundledPackageStatus = "ready" | "incomplete" | "missing";
+export type BundledVinaPackageStatus = BundledPackageStatus;
 
-export type BundledVinaIntegrity = {
-  status: BundledVinaPackageStatus;
+export type BundledBinaryIntegrity = {
+  status: BundledPackageStatus;
   binary_path: string;
   binary_exists: boolean;
   sha256: string;
@@ -37,13 +38,32 @@ export type BundledVinaIntegrity = {
   manifest_version: string;
   manifest_source: string;
   manifest_prepared_at: string;
+  warnings: string[];
+  message: string;
+};
+
+export type BundledVinaIntegrity = BundledBinaryIntegrity & {
   license_path: string;
   license_exists: boolean;
   third_party_notices_path: string;
   third_party_notices_exists: boolean;
   third_party_notices_has_autodock_vina: boolean;
+};
+
+export type BundledPythonIntegrity = BundledBinaryIntegrity;
+
+export type BundledPackageCheck<TIntegrity extends BundledBinaryIntegrity> = {
+  ok: boolean;
+  status: BundledPackageStatus;
+  integrity: TIntegrity;
   warnings: string[];
   message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
 };
 
 export type ToolchainStatusResponse = {
@@ -65,25 +85,31 @@ export type ToolchainStatusResponse = {
     message: string;
     raw_error: string;
     sha256: string;
-    package_status: BundledVinaPackageStatus;
+    package_status: BundledPackageStatus;
   };
   bundled_vina_integrity: BundledVinaIntegrity | null;
-  bundled_vina_package: {
-    ok: boolean;
-    status: BundledVinaPackageStatus;
-    integrity: BundledVinaIntegrity;
-    warnings: string[];
+  bundled_vina_package: BundledPackageCheck<BundledVinaIntegrity> | null;
+  bundled_python: {
+    exists: boolean;
+    path: string;
+    version: string;
+    status: ToolStatus;
     message: string;
-    error?: {
-      code: string;
-      message: string;
-      raw_error: string;
-      suggestion: string;
-    } | null;
-  } | null;
+    raw_error: string;
+    sha256: string;
+    package_status: BundledPackageStatus;
+  };
+  bundled_python_integrity: BundledPythonIntegrity | null;
+  bundled_python_package: BundledPackageCheck<BundledPythonIntegrity> | null;
   warnings: string[];
   active_vina: ToolCheckResult | null;
   active_source: ToolSource;
+  resolved_python: ToolCheckResult | null;
+  python_source: ToolSource;
+  meeko_for_python: ToolCheckResult | null;
+  rdkit_for_python: ToolCheckResult | null;
+  meeko_python_source: ToolSource;
+  rdkit_python_source: ToolSource;
   licenses: {
     exists: boolean;
     third_party_notices: string;
@@ -93,6 +119,7 @@ export type ToolchainStatusResponse = {
     exists: boolean;
     tools_dir_exists: boolean;
     vina_dir_exists: boolean;
+    python_dir_exists: boolean;
   };
   full_status: ToolchainFullStatus;
   message: string;

@@ -10,7 +10,7 @@
 | Vite | 前端开发与构建 | MIT | npm 开发依赖 | 是 | 否 |
 | Tauri | 桌面应用壳 | Apache-2.0 / MIT | npm CLI + Rust crate | 是 | 需要本机具备 Rust/Tauri 构建环境 |
 | tauri-plugin-dialog | 原生文件/目录选择对话框（路径输入的“选择…”按钮） | Apache-2.0 / MIT（Tauri 官方插件） | Rust crate + npm 包，通过 capabilities 授权 `dialog:default` | 是 | 否 |
-| Python | 后端运行环境 | Python Software Foundation License | 系统运行时 | 否 | 是 |
+| Python | 后端运行环境 | Python Software Foundation License | 系统运行时；DockStart Full 可选内置 runtime | 当前仓库不内置 | 是，除非 Full 包已随附 runtime |
 
 ## V0.1 Lite 计划检测但不内置的工具
 
@@ -28,7 +28,7 @@
 | AutoDock Vina | 是 | 随包保留许可证文本、版本、来源和修改说明 |
 | RDKit | 是 | 保留许可证文本、依赖说明和构建来源 |
 | Meeko | 是 | 补充 LGPL 合规说明，包括许可证文本、源码获取方式、修改说明和链接边界 |
-| Python 运行时 | 待评估 | 保留 Python 许可证、版本和打包来源说明 |
+| Python 运行时 | 是，作为 Full 版候选内置 runtime | 保留 Python 许可证、版本、来源、sha256 和打包来源说明；默认不提交完整 runtime 或 site-packages |
 
 ## 本阶段明确不引入
 
