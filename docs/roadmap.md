@@ -1,10 +1,22 @@
 # DockStart Roadmap
 
-本文档记录 DockStart 的阶段性路线图。实际优先级会根据用户反馈、许可证边界和维护成本调整。
+本文档记录 DockStart 从 V0.1 Lite MVP 走向 DockStart Full 一站式分子对接平台的阶段路线。实际优先级会根据用户反馈、许可证边界、分发体积和维护成本调整。
 
-## V0.1: 本地 PDBQT docking MVP
+## 产品方向
 
-目标：跑通本地最小闭环。
+DockStart Full 的最终目标：
+
+- 分发简单；
+- 内置工具链；
+- 开箱即用；
+- 中文引导；
+- 覆盖分子对接全过程。
+
+当前 V0.1 是 Lite MVP，主要价值是跑通本地 PDBQT docking 闭环。它依赖用户已经准备好的 PDBQT 文件和本机 AutoDock Vina，是阶段性实现，不是最终产品形态。
+
+## V0.1: 本地 PDBQT Docking Lite MVP
+
+目标：跑通最小闭环，证明项目、运行、解析和报告链路可用。
 
 已完成：
 
@@ -22,30 +34,62 @@
 - 前端显示结果表格；
 - 导出 Markdown 报告。
 
-明确不做：
+明确边界：
 
-- 自动下载结构；
-- 自动分子格式转换；
-- 自动药效判断；
-- 3D 可视化；
-- 相互作用分析。
+- 不内置 Vina；
+- 不内置 Python 工具链；
+- 不自动下载结构；
+- 不自动分子格式转换；
+- 不自动准备 receptor / ligand；
+- 不自动药效判断；
+- 不做 3D 可视化；
+- 不做相互作用分析。
 
-## V0.2: 结构获取与准备能力
+## V0.2: DockStart Full 工具链基础
 
-计划：
+V0.2 的重点从“用户自己安装工具”转向“DockStart 管理工具链”。更多设计见 [toolchain_design.md](toolchain_design.md)。
 
-- PDB / PubChem 下载；
-- RDKit / Meeko 准备配体和受体；
-- 更完善的错误引导；
-- 更清晰的输入结构检查；
-- 项目模板和示例数据整理。
+### V0.2.0: 内置 Vina
 
-注意：
+- 在 `resources/tools/vina/` 中提供平台对应的 Vina 可执行文件；
+- 启动时优先检测内置 Vina；
+- 保留用户自定义 Vina 路径作为覆盖选项；
+- 许可证文本放入 `resources/licenses/`。
 
-- 仍需确认第三方依赖和许可证边界；
-- 不应直接复制第三方源码到 DockStart。
+### V0.2.1: Toolchain 管理
 
-## V0.3: 结构可视化与可视化 box 设置
+- 新增 `ToolchainStatusPage`；
+- 显示内置工具、用户配置路径和 PATH 检测结果；
+- 明确工具来源：内置、用户配置、PATH、缺失；
+- 统一错误提示和修复建议。
+
+### V0.2.2: 内置 Python 环境
+
+- 评估 `resources/python/` 中的独立 Python 运行时；
+- 避免依赖用户系统 Python；
+- 建立 Python 包版本锁定和健康检查；
+- 记录 Python 和包版本到 run metadata。
+
+### V0.2.3: 内置 RDKit / Meeko 检测
+
+- 在内置 Python 环境中检测 RDKit；
+- 在内置 Python 环境中检测 Meeko；
+- 显示许可证和版本信息；
+- Meeko 需要补充 LGPL 合规说明。
+
+### V0.2.4: 配体自动准备
+
+- 从 SDF / MOL2 / PDB 等输入准备 `ligand.pdbqt`；
+- 记录输入文件、处理参数、输出文件和日志；
+- 失败时给出中文可操作错误。
+
+### V0.2.5: 受体自动准备
+
+- 从 PDB 等输入准备 `receptor.pdbqt`；
+- 明确氢、缺失原子、残基、金属离子等处理限制；
+- 记录处理日志和可复现参数。
+
+## V0.3: 结构可视化与可视化 Box 设置
 
 计划：
 
@@ -70,9 +114,10 @@
 注意：
 
 - PLIP 等工具许可证需要单独确认；
+- Open Babel / MGLTools / PLIP 暂不进入核心内置包；
 - 相互作用分析仍不能替代实验验证。
 
-## V0.5: 批量 docking 与结果管理
+## V0.5: 批量 Docking 与结果管理
 
 计划：
 

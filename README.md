@@ -2,18 +2,29 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台。
 
-DockStart 的目标是帮助初学者用更清晰的中文流程完成本地 PDBQT docking：导入已经准备好的 receptor/ligand PDBQT 文件，设置 docking box 和 Vina 参数，生成配置文件，运行 AutoDock Vina，解析 docking score，并导出可复现的 Markdown 报告。
+DockStart 的最终目标不是做一个“外部工具调用器”，而是成为开箱即用的一站式分子对接平台：分发简单、内置工具链、中文引导清晰，尽可能覆盖从结构获取、分子准备、box 设置、Vina 对接、结果解析到报告导出的完整流程。
 
 ## 重要说明
 
 - DockStart 不是 AutoDock Vina 官方项目。
 - DockStart 不修改 AutoDock Vina 的 docking 算法、scoring function 或搜索策略。
-- DockStart V0.1 只支持用户已经准备好的 `receptor.pdbqt` 和 `ligand.pdbqt`。
+- DockStart 当前 V0.1 是 Lite MVP：依赖用户已有的 `receptor.pdbqt`、`ligand.pdbqt` 和 AutoDock Vina。
+- V0.1 Lite 只是阶段性实现，不代表 DockStart 的最终形态。
 - Docking score 仅供结构结合趋势参考，不能替代实验验证，也不能证明真实药效。
 
-## 当前功能
+## 产品目标
 
-V0.1 MVP 已支持：
+DockStart Full 的长期方向：
+
+- 分发简单：用户下载桌面应用后尽量少配置或零配置。
+- 内置工具链：优先随应用提供 Vina、Python、RDKit、Meeko 等合规组件。
+- 开箱即用：默认优先使用内置工具，减少 PATH、环境变量和 Python 包安装问题。
+- 中文引导：关键参数、错误、路径和报告都提供面向初学者的中文说明。
+- 覆盖全过程：逐步覆盖结构获取、分子准备、对接执行、结果解析、报告导出和结果管理。
+
+## 当前 V0.1 Lite MVP
+
+V0.1 Lite 已支持：
 
 - 工具检测；
 - Vina / Python 路径配置；
@@ -28,6 +39,15 @@ V0.1 MVP 已支持：
 - 导出 `scores.csv`；
 - 导出 Markdown 报告。
 
+V0.1 Lite 的边界：
+
+- 需要用户自己准备 PDBQT 文件；
+- 需要用户自己安装或配置 AutoDock Vina；
+- 不自动下载 PDB / PubChem；
+- 不自动准备 receptor / ligand；
+- 不提供内置 Python 工具链；
+- 不做药效判断。
+
 ## 暂不支持
 
 V0.1 暂不支持：
@@ -41,6 +61,26 @@ V0.1 暂不支持：
 - PDF 报告；
 - AI 药效判断。
 
+## DockStart Full 工具链方向
+
+后续 Full 版本计划采用分层工具链：
+
+```text
+resources/
+├─ tools/
+│  └─ vina/
+├─ python/
+└─ licenses/
+```
+
+工具解析优先级：
+
+```text
+内置工具 > 用户配置路径 > 系统 PATH
+```
+
+对应架构说明见 [docs/toolchain_design.md](docs/toolchain_design.md)。
+
 ## 项目结构
 
 ```text
@@ -48,11 +88,12 @@ DockStart/
 ├─ apps/
 │  └─ desktop/              # Tauri + React 桌面端
 ├─ backend/
-│  ├─ adapters/             # 外部工具检测适配器
+│  ├─ adapters/             # 工具检测和调用适配器
 │  ├─ dockstart_core/       # 项目、运行、结果解析和报告导出逻辑
 │  └─ tests/                # 后端单元测试
 ├─ docs/
 │  ├─ license_notes.md
+│  ├─ toolchain_design.md
 │  ├─ user_guide.md
 │  ├─ smoke_test.md
 │  ├─ faq.md
@@ -71,7 +112,7 @@ DockStart/
 - Node.js 和 npm；
 - Rust 工具链；
 - Tauri 所需系统依赖；
-- AutoDock Vina，可通过 PATH 或 DockStart 设置页配置路径。
+- AutoDock Vina：V0.1 Lite 需要用户通过 PATH 或 DockStart 设置页配置路径。
 
 ## 开发运行
 
@@ -145,8 +186,10 @@ reports/docking_report.md
 ## 许可证与第三方工具
 
 - DockStart 本体计划采用 Apache License 2.0；正式授权以仓库 `LICENSE` 文件为准。
-- AutoDock Vina 是第三方工具，需要用户自行安装或配置路径。
-- Open Babel / MGLTools / PLIP 暂不内置，也不随 DockStart 打包。
+- AutoDock Vina 许可证允许作为 DockStart Full 的候选内置工具，但需要保留许可证文本和来源说明。
+- RDKit 可作为候选内置组件，但需要随包保留许可证和依赖说明。
+- Meeko 可作为候选内置组件，但需要补充 LGPL 合规说明，包括许可证文本、源码获取方式和修改说明。
+- Open Babel / MGLTools / PLIP 暂不进入核心内置包，可作为后续外部可选集成评估。
 - 第三方依赖和许可证边界详见 [docs/license_notes.md](docs/license_notes.md)。
 
 ## 科学免责声明

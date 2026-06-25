@@ -9,6 +9,8 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。
+
 第一阶段目标是实现最小闭环：
 
 ```text
@@ -290,6 +292,24 @@ runs/run_001/metadata.json
 2. 为什么要做？
 3. 做错了怎么办？
 
+### 7.1 路径输入必须提供"选择"按钮
+
+所有需要用户输入文件系统路径（文件或目录）的输入框，都必须在输入框旁提供一个“选择…”按钮，点击后调用 `tauri-plugin-dialog` 的原生对话框，让用户在电脑上选择路径，并把选中的绝对路径回填到输入框。用户仍可手动编辑路径。
+
+规则：
+
+* 目录类输入（项目保存目录、默认项目目录等）使用 `mode="directory"`。
+* 文件类输入（receptor/ligand PDBQT、Vina/Python 可执行文件等）使用 `mode="file"`，并按需提供 `filters` 限定扩展名（例如 PDBQT 文件用 `[{ name: "PDBQT", extensions: ["pdbqt"] }]`）。
+* 统一使用 `PathInput` 组件（`apps/desktop/src/components/PathInput.tsx`），不要在各页面重复实现对话框调用。
+* 选完路径后仍允许手动修改；对话框只是辅助，不强制覆盖。
+* 禁止只提供裸 `<input>` 让用户手敲绝对路径——这会让初学者出错。
+
+接入要求（已就绪，新增页面时复用即可）：
+
+* Rust：`Cargo.toml` 依赖 `tauri-plugin-dialog`；`main.rs` 注册 `.plugin(tauri_plugin_dialog::init())`。
+* 权限：`src-tauri/capabilities/default.json` 已授权 `dialog:default`。
+* 前端：`package.json` 依赖 `@tauri-apps/plugin-dialog`。
+
 ## 8. 中文术语建议
 
 统一使用以下中文：
@@ -424,3 +444,40 @@ V0.1 MVP 已完成本地 PDBQT docking 最小闭环，包括结果解析、`scor
 当前优先级进入文档整理和 V0.2 准备。后续开发应先保持 V0.1 流程稳定，再评估 PDB/PubChem 下载、RDKit/Meeko 自动准备和更完善的错误引导。
 
 除非用户明确要求并确认许可证边界，不要直接复制第三方源码或二进制到仓库。Open Babel、PLIP、MGLTools 等工具仍应作为外部可选集成来评估。
+
+## 16. DockStart Full 工具链原则
+
+后续涉及工具链时，默认遵守：
+
+```text
+内置工具 > 用户配置路径 > 系统 PATH
+```
+
+规划目录：
+
+```text
+resources/
+├─ tools/
+│  └─ vina/
+├─ python/
+└─ licenses/
+```
+
+架构边界：
+
+* V0.1 Lite 仍依赖用户已有 PDBQT 和 Vina，不要为了文档定位调整而改业务逻辑。
+* V0.2.0 优先评估内置 Vina。
+* V0.2.1 设计 ToolchainStatusPage。
+* V0.2.2 评估内置 Python 环境。
+* V0.2.3 检测内置 RDKit / Meeko。
+* V0.2.4 才做配体自动准备。
+* V0.2.5 才做受体自动准备。
+
+许可证策略：
+
+* Vina 可内置，但必须随包保留许可证文本、版本和来源说明。
+* RDKit 可内置，但必须保留许可证和依赖说明。
+* Meeko 可内置，但需要 LGPL 合规说明。
+* Open Babel / MGLTools / PLIP 暂不进入核心内置包。
+
+本轮或类似“文档和架构调整”任务不得顺手实现新功能、改 docking 逻辑或接入新工具。
