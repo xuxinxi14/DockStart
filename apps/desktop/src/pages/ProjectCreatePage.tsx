@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import PathInput from "../components/PathInput";
 import type { DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 
 type ProjectCreatePageProps = {
@@ -102,11 +103,12 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
         />
 
         <label htmlFor="base-dir">项目保存目录</label>
-        <input
+        <PathInput
           id="base-dir"
-          type="text"
           value={baseDir}
-          onChange={(event) => setBaseDir(event.target.value)}
+          onChange={setBaseDir}
+          mode="directory"
+          title="选择项目保存目录"
           placeholder="输入项目的父目录；会在其中创建项目名文件夹"
         />
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import PathInput from "../components/PathInput";
 import type { DockStartProject, ProjectFileRef, ProjectResponse } from "../types";
 
 type ImportPdbqtPageProps = {
@@ -124,11 +125,14 @@ export default function ImportPdbqtPage({
             </span>
           </div>
           <p>{fileStatus(project.receptor)}</p>
-          <input
-            type="text"
+          <PathInput
             value={receptorPath}
-            onChange={(event) => setReceptorPath(event.target.value)}
+            onChange={setReceptorPath}
+            mode="file"
+            title="选择受体 PDBQT 文件"
             placeholder="输入 receptor.pdbqt 源文件路径"
+            ariaLabel="受体 PDBQT 源文件路径"
+            filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
           />
           <button
             className="secondary-button"
@@ -148,11 +152,14 @@ export default function ImportPdbqtPage({
             </span>
           </div>
           <p>{fileStatus(project.ligand)}</p>
-          <input
-            type="text"
+          <PathInput
             value={ligandPath}
-            onChange={(event) => setLigandPath(event.target.value)}
+            onChange={setLigandPath}
+            mode="file"
+            title="选择配体 PDBQT 文件"
             placeholder="输入 ligand.pdbqt 源文件路径"
+            ariaLabel="配体 PDBQT 源文件路径"
+            filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
           />
           <button
             className="secondary-button"

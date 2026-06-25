@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import PathInput from "../components/PathInput";
 import type { DockStartSettings, SettingsResponse } from "../types";
 
 type SettingsPageProps = {
@@ -150,12 +151,13 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       <div className="settings-list">
         <div className="setting-row">
           <label htmlFor="vina-path">AutoDock Vina 路径</label>
-          <input
+          <PathInput
             id="vina-path"
-            type="text"
             value={settings.tool_paths.vina}
+            onChange={(value) => updateField("tool_paths", "vina", value)}
+            mode="file"
+            title="选择 AutoDock Vina 可执行文件"
             placeholder="例如 vina.exe 的完整路径，留空则从 PATH 自动检测"
-            onChange={(event) => updateField("tool_paths", "vina", event.target.value)}
           />
           <button
             className="secondary-button"
@@ -177,12 +179,13 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
 
         <div className="setting-row">
           <label htmlFor="python-path">Python 路径</label>
-          <input
+          <PathInput
             id="python-path"
-            type="text"
             value={settings.tool_paths.python}
+            onChange={(value) => updateField("tool_paths", "python", value)}
+            mode="file"
+            title="选择 Python 可执行文件"
             placeholder="例如 python.exe 的完整路径，留空则使用当前 Python"
-            onChange={(event) => updateField("tool_paths", "python", event.target.value)}
           />
           <button
             className="secondary-button"
@@ -204,12 +207,13 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
 
         <div className="setting-row">
           <label htmlFor="default-project-dir">默认项目目录</label>
-          <input
+          <PathInput
             id="default-project-dir"
-            type="text"
             value={settings.project.default_project_dir}
+            onChange={(value) => updateField("project", "default_project_dir", value)}
+            mode="directory"
+            title="选择默认项目目录"
             placeholder="可选：新建项目时默认打开的目录"
-            onChange={(event) => updateField("project", "default_project_dir", event.target.value)}
           />
           <button
             className="secondary-button"
