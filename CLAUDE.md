@@ -416,3 +416,11 @@ docs/license_notes.md
 9. 实现 Markdown 报告导出。
 
 只有这些跑通后，才考虑 PDB/PubChem/Meeko/RDKit 自动准备流程。
+
+## 15. V0.1.11 当前状态
+
+V0.1 MVP 已完成本地 PDBQT docking 最小闭环，包括结果解析、`scores.csv` 导出和 Markdown 报告导出。
+
+当前优先级进入文档整理和 V0.2 准备。后续开发应先保持 V0.1 流程稳定，再评估 PDB/PubChem 下载、RDKit/Meeko 自动准备和更完善的错误引导。
+
+除非用户明确要求并确认许可证边界，不要直接复制第三方源码或二进制到仓库。Open Babel、PLIP、MGLTools 等工具仍应作为外部可选集成来评估。

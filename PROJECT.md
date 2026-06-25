@@ -418,3 +418,11 @@ docs/license_notes.md
 ```
 
 记录每个依赖的许可证和集成方式。
+
+## 12. V0.1.11 状态记录
+
+V0.1 MVP 已完成本地 PDBQT docking 最小闭环：工具检测、路径配置、项目创建、PDBQT 导入、box/Vina 参数配置、`vina_config.txt` 生成、run 准备、Vina 执行、log 解析、`scores.csv` 导出和 Markdown 报告导出。
+
+V0.1.11 的重点是文档、使用教程、smoke test、FAQ 和路线图整理。下一阶段进入 V0.2 准备，重点评估 PDB/PubChem 下载、RDKit/Meeko 自动准备和更完善的错误引导。
+
+仍然禁止在没有确认许可证和分发边界前直接复制第三方源码或二进制到 DockStart，尤其是 Open Babel、PLIP、MGLTools 等工具。
