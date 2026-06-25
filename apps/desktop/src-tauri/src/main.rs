@@ -6,6 +6,12 @@ use std::{
     process::Command,
 };
 
+#[cfg(not(debug_assertions))]
+use tauri::Manager;
+
+#[cfg(not(debug_assertions))]
+const RESOURCE_DIR_ENV_VAR: &str = "DOCKSTART_RESOURCE_DIR";
+
 #[tauri::command]
 fn check_tools() -> String {
     match run_backend_module("dockstart_core.tool_check", Vec::new()) {
@@ -352,7 +358,7 @@ fn fallback_project_error_json(message: &str, raw_error: &str) -> String {
 
 fn fallback_toolchain_error_json(message: &str, raw_error: &str) -> String {
     format!(
-        "{{\"ok\":false,\"toolchain_root\":\"\",\"tools_dir\":\"\",\"licenses_dir\":\"\",\"manifest_file\":\"\",\"manifest_exists\":false,\"manifest\":{{}},\"manifest_error\":\"\",\"bundled_vina\":{{\"exists\":false,\"path\":\"\",\"version\":\"\",\"status\":\"error\",\"message\":\"{}\",\"raw_error\":\"{}\"}},\"active_vina\":null,\"active_source\":\"unknown\",\"licenses\":{{\"exists\":false,\"third_party_notices\":\"\",\"third_party_notices_exists\":false}},\"resources\":{{\"exists\":false,\"tools_dir_exists\":false,\"vina_dir_exists\":false}},\"full_status\":\"missing\",\"message\":\"{}\",\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请确认 Python 后端可以运行。\"}}}}",
+        "{{\"ok\":false,\"runtime_mode\":\"unknown\",\"resource_dir\":\"\",\"toolchain_root\":\"\",\"tools_dir\":\"\",\"licenses_dir\":\"\",\"manifest_file\":\"\",\"manifest_exists\":false,\"manifest\":{{}},\"manifest_error\":\"\",\"bundled_vina\":{{\"exists\":false,\"path\":\"\",\"version\":\"\",\"status\":\"error\",\"message\":\"{}\",\"raw_error\":\"{}\"}},\"active_vina\":null,\"active_source\":\"unknown\",\"licenses\":{{\"exists\":false,\"third_party_notices\":\"\",\"third_party_notices_exists\":false}},\"resources\":{{\"exists\":false,\"tools_dir_exists\":false,\"vina_dir_exists\":false}},\"full_status\":\"missing\",\"message\":\"{}\",\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请确认 Python 后端可以运行。\"}}}}",
         json_escape(message),
         json_escape(raw_error),
         json_escape(message),
@@ -376,9 +382,27 @@ fn json_escape(value: &str) -> String {
     escaped
 }
 
+fn configure_resource_dir_env(app: &tauri::App) {
+    #[cfg(not(debug_assertions))]
+    {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            env::set_var(RESOURCE_DIR_ENV_VAR, resource_dir);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            configure_resource_dir_env(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             check_tools,
             get_toolchain_status,

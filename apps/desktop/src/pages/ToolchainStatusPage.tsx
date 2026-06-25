@@ -29,6 +29,12 @@ const fullStatusText: Record<ToolchainStatusResponse["full_status"], string> = {
   missing: "missing：工具链目录缺失",
 };
 
+const runtimeModeText: Record<ToolchainStatusResponse["runtime_mode"], string> = {
+  dev: "dev：开发环境，使用项目根目录下的 resources/",
+  packaged: "packaged：打包环境，使用 Tauri resource_dir 下的 resources/",
+  unknown: "unknown：无法判断运行模式",
+};
+
 function normalizeTool(item: Partial<ToolCheckResult> | null | undefined): ToolCheckResult | null {
   if (!item) {
     return null;
@@ -51,6 +57,8 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ToolchainStatusResponse>;
   return {
     ok: Boolean(parsed.ok),
+    runtime_mode: parsed.runtime_mode ?? "unknown",
+    resource_dir: parsed.resource_dir ?? "",
     toolchain_root: parsed.toolchain_root ?? "",
     tools_dir: parsed.tools_dir ?? "",
     licenses_dir: parsed.licenses_dir ?? "",
@@ -88,6 +96,8 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
   const rawError = error instanceof Error ? error.message : String(error);
   return {
     ok: false,
+    runtime_mode: "unknown",
+    resource_dir: "",
     toolchain_root: "",
     tools_dir: "",
     licenses_dir: "",
@@ -193,6 +203,10 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
               </div>
               <dl className="tool-meta">
                 <div>
+                  <dt>当前运行模式</dt>
+                  <dd>{runtimeModeText[status.runtime_mode]}</dd>
+                </div>
+                <div>
                   <dt>状态说明</dt>
                   <dd>{fullStatusText[status.full_status]}</dd>
                 </div>
@@ -211,6 +225,10 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                 <div>
                   <dt>resources</dt>
                   <dd>{status.toolchain_root || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>Tauri resource_dir</dt>
+                  <dd>{status.resource_dir || "开发环境未使用 DOCKSTART_RESOURCE_DIR"}</dd>
                 </div>
                 <div>
                   <dt>tools 目录</dt>

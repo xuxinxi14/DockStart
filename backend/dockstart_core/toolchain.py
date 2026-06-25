@@ -9,7 +9,14 @@ from typing import Any
 
 from adapters import vina_adapter
 from dockstart_core.settings import load_settings
-from dockstart_core.toolchain_paths import get_bundled_vina_path, get_resources_dir
+from dockstart_core.toolchain_paths import (
+    get_bundled_vina_path,
+    get_licenses_dir,
+    get_resource_dir,
+    get_runtime_mode,
+    get_toolchain_manifest_path,
+    get_toolchain_root,
+)
 
 
 def _read_manifest(manifest_path: Path) -> tuple[dict[str, Any], str]:
@@ -31,12 +38,13 @@ def _full_status(resources_dir: Path, bundled_ok: bool, notices_exists: bool, ma
 
 
 def get_toolchain_status() -> dict[str, Any]:
-    resources_dir = get_resources_dir()
+    resource_dir = get_resource_dir()
+    resources_dir = get_toolchain_root()
     tools_dir = resources_dir / "tools"
     vina_dir = tools_dir / "vina"
-    licenses_dir = resources_dir / "licenses"
+    licenses_dir = get_licenses_dir()
     notices_path = licenses_dir / "THIRD_PARTY_NOTICES.md"
-    manifest_path = resources_dir / "toolchain_manifest.json"
+    manifest_path = get_toolchain_manifest_path()
     bundled_vina_path = get_bundled_vina_path()
     manifest, manifest_error = _read_manifest(manifest_path)
 
@@ -64,6 +72,8 @@ def get_toolchain_status() -> dict[str, Any]:
 
     return {
         "ok": True,
+        "runtime_mode": get_runtime_mode(),
+        "resource_dir": str(resource_dir) if resource_dir else "",
         "toolchain_root": str(resources_dir),
         "tools_dir": str(tools_dir),
         "licenses_dir": str(licenses_dir),

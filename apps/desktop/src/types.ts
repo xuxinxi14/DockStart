@@ -23,9 +23,12 @@ export type ToolCheckResult = {
 };
 
 export type ToolchainFullStatus = "partial" | "ready" | "missing";
+export type ToolchainRuntimeMode = "dev" | "packaged" | "unknown";
 
 export type ToolchainStatusResponse = {
   ok: boolean;
+  runtime_mode: ToolchainRuntimeMode;
+  resource_dir: string;
   toolchain_root: string;
   tools_dir: string;
   licenses_dir: string;

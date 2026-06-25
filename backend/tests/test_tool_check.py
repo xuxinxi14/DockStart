@@ -25,7 +25,15 @@ from dockstart_core.settings import (  # noqa: E402
     save_settings,
 )
 from dockstart_core.toolchain import get_toolchain_status  # noqa: E402
-from dockstart_core.toolchain_paths import TOOLCHAIN_ROOT_ENV_VAR  # noqa: E402
+from dockstart_core.toolchain_paths import (  # noqa: E402
+    RESOURCE_DIR_ENV_VAR,
+    TOOLCHAIN_ROOT_ENV_VAR,
+    get_bundled_vina_path,
+    get_licenses_dir,
+    get_runtime_mode,
+    get_toolchain_manifest_path,
+    get_toolchain_root,
+)
 
 
 class ToolCheckTests(unittest.TestCase):
@@ -174,6 +182,33 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.source, "configured")
         self.assertFalse(result.is_bundled)
 
+    def test_toolchain_paths_use_dev_project_resources_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root)}, clear=False):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+
+                self.assertEqual(get_runtime_mode(), "dev")
+                self.assertEqual(get_toolchain_root(), root / "resources")
+                self.assertEqual(get_bundled_vina_path(), root / "resources" / "tools" / "vina" / "vina.exe")
+                self.assertEqual(get_licenses_dir(), root / "resources" / "licenses")
+                self.assertEqual(get_toolchain_manifest_path(), root / "resources" / "toolchain_manifest.json")
+
+    def test_toolchain_paths_use_packaged_resource_dir_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resource_dir = Path(temp_dir) / "tauri_resource_dir"
+            project_root = Path(temp_dir) / "repo"
+            with patch.dict(
+                os.environ,
+                {
+                    RESOURCE_DIR_ENV_VAR: str(resource_dir),
+                    TOOLCHAIN_ROOT_ENV_VAR: str(project_root),
+                },
+            ):
+                self.assertEqual(get_runtime_mode(), "packaged")
+                self.assertEqual(get_toolchain_root(), resource_dir / "resources")
+                self.assertEqual(get_bundled_vina_path(), resource_dir / "resources" / "tools" / "vina" / "vina.exe")
+
     def test_toolchain_status_returns_structured_result(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
 
@@ -199,13 +234,77 @@ class ToolCheckTests(unittest.TestCase):
                 ),
                 patch.object(vina_adapter.subprocess, "run", return_value=completed),
             ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
                 response = get_toolchain_status()
 
         self.assertTrue(response["ok"])
         self.assertEqual(response["full_status"], "ready")
+        self.assertEqual(response["runtime_mode"], "dev")
+        self.assertEqual(response["toolchain_root"], str(root / "resources"))
         self.assertTrue(response["bundled_vina"]["exists"])
         self.assertEqual(response["bundled_vina"]["version"], "1.2.5")
         self.assertEqual(response["active_source"], "bundled")
+
+    def test_toolchain_status_uses_packaged_resource_dir(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resource_dir = Path(temp_dir) / "tauri_resource_dir"
+            toolchain_root = resource_dir / "resources"
+            bundled_path = toolchain_root / "tools" / "vina" / "vina.exe"
+            notices_path = toolchain_root / "licenses" / "THIRD_PARTY_NOTICES.md"
+            manifest_path = toolchain_root / "toolchain_manifest.json"
+            bundled_path.parent.mkdir(parents=True)
+            notices_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled vina", encoding="utf-8")
+            notices_path.write_text("# Notices\n", encoding="utf-8")
+            manifest_path.write_text('{"schema_version": 1}\n', encoding="utf-8")
+            settings_path = Path(temp_dir) / "settings.json"
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        RESOURCE_DIR_ENV_VAR: str(resource_dir),
+                        SETTINGS_ENV_VAR: str(settings_path),
+                    },
+                ),
+                patch.object(vina_adapter.subprocess, "run", return_value=completed),
+            ):
+                response = get_toolchain_status()
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["runtime_mode"], "packaged")
+        self.assertEqual(response["resource_dir"], str(resource_dir.resolve()))
+        self.assertEqual(response["toolchain_root"], str(toolchain_root.resolve()))
+        self.assertEqual(response["bundled_vina"]["path"], str(bundled_path.resolve()))
+        self.assertEqual(response["manifest_file"], str(manifest_path.resolve()))
+        self.assertEqual(response["licenses_dir"], str((toolchain_root / "licenses").resolve()))
+        self.assertEqual(response["active_source"], "bundled")
+
+    def test_toolchain_status_missing_when_packaged_resource_dir_does_not_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resource_dir = Path(temp_dir) / "missing_tauri_resource_dir"
+            settings_path = Path(temp_dir) / "settings.json"
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        RESOURCE_DIR_ENV_VAR: str(resource_dir),
+                        SETTINGS_ENV_VAR: str(settings_path),
+                    },
+                ),
+                patch.object(vina_adapter.shutil, "which", return_value=None),
+            ):
+                response = get_toolchain_status()
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["runtime_mode"], "packaged")
+        self.assertEqual(response["full_status"], "missing")
+        self.assertFalse(response["resources"]["exists"])
+        self.assertEqual(response["bundled_vina"]["status"], "missing")
+        self.assertEqual(response["active_source"], "missing")
 
     def test_meeko_import_failure_returns_structured_result(self) -> None:
         completed = SimpleNamespace(
