@@ -25,6 +25,9 @@ VINA_SCORE_ROW_PATTERN = re.compile(
     rf"^\s*(\d+)\s+({VINA_NUMBER_PATTERN})\s+({VINA_NUMBER_PATTERN})\s+({VINA_NUMBER_PATTERN})(?:\s|$)",
 )
 SCORES_CSV_FIELDS = ("mode", "affinity_kcal_mol", "rmsd_lb", "rmsd_ub")
+DOCKING_SCORE_DISCLAIMER = "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+RUN_REPORT_FILE = "docking_report.md"
+PROJECT_REPORT_FILE = Path("reports", "docking_report.md").as_posix()
 
 
 @dataclass
@@ -1855,6 +1858,356 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
     }
 
 
+def _markdown_cell(value: Any) -> str:
+    if value is None or value == "":
+        text = "未记录"
+    elif isinstance(value, float):
+        text = _format_config_number(value)
+    else:
+        text = str(value)
+    return text.replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>")
+
+
+def _markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
+    lines = [
+        "| " + " | ".join(_markdown_cell(header) for header in headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(_markdown_cell(value) for value in row) + " |")
+    return "\n".join(lines)
+
+
+def _command_for_report(metadata: dict[str, Any]) -> list[str]:
+    command = metadata.get("command")
+    if isinstance(command, list):
+        return [str(item) for item in command]
+    return []
+
+
+def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        return loaded
+
+    project_path = Path(project_dir).expanduser()
+    try:
+        project = _project_from_dict(loaded["project"], project_path)
+    except Exception as exc:  # noqa: BLE001 - return structured errors.
+        return _error(
+            "PROJECT_REPORT_CONFIG_INVALID",
+            "project.json 格式不完整，无法导出 Markdown 报告。",
+            raw_error=str(exc),
+            suggestion="请检查 project.json 中 receptor、ligand、box、vina 和 runs 字段是否完整。",
+        )
+
+    metadata, metadata_error = _read_run_metadata(project_dir, run_id)
+    if metadata_error:
+        return metadata_error
+    assert metadata is not None
+
+    status = str(metadata.get("status") or "")
+    if status != "finished":
+        return _error(
+            "RUN_STATUS_NOT_FINISHED",
+            f"当前 run 状态为 {status or 'unknown'}，只有 finished 状态的 run 可以导出 Markdown 报告。",
+            suggestion="请先成功运行 Vina，并解析 scores.csv 后再导出报告。",
+        )
+
+    if not any(isinstance(item, dict) and item.get("run_id") == run_id for item in project.runs):
+        return _error(
+            "RUN_SUMMARY_NOT_FOUND",
+            "project.json 的 runs 数组中没有找到对应 run，无法导出 Markdown 报告。",
+            suggestion="请确认该 run 来自当前 DockStart 项目，或重新准备运行记录。",
+        )
+
+    receptor_path, receptor_error = _project_relative_existing_file(
+        project_path,
+        project.receptor.file,
+        "RECEPTOR_FILE",
+        "receptor.pdbqt",
+    )
+    if receptor_error:
+        return receptor_error
+    ligand_path, ligand_error = _project_relative_existing_file(
+        project_path,
+        project.ligand.file,
+        "LIGAND_FILE",
+        "ligand.pdbqt",
+    )
+    if ligand_error:
+        return ligand_error
+
+    config_file = str(metadata.get("config_file") or _config_relative_path(project))
+    config_path, config_error = _project_relative_existing_file(project_path, config_file, "VINA_CONFIG", "vina_config.txt")
+    if config_error:
+        return config_error
+
+    scores_payload = load_scores_csv(project_dir, run_id)
+    if not scores_payload.get("ok"):
+        return scores_payload
+
+    return {
+        "ok": True,
+        "project_dir": str(project_path),
+        "project": project.to_dict(),
+        "metadata": metadata,
+        "run_id": run_id,
+        "scores": scores_payload["scores"],
+        "scores_file": scores_payload["scores_file"],
+        "project_scores_file": scores_payload.get("project_scores_file", Path("results", "scores.csv").as_posix()),
+        "receptor_file": project.receptor.file,
+        "receptor_path": str(receptor_path) if receptor_path else "",
+        "ligand_file": project.ligand.file,
+        "ligand_path": str(ligand_path) if ligand_path else "",
+        "config_file": config_file,
+        "config_path": str(config_path) if config_path else "",
+        "error": None,
+    }
+
+
+def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
+    context = _load_report_context(project_dir, run_id)
+    if not context.get("ok"):
+        return context
+
+    project = _project_from_dict(context["project"], Path(project_dir).expanduser())
+    metadata = context["metadata"]
+    scores = context["scores"]
+    command = _command_for_report(metadata)
+    command_text = json.dumps(command, ensure_ascii=False, indent=2)
+    vina_path = command[0] if command else str(metadata.get("vina_path") or "")
+
+    input_rows = [
+        ["receptor 文件", context["receptor_file"]],
+        ["ligand 文件", context["ligand_file"]],
+        ["vina_config.txt", context["config_file"]],
+        ["log.txt", str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())],
+        ["out.pdbqt", str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())],
+        ["stdout.txt", str(metadata.get("stdout_file") or Path("runs", run_id, "stdout.txt").as_posix())],
+        ["stderr.txt", str(metadata.get("stderr_file") or Path("runs", run_id, "stderr.txt").as_posix())],
+    ]
+    box_rows = [
+        ["center_x", project.box.center_x, "Å"],
+        ["center_y", project.box.center_y, "Å"],
+        ["center_z", project.box.center_z, "Å"],
+        ["size_x", project.box.size_x, "Å"],
+        ["size_y", project.box.size_y, "Å"],
+        ["size_z", project.box.size_z, "Å"],
+    ]
+    vina_rows = [
+        ["exhaustiveness", project.vina.exhaustiveness],
+        ["num_modes", project.vina.num_modes],
+        ["energy_range", project.vina.energy_range],
+        ["cpu", project.vina.cpu],
+        ["seed", project.vina.seed if project.vina.seed is not None else "未设置"],
+    ]
+    score_rows = [
+        [score["mode"], score["affinity_kcal_mol"], score["rmsd_lb"], score["rmsd_ub"]]
+        for score in scores
+    ]
+
+    report_text = "\n".join(
+        [
+            "# DockStart Docking Report",
+            "",
+            "## 1. 项目信息",
+            "",
+            f"- 项目名称: {_markdown_cell(project.project_name)}",
+            f"- 项目路径: {_markdown_cell(project.project_dir)}",
+            f"- 创建时间: {_markdown_cell(project.created_at)}",
+            f"- 更新时间: {_markdown_cell(project.updated_at)}",
+            f"- run_id: {_markdown_cell(run_id)}",
+            "",
+            "## 2. 输入文件",
+            "",
+            _markdown_table(["项目", "路径"], input_rows),
+            "",
+            "## 3. Box 参数",
+            "",
+            _markdown_table(["参数", "值", "单位"], box_rows),
+            "",
+            "## 4. Vina 参数",
+            "",
+            _markdown_table(["参数", "值"], vina_rows),
+            "",
+            "## 5. 运行信息",
+            "",
+            f"- Vina 路径: {_markdown_cell(vina_path)}",
+            f"- Vina 版本: {_markdown_cell(metadata.get('vina_version'))}",
+            f"- started_at: {_markdown_cell(metadata.get('started_at'))}",
+            f"- finished_at: {_markdown_cell(metadata.get('finished_at'))}",
+            f"- exit_code: {_markdown_cell(metadata.get('exit_code'))}",
+            "",
+            "命令数组:",
+            "",
+            "```json",
+            command_text,
+            "```",
+            "",
+            "## 6. Docking Score 结果",
+            "",
+            _markdown_table(["Mode", "Affinity kcal/mol", "RMSD l.b.", "RMSD u.b."], score_rows),
+            "",
+            "## 7. 重要说明",
+            "",
+            DOCKING_SCORE_DISCLAIMER,
+            "",
+            "- 本报告不证明真实药效；",
+            "- 本报告不包含相互作用分析；",
+            "- 本报告不包含分子动力学验证；",
+            "- 结果依赖输入结构、box、参数和 Vina 版本。",
+            "",
+        ],
+    )
+
+    return {
+        "ok": True,
+        "project_dir": str(Path(project_dir).expanduser()),
+        "project": project.to_dict(),
+        "run_id": run_id,
+        "metadata": metadata,
+        "scores": scores,
+        "scores_file": context["scores_file"],
+        "project_scores_file": context["project_scores_file"],
+        "report_text": report_text,
+        "message": "Markdown 报告内容已生成。",
+        "error": None,
+    }
+
+
+def _report_file_statuses(project_dir: str, run_id: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    project_path = Path(project_dir).expanduser()
+    scores_file = str(metadata.get("scores_file") or Path("runs", run_id, "scores.csv").as_posix())
+    report_file = str(metadata.get("report_file") or Path("runs", run_id, RUN_REPORT_FILE).as_posix())
+    project_report_file = str(metadata.get("project_report_file") or PROJECT_REPORT_FILE)
+    return [
+        _file_status(project_path, scores_file, "scores", "scores.csv"),
+        _file_status(project_path, report_file, "run_report", f"runs/{run_id}/docking_report.md"),
+        _file_status(project_path, project_report_file, "project_report", "reports/docking_report.md"),
+    ]
+
+
+def get_report_status(project_dir: str, run_id: str) -> dict[str, Any]:
+    metadata, error = _read_run_metadata(project_dir, run_id)
+    if error:
+        return error
+    assert metadata is not None
+
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        return loaded
+
+    files = _report_file_statuses(project_dir, run_id, metadata)
+    scores_status = next((item for item in files if item["key"] == "scores"), None)
+    report_files = [item for item in files if item["key"] in {"run_report", "project_report"}]
+    reports_ready = all(item["status"] == "ok" for item in report_files)
+    can_export = str(metadata.get("status") or "") == "finished" and bool(scores_status and scores_status["status"] == "ok")
+
+    return {
+        "ok": True,
+        "project_dir": str(Path(project_dir).expanduser()),
+        "project": loaded.get("project"),
+        "run_id": run_id,
+        "metadata": metadata,
+        "files": files,
+        "scores_status": scores_status,
+        "report_status": "exported" if reports_ready else "missing",
+        "can_export": can_export,
+        "report_file": str(metadata.get("report_file") or Path("runs", run_id, RUN_REPORT_FILE).as_posix()),
+        "project_report_file": str(metadata.get("project_report_file") or PROJECT_REPORT_FILE),
+        "reported_at": str(metadata.get("reported_at") or ""),
+        "message": "报告状态已读取。",
+        "error": None,
+    }
+
+
+def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
+    built = build_markdown_report(project_dir, run_id)
+    if not built.get("ok"):
+        return built
+
+    project_path = Path(project_dir).expanduser()
+    run_report_file = Path("runs", run_id, RUN_REPORT_FILE).as_posix()
+    project_report_file = PROJECT_REPORT_FILE
+    run_report_path, run_report_error = _project_relative_path_for_run(
+        project_path,
+        run_report_file,
+        "RUN_REPORT",
+        f"runs/{run_id}/docking_report.md",
+    )
+    if run_report_error:
+        return run_report_error
+    project_report_path, project_report_error = _project_relative_path_for_run(
+        project_path,
+        project_report_file,
+        "PROJECT_REPORT",
+        "reports/docking_report.md",
+    )
+    if project_report_error:
+        return project_report_error
+    assert run_report_path is not None
+    assert project_report_path is not None
+
+    try:
+        for target_path in (project_report_path, run_report_path):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(built["report_text"], encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 - return structured errors.
+        return _error(
+            "MARKDOWN_REPORT_WRITE_ERROR",
+            "写入 Markdown 报告时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认项目 reports 目录和 run 目录可以写入。",
+        )
+
+    reported_at = _now_iso()
+    metadata = dict(built["metadata"])
+    metadata.update(
+        {
+            "report_file": run_report_file,
+            "project_report_file": project_report_file,
+            "reported_at": reported_at,
+        },
+    )
+    try:
+        _write_run_metadata(project_dir, run_id, metadata)
+    except Exception as exc:  # noqa: BLE001 - return structured errors.
+        return _error(
+            "RUN_METADATA_WRITE_ERROR",
+            "写入 metadata.json 时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认 run 目录可以写入。",
+        )
+
+    project_update = update_project_run_summary(
+        project_dir,
+        run_id,
+        {
+            "report_file": run_report_file,
+            "project_report_file": project_report_file,
+            "reported_at": reported_at,
+        },
+    )
+    if not project_update.get("ok"):
+        return project_update
+
+    return {
+        "ok": True,
+        "project_dir": str(project_path),
+        "project": project_update.get("project"),
+        "run_id": run_id,
+        "metadata": metadata,
+        "metadata_file": _metadata_relative_path(run_id),
+        "report_file": run_report_file,
+        "project_report_file": project_report_file,
+        "reported_at": reported_at,
+        "files": _report_file_statuses(project_dir, run_id, metadata),
+        "message": "Markdown 报告已导出。",
+        "error": None,
+    }
+
+
 def update_run_metadata(project_dir: str, run_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(patch, dict):
         return _error("RUN_METADATA_PATCH_INVALID", "metadata patch 必须是 JSON 对象。")
@@ -2350,6 +2703,20 @@ def main() -> None:
             _print_json(_error("SCORES_LOAD_ARGS", "读取 scores.csv 需要 project_dir 和 run_id 参数。"))
             return
         _print_json(load_scores_csv(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "export-report":
+        if len(sys.argv) < 4:
+            _print_json(_error("REPORT_EXPORT_ARGS", "导出 Markdown 报告需要 project_dir 和 run_id 参数。"))
+            return
+        _print_json(export_markdown_report(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "report-status":
+        if len(sys.argv) < 4:
+            _print_json(_error("REPORT_STATUS_ARGS", "读取报告状态需要 project_dir 和 run_id 参数。"))
+            return
+        _print_json(get_report_status(sys.argv[2], sys.argv[3]))
         return
 
     _print_json(_error("PROJECT_COMMAND_UNKNOWN", f"未知项目命令：{command}"))

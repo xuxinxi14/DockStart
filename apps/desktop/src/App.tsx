@@ -2,6 +2,7 @@ import { useState } from "react";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
 import ProjectCreatePage from "./pages/ProjectCreatePage";
+import ReportPage from "./pages/ReportPage";
 import ResultPage from "./pages/ResultPage";
 import RunExecutePage from "./pages/RunExecutePage";
 import RunPreparePage from "./pages/RunPreparePage";
@@ -37,6 +38,7 @@ export default function App() {
     | "run-prepare"
     | "run-execute"
     | "result"
+    | "report"
   >("home");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
@@ -180,6 +182,24 @@ export default function App() {
           project={currentProject}
           runId={currentRunId}
           onBack={() => setCurrentPage("run-execute")}
+          onProjectChange={setCurrentProject}
+          onOpenReportPage={(project, runId) => {
+            setCurrentProject(project);
+            setCurrentRunId(runId);
+            setCurrentPage("report");
+          }}
+        />
+      </main>
+    );
+  }
+
+  if (currentPage === "report" && currentProject && currentRunId) {
+    return (
+      <main className="app-shell">
+        <ReportPage
+          project={currentProject}
+          runId={currentRunId}
+          onBack={() => setCurrentPage("result")}
           onProjectChange={setCurrentProject}
         />
       </main>

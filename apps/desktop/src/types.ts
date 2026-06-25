@@ -126,6 +126,12 @@ export type ProjectResponse = {
   project_scores_file?: string;
   best_affinity?: number | null;
   analyzed_at?: string;
+  report_file?: string;
+  project_report_file?: string;
+  reported_at?: string;
+  report_status?: string;
+  scores_status?: RunFileStatus | null;
+  can_export?: boolean;
   files?: RunFileStatus[];
   command?: string[];
   command_preview?: string;

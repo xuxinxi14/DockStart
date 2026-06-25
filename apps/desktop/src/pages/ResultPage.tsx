@@ -7,6 +7,7 @@ type ResultPageProps = {
   runId: string;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
+  onOpenReportPage: (project: DockStartProject, runId: string) => void;
 };
 
 const runStatusText: Record<string, string> = {
@@ -58,6 +59,7 @@ export default function ResultPage({
   runId,
   onBack,
   onProjectChange,
+  onOpenReportPage,
 }: ResultPageProps) {
   const [project, setProject] = useState(initialProject);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
@@ -221,6 +223,11 @@ export default function ResultPage({
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRunMetadata()}>
           重新加载 run metadata
         </button>
+        {scores.length > 0 || displayedScoresFile ? (
+          <button className="secondary-button" type="button" disabled={isBusy} onClick={() => onOpenReportPage(project, runId)}>
+            进入报告页
+          </button>
+        ) : null}
       </div>
 
       {displayedBestAffinity !== null ? (

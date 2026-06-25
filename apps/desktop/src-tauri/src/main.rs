@@ -231,6 +231,28 @@ fn load_scores_csv(project_dir: String, run_id: String) -> String {
     }
 }
 
+#[tauri::command]
+fn export_markdown_report(project_dir: String, run_id: String) -> String {
+    match run_backend_module(
+        "dockstart_core.project",
+        vec!["export-report".to_string(), project_dir, run_id],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导出 Markdown 报告。", &error),
+    }
+}
+
+#[tauri::command]
+fn get_report_status(project_dir: String, run_id: String) -> String {
+    match run_backend_module(
+        "dockstart_core.project",
+        vec!["report-status".to_string(), project_dir, run_id],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取报告状态。", &error),
+    }
+}
+
 fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String> {
     let backend_dir = find_backend_dir()
         .ok_or_else(|| "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string())?;
@@ -358,7 +380,9 @@ fn main() {
             execute_prepared_vina_run,
             get_run_files_status,
             analyze_vina_run_results,
-            load_scores_csv
+            load_scores_csv,
+            export_markdown_report,
+            get_report_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running DockStart");

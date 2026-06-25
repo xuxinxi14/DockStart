@@ -1,0 +1,235 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
+
+type ReportPageProps = {
+  project: DockStartProject;
+  runId: string;
+  onBack: () => void;
+  onProjectChange: (project: DockStartProject) => void;
+};
+
+const fileStatusText: Record<RunFileStatus["status"], string> = {
+  ok: "已生成",
+  missing: "未生成",
+  empty: "空文件",
+  error: "状态错误",
+};
+
+function parseProjectResponse(rawPayload: string): ProjectResponse {
+  const parsed = JSON.parse(rawPayload) as Partial<ProjectResponse>;
+  return {
+    ok: Boolean(parsed.ok),
+    project_dir: parsed.project_dir,
+    project: parsed.project ?? null,
+    run_id: parsed.run_id,
+    metadata: parsed.metadata,
+    report_file: parsed.report_file,
+    project_report_file: parsed.project_report_file,
+    reported_at: parsed.reported_at,
+    report_status: parsed.report_status,
+    scores_status: parsed.scores_status,
+    can_export: parsed.can_export,
+    files: parsed.files ?? [],
+    message: parsed.message,
+    error: parsed.error,
+  };
+}
+
+function metadataString(metadata: Record<string, unknown> | null, key: string): string {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function statusClass(status: RunFileStatus["status"]): string {
+  if (status === "ok") {
+    return "status-ok";
+  }
+  if (status === "missing") {
+    return "status-missing";
+  }
+  return "status-error";
+}
+
+export default function ReportPage({
+  project: initialProject,
+  runId,
+  onBack,
+  onProjectChange,
+}: ReportPageProps) {
+  const [project, setProject] = useState(initialProject);
+  const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
+  const [files, setFiles] = useState<RunFileStatus[]>([]);
+  const [reportFile, setReportFile] = useState("");
+  const [projectReportFile, setProjectReportFile] = useState("");
+  const [reportedAt, setReportedAt] = useState("");
+  const [reportStatus, setReportStatus] = useState("missing");
+  const [canExport, setCanExport] = useState(false);
+  const [message, setMessage] = useState("");
+  const [rawError, setRawError] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  const scoresStatus = useMemo(() => files.find((file) => file.key === "scores"), [files]);
+  const runReportStatus = useMemo(() => files.find((file) => file.key === "run_report"), [files]);
+  const projectReportStatus = useMemo(() => files.find((file) => file.key === "project_report"), [files]);
+  const displayedReportFile = reportFile || metadataString(metadata, "report_file") || `runs/${runId}/docking_report.md`;
+  const displayedProjectReportFile =
+    projectReportFile || metadataString(metadata, "project_report_file") || "reports/docking_report.md";
+  const displayedReportedAt = reportedAt || metadataString(metadata, "reported_at");
+  const hasScores = scoresStatus?.status === "ok";
+
+  const applyResponse = useCallback(
+    (response: ProjectResponse, fallbackMessage: string) => {
+      if (response.project) {
+        setProject(response.project);
+        onProjectChange(response.project);
+      }
+      if (response.metadata !== undefined) {
+        setMetadata(response.metadata ?? null);
+      }
+      setFiles(response.files ?? []);
+      setReportFile(response.report_file ?? metadataString(response.metadata ?? null, "report_file"));
+      setProjectReportFile(response.project_report_file ?? metadataString(response.metadata ?? null, "project_report_file"));
+      setReportedAt(response.reported_at ?? metadataString(response.metadata ?? null, "reported_at"));
+      setReportStatus(response.report_status ?? "missing");
+      setCanExport(Boolean(response.can_export));
+      setMessage(response.ok ? response.message ?? fallbackMessage : response.error?.message ?? fallbackMessage);
+      setRawError(response.ok ? "" : response.error?.raw_error ?? "");
+      return response.ok;
+    },
+    [onProjectChange],
+  );
+
+  const reloadReportStatus = useCallback(async () => {
+    setIsBusy(true);
+    try {
+      const rawPayload = await invoke<string>("get_report_status", {
+        projectDir: initialProject.project_dir,
+        runId,
+      });
+      applyResponse(parseProjectResponse(rawPayload), "报告状态已重新检查。");
+    } catch (error) {
+      setMessage("前端未能读取报告状态。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [applyResponse, initialProject.project_dir, runId]);
+
+  useEffect(() => {
+    void reloadReportStatus();
+  }, [reloadReportStatus]);
+
+  const exportReport = async () => {
+    setIsBusy(true);
+    setMessage("");
+    setRawError("");
+    try {
+      const rawPayload = await invoke<string>("export_markdown_report", {
+        projectDir: project.project_dir,
+        runId,
+      });
+      applyResponse(parseProjectResponse(rawPayload), "Markdown 报告已导出。");
+    } catch (error) {
+      setMessage("前端未能调用 Markdown 报告导出命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <section className="project-page" aria-labelledby="report-title">
+      <button className="text-button" type="button" onClick={onBack}>
+        返回结果页
+      </button>
+
+      <div className="page-heading">
+        <p className="eyebrow">ReportPage</p>
+        <h1 id="report-title">导出 Markdown 报告</h1>
+        <p>
+          本页只基于 finished run 和已解析的 scores.csv 导出可复现 Markdown 报告。不生成 PDF，不做 AI 总结，
+          不包含相互作用分析，也不做药效判断。
+        </p>
+      </div>
+
+      <div className="project-summary">
+        <span>当前项目路径</span>
+        <strong>{project.project_name}</strong>
+        <code>{project.project_dir}</code>
+      </div>
+
+      <div className="summary-grid">
+        <div className="param-summary">
+          <span>run_id</span>
+          <strong>{runId}</strong>
+        </div>
+        <div className="param-summary">
+          <span>scores.csv 状态</span>
+          <strong>{scoresStatus ? fileStatusText[scoresStatus.status] : "未检查"}</strong>
+        </div>
+        <div className="param-summary">
+          <span>报告状态</span>
+          <strong>{reportStatus === "exported" ? "已导出" : "未导出"}</strong>
+        </div>
+      </div>
+
+      {!hasScores ? <p className="warning-note">未找到 scores.csv，请先回到结果页解析结果。</p> : null}
+
+      <p className="disclaimer-note">Docking score 仅供结构结合趋势参考，不能替代实验验证。</p>
+
+      <div className="toolbar project-toolbar">
+        <button className="primary-button" type="button" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
+          {isBusy ? "处理中..." : "导出 Markdown 报告"}
+        </button>
+        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadReportStatus()}>
+          重新检查报告状态
+        </button>
+      </div>
+
+      <div className="tool-grid run-check-grid">
+        {[scoresStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
+          <article className="tool-card" key={file!.key}>
+            <div className="tool-card-header">
+              <h2>{file!.name}</h2>
+              <span className={`status-badge ${statusClass(file!.status)}`}>{fileStatusText[file!.status]}</span>
+            </div>
+            <dl className="tool-meta">
+              <div>
+                <dt>路径</dt>
+                <dd>{file!.path}</dd>
+              </div>
+              <div>
+                <dt>大小</dt>
+                <dd>{file!.exists ? `${file!.size} bytes` : "文件不存在"}</dd>
+              </div>
+              <div>
+                <dt>说明</dt>
+                <dd>{file!.message}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+
+      {reportStatus === "exported" || displayedReportedAt ? (
+        <div className="ready-note run-result-note">
+          <span>Markdown 报告已导出。</span>
+          <div className="run-result-files">
+            <code>{displayedProjectReportFile}</code>
+            <code>{displayedReportFile}</code>
+            <code>{displayedReportedAt || "reported_at 未记录"}</code>
+          </div>
+        </div>
+      ) : null}
+
+      {message ? <p className="settings-message">{message}</p> : null}
+      {rawError ? (
+        <details className="raw-error">
+          <summary>查看 raw_error</summary>
+          <pre>{rawError}</pre>
+        </details>
+      ) : null}
+    </section>
+  );
+}
