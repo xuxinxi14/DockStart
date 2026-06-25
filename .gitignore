@@ -1,0 +1,39 @@
+# Frontend dependencies and build outputs
+node_modules/
+dist/
+.vite/
+.turbo/
+
+# Rust/Tauri build outputs
+target/
+
+# Python caches and virtual environments
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Local settings and logs
+dockstart_settings.json
+*.log
+
+# Third-party source archives and downloads
+*_master.zip
+*_main.zip
+*_develop.zip
+*_dev.zip
+_external_downloads/
+third_party_sources/
+
+# Runtime docking outputs
+runs/
+
+# Keep demo project skeleton directories tracked.
+!examples/demo_project/runs/
+!examples/demo_project/runs/.gitkeep

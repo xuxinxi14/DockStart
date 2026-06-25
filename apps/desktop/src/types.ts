@@ -1,0 +1,140 @@
+export type ToolStatus = "ok" | "missing" | "error" | "unknown";
+
+export type ToolSource =
+  | "configured"
+  | "auto"
+  | "current_environment"
+  | "frontend_dependency"
+  | "unknown";
+
+export type ToolCheckResult = {
+  key: string;
+  name: string;
+  status: ToolStatus;
+  version: string;
+  path: string;
+  message: string;
+  raw_error: string;
+  source: ToolSource;
+};
+
+export type RunCheckResult = {
+  key: string;
+  name: string;
+  status: ToolStatus;
+  message: string;
+  path?: string;
+  version?: string;
+  raw_error?: string;
+};
+
+export type RunFileStatus = {
+  key: string;
+  name: string;
+  path: string;
+  exists: boolean;
+  is_file: boolean;
+  size: number;
+  non_empty: boolean;
+  status: "ok" | "missing" | "empty" | "error";
+  message: string;
+  raw_error?: string;
+};
+
+export type ScoreRow = {
+  mode: number;
+  affinity_kcal_mol: number;
+  rmsd_lb: number;
+  rmsd_ub: number;
+};
+
+export type DockStartSettings = {
+  tool_paths: {
+    vina: string;
+    python: string;
+  };
+  project: {
+    default_project_dir: string;
+  };
+};
+
+export type SettingsResponse = {
+  ok: boolean;
+  settings_path: string;
+  settings: DockStartSettings | null;
+  error?: {
+    message: string;
+    raw_error: string;
+  };
+};
+
+export type ProjectFileRef = {
+  source: string;
+  file: string;
+};
+
+export type DockStartProject = {
+  project_name: string;
+  created_at: string;
+  updated_at: string;
+  project_dir: string;
+  receptor: ProjectFileRef;
+  ligand: ProjectFileRef;
+  box: {
+    center_x: number;
+    center_y: number;
+    center_z: number;
+    size_x: number;
+    size_y: number;
+    size_z: number;
+  };
+  vina: {
+    exhaustiveness: number;
+    num_modes: number;
+    energy_range: number;
+    cpu: number;
+    seed: number | null;
+  };
+  config: {
+    vina_config_file: string;
+    generated_at: string;
+  };
+  runs: Array<Record<string, unknown>>;
+};
+
+export type ProjectResponse = {
+  ok: boolean;
+  project_dir?: string;
+  project: DockStartProject | null;
+  box?: DockStartProject["box"];
+  vina?: DockStartProject["vina"];
+  config_file?: string;
+  config_text?: string;
+  checks?: RunCheckResult[];
+  next_run_id?: string;
+  run_id?: string;
+  metadata?: Record<string, unknown>;
+  metadata_file?: string;
+  command_preview_file?: string;
+  config_snapshot_file?: string;
+  stdout_file?: string;
+  stderr_file?: string;
+  output_file?: string;
+  log_file?: string;
+  scores?: ScoreRow[];
+  scores_file?: string;
+  project_scores_file?: string;
+  best_affinity?: number | null;
+  analyzed_at?: string;
+  files?: RunFileStatus[];
+  command?: string[];
+  command_preview?: string;
+  warnings?: string[];
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  };
+};
