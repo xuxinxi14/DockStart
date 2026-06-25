@@ -22,6 +22,7 @@ env/
 # Local settings and logs
 dockstart_settings.json
 *.log
+.workbuddy/
 
 # Third-party source archives and downloads
 *_master.zip
