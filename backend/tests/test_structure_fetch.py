@@ -13,6 +13,8 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from dockstart_core.project import _project_from_dict, create_project, load_project, save_project  # noqa: E402
 from dockstart_core.structure_fetch import (  # noqa: E402
+    clear_ligand_raw_record,
+    clear_receptor_raw_record,
     fetch_pdb_structure,
     fetch_pubchem_ligand,
     get_raw_files_status,
@@ -162,7 +164,9 @@ class StructureFetchTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(loaded["receptor"]["source"], "rcsb_pdb")
         self.assertEqual(loaded["receptor"]["source_id"], "1HSG")
+        self.assertEqual(loaded["receptor"]["query_type"], "pdb_id")
         self.assertEqual(loaded["receptor"]["raw_file"], "raw/receptor_1HSG.pdb")
+        self.assertTrue(loaded["receptor"]["downloaded_at"])
 
     def test_project_json_records_ligand_raw_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -174,7 +178,9 @@ class StructureFetchTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(loaded["ligand"]["source"], "pubchem")
         self.assertEqual(loaded["ligand"]["source_id"], "2244")
+        self.assertEqual(loaded["ligand"]["query_type"], "cid")
         self.assertEqual(loaded["ligand"]["raw_file"], "raw/ligand_2244.sdf")
+        self.assertTrue(loaded["ligand"]["downloaded_at"])
 
     def test_fetch_does_not_replace_existing_prepared_receptor_file_reference(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -218,6 +224,114 @@ class StructureFetchTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(statuses["receptor_raw"]["status"], "ok")
         self.assertEqual(statuses["ligand_raw"]["status"], "ok")
+        self.assertTrue(result["receptor"]["exists"])
+        self.assertEqual(result["receptor"]["size_bytes"], len(b"HEADER\n"))
+        self.assertTrue(result["receptor"]["modified_at"])
+        self.assertTrue(result["receptor"]["absolute_path"])
+        self.assertTrue(result["receptor"]["record_consistent"])
+
+    def test_get_raw_files_status_without_raw_file_returns_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            result = get_raw_files_status(str(project_dir))
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["receptor"]["exists"])
+        self.assertEqual(result["receptor"]["size_bytes"], 0)
+        self.assertFalse(result["receptor"]["record_consistent"])
+
+    def test_get_raw_files_status_detects_missing_recorded_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            loaded = load_project(str(project_dir))
+            project = loaded["project"]
+            project["receptor"]["source"] = "rcsb_pdb"
+            project["receptor"]["source_id"] = "1HSG"
+            project["receptor"]["raw_file"] = "raw/receptor_1HSG.pdb"
+            self.assertTrue(save_project(_project_from_dict(project, project_dir))["ok"])
+
+            result = get_raw_files_status(str(project_dir))
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["receptor"]["exists"])
+        self.assertFalse(result["receptor"]["record_consistent"])
+        self.assertEqual(result["receptor"]["status"], "missing")
+
+    def test_clear_receptor_raw_record_preserves_prepared_file_reference_and_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            fetch_pdb_structure(str(project_dir), "1HSG", fetcher=self._fetcher(b"HEADER\n"))
+            prepared = project_dir / "prepared" / "receptor.pdbqt"
+            prepared.write_text("prepared receptor\n", encoding="utf-8")
+            raw = project_dir / "raw" / "receptor_1HSG.pdb"
+
+            result = clear_receptor_raw_record(str(project_dir))
+            loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(loaded["receptor"]["file"], "prepared/receptor.pdbqt")
+            self.assertEqual(loaded["receptor"]["source"], "")
+            self.assertEqual(loaded["receptor"]["source_id"], "")
+            self.assertEqual(loaded["receptor"]["query_type"], "")
+            self.assertEqual(loaded["receptor"]["downloaded_at"], "")
+            self.assertEqual(loaded["receptor"]["raw_file"], "")
+            self.assertTrue(raw.exists())
+            self.assertTrue(prepared.exists())
+
+    def test_clear_ligand_raw_record_preserves_prepared_file_reference_and_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
+            prepared = project_dir / "prepared" / "ligand.pdbqt"
+            prepared.write_text("prepared ligand\n", encoding="utf-8")
+            raw = project_dir / "raw" / "ligand_2244.sdf"
+
+            result = clear_ligand_raw_record(str(project_dir))
+            loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(loaded["ligand"]["file"], "prepared/ligand.pdbqt")
+            self.assertEqual(loaded["ligand"]["source"], "")
+            self.assertEqual(loaded["ligand"]["source_id"], "")
+            self.assertEqual(loaded["ligand"]["query_type"], "")
+            self.assertEqual(loaded["ligand"]["downloaded_at"], "")
+            self.assertEqual(loaded["ligand"]["raw_file"], "")
+            self.assertTrue(raw.exists())
+            self.assertTrue(prepared.exists())
+
+    def test_clear_raw_record_with_delete_file_only_deletes_raw_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            fetch_pdb_structure(str(project_dir), "1HSG", fetcher=self._fetcher(b"HEADER\n"))
+            raw = project_dir / "raw" / "receptor_1HSG.pdb"
+            prepared = project_dir / "prepared" / "receptor.pdbqt"
+            prepared.write_text("prepared receptor\n", encoding="utf-8")
+
+            result = clear_receptor_raw_record(str(project_dir), delete_file=True)
+
+            self.assertTrue(result["ok"], result)
+            self.assertFalse(raw.exists())
+            self.assertTrue(prepared.exists())
+            self.assertTrue(result["deleted_file"])
+
+    def test_clear_raw_record_refuses_delete_outside_raw_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            prepared = project_dir / "prepared" / "receptor.pdbqt"
+            prepared.write_text("prepared receptor\n", encoding="utf-8")
+            loaded = load_project(str(project_dir))
+            project = loaded["project"]
+            project["receptor"]["source"] = "rcsb_pdb"
+            project["receptor"]["source_id"] = "1HSG"
+            project["receptor"]["raw_file"] = "../demo_project/prepared/receptor.pdbqt"
+            self.assertTrue(save_project(_project_from_dict(project, project_dir))["ok"])
+
+            result = clear_receptor_raw_record(str(project_dir), delete_file=True)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "RAW_DELETE_OUTSIDE_RAW_DIR")
+            self.assertTrue(prepared.exists())
 
     def test_structure_fetch_does_not_import_processing_or_docking_adapters(self) -> None:
         import dockstart_core.structure_fetch as structure_fetch

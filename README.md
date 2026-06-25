@@ -55,6 +55,14 @@ V0.2.5 已支持原始结构下载基础层：
 - `project.json` 会记录 `source`、`source_id` 和 `raw_file`；
 - raw 文件只记录来源和原始数据，不能直接运行 AutoDock Vina。
 
+V0.2.6 已支持 raw 文件管理增强：
+
+- StructureFetchPage 会显示受体/配体 raw 文件状态、大小、修改时间、绝对路径和记录一致性；
+- 下载时 `overwrite` 默认关闭，开启后会显示覆盖警告；
+- 可以清除 receptor/ligand 的 raw 记录；
+- 清除 raw 记录不会删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
+- 如选择同时删除文件，DockStart 只允许删除项目 `raw/` 目录下的文件。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -71,6 +79,7 @@ V0.2.5 已支持原始结构下载基础层：
 - 需要用户自己准备 PDBQT 文件；
 - 需要用户自己安装或配置 AutoDock Vina；
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
+- raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；

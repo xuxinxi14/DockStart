@@ -8,10 +8,11 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dockstart_core.project import _error, _project_from_dict, _success, load_project, save_project
+from dockstart_core.project import _error, _now_iso, _project_from_dict, _success, load_project, save_project
 
 PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
 SUPPORTED_PDB_FORMATS = {"pdb", "cif"}
@@ -66,7 +67,7 @@ def validate_pubchem_cid(cid: str | int) -> dict[str, Any]:
 
 
 def _fetch_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "DockStart/0.2.5"})
+    request = urllib.request.Request(url, headers={"User-Agent": "DockStart/0.2.6"})
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS endpoints only.
         return response.read()
 
@@ -184,6 +185,8 @@ def fetch_pdb_structure(
 
     project.receptor.source = "rcsb_pdb"
     project.receptor.source_id = normalized_pdb_id
+    project.receptor.query_type = "pdb_id"
+    project.receptor.downloaded_at = _now_iso()
     project.receptor.raw_file = relative_file
     if not project.receptor.file:
         project.receptor.file = "prepared/receptor.pdbqt"
@@ -245,6 +248,8 @@ def fetch_pubchem_ligand(
 
     project.ligand.source = "pubchem"
     project.ligand.source_id = normalized_cid
+    project.ligand.query_type = "cid"
+    project.ligand.downloaded_at = _now_iso()
     project.ligand.raw_file = relative_file
     if not project.ligand.file:
         project.ligand.file = "prepared/ligand.pdbqt"
@@ -263,15 +268,42 @@ def fetch_pubchem_ligand(
     }
 
 
-def _raw_file_status(project_path: Path, relative_file: str, key: str, name: str) -> dict[str, Any]:
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _modified_at(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
+
+
+def _raw_file_status(project_path: Path, file_ref: Any, key: str, name: str) -> dict[str, Any]:
+    relative_file = str(getattr(file_ref, "raw_file", "") or "")
+    source = str(getattr(file_ref, "source", "") or "")
+    source_id = str(getattr(file_ref, "source_id", "") or "")
+    query_type = str(getattr(file_ref, "query_type", "") or "")
+    downloaded_at = str(getattr(file_ref, "downloaded_at", "") or "")
+
     if not relative_file:
         return {
             "key": key,
             "name": name,
+            "source": source,
+            "source_id": source_id,
+            "query_type": query_type,
+            "downloaded_at": downloaded_at,
+            "raw_file": "",
             "path": "",
             "exists": False,
             "is_file": False,
             "size": 0,
+            "size_bytes": 0,
+            "modified_at": "",
+            "absolute_path": "",
+            "record_consistent": False,
             "non_empty": False,
             "status": "missing",
             "message": f"{name} 尚未记录 raw 文件。",
@@ -279,11 +311,19 @@ def _raw_file_status(project_path: Path, relative_file: str, key: str, name: str
         }
 
     path = project_path / relative_file
+    raw_dir = project_path / "raw"
+    resolved_path = path.resolve()
+    resolved_raw_dir = raw_dir.resolve()
+    is_inside_raw = _is_relative_to(resolved_path, resolved_raw_dir)
     exists = path.exists()
     is_file = path.is_file()
     size = path.stat().st_size if exists and is_file else 0
     non_empty = size > 0
-    if not exists:
+    modified_at = _modified_at(path) if exists and is_file else ""
+    if not is_inside_raw:
+        status = "error"
+        message = f"{name} raw 记录不在项目 raw/ 目录内。"
+    elif not exists:
         status = "missing"
         message = f"{name} raw 文件不存在。"
     elif not is_file:
@@ -299,10 +339,19 @@ def _raw_file_status(project_path: Path, relative_file: str, key: str, name: str
     return {
         "key": key,
         "name": name,
+        "source": source,
+        "source_id": source_id,
+        "query_type": query_type,
+        "downloaded_at": downloaded_at,
+        "raw_file": relative_file,
         "path": relative_file,
         "exists": exists,
         "is_file": is_file,
         "size": size,
+        "size_bytes": size,
+        "modified_at": modified_at,
+        "absolute_path": str(resolved_path),
+        "record_consistent": is_inside_raw and exists and is_file and non_empty,
         "non_empty": non_empty,
         "status": status,
         "message": message,
@@ -317,18 +366,85 @@ def get_raw_files_status(project_dir: str) -> dict[str, Any]:
     assert project is not None
 
     project_path = Path(project.project_dir).expanduser()
-    files = [
-        _raw_file_status(project_path, project.receptor.raw_file, "receptor_raw", "受体原始结构"),
-        _raw_file_status(project_path, project.ligand.raw_file, "ligand_raw", "配体原始结构"),
-    ]
+    receptor = _raw_file_status(project_path, project.receptor, "receptor_raw", "受体原始结构")
+    ligand = _raw_file_status(project_path, project.ligand, "ligand_raw", "配体原始结构")
+    files = [receptor, ligand]
     return {
         "ok": True,
         "project_dir": project.project_dir,
         "project": project.to_dict(),
+        "receptor": receptor,
+        "ligand": ligand,
         "files": files,
         "message": "raw 文件状态已读取。",
         "error": None,
     }
+
+
+def _clear_raw_record(project_dir: str, role: str, delete_file: bool = False) -> dict[str, Any]:
+    if role not in {"receptor", "ligand"}:
+        return _error("RAW_ROLE_INVALID", "raw 记录类型无效。")
+
+    project, project_error = _load_project_for_raw(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    raw_dir = (project_path / "raw").resolve()
+    file_ref = getattr(project, role)
+    raw_file = str(file_ref.raw_file or "")
+    deleted_file = ""
+
+    if delete_file and raw_file:
+        target_path = (project_path / raw_file).resolve()
+        if not _is_relative_to(target_path, raw_dir):
+            return _error(
+                "RAW_DELETE_OUTSIDE_RAW_DIR",
+                "为了保护项目文件，只允许删除项目 raw/ 目录下的 raw 文件。",
+                raw_error=str(target_path),
+                suggestion="请先检查 project.json 中的 raw_file 记录是否正确。",
+            )
+        if target_path.exists():
+            if not target_path.is_file():
+                return _error(
+                    "RAW_DELETE_TARGET_NOT_FILE",
+                    "raw_file 指向的路径不是文件，DockStart 不会删除它。",
+                    raw_error=str(target_path),
+                    suggestion="请手动检查 raw/ 目录内容。",
+                )
+            target_path.unlink()
+            deleted_file = str(target_path)
+
+    file_ref.source = ""
+    file_ref.source_id = ""
+    file_ref.query_type = ""
+    file_ref.downloaded_at = ""
+    file_ref.raw_file = ""
+
+    saved = save_project(project)
+    if not saved.get("ok"):
+        return saved
+
+    label = "受体" if role == "receptor" else "配体"
+    response = get_raw_files_status(project.project_dir)
+    if not response.get("ok"):
+        return response
+    response.update(
+        {
+            "message": f"{label} raw 记录已清除。" + (" raw 文件也已删除。" if deleted_file else ""),
+            "deleted_file": deleted_file,
+        },
+    )
+    return response
+
+
+def clear_receptor_raw_record(project_dir: str, delete_file: bool = False) -> dict[str, Any]:
+    return _clear_raw_record(project_dir, "receptor", delete_file)
+
+
+def clear_ligand_raw_record(project_dir: str, delete_file: bool = False) -> dict[str, Any]:
+    return _clear_raw_record(project_dir, "ligand", delete_file)
 
 
 def _parse_bool(value: str) -> bool:
@@ -367,6 +483,22 @@ def main() -> None:
             _print_json(_error("RAW_FILES_STATUS_ARGS", "读取 raw 文件状态需要 project_dir 参数。"))
             return
         _print_json(get_raw_files_status(sys.argv[2]))
+        return
+
+    if command == "clear-receptor-raw":
+        if len(sys.argv) < 3:
+            _print_json(_error("CLEAR_RECEPTOR_RAW_ARGS", "清除受体 raw 记录需要 project_dir 参数。"))
+            return
+        delete_file = _parse_bool(sys.argv[3]) if len(sys.argv) > 3 else False
+        _print_json(clear_receptor_raw_record(sys.argv[2], delete_file))
+        return
+
+    if command == "clear-ligand-raw":
+        if len(sys.argv) < 3:
+            _print_json(_error("CLEAR_LIGAND_RAW_ARGS", "清除配体 raw 记录需要 project_dir 参数。"))
+            return
+        delete_file = _parse_bool(sys.argv[3]) if len(sys.argv) > 3 else False
+        _print_json(clear_ligand_raw_record(sys.argv[2], delete_file))
         return
 
     _print_json(_error("STRUCTURE_FETCH_COMMAND_UNKNOWN", f"未知结构下载命令：{command}"))

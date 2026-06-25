@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理。当前仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 第一阶段目标是实现最小闭环：
 
@@ -473,6 +473,7 @@ resources/
 * V0.2.4 是路线校准与工具链文档整理，不实现新功能。
 * 后续可继续做离线 runtime 管理，但默认不提交二进制 runtime。
 * V0.2.5 实现 PDB/PubChem 原始结构下载基础层，只保存 raw 文件并记录来源。
+* V0.2.6 实现 raw 文件状态增强和 raw 记录清除，不改变 prepared PDBQT 文件。
 * raw → prepared PDBQT 自动准备仍然延后。
 
 Python runtime 当前解析优先级为：
@@ -515,6 +516,27 @@ V0.2.5 只允许：
 
 V0.2.5 禁止：
 
+* 自动转 PDBQT；
+* 调用 RDKit 做分子处理；
+* 调用 Meeko 做受体或配体准备；
+* 接入 Open Babel、PLIP、MGLTools；
+* 修改 Vina 运行流程；
+* 做 3D 可视化或药效判断。
+
+## 18. V0.2.6 raw 文件管理边界
+
+V0.2.6 只允许：
+
+* 展示 receptor/ligand raw 文件状态；
+* 展示 raw 文件大小、修改时间、绝对路径和记录一致性；
+* 在 overwrite=true 时允许重新下载覆盖同名 raw 文件；
+* 清除 receptor/ligand 的 raw 记录；
+* 可选删除项目 `raw/` 目录内对应 raw 文件；
+* 保留 `receptor.file` 和 `ligand.file` 中的 prepared PDBQT 路径。
+
+V0.2.6 禁止：
+
+* 删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
 * 自动转 PDBQT；
 * 调用 RDKit 做分子处理；
 * 调用 Meeko 做受体或配体准备；

@@ -1,6 +1,6 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.5 的 raw 原始结构下载能力。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.6 的 raw 原始结构下载与 raw 记录管理能力。
 
 ## 前置条件
 
@@ -11,7 +11,7 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.2.5 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，但不会自动把 PDB、SDF、MOL2 转成 PDBQT。运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
+V0.2.6 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性，但不会自动把 PDB、SDF、MOL2 转成 PDBQT。运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
 ## 1. 配置工具路径
 
@@ -76,17 +76,38 @@ raw/ligand_2244.sdf
   "receptor": {
     "source": "rcsb_pdb",
     "source_id": "1HSG",
+    "query_type": "pdb_id",
+    "downloaded_at": "2026-06-26T12:00:00+00:00",
     "raw_file": "raw/receptor_1HSG.pdb",
     "file": "prepared/receptor.pdbqt"
   },
   "ligand": {
     "source": "pubchem",
     "source_id": "2244",
+    "query_type": "cid",
+    "downloaded_at": "2026-06-26T12:00:00+00:00",
     "raw_file": "raw/ligand_2244.sdf",
     "file": "prepared/ligand.pdbqt"
   }
 }
 ```
+
+StructureFetchPage 会显示：
+
+- receptor raw 文件状态；
+- ligand raw 文件状态；
+- raw 文件是否存在；
+- 文件大小；
+- 修改时间；
+- 绝对路径；
+- `record_consistent`，用于提示 project.json 记录和实际 raw 文件是否一致。
+
+可以清除 raw 记录：
+
+- 默认只清除 `source`、`source_id`、`query_type`、`downloaded_at` 和 `raw_file`；
+- 不会清除 `receptor.file` 或 `ligand.file`；
+- 不会删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
+- 如果选择“同时删除 raw 文件”，DockStart 只允许删除项目 `raw/` 目录内的文件。
 
 注意：
 
@@ -100,6 +121,7 @@ raw/ligand_2244.sdf
 - PubChem CID 不是正整数；
 - 网络超时或远端返回 404；
 - raw 文件已存在且未开启 overwrite。
+- project.json 记录了 raw_file 但文件被手动删除，此时 `record_consistent` 会显示需要检查。
 
 ## 4. 导入 receptor.pdbqt
 

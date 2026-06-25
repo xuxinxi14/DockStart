@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.6
+
+- Enhanced raw file status reporting for receptor and ligand records.
+- Added `size_bytes`, `modified_at`, `absolute_path`, and `record_consistent` metadata to raw file checks.
+- Added backend helpers and Tauri commands to clear receptor/ligand raw records.
+- Kept prepared PDBQT paths and files untouched when clearing raw records.
+- Allowed optional raw file deletion only for files inside the project `raw/` directory.
+- Updated StructureFetchPage with raw status cards, overwrite warnings, clear-record actions, and raw/prepared guidance.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.5
 
 - Added raw receptor structure download from RCSB PDB by PDB ID.

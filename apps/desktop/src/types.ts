@@ -154,6 +154,18 @@ export type RunFileStatus = {
   raw_error?: string;
 };
 
+export type RawStructureStatus = RunFileStatus & {
+  source: string;
+  source_id: string;
+  query_type: string;
+  downloaded_at: string;
+  raw_file: string;
+  size_bytes: number;
+  modified_at: string;
+  absolute_path: string;
+  record_consistent: boolean;
+};
+
 export type ScoreRow = {
   mode: number;
   affinity_kcal_mol: number;
@@ -184,6 +196,8 @@ export type SettingsResponse = {
 export type ProjectFileRef = {
   source: string;
   source_id: string;
+  query_type: string;
+  downloaded_at: string;
   raw_file: string;
   file: string;
 };
@@ -249,6 +263,9 @@ export type ProjectResponse = {
   source_id?: string;
   format?: string;
   url?: string;
+  receptor?: RawStructureStatus;
+  ligand?: RawStructureStatus;
+  deleted_file?: string;
   report_status?: string;
   scores_status?: RunFileStatus | null;
   can_export?: boolean;

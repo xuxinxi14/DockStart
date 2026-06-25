@@ -158,6 +158,36 @@ fn get_raw_files_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn clear_receptor_raw_record(project_dir: String, delete_file: bool) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec![
+            "clear-receptor-raw".to_string(),
+            project_dir,
+            delete_file.to_string(),
+        ],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法清除受体 raw 记录。", &error),
+    }
+}
+
+#[tauri::command]
+fn clear_ligand_raw_record(project_dir: String, delete_file: bool) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec![
+            "clear-ligand-raw".to_string(),
+            project_dir,
+            delete_file.to_string(),
+        ],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法清除配体 raw 记录。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_box_params(project_dir: String) -> String {
     match run_backend_module(
         "dockstart_core.project",
@@ -471,6 +501,8 @@ fn main() {
             fetch_pdb_structure,
             fetch_pubchem_ligand,
             get_raw_files_status,
+            clear_receptor_raw_record,
+            clear_ligand_raw_record,
             get_box_params,
             update_box_params,
             get_vina_params,

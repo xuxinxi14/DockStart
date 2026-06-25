@@ -339,6 +339,13 @@ button {
   font-weight: 700;
 }
 
+.inline-note {
+  margin-top: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .disclaimer-note {
   margin: 18px 0 0;
   border: 1px solid #c6d6e5;
