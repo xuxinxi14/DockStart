@@ -35,6 +35,12 @@ const runtimeModeText: Record<ToolchainStatusResponse["runtime_mode"], string> =
   unknown: "unknown：无法判断运行模式",
 };
 
+const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]>["status"], string> = {
+  ready: "ready：可用于 Full 打包",
+  incomplete: "incomplete：文件存在但许可证或 manifest 尚未完整",
+  missing: "missing：未发现内置 vina.exe",
+};
+
 function normalizeTool(item: Partial<ToolCheckResult> | null | undefined): ToolCheckResult | null {
   if (!item) {
     return null;
@@ -53,8 +59,36 @@ function normalizeTool(item: Partial<ToolCheckResult> | null | undefined): ToolC
   };
 }
 
+function normalizeIntegrity(
+  item: Partial<NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]>> | null | undefined,
+): NonNullable<ToolchainStatusResponse["bundled_vina_integrity"]> | null {
+  if (!item) {
+    return null;
+  }
+  return {
+    status: item.status ?? "missing",
+    binary_path: item.binary_path ?? "",
+    binary_exists: Boolean(item.binary_exists),
+    sha256: item.sha256 ?? "",
+    manifest_sha256: item.manifest_sha256 ?? "",
+    sha256_matches: Boolean(item.sha256_matches),
+    manifest_bundled: Boolean(item.manifest_bundled),
+    manifest_version: item.manifest_version ?? "",
+    manifest_source: item.manifest_source ?? "",
+    manifest_prepared_at: item.manifest_prepared_at ?? "",
+    license_path: item.license_path ?? "",
+    license_exists: Boolean(item.license_exists),
+    third_party_notices_path: item.third_party_notices_path ?? "",
+    third_party_notices_exists: Boolean(item.third_party_notices_exists),
+    third_party_notices_has_autodock_vina: Boolean(item.third_party_notices_has_autodock_vina),
+    warnings: item.warnings ?? [],
+    message: item.message ?? "",
+  };
+}
+
 function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ToolchainStatusResponse>;
+  const integrity = normalizeIntegrity(parsed.bundled_vina_integrity);
   return {
     ok: Boolean(parsed.ok),
     runtime_mode: parsed.runtime_mode ?? "unknown",
@@ -73,7 +107,12 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
       status: parsed.bundled_vina?.status ?? "unknown",
       message: parsed.bundled_vina?.message ?? "暂无说明。",
       raw_error: parsed.bundled_vina?.raw_error ?? "",
+      sha256: parsed.bundled_vina?.sha256 ?? "",
+      package_status: parsed.bundled_vina?.package_status ?? integrity?.status ?? "missing",
     },
+    bundled_vina_integrity: integrity,
+    bundled_vina_package: parsed.bundled_vina_package ?? null,
+    warnings: parsed.warnings ?? integrity?.warnings ?? [],
     active_vina: normalizeTool(parsed.active_vina),
     active_source: parsed.active_source ?? "unknown",
     licenses: {
@@ -112,7 +151,12 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
       status: "error",
       message: "前端未能调用内置工具链状态命令。",
       raw_error: rawError,
+      sha256: "",
+      package_status: "missing",
     },
+    bundled_vina_integrity: null,
+    bundled_vina_package: null,
+    warnings: [],
     active_vina: null,
     active_source: "unknown",
     licenses: {
@@ -260,12 +304,37 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd>{booleanText(status.bundled_vina.exists)}</dd>
                 </div>
                 <div>
+                  <dt>Full 打包状态</dt>
+                  <dd>{packageStatusText[status.bundled_vina.package_status]}</dd>
+                </div>
+                <div>
                   <dt>路径</dt>
                   <dd>{status.bundled_vina.path || "未获取"}</dd>
                 </div>
                 <div>
+                  <dt>sha256</dt>
+                  <dd>{status.bundled_vina.sha256 || "未计算"}</dd>
+                </div>
+                <div>
                   <dt>版本</dt>
                   <dd>{status.bundled_vina.version || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>LICENSE</dt>
+                  <dd>
+                    {status.bundled_vina_integrity?.license_path || "未获取"}（
+                    {booleanText(Boolean(status.bundled_vina_integrity?.license_exists))}）
+                  </dd>
+                </div>
+                <div>
+                  <dt>THIRD_PARTY_NOTICES 记录</dt>
+                  <dd>
+                    {booleanText(Boolean(status.bundled_vina_integrity?.third_party_notices_has_autodock_vina))}
+                  </dd>
+                </div>
+                <div>
+                  <dt>manifest sha256</dt>
+                  <dd>{status.bundled_vina_integrity?.manifest_sha256 || "未记录"}</dd>
                 </div>
                 <div>
                   <dt>说明</dt>
@@ -337,6 +406,17 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
             <div className="warning-note">
               {status.error.message}
               {status.error.suggestion ? ` ${status.error.suggestion}` : ""}
+            </div>
+          ) : null}
+
+          {status.warnings.length ? (
+            <div className="warning-note">
+              <strong>内置 Vina 打包检查提示</strong>
+              <ul>
+                {status.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </>

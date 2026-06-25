@@ -216,11 +216,13 @@ class ToolCheckTests(unittest.TestCase):
             root = Path(temp_dir)
             bundled_path = root / "resources" / "tools" / "vina" / "vina.exe"
             notices_path = root / "resources" / "licenses" / "THIRD_PARTY_NOTICES.md"
+            license_path = root / "resources" / "licenses" / "AutoDock-Vina_LICENSE.txt"
             manifest_path = root / "resources" / "toolchain_manifest.json"
             bundled_path.parent.mkdir(parents=True)
             notices_path.parent.mkdir(parents=True)
             bundled_path.write_text("fake bundled vina", encoding="utf-8")
             notices_path.write_text("# Notices\n", encoding="utf-8")
+            license_path.write_text("Apache License 2.0\n", encoding="utf-8")
             manifest_path.write_text('{"schema_version": 1}\n', encoding="utf-8")
             settings_path = root / "settings.json"
 
@@ -253,11 +255,13 @@ class ToolCheckTests(unittest.TestCase):
             toolchain_root = resource_dir / "resources"
             bundled_path = toolchain_root / "tools" / "vina" / "vina.exe"
             notices_path = toolchain_root / "licenses" / "THIRD_PARTY_NOTICES.md"
+            license_path = toolchain_root / "licenses" / "AutoDock-Vina_LICENSE.txt"
             manifest_path = toolchain_root / "toolchain_manifest.json"
             bundled_path.parent.mkdir(parents=True)
             notices_path.parent.mkdir(parents=True)
             bundled_path.write_text("fake bundled vina", encoding="utf-8")
             notices_path.write_text("# Notices\n", encoding="utf-8")
+            license_path.write_text("Apache License 2.0\n", encoding="utf-8")
             manifest_path.write_text('{"schema_version": 1}\n', encoding="utf-8")
             settings_path = Path(temp_dir) / "settings.json"
 

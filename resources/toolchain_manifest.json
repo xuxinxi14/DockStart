@@ -3,6 +3,16 @@
   "toolchain_name": "DockStart Full",
   "status": "partial",
   "description": "DockStart 内置工具链目录规范。当前提交只建立 Vina 内置路径识别，不随仓库强制提交 vina.exe。",
+  "bundled_vina": {
+    "name": "AutoDock Vina",
+    "version": "",
+    "binary_path": "resources/tools/vina/vina.exe",
+    "license": "Apache-2.0",
+    "source": "",
+    "bundled": false,
+    "sha256": "",
+    "prepared_at": ""
+  },
   "tools": {
     "vina": {
       "name": "AutoDock Vina",
@@ -19,6 +29,7 @@
     }
   },
   "licenses": {
+    "autodock_vina": "resources/licenses/AutoDock-Vina_LICENSE.txt",
     "third_party_notices": "resources/licenses/THIRD_PARTY_NOTICES.md"
   }
 }

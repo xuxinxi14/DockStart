@@ -24,6 +24,27 @@ export type ToolCheckResult = {
 
 export type ToolchainFullStatus = "partial" | "ready" | "missing";
 export type ToolchainRuntimeMode = "dev" | "packaged" | "unknown";
+export type BundledVinaPackageStatus = "ready" | "incomplete" | "missing";
+
+export type BundledVinaIntegrity = {
+  status: BundledVinaPackageStatus;
+  binary_path: string;
+  binary_exists: boolean;
+  sha256: string;
+  manifest_sha256: string;
+  sha256_matches: boolean;
+  manifest_bundled: boolean;
+  manifest_version: string;
+  manifest_source: string;
+  manifest_prepared_at: string;
+  license_path: string;
+  license_exists: boolean;
+  third_party_notices_path: string;
+  third_party_notices_exists: boolean;
+  third_party_notices_has_autodock_vina: boolean;
+  warnings: string[];
+  message: string;
+};
 
 export type ToolchainStatusResponse = {
   ok: boolean;
@@ -43,7 +64,24 @@ export type ToolchainStatusResponse = {
     status: ToolStatus;
     message: string;
     raw_error: string;
+    sha256: string;
+    package_status: BundledVinaPackageStatus;
   };
+  bundled_vina_integrity: BundledVinaIntegrity | null;
+  bundled_vina_package: {
+    ok: boolean;
+    status: BundledVinaPackageStatus;
+    integrity: BundledVinaIntegrity;
+    warnings: string[];
+    message: string;
+    error?: {
+      code: string;
+      message: string;
+      raw_error: string;
+      suggestion: string;
+    } | null;
+  } | null;
+  warnings: string[];
   active_vina: ToolCheckResult | null;
   active_source: ToolSource;
   licenses: {
