@@ -8,12 +8,14 @@ import RunExecutePage from "./pages/RunExecutePage";
 import RunPreparePage from "./pages/RunPreparePage";
 import SettingsPage from "./pages/SettingsPage";
 import ToolCheckPage from "./pages/ToolCheckPage";
+import ToolchainStatusPage from "./pages/ToolchainStatusPage";
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject } from "./types";
 
 const nextPages = [
   "工具检测",
+  "内置工具链状态",
   "创建项目",
   "导入 PDBQT",
   "设置对接箱体",
@@ -29,6 +31,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<
     | "home"
     | "tool-check"
+    | "toolchain-status"
     | "settings"
     | "project-create"
     | "import-pdbqt"
@@ -47,6 +50,14 @@ export default function App() {
     return (
       <main className="app-shell">
         <SettingsPage onBack={() => setCurrentPage("tool-check")} />
+      </main>
+    );
+  }
+
+  if (currentPage === "toolchain-status") {
+    return (
+      <main className="app-shell">
+        <ToolchainStatusPage onBack={() => setCurrentPage("home")} />
       </main>
     );
   }
@@ -221,6 +232,9 @@ export default function App() {
           </button>
           <button className="secondary-button" type="button" onClick={() => setCurrentPage("settings")}>
             配置工具路径
+          </button>
+          <button className="secondary-button" type="button" onClick={() => setCurrentPage("toolchain-status")}>
+            内置工具链状态
           </button>
           <button className="secondary-button" type="button" onClick={() => setCurrentPage("project-create")}>
             创建项目

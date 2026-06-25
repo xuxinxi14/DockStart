@@ -902,6 +902,31 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(loaded["ok"])
             self.assertEqual(loaded["metadata"]["run_id"], "run_001")
 
+    def test_prepare_vina_run_uses_resolved_bundled_vina_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            bundled_result = ToolCheckResult(
+                key="vina",
+                name="AutoDock Vina",
+                status="ok",
+                version="1.2.5",
+                path=bundled_path,
+                message="已检测到内置 AutoDock Vina。",
+                source="bundled",
+                bundled_path=bundled_path,
+                is_bundled=True,
+            )
+
+            with unittest.mock.patch("dockstart_core.project.vina_adapter.detect", return_value=bundled_result):
+                response = prepare_vina_run(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["metadata"]["vina_path"], bundled_path)
+            self.assertEqual(response["metadata"]["command"][0], bundled_path)
+            metadata = json.loads((project_dir / "runs" / "run_001" / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["command"][0], bundled_path)
+
     def test_execute_vina_run_missing_metadata_returns_structured_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_response = create_project("demo_project", temp_dir)

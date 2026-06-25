@@ -32,6 +32,13 @@ dockstart_settings.json
 _external_downloads/
 third_party_sources/
 
+# Optional bundled tool binaries. Keep manifests and README files tracked.
+resources/tools/vina/vina.exe
+resources/tools/vina/vina
+resources/tools/vina/*.dll
+resources/tools/vina/*.so
+resources/tools/vina/*.dylib
+
 # Runtime docking outputs
 runs/
 

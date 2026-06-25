@@ -1,10 +1,12 @@
 export type ToolStatus = "ok" | "missing" | "error" | "unknown";
 
 export type ToolSource =
+  | "bundled"
   | "configured"
   | "auto"
   | "current_environment"
   | "frontend_dependency"
+  | "missing"
   | "unknown";
 
 export type ToolCheckResult = {
@@ -16,6 +18,49 @@ export type ToolCheckResult = {
   message: string;
   raw_error: string;
   source: ToolSource;
+  bundled_path: string;
+  is_bundled: boolean;
+};
+
+export type ToolchainFullStatus = "partial" | "ready" | "missing";
+
+export type ToolchainStatusResponse = {
+  ok: boolean;
+  toolchain_root: string;
+  tools_dir: string;
+  licenses_dir: string;
+  manifest_file: string;
+  manifest_exists: boolean;
+  manifest: Record<string, unknown>;
+  manifest_error: string;
+  bundled_vina: {
+    exists: boolean;
+    path: string;
+    version: string;
+    status: ToolStatus;
+    message: string;
+    raw_error: string;
+  };
+  active_vina: ToolCheckResult | null;
+  active_source: ToolSource;
+  licenses: {
+    exists: boolean;
+    third_party_notices: string;
+    third_party_notices_exists: boolean;
+  };
+  resources: {
+    exists: boolean;
+    tools_dir_exists: boolean;
+    vina_dir_exists: boolean;
+  };
+  full_status: ToolchainFullStatus;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  };
 };
 
 export type RunCheckResult = {

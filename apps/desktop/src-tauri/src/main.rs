@@ -15,6 +15,14 @@ fn check_tools() -> String {
 }
 
 #[tauri::command]
+fn get_toolchain_status() -> String {
+    match run_backend_module("dockstart_core.toolchain", Vec::new()) {
+        Ok(payload) => payload,
+        Err(error) => fallback_toolchain_error_json("无法读取 DockStart 内置工具链状态。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_settings() -> String {
     match run_backend_module("dockstart_core.settings", vec!["get".to_string()]) {
         Ok(payload) => payload,
@@ -342,6 +350,17 @@ fn fallback_project_error_json(message: &str, raw_error: &str) -> String {
     )
 }
 
+fn fallback_toolchain_error_json(message: &str, raw_error: &str) -> String {
+    format!(
+        "{{\"ok\":false,\"toolchain_root\":\"\",\"tools_dir\":\"\",\"licenses_dir\":\"\",\"manifest_file\":\"\",\"manifest_exists\":false,\"manifest\":{{}},\"manifest_error\":\"\",\"bundled_vina\":{{\"exists\":false,\"path\":\"\",\"version\":\"\",\"status\":\"error\",\"message\":\"{}\",\"raw_error\":\"{}\"}},\"active_vina\":null,\"active_source\":\"unknown\",\"licenses\":{{\"exists\":false,\"third_party_notices\":\"\",\"third_party_notices_exists\":false}},\"resources\":{{\"exists\":false,\"tools_dir_exists\":false,\"vina_dir_exists\":false}},\"full_status\":\"missing\",\"message\":\"{}\",\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请确认 Python 后端可以运行。\"}}}}",
+        json_escape(message),
+        json_escape(raw_error),
+        json_escape(message),
+        json_escape(message),
+        json_escape(raw_error)
+    )
+}
+
 fn json_escape(value: &str) -> String {
     let mut escaped = String::new();
     for character in value.chars() {
@@ -362,6 +381,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             check_tools,
+            get_toolchain_status,
             get_settings,
             save_settings,
             update_tool_path,

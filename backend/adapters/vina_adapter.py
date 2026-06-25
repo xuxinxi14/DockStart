@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from dockstart_core.models import ToolCheckResult
+from dockstart_core.toolchain_paths import get_bundled_vina_path
 
 _VINA_CANDIDATES = ("vina", "vina.exe")
 
@@ -26,29 +27,8 @@ def _parse_version(output: str) -> str:
     return match.group(1) if match else first_line
 
 
-def detect(configured_path: str = "") -> ToolCheckResult:
-    configured_path = configured_path.strip()
-    source = "configured" if configured_path else "auto"
-    path = configured_path or _find_vina()
-
-    if not path:
-        return ToolCheckResult(
-            key="vina",
-            name="AutoDock Vina",
-            status="missing",
-            message="未在 PATH 中检测到 vina 或 vina.exe。请先安装 AutoDock Vina，或在后续设置页配置工具路径。",
-            source=source,
-        )
-
-    if configured_path and not Path(configured_path).exists():
-        return ToolCheckResult(
-            key="vina",
-            name="AutoDock Vina",
-            status="missing",
-            path=configured_path,
-            message="用户配置的 vina.exe 路径不存在，请检查设置页中的 AutoDock Vina 路径。",
-            source="configured",
-        )
+def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCheckResult:
+    is_bundled = source == "bundled"
 
     try:
         completed = subprocess.run(
@@ -67,6 +47,8 @@ def detect(configured_path: str = "") -> ToolCheckResult:
             message="检测到的 Vina 路径无法执行，请检查安装是否完整。",
             raw_error=str(exc),
             source=source,
+            bundled_path=bundled_path,
+            is_bundled=is_bundled,
         )
     except Exception as exc:  # noqa: BLE001 - convert detector failures to structured results.
         return ToolCheckResult(
@@ -77,6 +59,8 @@ def detect(configured_path: str = "") -> ToolCheckResult:
             message="检测 AutoDock Vina 时发生错误。",
             raw_error=str(exc),
             source=source,
+            bundled_path=bundled_path,
+            is_bundled=is_bundled,
         )
 
     stdout = completed.stdout.strip()
@@ -94,6 +78,8 @@ def detect(configured_path: str = "") -> ToolCheckResult:
             message="已检测到 AutoDock Vina 命令行工具。",
             raw_error=stderr,
             source=source,
+            bundled_path=bundled_path,
+            is_bundled=is_bundled,
         )
 
     return ToolCheckResult(
@@ -105,4 +91,58 @@ def detect(configured_path: str = "") -> ToolCheckResult:
         message="已找到 AutoDock Vina，但运行版本检测命令失败。",
         raw_error=raw_output,
         source=source,
+        bundled_path=bundled_path,
+        is_bundled=is_bundled,
+    )
+
+
+def detect(configured_path: str = "", bundled_path: str = "") -> ToolCheckResult:
+    configured_path = configured_path.strip()
+    resolved_bundled_path = str(Path(bundled_path).expanduser()) if bundled_path else str(get_bundled_vina_path())
+
+    if Path(resolved_bundled_path).expanduser().is_file():
+        return _run_version_check(
+            resolved_bundled_path,
+            "bundled",
+            bundled_path=resolved_bundled_path,
+        )
+
+    if configured_path:
+        configured = Path(configured_path).expanduser()
+        if not configured.exists():
+            return ToolCheckResult(
+                key="vina",
+                name="AutoDock Vina",
+                status="missing",
+                path=configured_path,
+                message="用户配置的 vina.exe 路径不存在，请检查设置页中的 AutoDock Vina 路径。",
+                source="configured",
+                bundled_path=resolved_bundled_path,
+                is_bundled=False,
+            )
+        return _run_version_check(
+            str(configured),
+            "configured",
+            bundled_path=resolved_bundled_path,
+        )
+
+    path = _find_vina()
+    if not path:
+        return ToolCheckResult(
+            key="vina",
+            name="AutoDock Vina",
+            status="missing",
+            message=(
+                "未检测到内置 Vina，也未在 PATH 中检测到 vina 或 vina.exe。"
+                "请放置 resources/tools/vina/vina.exe、在设置页配置路径，或将 Vina 加入 PATH。"
+            ),
+            source="missing",
+            bundled_path=resolved_bundled_path,
+            is_bundled=False,
+        )
+
+    return _run_version_check(
+        path,
+        "auto",
+        bundled_path=resolved_bundled_path,
     )

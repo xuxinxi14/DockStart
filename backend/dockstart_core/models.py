@@ -6,7 +6,15 @@ from dataclasses import asdict, dataclass
 from typing import Any, ClassVar, Literal
 
 ToolStatus = Literal["ok", "missing", "error", "unknown"]
-ToolSource = Literal["configured", "auto", "current_environment", "frontend_dependency", "unknown"]
+ToolSource = Literal[
+    "bundled",
+    "configured",
+    "auto",
+    "current_environment",
+    "frontend_dependency",
+    "missing",
+    "unknown",
+]
 
 
 @dataclass(frozen=True)
@@ -21,12 +29,16 @@ class ToolCheckResult:
     message: str = ""
     raw_error: str = ""
     source: ToolSource = "unknown"
+    bundled_path: str = ""
+    is_bundled: bool = False
 
     ALLOWED_STATUSES: ClassVar[set[str]] = {"ok", "missing", "error", "unknown"}
     ALLOWED_SOURCES: ClassVar[set[str]] = {
         "configured",
         "auto",
+        "bundled",
         "current_environment",
+        "missing",
         "frontend_dependency",
         "unknown",
     }

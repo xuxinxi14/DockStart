@@ -24,6 +24,8 @@ from dockstart_core.settings import (  # noqa: E402
     load_settings,
     save_settings,
 )
+from dockstart_core.toolchain import get_toolchain_status  # noqa: E402
+from dockstart_core.toolchain_paths import TOOLCHAIN_ROOT_ENV_VAR  # noqa: E402
 
 
 class ToolCheckTests(unittest.TestCase):
@@ -42,6 +44,8 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(payload["status"], "unknown")
         self.assertEqual(payload["raw_error"], "")
         self.assertEqual(payload["source"], "unknown")
+        self.assertEqual(payload["bundled_path"], "")
+        self.assertFalse(payload["is_bundled"])
 
     def test_settings_loads_default_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -78,15 +82,20 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.source, "current_environment")
 
     def test_vina_missing_returns_structured_result(self) -> None:
-        with patch.object(vina_adapter.shutil, "which", return_value=None):
-            result = vina_adapter.detect()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            with patch.object(vina_adapter.shutil, "which", return_value=None):
+                result = vina_adapter.detect(bundled_path=bundled_path)
 
         self.assertEqual(result.key, "vina")
         self.assertIn(result.status, {"missing", "error"})
-        self.assertEqual(result.source, "auto")
+        self.assertEqual(result.source, "missing")
+        self.assertEqual(result.bundled_path, bundled_path)
 
     def test_configured_vina_missing_returns_structured_result(self) -> None:
-        result = vina_adapter.detect("Z:/missing/vina.exe")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            result = vina_adapter.detect("Z:/missing/vina.exe", bundled_path=bundled_path)
 
         self.assertEqual(result.key, "vina")
         self.assertIn(result.status, {"missing", "error"})
@@ -94,11 +103,109 @@ class ToolCheckTests(unittest.TestCase):
         self.assertIn("用户配置", result.message)
 
     def test_unconfigured_vina_still_uses_auto_detection(self) -> None:
-        with patch.object(vina_adapter.shutil, "which", return_value=None):
-            result = vina_adapter.detect("")
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            with (
+                patch.object(vina_adapter.shutil, "which", return_value="C:/tools/vina.exe"),
+                patch.object(vina_adapter.subprocess, "run", return_value=completed),
+            ):
+                result = vina_adapter.detect("", bundled_path=bundled_path)
 
         self.assertEqual(result.key, "vina")
+        self.assertEqual(result.status, "ok")
         self.assertEqual(result.source, "auto")
+        self.assertFalse(result.is_bundled)
+
+    def test_bundled_vina_takes_priority_over_configured(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            configured_path = Path(temp_dir) / "configured" / "vina.exe"
+            bundled_path.parent.mkdir(parents=True)
+            configured_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled vina", encoding="utf-8")
+            configured_path.write_text("fake configured vina", encoding="utf-8")
+
+            with patch.object(vina_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = vina_adapter.detect(str(configured_path), bundled_path=str(bundled_path))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "bundled")
+        self.assertTrue(result.is_bundled)
+        self.assertEqual(result.path, str(bundled_path))
+        self.assertEqual(run_mock.call_args[0][0][0], str(bundled_path))
+
+    def test_configured_vina_takes_priority_over_path_when_no_bundled(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            configured_path = Path(temp_dir) / "configured" / "vina.exe"
+            configured_path.parent.mkdir(parents=True)
+            configured_path.write_text("fake configured vina", encoding="utf-8")
+
+            with (
+                patch.object(vina_adapter.shutil, "which", return_value="C:/path/vina.exe"),
+                patch.object(vina_adapter.subprocess, "run", return_value=completed) as run_mock,
+            ):
+                result = vina_adapter.detect(str(configured_path), bundled_path=str(bundled_path))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "configured")
+        self.assertEqual(result.path, str(configured_path))
+        self.assertEqual(run_mock.call_args[0][0][0], str(configured_path))
+
+    def test_bundled_missing_falls_back_to_configured(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            configured_path = Path(temp_dir) / "configured" / "vina.exe"
+            configured_path.parent.mkdir(parents=True)
+            configured_path.write_text("fake configured vina", encoding="utf-8")
+
+            with patch.object(vina_adapter.subprocess, "run", return_value=completed):
+                result = vina_adapter.detect(str(configured_path), bundled_path=str(bundled_path))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "configured")
+        self.assertFalse(result.is_bundled)
+
+    def test_toolchain_status_returns_structured_result(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundled_path = root / "resources" / "tools" / "vina" / "vina.exe"
+            notices_path = root / "resources" / "licenses" / "THIRD_PARTY_NOTICES.md"
+            manifest_path = root / "resources" / "toolchain_manifest.json"
+            bundled_path.parent.mkdir(parents=True)
+            notices_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled vina", encoding="utf-8")
+            notices_path.write_text("# Notices\n", encoding="utf-8")
+            manifest_path.write_text('{"schema_version": 1}\n', encoding="utf-8")
+            settings_path = root / "settings.json"
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        TOOLCHAIN_ROOT_ENV_VAR: str(root),
+                        SETTINGS_ENV_VAR: str(settings_path),
+                    },
+                ),
+                patch.object(vina_adapter.subprocess, "run", return_value=completed),
+            ):
+                response = get_toolchain_status()
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["full_status"], "ready")
+        self.assertTrue(response["bundled_vina"]["exists"])
+        self.assertEqual(response["bundled_vina"]["version"], "1.2.5")
+        self.assertEqual(response["active_source"], "bundled")
 
     def test_meeko_import_failure_returns_structured_result(self) -> None:
         completed = SimpleNamespace(
