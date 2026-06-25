@@ -6,6 +6,7 @@ import type { DockStartProject, ProjectFileRef, ProjectResponse } from "../types
 type ImportPdbqtPageProps = {
   project: DockStartProject;
   onBack: () => void;
+  onOpenStructureFetch: (project: DockStartProject) => void;
   onOpenBoxSetup: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
@@ -28,6 +29,7 @@ function fileStatus(fileRef: ProjectFileRef): string {
 export default function ImportPdbqtPage({
   project: initialProject,
   onBack,
+  onOpenStructureFetch,
   onOpenBoxSetup,
   onProjectChange,
 }: ImportPdbqtPageProps) {
@@ -107,6 +109,7 @@ export default function ImportPdbqtPage({
         <p>
           第一版只接受已经准备好的 .pdbqt 文件。导入时会复制到项目 prepared
           目录，并更新 project.json。
+          如果你还没有 PDBQT，可以先下载 PDB / PubChem 原始结构文件；但 raw 文件不能直接运行 Vina，后续仍需准备成 PDBQT。
         </p>
       </div>
 
@@ -175,6 +178,9 @@ export default function ImportPdbqtPage({
       <div className="toolbar project-toolbar">
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadProject()}>
           重新加载项目
+        </button>
+        <button className="secondary-button" type="button" onClick={() => onOpenStructureFetch(project)}>
+          先下载原始结构文件
         </button>
       </div>
 

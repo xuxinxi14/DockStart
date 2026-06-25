@@ -33,6 +33,8 @@ PROJECT_REPORT_FILE = Path("reports", "docking_report.md").as_posix()
 @dataclass
 class ProjectFileRef:
     source: str = ""
+    source_id: str = ""
+    raw_file: str = ""
     file: str = ""
 
 
@@ -143,10 +145,14 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
         project_dir=str(data.get("project_dir", str(fallback_dir)) or fallback_dir),
         receptor=ProjectFileRef(
             source=str(receptor.get("source", "") or ""),
+            source_id=str(receptor.get("source_id", "") or ""),
+            raw_file=str(receptor.get("raw_file", "") or ""),
             file=str(receptor.get("file", "") or ""),
         ),
         ligand=ProjectFileRef(
             source=str(ligand.get("source", "") or ""),
+            source_id=str(ligand.get("source_id", "") or ""),
+            raw_file=str(ligand.get("raw_file", "") or ""),
             file=str(ligand.get("file", "") or ""),
         ),
         box=BoxSettings(

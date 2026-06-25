@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.5
+
+- Added raw receptor structure download from RCSB PDB by PDB ID.
+- Added raw ligand SDF download from PubChem by CID.
+- Saved downloaded raw files under each project `raw/` directory.
+- Recorded `source`, `source_id`, and `raw_file` in `project.json` while keeping prepared PDBQT paths in `file`.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.4
 
 - Clarified the V0.2 roadmap around the bundled Python runtime and toolchain documentation.

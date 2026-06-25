@@ -47,6 +47,14 @@ V0.2.3 已支持工具链基础能力：
 - Python 解析优先级为 `bundled` → `configured` → `current_environment`；
 - Meeko / RDKit 当前只使用解析后的 Python 做 `import` 检测。
 
+V0.2.5 已支持原始结构下载基础层：
+
+- 通过 RCSB PDB ID 下载受体原始结构文件；
+- 通过 PubChem CID 下载配体原始 SDF 文件；
+- 下载结果保存到当前 DockStart 项目的 `raw/` 目录；
+- `project.json` 会记录 `source`、`source_id` 和 `raw_file`；
+- raw 文件只记录来源和原始数据，不能直接运行 AutoDock Vina。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -62,8 +70,7 @@ V0.2.3 已支持工具链基础能力：
 
 - 需要用户自己准备 PDBQT 文件；
 - 需要用户自己安装或配置 AutoDock Vina；
-- 不自动下载 PDB / PubChem；
-- 不自动准备 receptor / ligand；
+- 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；
@@ -73,7 +80,6 @@ V0.2.3 已支持工具链基础能力：
 
 当前仍不支持：
 
-- PDB / PubChem 下载；
 - PDB / SDF / MOL2 自动转 PDBQT；
 - RDKit 配体处理；
 - Meeko 受体 / 配体准备；
@@ -186,15 +192,16 @@ npm run tauri dev
 
 1. 配置 AutoDock Vina 路径。
 2. 创建 DockStart 项目。
-3. 导入已经准备好的 `receptor.pdbqt`。
-4. 导入已经准备好的 `ligand.pdbqt`。
-5. 设置 docking box。
-6. 设置 Vina 参数。
-7. 生成 `configs/vina_config.txt`。
-8. 准备 run。
-9. 执行 Vina。
-10. 解析 `log.txt` 并导出 `scores.csv`。
-11. 导出 `reports/docking_report.md`。
+3. 可选：下载 RCSB PDB / PubChem CID 原始结构到 `raw/`。
+4. 导入已经准备好的 `receptor.pdbqt`。
+5. 导入已经准备好的 `ligand.pdbqt`。
+6. 设置 docking box。
+7. 设置 Vina 参数。
+8. 生成 `configs/vina_config.txt`。
+9. 准备 run。
+10. 执行 Vina。
+11. 解析 `log.txt` 并导出 `scores.csv`。
+12. 导出 `reports/docking_report.md`。
 
 详细步骤见 [docs/user_guide.md](docs/user_guide.md)，手动验收流程见 [docs/smoke_test.md](docs/smoke_test.md)。
 
@@ -205,6 +212,8 @@ npm run tauri dev
 ```text
 prepared/receptor.pdbqt
 prepared/ligand.pdbqt
+raw/receptor_1HSG.pdb
+raw/ligand_2244.sdf
 configs/vina_config.txt
 runs/run_001/metadata.json
 runs/run_001/out.pdbqt

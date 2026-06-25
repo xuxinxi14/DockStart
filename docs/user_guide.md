@@ -1,6 +1,6 @@
-# DockStart V0.1 User Guide
+# DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 V0.1 MVP 流程。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.5 的 raw 原始结构下载能力。
 
 ## 前置条件
 
@@ -11,7 +11,7 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.1 不会帮你从 PDB / PubChem 下载结构，也不会自动把 PDB、SDF、MOL2 转成 PDBQT。
+V0.2.5 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，但不会自动把 PDB、SDF、MOL2 转成 PDBQT。运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
 ## 1. 配置工具路径
 
@@ -55,7 +55,53 @@ project_name/
 - 项目目录已存在：换一个项目名，DockStart 不会覆盖已有项目；
 - 项目名称包含非法字符：避免使用 Windows 文件名保留字符，如 `\ / : * ? " < > |`。
 
-## 3. 导入 receptor.pdbqt
+## 3. 可选：下载原始结构文件
+
+用户可以在 StructureFetchPage 下载：
+
+- RCSB PDB 受体原始结构，例如输入 `1HSG`；
+- PubChem CID 配体原始 SDF，例如输入 `2244`。
+
+输出位置：
+
+```text
+raw/receptor_1HSG.pdb
+raw/ligand_2244.sdf
+```
+
+`project.json` 会记录：
+
+```json
+{
+  "receptor": {
+    "source": "rcsb_pdb",
+    "source_id": "1HSG",
+    "raw_file": "raw/receptor_1HSG.pdb",
+    "file": "prepared/receptor.pdbqt"
+  },
+  "ligand": {
+    "source": "pubchem",
+    "source_id": "2244",
+    "raw_file": "raw/ligand_2244.sdf",
+    "file": "prepared/ligand.pdbqt"
+  }
+}
+```
+
+注意：
+
+- raw 文件不能直接运行 AutoDock Vina；
+- DockStart 当前不会自动生成 PDBQT；
+- 下载 raw 文件后，仍需准备并导入 `receptor.pdbqt` 和 `ligand.pdbqt`。
+
+常见错误：
+
+- PDB ID 不是 4 位字母/数字；
+- PubChem CID 不是正整数；
+- 网络超时或远端返回 404；
+- raw 文件已存在且未开启 overwrite。
+
+## 4. 导入 receptor.pdbqt
 
 用户需要输入：
 
@@ -75,7 +121,7 @@ prepared/receptor.pdbqt
 - 文件为空：重新准备 receptor PDBQT；
 - 文件扩展名不是 `.pdbqt`：V0.1 只接受 PDBQT。
 
-## 4. 导入 ligand.pdbqt
+## 5. 导入 ligand.pdbqt
 
 用户需要输入：
 
@@ -94,7 +140,7 @@ prepared/ligand.pdbqt
 - 文件不存在或为空；
 - 误导入 PDB、SDF、MOL2：V0.1 不做自动格式转换，请先在外部工具中准备 PDBQT。
 
-## 5. 设置 Box 参数
+## 6. 设置 Box 参数
 
 用户需要输入：
 
@@ -119,7 +165,7 @@ prepared/ligand.pdbqt
 - 输入非数字：请使用整数或小数；
 - box 过大：运行会变慢，且可能降低搜索效率。
 
-## 6. 设置 Vina 参数
+## 7. 设置 Vina 参数
 
 用户需要输入：
 
@@ -140,7 +186,7 @@ prepared/ligand.pdbqt
 - `cpu` 为负数；
 - seed 不是整数。
 
-## 7. 生成 vina_config.txt
+## 8. 生成 vina_config.txt
 
 用户需要输入：
 
@@ -158,7 +204,7 @@ configs/vina_config.txt
 - box 或 Vina 参数格式不合法；
 - 项目目录不可写。
 
-## 8. 准备 run
+## 9. 准备 run
 
 用户需要输入：
 
@@ -179,7 +225,7 @@ runs/run_001/config_snapshot.txt
 - receptor 或 ligand 文件缺失；
 - run 目录已存在时，DockStart 会自动选择下一个 run id。
 
-## 9. 执行 Vina
+## 10. 执行 Vina
 
 用户需要输入：
 
@@ -201,7 +247,7 @@ runs/run_001/metadata.json
 - 没有生成非空 `out.pdbqt`：检查输入 PDBQT、box、参数和 Vina 版本；
 - command 不是数组：重新准备 run。
 
-## 10. 解析结果
+## 11. 解析结果
 
 用户需要输入：
 
@@ -233,7 +279,7 @@ mode,affinity_kcal_mol,rmsd_lb,rmsd_ub
 - `log.txt` 中没有 Vina score 表格；
 - score 表格行格式异常。
 
-## 11. 导出 Markdown 报告
+## 12. 导出 Markdown 报告
 
 用户需要输入：
 

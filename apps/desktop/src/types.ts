@@ -183,6 +183,8 @@ export type SettingsResponse = {
 
 export type ProjectFileRef = {
   source: string;
+  source_id: string;
+  raw_file: string;
   file: string;
 };
 
@@ -242,6 +244,11 @@ export type ProjectResponse = {
   report_file?: string;
   project_report_file?: string;
   reported_at?: string;
+  raw_file?: string;
+  source?: string;
+  source_id?: string;
+  format?: string;
+  url?: string;
   report_status?: string;
   scores_status?: RunFileStatus | null;
   can_export?: boolean;

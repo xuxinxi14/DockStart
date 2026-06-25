@@ -192,6 +192,7 @@ button {
 
 .form-panel input,
 .import-card input,
+.import-card select,
 .box-field input,
 .param-field input {
   width: 100%;
@@ -205,10 +206,24 @@ button {
 
 .form-panel input:focus,
 .import-card input:focus,
+.import-card select:focus,
 .box-field input:focus,
 .param-field input:focus {
   border-color: #38608f;
   outline: 2px solid #c9dff3;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #40566d;
+  font-weight: 600;
+}
+
+.checkbox-row input {
+  width: auto;
+  min-height: auto;
 }
 
 .form-actions {
@@ -611,4 +626,3 @@ button {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-

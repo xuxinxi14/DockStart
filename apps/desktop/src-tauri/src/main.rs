@@ -103,6 +103,61 @@ fn import_ligand_pdbqt(project_dir: String, source_path: String) -> String {
 }
 
 #[tauri::command]
+fn fetch_pdb_structure(
+    project_dir: String,
+    pdb_id: String,
+    format: String,
+    overwrite: bool,
+) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec![
+            "fetch-pdb".to_string(),
+            project_dir,
+            pdb_id,
+            format,
+            overwrite.to_string(),
+        ],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法下载 RCSB PDB 原始结构文件。", &error),
+    }
+}
+
+#[tauri::command]
+fn fetch_pubchem_ligand(
+    project_dir: String,
+    cid: String,
+    format: String,
+    overwrite: bool,
+) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec![
+            "fetch-pubchem".to_string(),
+            project_dir,
+            cid,
+            format,
+            overwrite.to_string(),
+        ],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法下载 PubChem 原始配体文件。", &error),
+    }
+}
+
+#[tauri::command]
+fn get_raw_files_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec!["raw-files-status".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 raw 文件状态。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_box_params(project_dir: String) -> String {
     match run_backend_module(
         "dockstart_core.project",
@@ -413,6 +468,9 @@ fn main() {
             load_project,
             import_receptor_pdbqt,
             import_ligand_pdbqt,
+            fetch_pdb_structure,
+            fetch_pubchem_ligand,
+            get_raw_files_status,
             get_box_params,
             update_box_params,
             get_vina_params,

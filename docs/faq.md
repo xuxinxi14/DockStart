@@ -35,25 +35,34 @@ Docking score 只表示在特定输入结构、box、参数和 Vina 版本下的
 
 DockStart 不会自动判断“药效好/不好”，也不会输出“候选药物”结论。
 
-## 5. 为什么没有 PDB/PubChem 下载？
+## 5. PDB/PubChem 下载现在支持到什么程度？
 
-V0.1 优先保证本地 PDBQT docking 流程稳定。PDB/PubChem 下载会引入网络、数据格式、结构选择、配体状态和许可证边界等额外问题。
+V0.2.5 支持基础 raw 下载：
 
-该能力计划放在 V0.2 或之后。
+- RCSB PDB：通过 4 位 PDB ID 下载受体原始结构，保存到 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`；
+- PubChem：通过 CID 下载配体原始 SDF，保存到 `raw/ligand_{cid}.sdf`。
 
-## 6. 为什么没有 3D 可视化？
+这些 raw 文件不能直接运行 Vina。DockStart 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
+
+当前不会自动转 PDBQT，不会调用 RDKit，不会调用 Meeko，也不会生成 3D 构象。
+
+## 6. 为什么下载了 raw 文件还不能运行 Vina？
+
+AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2.5 只负责下载和记录来源，不做这些化学处理。
+
+## 7. 为什么没有 3D 可视化？
 
 3D 可视化和可视化 box 设置很有价值，但它需要额外前端依赖、渲染状态管理和更完整的交互设计。V0.1 先完成手动 box 参数输入和可复现文件输出。
 
 3Dmol.js / Mol* 可视化计划放在 V0.3 或之后。
 
-## 7. 可以商用吗？
+## 8. 可以商用吗？
 
 需要分别看 DockStart 本体许可证和第三方工具许可证。
 
 DockStart 本体计划采用 Apache License 2.0；正式授权以仓库 `LICENSE` 文件为准。AutoDock Vina、React、Vite、Tauri、RDKit、Open Babel、PLIP、MGLTools 等都有各自许可证和分发要求。商用前请查看 [license_notes.md](license_notes.md)，并自行确认你的使用方式是否满足所有第三方许可证。
 
-## 8. 可以把 Open Babel/MGLTools 打包进 DockStart 吗？
+## 9. 可以把 Open Babel/MGLTools 打包进 DockStart 吗？
 
 当前不打包。
 

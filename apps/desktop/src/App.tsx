@@ -7,6 +7,7 @@ import ResultPage from "./pages/ResultPage";
 import RunExecutePage from "./pages/RunExecutePage";
 import RunPreparePage from "./pages/RunPreparePage";
 import SettingsPage from "./pages/SettingsPage";
+import StructureFetchPage from "./pages/StructureFetchPage";
 import ToolCheckPage from "./pages/ToolCheckPage";
 import ToolchainStatusPage from "./pages/ToolchainStatusPage";
 import VinaConfigPage from "./pages/VinaConfigPage";
@@ -17,6 +18,7 @@ const nextPages = [
   "工具检测",
   "内置工具链状态",
   "创建项目",
+  "下载原始结构",
   "导入 PDBQT",
   "设置对接箱体",
   "设置 Vina 参数",
@@ -34,6 +36,7 @@ export default function App() {
     | "toolchain-status"
     | "settings"
     | "project-create"
+    | "structure-fetch"
     | "import-pdbqt"
     | "box-setup"
     | "vina-param"
@@ -78,7 +81,23 @@ export default function App() {
       <main className="app-shell">
         <ProjectCreatePage
           onBack={() => setCurrentPage("home")}
-          onCreated={(project) => {
+          onCreated={(project, nextPage) => {
+            setCurrentProject(project);
+            setCurrentPage(nextPage);
+          }}
+        />
+      </main>
+    );
+  }
+
+  if (currentPage === "structure-fetch" && currentProject) {
+    return (
+      <main className="app-shell">
+        <StructureFetchPage
+          project={currentProject}
+          onBack={() => setCurrentPage("project-create")}
+          onProjectChange={setCurrentProject}
+          onOpenImportPdbqt={(project) => {
             setCurrentProject(project);
             setCurrentPage("import-pdbqt");
           }}
@@ -93,6 +112,10 @@ export default function App() {
         <ImportPdbqtPage
           project={currentProject}
           onBack={() => setCurrentPage("project-create")}
+          onOpenStructureFetch={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("structure-fetch");
+          }}
           onOpenBoxSetup={(project) => {
             setCurrentProject(project);
             setCurrentPage("box-setup");

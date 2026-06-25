@@ -5,7 +5,7 @@ import type { DockStartProject, ProjectResponse, SettingsResponse } from "../typ
 
 type ProjectCreatePageProps = {
   onBack: () => void;
-  onCreated: (project: DockStartProject) => void;
+  onCreated: (project: DockStartProject, nextPage: "structure-fetch" | "import-pdbqt") => void;
 };
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -35,6 +35,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [createdProject, setCreatedProject] = useState<DockStartProject | null>(null);
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -56,6 +57,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
     setIsBusy(true);
     setMessage("");
     setRawError("");
+    setCreatedProject(null);
     try {
       const rawPayload = await invoke<string>("create_project", {
         projectName,
@@ -64,7 +66,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       const response = parseProjectResponse(rawPayload);
       if (response.ok && response.project) {
         setMessage(response.message ?? "项目创建成功。");
-        onCreated(response.project);
+        setCreatedProject(response.project);
         return;
       }
       setMessage(response.error?.message ?? "项目创建失败。");
@@ -75,7 +77,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
     } finally {
       setIsBusy(false);
     }
-  }, [baseDir, onCreated, projectName]);
+  }, [baseDir, projectName]);
 
   return (
     <section className="project-page" aria-labelledby="project-create-title">
@@ -120,6 +122,25 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       </div>
 
       {message ? <p className="settings-message">{message}</p> : null}
+      {createdProject ? (
+        <div className="ready-note">
+          <span>项目已创建。下一步可以先下载 raw 原始结构，也可以直接导入已经准备好的 PDBQT。</span>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onCreated(createdProject, "structure-fetch")}
+          >
+            下载原始结构文件
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => onCreated(createdProject, "import-pdbqt")}
+          >
+            直接导入 PDBQT
+          </button>
+        </div>
+      ) : null}
       {rawError ? (
         <details className="raw-error">
           <summary>查看 raw_error</summary>
