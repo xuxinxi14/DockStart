@@ -83,6 +83,7 @@ project_name/
 
 ```text
 raw/receptor_1HSG.pdb
+raw/receptor_1HSG.cif
 raw/ligand_2244.sdf
 raw/ligand_name_aspirin.sdf
 ```
