@@ -18,11 +18,16 @@ from dockstart_core.preparation_models import (
 from dockstart_core.toolchain import get_resolved_python
 
 SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol"}
+SUPPORTED_RECEPTOR_PREPARATION_FORMATS = {".pdb", ".cif"}
 LIGAND_PREPARATION_OUTPUT = "prepared/ligand.pdbqt"
+RECEPTOR_PREPARATION_OUTPUT = "prepared/receptor.pdbqt"
 LIGAND_PREPARATION_LOG_DIR = Path("prepared", "logs")
 LIGAND_PREPARATION_STDOUT = Path("prepared", "logs", "ligand_stdout.txt")
 LIGAND_PREPARATION_STDERR = Path("prepared", "logs", "ligand_stderr.txt")
 LIGAND_PREPARATION_LOG = Path("prepared", "logs", "ligand_preparation_log.json")
+RECEPTOR_PREPARATION_STDOUT = Path("prepared", "logs", "receptor_stdout.txt")
+RECEPTOR_PREPARATION_STDERR = Path("prepared", "logs", "receptor_stderr.txt")
+RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.json")
 
 
 def _now_iso() -> str:
@@ -602,6 +607,274 @@ def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
     }
 
 
+def validate_receptor_preparation_input(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    raw_file = str(project.receptor.raw_file or "")
+    if not raw_file:
+        return _error(
+            "RECEPTOR_RAW_FILE_NOT_RECORDED",
+            "尚未记录 receptor raw 文件，无法自动准备受体 PDBQT。",
+            suggestion="请先在“下载原始结构文件”页面下载 receptor raw 文件，或手动导入 prepared receptor PDBQT。",
+        )
+
+    input_path = _project_file_path(project_path, raw_file)
+    input_status = _file_status(project_path, raw_file, "receptor_raw", "受体 raw 文件")
+    if input_status["status"] != "ok":
+        return _error(
+            "RECEPTOR_RAW_FILE_NOT_READY",
+            "受体 raw 文件不存在或为空，无法自动准备 receptor PDBQT。",
+            raw_error=input_status.get("absolute_path", input_status.get("path", "")),
+            suggestion="请重新下载 receptor raw 文件，或检查 project.json 中的 receptor.raw_file 记录。",
+        )
+
+    suffix = input_path.suffix.lower()
+    if suffix not in SUPPORTED_RECEPTOR_PREPARATION_FORMATS:
+        return _error(
+            "RECEPTOR_RAW_FORMAT_UNSUPPORTED",
+            "当前版本暂不支持该受体 raw 文件格式自动准备 PDBQT。",
+            raw_error=suffix,
+            suggestion="V0.3.3 优先支持 PDB；CIF 是否可用取决于本机 Meeko。其他格式请先使用外部工具准备 PDBQT。",
+        )
+
+    output_path = project_path / RECEPTOR_PREPARATION_OUTPUT
+    if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
+        return _error(
+            "RECEPTOR_PREPARED_FILE_EXISTS",
+            "prepared/receptor.pdbqt 已存在，默认不会覆盖。",
+            raw_error=str(output_path),
+            suggestion="如确认要重新生成，请开启 overwrite。",
+        )
+
+    tool_status = get_preparation_tool_status(project.project_dir)
+    if not tool_status.get("ok"):
+        return tool_status
+    tools = tool_status["tools"]
+    python_tool = tools["python"]
+    meeko_tool = tools["meeko"]
+    receptor_capability = meeko_tool.get("capabilities", {}).get("receptor_preparation", {})
+    receptor_cli_candidates = receptor_capability.get("cli_candidates_found", [])
+    if not isinstance(receptor_cli_candidates, list):
+        receptor_cli_candidates = []
+    receptor_cli_candidates = [str(item) for item in receptor_cli_candidates if str(item)]
+
+    missing: list[str] = []
+    if python_tool.get("status") != "ok":
+        missing.append("Python")
+    if meeko_tool.get("status") != "ok":
+        missing.append("Meeko")
+    if receptor_capability.get("status") != "ok":
+        missing.append("Meeko receptor preparation capability")
+    if not receptor_cli_candidates:
+        missing.append("mk_prepare_receptor CLI")
+
+    if missing:
+        return _error(
+            "RECEPTOR_PREPARATION_TOOLS_NOT_READY",
+            "受体 PDBQT 自动准备所需工具尚未全部可用或不可确认。",
+            raw_error=", ".join(missing),
+            suggestion="请确认 Meeko 已安装且可发现 mk_prepare_receptor CLI。当前版本不使用 MGLTools/Open Babel 兜底。",
+        )
+
+    warnings = [
+        "受体自动准备使用保守默认设置，不能保证缺失残基、金属离子、水分子、辅因子或质子化状态处理一定适合当前体系。",
+        "请在运行 Vina 前人工检查 receptor PDBQT。",
+    ]
+    if suffix == ".cif":
+        warnings.append("CIF 支持取决于本机 Meeko receptor preparation 能力；如失败，请先在外部工具中转换或准备 PDBQT。")
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "input_file": raw_file,
+        "input_path": str(input_path),
+        "output_file": RECEPTOR_PREPARATION_OUTPUT,
+        "output_path": str(output_path),
+        "format": suffix,
+        "tools": tools,
+        "receptor_cli": receptor_cli_candidates[0],
+        "overwrite": overwrite,
+        "warnings": warnings,
+        "message": "受体 PDBQT 自动准备输入检查通过。",
+        "error": None,
+    }
+
+
+def build_receptor_preparation_command_or_script(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+    validation = validate_receptor_preparation_input(project_dir, overwrite=overwrite)
+    if not validation.get("ok"):
+        return validation
+
+    project_path = Path(validation["project_dir"]).expanduser()
+    logs_dir = project_path / LIGAND_PREPARATION_LOG_DIR
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    cli_path = str(validation["receptor_cli"])
+    output_stem = str((project_path / RECEPTOR_PREPARATION_OUTPUT).with_suffix(""))
+    python_path = validation["tools"]["python"]["path"]
+    if Path(cli_path).suffix.lower() == ".py":
+        command = [python_path, cli_path, "-i", validation["input_path"], "-o", output_stem, "-p"]
+    else:
+        command = [cli_path, "-i", validation["input_path"], "-o", output_stem, "-p"]
+
+    return {
+        **validation,
+        "command": command,
+        "stdout_file": RECEPTOR_PREPARATION_STDOUT.as_posix(),
+        "stderr_file": RECEPTOR_PREPARATION_STDERR.as_posix(),
+        "log_file": RECEPTOR_PREPARATION_LOG.as_posix(),
+    }
+
+
+def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
+    _ = options or {}
+    built = build_receptor_preparation_command_or_script(project_dir, overwrite=overwrite)
+    if not built.get("ok"):
+        return built
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    stdout_path = project_path / built["stdout_file"]
+    stderr_path = project_path / built["stderr_file"]
+    log_path = project_path / built["log_file"]
+    output_path = Path(built["output_path"])
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    prep = project.preparation.receptor
+    started_at = _now_iso()
+    prep.status = "running"
+    prep.method = "meeko"
+    prep.input_file = built["input_file"]
+    prep.output_file = RECEPTOR_PREPARATION_OUTPUT
+    prep.started_at = started_at
+    prep.finished_at = None
+    prep.python_path = built["tools"]["python"].get("path", "")
+    prep.python_source = built["tools"]["python"].get("source", "unknown")
+    prep.rdkit_available = False
+    prep.meeko_available = built["tools"]["meeko"].get("status") == "ok"
+    prep.command = built["command"]
+    prep.stdout_file = built["stdout_file"]
+    prep.stderr_file = built["stderr_file"]
+    prep.log_file = built["log_file"]
+    prep.error = None
+    prep.warnings = list(built.get("warnings", []))
+    saved = save_project(project)
+    if not saved.get("ok"):
+        return saved
+
+    try:
+        completed = meeko_adapter.run_preparation_command(built["command"], cwd=project_path)
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        exit_code = int(completed.returncode)
+    except Exception as exc:  # noqa: BLE001 - return structured preparation failure.
+        stdout = ""
+        stderr = str(exc)
+        exit_code = -1
+
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+
+    finished_at = _now_iso()
+    output_ok = output_path.is_file() and output_path.stat().st_size > 0
+    success = exit_code == 0 and output_ok
+    if success:
+        prep.status = "finished"
+        prep.error = None
+        project.receptor.file = RECEPTOR_PREPARATION_OUTPUT
+        message = "receptor PDBQT 自动准备完成。请继续人工检查受体结构、金属离子、水分子、辅因子和质子化状态。"
+        error = None
+    else:
+        prep.status = "failed"
+        message = "receptor PDBQT 自动准备失败。"
+        raw_error = stderr or stdout or ("输出 PDBQT 不存在或为空。" if exit_code == 0 else "")
+        error = {
+            "code": "RECEPTOR_PREPARATION_FAILED",
+            "message": "receptor PDBQT 自动准备失败，请查看 stderr 和日志。",
+            "raw_error": raw_error,
+            "suggestion": "请确认 Meeko receptor CLI、输入文件格式、受体结构完整性和准备选项。",
+        }
+        prep.error = error
+
+    prep.finished_at = finished_at
+    log_payload = {
+        "target": "receptor",
+        "status": prep.status,
+        "method": prep.method,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "input_file": built["input_file"],
+        "output_file": RECEPTOR_PREPARATION_OUTPUT,
+        "command": built["command"],
+        "exit_code": exit_code,
+        "stdout_file": built["stdout_file"],
+        "stderr_file": built["stderr_file"],
+        "output_exists": output_path.is_file(),
+        "output_non_empty": output_ok,
+        "warnings": prep.warnings,
+        "error": error,
+    }
+    log_path.write_text(json.dumps(log_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    saved = save_project(project)
+    if not saved.get("ok"):
+        return saved
+
+    payload = get_preparation_status(project.project_dir)
+    payload.update(
+        {
+            "ok": success,
+            "target": "receptor",
+            "output_file": RECEPTOR_PREPARATION_OUTPUT,
+            "stdout_file": built["stdout_file"],
+            "stderr_file": built["stderr_file"],
+            "log_file": built["log_file"],
+            "exit_code": exit_code,
+            "message": message,
+            "error": error,
+        }
+    )
+    return payload
+
+
+def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    prep = project.preparation.receptor
+    stdout_file = prep.stdout_file or RECEPTOR_PREPARATION_STDOUT.as_posix()
+    stderr_file = prep.stderr_file or RECEPTOR_PREPARATION_STDERR.as_posix()
+    log_file = prep.log_file or RECEPTOR_PREPARATION_LOG.as_posix()
+
+    def read_optional(relative_file: str) -> str:
+        path = _project_file_path(project_path, relative_file)
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": "receptor",
+        "stdout_file": stdout_file,
+        "stderr_file": stderr_file,
+        "log_file": log_file,
+        "stdout": read_optional(stdout_file),
+        "stderr": read_optional(stderr_file),
+        "log": read_optional(log_file),
+        "message": "receptor preparation 日志已读取。",
+        "error": None,
+    }
+
+
 def reset_preparation_status(project_dir: str, target: str) -> dict[str, Any]:
     normalized_target = _normalize_target(target)
     if normalized_target is None:
@@ -666,6 +939,21 @@ def main() -> None:
             _print_json(_error("LIGAND_PREPARATION_LOG_ARGS", "读取 ligand preparation 日志需要 project_dir 参数。"))
             return
         _print_json(load_ligand_preparation_log(sys.argv[2]))
+        return
+
+    if command == "prepare-receptor":
+        if len(sys.argv) < 3:
+            _print_json(_error("RECEPTOR_PREPARATION_ARGS", "准备 receptor PDBQT 需要 project_dir 参数。"))
+            return
+        overwrite = len(sys.argv) >= 4 and sys.argv[3].strip().lower() in {"1", "true", "yes", "y"}
+        _print_json(prepare_receptor_pdbqt(sys.argv[2], overwrite=overwrite))
+        return
+
+    if command == "receptor-log":
+        if len(sys.argv) < 3:
+            _print_json(_error("RECEPTOR_PREPARATION_LOG_ARGS", "读取 receptor preparation 日志需要 project_dir 参数。"))
+            return
+        _print_json(load_receptor_preparation_log(sys.argv[2]))
         return
 
     if command == "reset":

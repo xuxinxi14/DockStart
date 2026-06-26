@@ -435,8 +435,9 @@ export default function StructureFetchPage({
       </div>
 
       <div className="warning-note">
-        DockStart 当前不会调用 RDKit、Meeko、Open Babel、PLIP、MGLTools，也不会自动准备 docking 输入。raw 记录可以清除，
-        但 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。
+        下载页本身只保存 raw 文件，不会直接准备 docking 输入。后续可到 PreparationPage 使用已检测到的 RDKit/Meeko
+        尝试准备 PDBQT；DockStart 当前仍不接入 Open Babel、PLIP 或 MGLTools。raw 记录可以清除，但
+        prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。
       </div>
 
       {message ? <p className="settings-message">{message}</p> : null}

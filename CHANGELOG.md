@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.3
+
+- Added receptor raw PDB/CIF to `prepared/receptor.pdbqt` preparation through detected Meeko receptor CLI.
+- Added receptor preparation validation, command construction, stdout/stderr/log capture, and project.json updates.
+- Added Tauri commands and a minimal PreparationPage button for receptor preparation.
+- Default behavior does not overwrite existing `prepared/receptor.pdbqt`; overwrite must be explicitly enabled.
+- Added mock-first backend tests; tests do not depend on a real Meeko installation.
+- Did not add Open Babel, MGLTools, MOL2/SMILES preparation, 3D visualization, interaction analysis, drug efficacy judgement, or Vina workflow changes.
+
 ## v0.3.2
 
 - Added ligand raw SDF/MOL to `prepared/ligand.pdbqt` preparation through the resolved Python + RDKit + Meeko toolchain.

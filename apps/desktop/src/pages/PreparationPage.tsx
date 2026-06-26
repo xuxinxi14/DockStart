@@ -102,6 +102,7 @@ export default function PreparationPage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
 
   useEffect(() => {
@@ -196,6 +197,39 @@ export default function PreparationPage({
       applyResponse(parsePreparationResponse(rawPayload), "ligand PDBQT 自动准备已完成。");
     } catch (error) {
       setMessage("前端未能调用 ligand PDBQT 自动准备命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const prepareReceptor = async () => {
+    setIsBusy(true);
+    try {
+      const rawPayload = await invoke<string>("prepare_receptor_pdbqt", {
+        projectDir: project.project_dir,
+        overwrite: overwriteReceptor,
+      });
+      applyResponse(parsePreparationResponse(rawPayload), "receptor PDBQT 自动准备已完成。");
+    } catch (error) {
+      setMessage("前端未能调用 receptor PDBQT 自动准备命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const loadReceptorLog = async () => {
+    setIsBusy(true);
+    try {
+      const rawPayload = await invoke<string>("load_receptor_preparation_log", {
+        projectDir: project.project_dir,
+      });
+      const parsed = JSON.parse(rawPayload) as { ok: boolean; message?: string; stderr?: string; stdout?: string; log?: string; error?: { message: string; raw_error: string } };
+      setMessage(parsed.message ?? parsed.error?.message ?? "receptor preparation 日志已读取。");
+      setRawError([parsed.stderr, parsed.stdout, parsed.log, parsed.error?.raw_error].filter(Boolean).join("\n\n"));
+    } catch (error) {
+      setMessage("前端未能读取 receptor preparation 日志。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -299,10 +333,36 @@ export default function PreparationPage({
               <dt>方法</dt>
               <dd>{receptorPrep?.method ?? "未记录"}</dd>
             </div>
+            <div>
+              <dt>stdout</dt>
+              <dd><code>{receptorPrep?.stdout_file || "未生成"}</code></dd>
+            </div>
+            <div>
+              <dt>stderr</dt>
+              <dd><code>{receptorPrep?.stderr_file || "未生成"}</code></dd>
+            </div>
+            <div>
+              <dt>log</dt>
+              <dd><code>{receptorPrep?.log_file || "未生成"}</code></dd>
+            </div>
           </dl>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={overwriteReceptor}
+              onChange={(event) => setOverwriteReceptor(event.target.checked)}
+            />
+            覆盖已有 prepared/receptor.pdbqt
+          </label>
           <div className="toolbar project-toolbar">
+            <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareReceptor()}>
+              准备 receptor PDBQT
+            </button>
             <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void validateTarget("receptor")}>
               检查受体准备条件
+            </button>
+            <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void loadReceptorLog()}>
+              读取受体准备日志
             </button>
             <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void resetTarget("receptor")}>
               重置受体准备状态

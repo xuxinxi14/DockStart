@@ -117,6 +117,14 @@ V0.3.2 已实现配体 PDBQT 自动准备的最小闭环：
 - 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
 - 当前仍不支持 receptor 自动准备、MOL2/SMILES 自动准备，也不改变 Vina 主流程。
 
+V0.3.3 已实现受体 PDBQT 自动准备的最小闭环：
+
+- 支持从项目中的 `receptor.raw_file` 读取 PDB / CIF；
+- 使用当前解析到的 Python + Meeko receptor CLI 生成 `prepared/receptor.pdbqt`；
+- 默认不覆盖已有 `prepared/receptor.pdbqt`，需要用户显式开启 overwrite；
+- 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
+- 受体准备采用保守默认设置，仍需用户检查缺失残基、金属离子、水分子、辅因子和质子化状态。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -135,7 +143,7 @@ V0.3.2 已实现配体 PDBQT 自动准备的最小闭环：
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - raw 文件不等于 prepared PDBQT；
-- V0.3.2 只新增 ligand SDF/MOL 到 PDBQT 的自动准备；receptor 自动准备、MOL2/SMILES 和复杂结构修复仍未实现；
+- V0.3.3 已新增 ligand SDF/MOL 和 receptor PDB/CIF 到 PDBQT 的自动准备；MOL2/SMILES 和复杂结构修复仍未实现；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；

@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备。当前仍未实现 receptor 自动准备、MOL2/SMILES 自动准备或复杂结构修复。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备；V0.3.3 已实现 receptor PDB/CIF 到 prepared/receptor.pdbqt 的最小自动准备。当前仍未实现 MOL2/SMILES 自动准备或复杂结构修复。
 
 第一阶段目标是实现最小闭环：
 
@@ -488,13 +488,12 @@ bundled > configured > current_environment
 
 当前仓库只提交 `resources/python/README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。`scripts/prepare_bundled_python.py` 只复制本地 Python runtime、计算 `python.exe` sha256、读取版本并更新 manifest；它不联网、不安装 Python 包、不安装 RDKit、不安装 Meeko。
 
-Meeko/RDKit 当前已用于两类能力：V0.3.1 做 import、版本和准备能力检测；V0.3.2 可在 ligand raw 文件为 SDF/MOL 时，用已解析的 Python + RDKit + Meeko 尝试生成 `prepared/ligand.pdbqt`。当前仍不做 receptor 自动准备、MOL2/SMILES 自动准备或复杂结构修复。
+Meeko/RDKit 当前已用于三类能力：V0.3.1 做 import、版本和准备能力检测；V0.3.2 可在 ligand raw 文件为 SDF/MOL 时，用已解析的 Python + RDKit + Meeko 尝试生成 `prepared/ligand.pdbqt`；V0.3.3 可在 receptor raw 文件为 PDB/CIF 且 Meeko receptor CLI 可发现时，尝试生成 `prepared/receptor.pdbqt`。当前仍不做 MOL2/SMILES 自动准备或复杂结构修复。
 
 当前明确未实现：
 
-* receptor PDB/CIF 自动转 PDBQT；
 * ligand MOL2/SMILES 自动转 PDBQT；
-* Meeko 受体准备；
+* 复杂受体结构修复；
 * Open Babel；
 * PLIP/MGLTools；
 * 3D 可视化；
@@ -577,7 +576,7 @@ V0.2.8 只允许：
 * ProjectCreatePage 展示 raw 下载和直接导入 PDBQT 两个入口；
 * ImportPdbqtPage 解释 raw 文件和 prepared PDBQT 的区别；
 * StructureFetchPage 下载后提示仍需手动准备 PDBQT；
-* ToolchainStatusPage 说明 Meeko/RDKit 当前只做 import 检测。
+* ToolchainStatusPage 在 V0.2.8 阶段说明 Meeko/RDKit 当时只做 import 检测。
 
 V0.2.8 禁止：
 
@@ -589,7 +588,7 @@ V0.2.8 禁止：
 * 修改 Vina 运行流程；
 * 做药效判断。
 
-## 24. V0.3.1 / V0.3.2 自动准备能力边界
+## 24. V0.3.1 / V0.3.2 / V0.3.3 自动准备能力边界
 
 V0.3.1 允许：
 
@@ -605,10 +604,18 @@ V0.3.2 允许：
 * 保存 stdout、stderr 和 preparation log；
 * 更新 `ligand.file` 和 `preparation.ligand`。
 
-V0.3.2 仍然禁止：
+V0.3.3 允许：
 
-* receptor PDBQT 自动准备；
+* 在 `receptor.raw_file` 为 PDB 或 CIF 且 Meeko receptor CLI 可发现时准备 `prepared/receptor.pdbqt`；
+* 使用已解析的 Python + Meeko；
+* 默认不覆盖已有 `prepared/receptor.pdbqt`；
+* 保存 stdout、stderr 和 preparation log；
+* 更新 `receptor.file` 和 `preparation.receptor`。
+
+V0.3.3 仍然禁止：
+
 * MOL2 或 SMILES 自动准备；
+* 复杂受体结构修复；
 * 接入 Open Babel、PLIP、MGLTools；
 * 做 3D 可视化；
 * 修改 Vina 运行流程或 scoring function；
