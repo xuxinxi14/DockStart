@@ -425,3 +425,5 @@ Docking score 仅供结构结合趋势参考，不能替代实验验证。DockSt
 V0.4.0 已提供后端 viewer 读取接口，可以把项目内的 `raw/`、`prepared/` 和 `runs/{run_id}/out.pdbqt` 文本结构文件安全传给后续前端 viewer。当前阶段仍没有正式 3D 页面；V0.4.1 才会接入最小 3Dmol.js ViewerPage。
 
 这些接口只读取文本结构文件，不调用 RDKit、Meeko 或 AutoDock Vina，不做相互作用分析，也不会判断 docking pose 是否代表真实结合或药效。超过 20 MB 的结构文件会被拒绝一次性读取，并返回中文结构化提示。
+
+V0.4.1 已新增最小 ViewerPage。进入项目后，可以从 PreparationPage 或 ImportPdbqtPage 点击“打开 3D 查看 / 查看 prepared 文件”，也可以在已有当前项目时从首页进入。页面支持选择 receptor raw、ligand raw、receptor prepared、ligand prepared 或最近 docking output，加载后可清空 viewer 或重新居中。当前还不显示 Box 线框，也不支持 pose-score 对应表。

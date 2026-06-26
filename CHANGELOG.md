@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.1
+
+- Added a minimal local 3Dmol.js ViewerPage with structure source selection, load, clear, and zoom-to-fit controls.
+- Added ViewerPage entry points from the home flow, PreparationPage, and ImportPdbqtPage.
+- ViewerPage can request receptor raw, ligand raw, prepared receptor, prepared ligand, and latest docking output content through the backend viewer commands.
+- Added local npm-managed `3dmol` dependency; no external CDN is used.
+- Did not add Box overlay, docking pose score mapping, PLIP/ProLIF, interaction analysis, pocket prediction, drug efficacy judgement, or Vina algorithm changes.
+
 ## v0.4.0
 
 - Added backend viewer data models and project-local structure file loading for raw receptor, raw ligand, prepared receptor, prepared ligand, and docking output files.

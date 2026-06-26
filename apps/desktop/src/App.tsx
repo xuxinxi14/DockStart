@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage";
 import StructureFetchPage from "./pages/StructureFetchPage";
 import ToolCheckPage from "./pages/ToolCheckPage";
 import ToolchainStatusPage from "./pages/ToolchainStatusPage";
+import ViewerPage from "./pages/ViewerPage";
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject } from "./types";
@@ -47,6 +48,7 @@ export default function App() {
     | "run-prepare"
     | "run-execute"
     | "result"
+    | "viewer"
     | "report"
   >("home");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
@@ -124,6 +126,10 @@ export default function App() {
             setCurrentProject(project);
             setCurrentPage("import-pdbqt");
           }}
+          onOpenViewer={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("viewer");
+          }}
         />
       </main>
     );
@@ -142,6 +148,10 @@ export default function App() {
           onOpenBoxSetup={(project) => {
             setCurrentProject(project);
             setCurrentPage("box-setup");
+          }}
+          onOpenViewer={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("viewer");
           }}
           onProjectChange={setCurrentProject}
         />
@@ -250,6 +260,14 @@ export default function App() {
     );
   }
 
+  if (currentPage === "viewer" && currentProject) {
+    return (
+      <main className="app-shell">
+        <ViewerPage project={currentProject} onBack={() => setCurrentPage("preparation")} />
+      </main>
+    );
+  }
+
   if (currentPage === "report" && currentProject && currentRunId) {
     return (
       <main className="app-shell">
@@ -284,6 +302,14 @@ export default function App() {
           </button>
           <button className="secondary-button" type="button" onClick={() => setCurrentPage("project-create")}>
             创建项目
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!currentProject}
+            onClick={() => setCurrentPage("viewer")}
+          >
+            3D 结构查看
           </button>
         </div>
       </section>

@@ -208,6 +208,49 @@ export type RawStructureStatus = RunFileStatus & {
   record_consistent: boolean;
 };
 
+export type ViewerFileKind =
+  | "receptor_raw"
+  | "ligand_raw"
+  | "receptor_prepared"
+  | "ligand_prepared"
+  | "docking_output";
+
+export type ViewerStructureResult = {
+  ok: boolean;
+  file_kind: ViewerFileKind | string;
+  relative_path: string;
+  absolute_path: string;
+  exists: boolean;
+  format: string;
+  content: string;
+  size_bytes: number;
+  message: string;
+  warnings: string[];
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+  run_id?: string;
+  mode?: number;
+};
+
+export type ViewerFileStatusResponse = {
+  ok: boolean;
+  project_dir: string;
+  files: Record<ViewerFileKind, ViewerStructureResult>;
+  docking_outputs: Array<ViewerStructureResult & { run_id?: string; run_status?: string }>;
+  message: string;
+  warnings: string[];
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type ScoreRow = {
   mode: number;
   affinity_kcal_mol: number;

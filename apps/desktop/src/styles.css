@@ -637,3 +637,56 @@ button {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+.viewer-controls {
+  margin-bottom: 18px;
+}
+
+.viewer-source-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  color: #243b53;
+  font-weight: 700;
+}
+
+.viewer-source-row select {
+  min-height: 40px;
+  min-width: 0;
+  border: 1px solid #b7c7d8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #243b53;
+  padding: 0 10px;
+  font: inherit;
+}
+
+.viewer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.viewer-canvas {
+  min-height: 560px;
+  border: 1px solid #c9d6e2;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.viewer-side-panel {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .viewer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-canvas {
+    min-height: 420px;
+  }
+}

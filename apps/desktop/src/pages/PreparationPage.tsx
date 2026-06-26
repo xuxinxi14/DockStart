@@ -15,6 +15,7 @@ type PreparationPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onOpenImportPdbqt: (project: DockStartProject) => void;
+  onOpenViewer: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
 
@@ -95,6 +96,7 @@ export default function PreparationPage({
   project: initialProject,
   onBack,
   onOpenImportPdbqt,
+  onOpenViewer,
   onProjectChange,
 }: PreparationPageProps) {
   const [project, setProject] = useState(initialProject);
@@ -447,6 +449,12 @@ export default function PreparationPage({
         </button>
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
           去导入 prepared PDBQT
+        </button>
+      </div>
+
+      <div className="toolbar project-toolbar">
+        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
+          打开 3D 查看
         </button>
       </div>
 

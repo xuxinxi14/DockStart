@@ -185,7 +185,14 @@ V0.4.0 已建立 3D viewer 所需的后端数据通道：
 - 读取前会限制文件必须位于项目目录内，并对超过 20 MB 的结构文件返回中文结构化提示；
 - 该阶段只传递结构文本给前端，不调用 RDKit、Meeko 或 AutoDock Vina，也不做相互作用分析。
 
-V0.4.0 还没有完成 3Dmol.js 页面、Box 线框叠加、pose 与 `scores.csv` 的对应显示。这些属于 V0.4.1–V0.4.4 的后续阶段。
+V0.4.1 已新增最小 3Dmol.js ViewerPage：
+
+- 前端依赖通过 npm 管理，不使用外部 CDN；
+- 可以从页面选择 receptor raw、ligand raw、receptor prepared、ligand prepared 或最近的 docking output 并加载；
+- 提供清空 viewer 和重新居中按钮；
+- 如果结构格式无法显示，会给出中文提示而不是崩溃。
+
+Box 线框叠加、pose 与 `scores.csv` 的对应显示、指定 run/mode 切换仍属于 V0.4.2–V0.4.4 的后续阶段。
 
 ## 当前暂不支持
 

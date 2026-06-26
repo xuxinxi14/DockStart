@@ -112,3 +112,5 @@ V0.4 以后才考虑 3D 可视化、可视化 box 设置、相互作用分析和
 V0.4.0 已完成 3D viewer 所需的后端结构文件读取接口，但还没有正式 3D 页面。当前接口可以读取项目内 raw/prepared/out.pdbqt 文本结构文件，并能列出 docking pose 文本；V0.4.1 才会接入最小 3Dmol.js ViewerPage。
 
 Viewer 只负责几何查看的数据通道，不做相互作用分析、pocket prediction 或药效判断。读取文件时会拒绝项目目录外路径，并对超过 20 MB 的结构文件返回中文结构化提示。
+
+V0.4.1 的 ViewerPage 使用 npm 依赖 `3dmol`，不使用外部 CDN。它能尝试显示 PDB/PDBQT/CIF/SDF/MOL/MOL2 文本结构文件；不同格式的显示效果取决于 3Dmol.js 对该格式的支持。显示成功也不代表结构准备或 docking 结果在科学上正确。

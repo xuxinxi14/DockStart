@@ -8,6 +8,7 @@ type ImportPdbqtPageProps = {
   onBack: () => void;
   onOpenStructureFetch: (project: DockStartProject) => void;
   onOpenBoxSetup: (project: DockStartProject) => void;
+  onOpenViewer: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
 
@@ -31,6 +32,7 @@ export default function ImportPdbqtPage({
   onBack,
   onOpenStructureFetch,
   onOpenBoxSetup,
+  onOpenViewer,
   onProjectChange,
 }: ImportPdbqtPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
@@ -197,6 +199,12 @@ export default function ImportPdbqtPage({
           </button>
         </div>
       ) : null}
+
+      <div className="toolbar project-toolbar">
+        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
+          查看 prepared 文件
+        </button>
+      </div>
 
       {message ? <p className="settings-message">{message}</p> : null}
       {rawError ? (
