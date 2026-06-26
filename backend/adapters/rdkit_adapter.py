@@ -10,6 +10,8 @@ from typing import Any
 
 from dockstart_core.models import ToolCheckResult
 
+SUBPROCESS_TEXT_KWARGS = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 
 def detect(python_path: str = "", source: str = "current_environment") -> ToolCheckResult:
     python_executable = python_path.strip() or sys.executable
@@ -33,7 +35,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            **SUBPROCESS_TEXT_KWARGS,
             timeout=10,
             check=False,
         )
@@ -154,7 +156,7 @@ print(json.dumps(payload, ensure_ascii=False))
         completed = subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            **SUBPROCESS_TEXT_KWARGS,
             timeout=10,
             check=False,
         )
@@ -176,7 +178,8 @@ print(json.dumps(payload, ensure_ascii=False))
             "raw_error": str(exc),
         }
 
-    raw_error = completed.stderr.strip()
+    stdout = completed.stdout or ""
+    raw_error = (completed.stderr or "").strip()
     if completed.returncode != 0:
         status = "missing" if "ModuleNotFoundError" in raw_error or "No module named" in raw_error else "error"
         return {
@@ -193,11 +196,11 @@ print(json.dumps(payload, ensure_ascii=False))
                 "sdf_inline_read": {"status": "unknown", "message": "RDKit 不可导入，未检测 SDF 读取能力。"},
             },
             "message": "未检测到 RDKit 能力。DockStart 不会自动安装 RDKit。",
-            "raw_error": raw_error or completed.stdout.strip(),
+            "raw_error": raw_error or stdout.strip(),
         }
 
     try:
-        payload = json.loads(completed.stdout.strip() or "{}")
+        payload = json.loads(stdout.strip() or "{}")
     except json.JSONDecodeError as exc:
         return {
             "key": "rdkit",

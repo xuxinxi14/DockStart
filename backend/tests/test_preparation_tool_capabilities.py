@@ -24,6 +24,10 @@ def _completed(stdout: dict | str, returncode: int = 0, stderr: str = "") -> sub
     return subprocess.CompletedProcess(args=["python", "-c", "probe"], returncode=returncode, stdout=output, stderr=stderr)
 
 
+def _completed_with_none_output(returncode: int = 1) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=["python", "-c", "probe"], returncode=returncode, stdout=None, stderr=None)
+
+
 class PreparationToolCapabilityTests(unittest.TestCase):
     def test_rdkit_capabilities_mock_python_success(self) -> None:
         payload = {
@@ -50,6 +54,32 @@ class PreparationToolCapabilityTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "missing")
         self.assertIn("不会自动安装", result["message"])
+
+    def test_rdkit_capabilities_none_output_returns_structured_error(self) -> None:
+        with patch("adapters.rdkit_adapter.subprocess.run", return_value=_completed_with_none_output()):
+            result = detect_rdkit_capabilities(sys.executable, "current_environment")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("不会自动安装", result["message"])
+        self.assertIn("raw_error", result)
+
+    def test_rdkit_capabilities_uses_argument_array_for_spaced_python_path(self) -> None:
+        payload = {
+            "import_available": True,
+            "version": "mock",
+            "capabilities": {"import": {"status": "ok", "message": "mock"}},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            python_path = Path(temp_dir) / "Python With Space" / "python.exe"
+            python_path.parent.mkdir(parents=True)
+            python_path.write_text("", encoding="utf-8")
+            with patch("adapters.rdkit_adapter.subprocess.run", return_value=_completed(payload)) as run_mock:
+                result = detect_rdkit_capabilities(str(python_path), "configured")
+
+        self.assertEqual(result["status"], "ok")
+        command = run_mock.call_args.args[0]
+        self.assertIsInstance(command, list)
+        self.assertEqual(command[0], str(python_path))
 
     def test_meeko_capabilities_mock_python_success_with_unknown_preparation_api(self) -> None:
         payload = {
@@ -88,6 +118,14 @@ class PreparationToolCapabilityTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "missing")
         self.assertIn("不会自动安装", result["message"])
+
+    def test_meeko_capabilities_none_output_returns_structured_error(self) -> None:
+        with patch("adapters.meeko_adapter.subprocess.run", return_value=_completed_with_none_output()):
+            result = detect_meeko_capabilities(sys.executable, "current_environment")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("不会自动安装", result["message"])
+        self.assertIn("raw_error", result)
 
     def test_missing_python_path_returns_structured_missing(self) -> None:
         result = detect_rdkit_capabilities("Z:/missing/python.exe", "configured")

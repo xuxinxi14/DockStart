@@ -382,6 +382,8 @@ prepared/ligand.pdbqt
 
 V0.3.6 的自动准备 smoke test 使用 mock runner，不依赖真实 RDKit/Meeko，也不调用 AutoDock Vina。真实科学结果仍需要用户用实际工具和结构检查。
 
+V0.3.8 增加真实工具链兼容性验收视角：如果当前解析到的 Python 缺少 RDKit 或 Meeko，验收应停在清晰的 `missing` 状态和中文安装/配置提示，不应继续执行 preparation，也不应生成空的 `prepared/*.pdbqt`。
+
 ### 手动测试步骤
 
 1. 创建项目并下载 receptor raw PDB/CIF 与 ligand raw SDF。
@@ -397,6 +399,7 @@ V0.3.6 的自动准备 smoke test 使用 mock runner，不依赖真实 RDKit/Mee
 - raw 文件不会被当作 Vina 输入。
 - `receptor.file` 和 `ligand.file` 仍指向 prepared PDBQT。
 - preparation 失败时提示查看日志。
+- RDKit/Meeko 缺失时返回结构化中文错误，不自动安装依赖。
 - 每次 preparation 都保留独立 metadata、stdout、stderr、command、input snapshot 和 output check。
 - prepared PDBQT 补齐后，V0.1 config/run/parse/report 流程不被破坏。
 

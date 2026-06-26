@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.8
+
+- Validated V0.3 preparation toolchain behavior against the real local Python environment.
+- Confirmed missing RDKit/Meeko environments return structured `missing` results instead of continuing preparation.
+- Fixed Windows subprocess UTF-8 decoding for RDKit/Meeko capability detection and preparation command execution.
+- Added mock coverage for empty subprocess stdout/stderr and Python paths containing spaces.
+- Clarified docs that V0.3 automatic preparation depends on a user-configured Python environment with RDKit/Meeko installed; DockStart does not auto-install those packages.
+- Did not add Open Babel, PLIP, MGLTools, 3D visualization, interaction analysis, drug efficacy judgement, Vina algorithm changes, or Python runtime binaries.
+
 ## v0.3.7
 
 - Performed V0.3 preparation workflow freeze audit.

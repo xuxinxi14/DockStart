@@ -1,6 +1,6 @@
 # DockStart Toolchain Runtime
 
-本文档说明 DockStart Full 工具链中 Python runtime 的当前设计和边界。当前版本只实现 runtime 解析、manifest 检查和状态展示，不实现 RDKit/Meeko 分子处理。
+本文档说明 DockStart Full 工具链中 Python runtime 的当前设计和边界。当前版本已经具备 Python runtime 解析、manifest 检查、状态展示，以及在用户已有 RDKit/Meeko 环境可用时尝试 V0.3 ligand/receptor PDBQT 自动准备的后端能力。
 
 ## 为什么需要 Python runtime
 
@@ -27,7 +27,7 @@ bundled > configured > current_environment
 - `configured`：用户在设置页中配置的 Python 路径。
 - `current_environment`：当前运行 DockStart 后端的 Python 环境。
 
-Meeko/RDKit 的 import 检测会使用解析后的 Python。也就是说，如果 bundled Python 存在，Meeko/RDKit 检测会优先使用 bundled Python。
+Meeko/RDKit 的 import、能力检测和 V0.3 自动准备都会使用解析后的 Python。也就是说，如果 bundled Python 存在，Meeko/RDKit 检测与准备会优先使用 bundled Python；如果用户在设置页配置了 Python，则在没有 bundled Python 时使用 configured Python；否则使用 current_environment。
 
 ## bundled Python 目录结构
 
@@ -134,6 +134,8 @@ python -c "import rdkit"
 
 V0.3.2 开始，DockStart 可以使用 RDKit + Meeko 尝试把 ligand SDF/MOL raw 文件准备为 `prepared/ligand.pdbqt`。V0.3.3 开始，DockStart 可以使用 Meeko receptor CLI 尝试把 receptor PDB/CIF raw 文件准备为 `prepared/receptor.pdbqt`。当前仍不支持 MOL2/SMILES 自动准备，也不会把这些结果解释为药效判断。
 
+V0.3.8 的真实工具链验收确认了一个重要边界：如果当前解析到的 Python 缺少 RDKit 或 Meeko，DockStart 会返回 `missing` 和中文提示，不会自动安装依赖，也不会假装生成 PDBQT。用户需要在设置页配置一个已经安装 RDKit/Meeko 的 Python 环境，或自行准备 PDBQT 后走手动导入流程。
+
 ## 许可证和依赖注意事项
 
 - Python runtime 需要保留 Python Software Foundation License 相关说明；
@@ -155,4 +157,4 @@ V0.3.2 开始，DockStart 可以使用 RDKit + Meeko 尝试把 ligand SDF/MOL ra
 - 离线安装方式；
 - 是否允许随 DockStart Full 打包分发。
 
-在这些问题明确前，DockStart 只保持检测和状态展示，不做 RDKit/Meeko 分子处理。
+在这些问题明确前，DockStart 不提交完整 Python runtime 或 `site-packages/`。V0.3 自动准备只使用用户已配置或当前环境中已经可用的 RDKit/Meeko，不负责自动安装、升级或科学判断准备结果。
