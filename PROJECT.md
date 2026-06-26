@@ -569,7 +569,7 @@ V0.2.8 的真实含义是“减少用户把 raw 文件误认为可直接运行 V
 * ProjectCreatePage 提供 raw 下载和直接导入 PDBQT 两个入口；
 * ImportPdbqtPage 解释 raw 文件和 prepared PDBQT 的区别；
 * StructureFetchPage 下载后提示下一步仍需手动准备并导入 PDBQT；
-* ToolchainStatusPage 明确 Meeko/RDKit 当前只是 import 检测，不会自动处理分子。
+* ToolchainStatusPage 在 V0.2.8 阶段明确 Meeko/RDKit 当时只是 import 检测，不会自动处理分子。
 
 当前仍然明确没有实现：
 
@@ -615,7 +615,7 @@ V0.2.10 的真实含义是“验收说明和发布记录整理”，不是“新
 * V0.2 raw 下载流程记录预期产物：`raw/receptor_{PDB_ID}.pdb` 或 `.cif`，以及 `raw/ligand_{cid}.sdf`；
 * prepared 输入仍然明确为 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
 * 文档明确 raw 文件不等于 prepared PDBQT；
-* 文档明确当前仍不自动转 PDBQT；
+* 文档明确 V0.2.10 阶段仍不自动转 PDBQT；
 * roadmap 将 RDKit/Meeko 自动准备放到后续 V0.3 设计、测试和许可证审查。
 
 当前仍然明确没有实现：
@@ -782,3 +782,14 @@ V0.3.6 的真实含义是“把 V0.3 自动准备工作流写清楚，并用 moc
 * 分子动力学；
 * PDF 报告；
 * 药效判断。
+
+### 13.15 V0.3.7 preparation 冻结审计
+
+V0.3.7 的真实含义是“只做版本、文档和仓库一致性审计”，不是“新增功能”。
+
+当前已经具备：
+
+* 版本号统一为 `0.3.7`；
+* 文档中 V0.2/V0.3 历史状态表述已校准；
+* 冻结审计确认未新增 Open Babel、PLIP、MGLTools、3D 可视化、相互作用分析、药效判断或 Vina 算法变更；
+* 冻结审计确认未提交 Python runtime 二进制或大型第三方源码。

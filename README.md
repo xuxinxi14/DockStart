@@ -77,7 +77,7 @@ V0.2.8 已增强 raw/prepared 流程引导：
 - 创建项目后继续提供“下载原始结构文件”和“直接导入 PDBQT”两个入口；
 - PDBQT 导入页强调 raw 文件不能直接运行 Vina；
 - StructureFetchPage 下载后提示下一步仍需手动准备并导入 prepared PDBQT；
-- ToolchainStatusPage 明确 Meeko/RDKit 当前只是检测，不会自动处理分子。
+- ToolchainStatusPage 在 V0.2.8 阶段明确 Meeko/RDKit 当时只是检测，不会自动处理分子。
 
 V0.2.9 已新增手动 PDBQT 准备指南：
 
@@ -92,7 +92,7 @@ V0.2.10 已整理 smoke test 和 release notes：
 - [docs/smoke_test.md](docs/smoke_test.md) 现在区分 V0.1 本地 prepared PDBQT 完整流程和 V0.2 raw 下载流程；
 - V0.2 raw 下载流程的预期产物是 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`，以及 `raw/ligand_{cid}.sdf`；
 - Vina 当前运行流程仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
-- 文档明确 raw 文件不等于 prepared PDBQT，DockStart 当前仍不自动转 PDBQT；
+- 文档明确 raw 文件不等于 prepared PDBQT，DockStart 在 V0.2.10 阶段仍不自动转 PDBQT；
 - 后续 V0.3 才考虑 RDKit/Meeko 自动准备的设计、测试和许可证审查。
 
 V0.3.0 已开始自动准备工作流基础：
@@ -115,7 +115,7 @@ V0.3.2 已实现配体 PDBQT 自动准备的最小闭环：
 - 使用当前解析到的 Python + RDKit + Meeko 生成 `prepared/ligand.pdbqt`；
 - 默认不覆盖已有 `prepared/ligand.pdbqt`，需要用户显式开启 overwrite；
 - 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
-- 当前仍不支持 receptor 自动准备、MOL2/SMILES 自动准备，也不改变 Vina 主流程。
+- V0.3.2 阶段仍不支持 receptor 自动准备、MOL2/SMILES 自动准备，也不改变 Vina 主流程。
 
 V0.3.3 已实现受体 PDBQT 自动准备的最小闭环：
 
@@ -145,6 +145,12 @@ V0.3.6 已完成 preparation 工作流文档收尾：
 - 新增 mock preparation smoke test，不依赖真实 RDKit/Meeko/Vina；
 - 明确自动准备不保证质子化、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确；
 - 仍不包含 Open Babel、MGLTools、PLIP、3D 可视化、相互作用分析、分子动力学、PDF 报告或药效判断。
+
+V0.3.7 是 V0.3 后端冻结审计：
+
+- 统一版本号到 `0.3.7`；
+- 校准文档中 V0.2/V0.3 的历史表述；
+- 不新增功能，不改变 Vina 主流程。
 
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 

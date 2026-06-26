@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.7
+
+- Performed V0.3 preparation workflow freeze audit.
+- Unified project version numbers to `0.3.7`.
+- Clarified historical V0.2/V0.3 wording so old "current" statements do not imply missing features after V0.3.6.
+- Reconfirmed no Open Babel, PLIP, MGLTools, 3D visualization, interaction analysis, drug efficacy judgement, Vina algorithm changes, Python runtime binaries, or SSL changes were added.
+
 ## v0.3.6
 
 - Documented the V0.3 automated PDBQT preparation workflow from raw downloads through preparation, box/config/run, result parsing, and Markdown report export.
