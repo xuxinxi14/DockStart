@@ -468,3 +468,25 @@ conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setup
 - 不做相互作用分析；
 - 不判断 docking pose 是否真实结合；
 - 不修改 Vina config 生成语义。
+
+## V0.4.3 Docking Pose Viewer Smoke Test
+
+### 测试目标
+
+验证 ViewerPage 可以从已有 run 中读取 `out.pdbqt` 的 mode，并在 `scores.csv` 存在时显示 affinity/rmsd 摘要。
+
+### 手动测试步骤
+
+1. 准备 `runs/run_001/out.pdbqt`，至少包含一个 `MODEL ... ENDMDL`，或一个无 `MODEL` 的单 pose PDBQT 文本。
+2. 可选准备 `runs/run_001/scores.csv`，表头为 `mode,affinity_kcal_mol,rmsd_lb,rmsd_ub`。
+3. 打开 ViewerPage，输入 `run_001`。
+4. 点击“读取 pose 列表”。
+5. 预期：页面列出 mode；如果 `scores.csv` 存在，显示 affinity/rmsd；如果缺失，显示 warning 但不阻止查看。
+6. 点击“查看 mode 1”，预期 viewer 加载 pose，并尝试同时显示 prepared receptor。
+
+### 边界
+
+- 不解析相互作用；
+- 不修改 `out.pdbqt`；
+- 不调用 AutoDock Vina；
+- 不把 docking score 解释为药效。

@@ -540,6 +540,17 @@ fn load_docking_pose_for_viewer(project_dir: String, run_id: String, mode: Optio
 }
 
 #[tauri::command]
+fn load_pose_score_summary(project_dir: String, run_id: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["score-summary".to_string(), project_dir, run_id],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 pose score 摘要。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_box_visualization(project_dir: String) -> String {
     match run_backend_module(
         "dockstart_core.viewer",
@@ -743,6 +754,7 @@ fn main() {
             load_structure_for_viewer,
             list_docking_poses,
             load_docking_pose_for_viewer,
+            load_pose_score_summary,
             get_box_visualization,
             update_box_from_visualization
         ])

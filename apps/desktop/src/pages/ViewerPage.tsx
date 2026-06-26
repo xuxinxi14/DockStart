@@ -4,6 +4,8 @@ import * as $3Dmol from "3dmol";
 import type {
   BoxVisualizationPayload,
   BoxVisualizationResponse,
+  DockingPoseListResponse,
+  DockingPoseSummary,
   DockStartProject,
   ViewerFileKind,
   ViewerFileStatusResponse,
@@ -36,6 +38,10 @@ function parseViewerStructure(rawPayload: string): ViewerStructureResult {
 
 function parseBoxVisualization(rawPayload: string): BoxVisualizationResponse {
   return JSON.parse(rawPayload) as BoxVisualizationResponse;
+}
+
+function parseDockingPoseList(rawPayload: string): DockingPoseListResponse {
+  return JSON.parse(rawPayload) as DockingPoseListResponse;
 }
 
 function formatBytes(size: number): string {
@@ -115,6 +121,16 @@ function localBoxWarnings(box: DockStartProject["box"]): string[] {
     : [];
 }
 
+function latestRunId(project: DockStartProject): string {
+  for (const run of [...project.runs].reverse()) {
+    const value = run.run_id;
+    if (typeof value === "string" && value) {
+      return value;
+    }
+  }
+  return "";
+}
+
 export default function ViewerPage({ project, onBack, onProjectChange }: ViewerPageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
@@ -124,6 +140,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     buildLocalBoxVisualization(project.box),
   );
   const [boxWarnings, setBoxWarnings] = useState<string[]>([]);
+  const [runId, setRunId] = useState(() => latestRunId(project));
+  const [poseList, setPoseList] = useState<DockingPoseListResponse | null>(null);
+  const [selectedPose, setSelectedPose] = useState<DockingPoseSummary | null>(null);
   const [status, setStatus] = useState<ViewerFileStatusResponse | null>(null);
   const [structure, setStructure] = useState<ViewerStructureResult | null>(null);
   const [message, setMessage] = useState("");
@@ -176,6 +195,44 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     [boxVisualization, clearViewer],
   );
 
+  const renderPoseWithReceptor = useCallback(
+    async (poseStructure: ViewerStructureResult) => {
+      clearViewer();
+      if (!containerRef.current) {
+        return;
+      }
+      try {
+        const viewer = $3Dmol.createViewer(containerRef.current, { backgroundColor: "white" });
+        try {
+          const rawReceptor = await invoke<string>("load_structure_for_viewer", {
+            projectDir: project.project_dir,
+            fileKind: "receptor_prepared",
+          });
+          const receptor = parseViewerStructure(rawReceptor);
+          if (receptor.ok && viewerFormats.has(receptor.format)) {
+            const receptorModel = viewer.addModel(receptor.content, receptor.format);
+            receptorModel.setStyle({}, { cartoon: { color: "spectrum", opacity: 0.72 }, stick: { radius: 0.08 } });
+          }
+        } catch {
+          // Pose viewing still works without a prepared receptor reference.
+        }
+
+        const poseModel = viewer.addModel(poseStructure.content, poseStructure.format);
+        poseModel.setStyle({}, { stick: { radius: 0.26, colorscheme: "magentaCarbon" } });
+        if (boxVisualization) {
+          viewer.addBox(boxVisualization.viewer_box_payload);
+        }
+        viewer.zoomTo();
+        viewer.render();
+        viewerRef.current = viewer;
+      } catch (error) {
+        setMessage("3Dmol.js 未能显示该 docking pose。");
+        setRawError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [boxVisualization, clearViewer, project.project_dir],
+  );
+
   const reloadStatus = useCallback(async () => {
     setIsBusy(true);
     setRawError("");
@@ -207,6 +264,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       });
       const parsed = parseViewerStructure(rawPayload);
       setStructure(parsed);
+      setSelectedPose(null);
       if (!parsed.ok) {
         clearViewer();
         setMessage(parsed.error?.message ?? parsed.message ?? "结构文件无法加载。");
@@ -223,6 +281,65 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       setIsBusy(false);
     }
   }, [clearViewer, fileKind, project.project_dir, renderStructure]);
+
+  const loadPoseList = useCallback(async () => {
+    if (!runId.trim()) {
+      setMessage("请先输入 run_id，例如 run_001。");
+      return;
+    }
+    setIsBusy(true);
+    setRawError("");
+    try {
+      const rawPayload = await invoke<string>("list_docking_poses", {
+        projectDir: project.project_dir,
+        runId: runId.trim(),
+      });
+      const parsed = parseDockingPoseList(rawPayload);
+      setPoseList(parsed);
+      if (!parsed.ok) {
+        setMessage(parsed.error?.message ?? "pose 列表读取失败。");
+        setRawError(parsed.error?.raw_error ?? "");
+        return;
+      }
+      setMessage(parsed.message ?? "pose 列表已读取。");
+    } catch (error) {
+      setMessage("前端未能调用 pose 列表命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [project.project_dir, runId]);
+
+  const loadPose = useCallback(
+    async (mode: number) => {
+      setIsBusy(true);
+      setRawError("");
+      try {
+        const rawPayload = await invoke<string>("load_docking_pose_for_viewer", {
+          projectDir: project.project_dir,
+          runId: runId.trim(),
+          mode,
+        });
+        const parsed = parseViewerStructure(rawPayload);
+        if (!parsed.ok) {
+          setMessage(parsed.error?.message ?? "docking pose 读取失败。");
+          setRawError(parsed.error?.raw_error ?? "");
+          return;
+        }
+        setStructure(parsed);
+        setSelectedPose(poseList?.poses.find((pose) => pose.mode === mode) ?? null);
+        setFileKind("docking_output");
+        setMessage("已加载 docking pose。Docking pose 和 docking score 仅供结构查看与趋势参考，不能证明真实结合或药效。");
+        await renderPoseWithReceptor(parsed);
+      } catch (error) {
+        setMessage("前端未能调用 docking pose 读取命令。");
+        setRawError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [poseList?.poses, project.project_dir, renderPoseWithReceptor, runId],
+  );
 
   const loadBoxVisualization = useCallback(async () => {
     try {
@@ -290,9 +407,13 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
 
   useEffect(() => {
     if (structure?.ok) {
+      if (selectedPose && structure.file_kind === "docking_output") {
+        void renderPoseWithReceptor(structure);
+        return;
+      }
       renderStructure(structure);
     }
-  }, [boxVisualization, renderStructure, structure]);
+  }, [boxVisualization, renderPoseWithReceptor, renderStructure, selectedPose, structure]);
 
   const selectedStatus = status?.files?.[fileKind];
   const selectedOption = fileKindOptions.find((item) => item.value === fileKind);
@@ -348,6 +469,64 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             清空 viewer
           </button>
         </div>
+      </section>
+
+      <section className="panel viewer-controls" aria-label="Docking pose controls">
+        <h2>Docking pose 查看</h2>
+        <p className="placeholder-note">
+          选择已有 run_id 后读取 runs/&lt;run_id&gt;/out.pdbqt。Docking pose 和 score 仅供结构查看与趋势参考，不能证明真实结合或药效。
+        </p>
+        <label className="viewer-source-row">
+          <span>run_id</span>
+          <input
+            type="text"
+            value={runId}
+            placeholder="run_001"
+            onChange={(event) => setRunId(event.target.value)}
+          />
+        </label>
+        <div className="toolbar project-toolbar">
+          <button className="secondary-button" type="button" disabled={isBusy || !runId.trim()} onClick={() => void loadPoseList()}>
+            读取 pose 列表
+          </button>
+        </div>
+        {poseList?.warnings?.length ? (
+          <div className="warning-note">
+            {poseList.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
+        ) : null}
+        {poseList?.poses?.length ? (
+          <div className="scores-table-wrapper">
+            <table className="scores-table">
+              <thead>
+                <tr>
+                  <th>mode</th>
+                  <th>affinity</th>
+                  <th>rmsd_lb</th>
+                  <th>rmsd_ub</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {poseList.poses.map((pose) => (
+                  <tr key={pose.mode}>
+                    <td>{pose.mode}</td>
+                    <td>{pose.affinity_kcal_mol ?? "未解析"}</td>
+                    <td>{pose.rmsd_lb ?? "未解析"}</td>
+                    <td>{pose.rmsd_ub ?? "未解析"}</td>
+                    <td>
+                      <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void loadPose(pose.mode)}>
+                        查看 mode {pose.mode}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel viewer-controls" aria-label="Box visualization controls">
@@ -409,6 +588,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             <div>
               <dt>大小</dt>
               <dd>{formatBytes(structure?.size_bytes ?? selectedStatus?.size_bytes ?? 0)}</dd>
+            </div>
+            <div>
+              <dt>当前 pose</dt>
+              <dd>
+                {selectedPose
+                  ? `mode ${selectedPose.mode}, affinity ${selectedPose.affinity_kcal_mol ?? "未解析"}`
+                  : "未选择"}
+              </dd>
             </div>
           </dl>
           {message ? <div className="settings-message">{message}</div> : null}

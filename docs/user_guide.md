@@ -429,3 +429,5 @@ V0.4.0 已提供后端 viewer 读取接口，可以把项目内的 `raw/`、`pre
 V0.4.1 已新增最小 ViewerPage。进入项目后，可以从 PreparationPage 或 ImportPdbqtPage 点击“打开 3D 查看 / 查看 prepared 文件”，也可以在已有当前项目时从首页进入。页面支持选择 receptor raw、ligand raw、receptor prepared、ligand prepared 或最近 docking output，加载后可清空 viewer 或重新居中。当前还不显示 Box 线框，也不支持 pose-score 对应表。
 
 V0.4.2 已在 ViewerPage 中加入 Box 可视化设置。页面会读取 `project.json.box`，显示 `center_x/y/z` 和 `size_x/y/z` 六个参数，单位为 Å；修改输入框时会刷新 viewer 中的 Box overlay，点击“保存 Box 参数”后写回同一个 `project.json.box` 字段。Box 可视化只是帮助查看搜索空间，不代表 DockStart 自动识别结合口袋。
+
+V0.4.3 已支持 docking pose 查看。输入 `run_001` 这类 run_id 后，ViewerPage 可以读取 `runs/{run_id}/out.pdbqt`，列出 mode，并在 `scores.csv` 存在时显示 affinity、rmsd_lb、rmsd_ub。点击某个 mode 后，页面会尝试同时显示 prepared receptor 和选中的 pose。该功能只用于几何查看和结果复核，不做相互作用分析或药效判断。

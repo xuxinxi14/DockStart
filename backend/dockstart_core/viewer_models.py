@@ -30,6 +30,9 @@ class DockingPoseSummary:
     relative_path: str
     size_bytes: int
     line_count: int
+    affinity_kcal_mol: float | None = None
+    rmsd_lb: float | None = None
+    rmsd_ub: float | None = None
     message: str = ""
     warnings: list[str] = field(default_factory=list)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import csv
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -462,6 +463,107 @@ def _parse_pdbqt_poses(content: str) -> list[dict[str, Any]]:
     return poses
 
 
+def _parse_float_cell(value: Any) -> float | None:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
+def _default_scores_relative_path(project_dir: str, run_id: str) -> str:
+    metadata_path = _project_root(project_dir) / "runs" / run_id / "metadata.json"
+    if metadata_path.exists():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(metadata, dict) and metadata.get("scores_file"):
+                return str(metadata["scores_file"])
+        except Exception:
+            pass
+    return Path("runs", run_id, "scores.csv").as_posix()
+
+
+def load_pose_score_summary(project_dir: str, run_id: str) -> dict[str, Any]:
+    if not RUN_ID_PATTERN.match(run_id):
+        return _viewer_error(
+            "VIEWER_RUN_ID_INVALID",
+            "run_id 格式无效，应类似 run_001。",
+            raw_error=str(run_id),
+            suggestion="请使用项目 runs 列表中的 run_id。",
+        )
+
+    relative_path = _default_scores_relative_path(project_dir, run_id)
+    project_root = _project_root(project_dir)
+    scores_path, path_error = _resolve_project_file(project_root, relative_path, "scores_csv")
+    if path_error:
+        return path_error
+    assert scores_path is not None
+
+    if not scores_path.exists():
+        return {
+            "ok": True,
+            "project_dir": str(project_root),
+            "run_id": run_id,
+            "scores_file": relative_path,
+            "scores": [],
+            "warnings": ["没有找到 scores.csv，仍可查看 docking pose，但不会显示 affinity/rmsd 摘要。"],
+            "message": "scores.csv 不存在，pose 查看将只显示几何结构。",
+            "error": None,
+        }
+    if not scores_path.is_file() or scores_path.stat().st_size <= 0:
+        return {
+            "ok": True,
+            "project_dir": str(project_root),
+            "run_id": run_id,
+            "scores_file": relative_path,
+            "scores": [],
+            "warnings": ["scores.csv 不可读取或为空，仍可查看 docking pose。"],
+            "message": "scores.csv 不可读取或为空，pose 查看将只显示几何结构。",
+            "error": None,
+        }
+
+    scores: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    try:
+        with scores_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for index, row in enumerate(reader, start=2):
+                try:
+                    mode = int(str(row.get("mode", "")).strip())
+                except Exception:
+                    warnings.append(f"scores.csv 第 {index} 行 mode 无法解析，已跳过。")
+                    continue
+                scores.append(
+                    {
+                        "mode": mode,
+                        "affinity_kcal_mol": _parse_float_cell(row.get("affinity_kcal_mol")),
+                        "rmsd_lb": _parse_float_cell(row.get("rmsd_lb")),
+                        "rmsd_ub": _parse_float_cell(row.get("rmsd_ub")),
+                    }
+                )
+    except Exception as exc:  # noqa: BLE001 - return structured warnings.
+        return {
+            "ok": True,
+            "project_dir": str(project_root),
+            "run_id": run_id,
+            "scores_file": relative_path,
+            "scores": [],
+            "warnings": [f"读取 scores.csv 时发生错误，仍可查看 docking pose：{exc}"],
+            "message": "scores.csv 读取失败，pose 查看将只显示几何结构。",
+            "error": None,
+        }
+
+    return {
+        "ok": True,
+        "project_dir": str(project_root),
+        "run_id": run_id,
+        "scores_file": relative_path,
+        "scores": scores,
+        "warnings": warnings,
+        "message": "pose score 摘要已读取。",
+        "error": None,
+    }
+
+
 def list_docking_poses(project_dir: str, run_id: str) -> dict[str, Any]:
     relative_path, path_error = _run_output_relative_path(project_dir, run_id)
     if path_error:
@@ -476,16 +578,29 @@ def list_docking_poses(project_dir: str, run_id: str) -> dict[str, Any]:
 
     content = Path(validation["absolute_path"]).read_text(encoding="utf-8", errors="replace")
     poses = _parse_pdbqt_poses(content)
+    score_summary = load_pose_score_summary(project_dir, run_id)
+    score_by_mode = {
+        int(score["mode"]): score
+        for score in score_summary.get("scores", [])
+        if isinstance(score, dict) and str(score.get("mode", "")).isdigit()
+    }
     summaries = [
-        DockingPoseSummary(
-            mode=int(pose["mode"]),
-            relative_path=relative_path,
-            size_bytes=len(pose["content"].encode("utf-8")),
-            line_count=len(pose["content"].splitlines()),
-            message="已识别 docking pose。",
-        ).to_dict()
+        (
+            lambda pose_mode, score: DockingPoseSummary(
+                mode=pose_mode,
+                relative_path=relative_path,
+                size_bytes=len(pose["content"].encode("utf-8")),
+                line_count=len(pose["content"].splitlines()),
+                affinity_kcal_mol=score.get("affinity_kcal_mol") if score else None,
+                rmsd_lb=score.get("rmsd_lb") if score else None,
+                rmsd_ub=score.get("rmsd_ub") if score else None,
+                message="已识别 docking pose。",
+            ).to_dict()
+        )(int(pose["mode"]), score_by_mode.get(int(pose["mode"])))
         for pose in poses
     ]
+    warnings = [] if poses else ["out.pdbqt 中没有识别到可显示的 pose。"]
+    warnings.extend(score_summary.get("warnings", []))
     return {
         "ok": True,
         "project_dir": str(_project_root(project_dir)),
@@ -493,8 +608,9 @@ def list_docking_poses(project_dir: str, run_id: str) -> dict[str, Any]:
         "relative_path": relative_path,
         "format": validation["format"],
         "poses": summaries,
+        "scores_file": score_summary.get("scores_file", ""),
         "message": "Docking pose 列表已读取，仅用于几何查看。",
-        "warnings": [] if poses else ["out.pdbqt 中没有识别到可显示的 pose。"],
+        "warnings": warnings,
         "error": None,
     }
 
@@ -533,6 +649,11 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
             suggestion="请从 pose 列表中选择已有 mode。",
         )
 
+    score_summary = load_pose_score_summary(project_dir, run_id)
+    selected_score = next(
+        (score for score in score_summary.get("scores", []) if isinstance(score, dict) and score.get("mode") == selected_mode),
+        None,
+    )
     return ViewerStructureResult(
         ok=True,
         file_kind="docking_output",
@@ -543,9 +664,9 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
         content=str(selected["content"]),
         size_bytes=len(str(selected["content"]).encode("utf-8")),
         message=f"已读取 docking pose mode {selected_mode}，仅用于几何查看。",
-        warnings=[],
+        warnings=score_summary.get("warnings", []),
         error=None,
-    ).to_dict() | {"run_id": run_id, "mode": selected_mode}
+    ).to_dict() | {"run_id": run_id, "mode": selected_mode, "score": selected_score}
 
 
 def _print_json(payload: dict[str, Any]) -> None:
@@ -604,6 +725,13 @@ def main() -> None:
             return
         mode = int(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[4] else None
         _print_json(load_docking_pose_for_viewer(sys.argv[2], sys.argv[3], mode))
+        return
+
+    if command == "score-summary":
+        if len(sys.argv) < 4:
+            _print_json(_viewer_error("VIEWER_SCORE_SUMMARY_ARGS", "读取 pose score 摘要需要 project_dir 和 run_id 参数。"))
+            return
+        _print_json(load_pose_score_summary(sys.argv[2], sys.argv[3]))
         return
 
     _print_json(_viewer_error("VIEWER_COMMAND_UNKNOWN", f"未知 Viewer 命令：{command}"))

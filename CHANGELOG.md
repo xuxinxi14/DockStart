@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.3
+
+- Enhanced docking pose parsing for `runs/{run_id}/out.pdbqt`, including multi-`MODEL` files and single-pose files without `MODEL` records.
+- Added pose score summary loading from `runs/{run_id}/scores.csv` when available.
+- ViewerPage can list pose modes, show affinity/rmsd summaries, and load a selected mode for 3D viewing with prepared receptor context.
+- Missing `scores.csv` no longer blocks pose viewing; DockStart shows a warning and keeps geometry viewing available.
+- Did not modify `out.pdbqt`, call Vina, add PLIP/ProLIF, perform interaction analysis, or make drug efficacy judgements.
+
 ## v0.4.2
 
 - Added backend Box visualization payloads for center, size, min/max, corners, and 3Dmol box overlay data.

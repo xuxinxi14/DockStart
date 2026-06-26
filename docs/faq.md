@@ -116,3 +116,5 @@ Viewer 只负责几何查看的数据通道，不做相互作用分析、pocket 
 V0.4.1 的 ViewerPage 使用 npm 依赖 `3dmol`，不使用外部 CDN。它能尝试显示 PDB/PDBQT/CIF/SDF/MOL/MOL2 文本结构文件；不同格式的显示效果取决于 3Dmol.js 对该格式的支持。显示成功也不代表结构准备或 docking 结果在科学上正确。
 
 V0.4.2 可以在 ViewerPage 中显示并保存 docking box 参数。这个 Box overlay 只对应 Vina 搜索空间参数，不是 pocket prediction；如果 size 设得过大，DockStart 会显示 warning，但是否合理仍需要用户结合受体结构和研究目标判断。
+
+V0.4.3 可以读取 Vina 输出的 `out.pdbqt` 并按 mode 查看 pose。如果 `scores.csv` 已由结果解析步骤生成，ViewerPage 会显示 affinity 和 RMSD 摘要；如果没有 `scores.csv`，仍可查看 pose，但不会显示分数摘要。DockStart 不会从 pose 自动推断氢键、疏水作用、盐桥或药效。

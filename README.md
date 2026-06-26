@@ -192,7 +192,7 @@ V0.4.1 已新增最小 3Dmol.js ViewerPage：
 - 提供清空 viewer 和重新居中按钮；
 - 如果结构格式无法显示，会给出中文提示而不是崩溃。
 
-pose 与 `scores.csv` 的对应显示、指定 run/mode 切换仍属于 V0.4.3–V0.4.4 的后续阶段。
+workflow status 的 viewer 推荐入口仍属于 V0.4.4 的后续阶段。
 
 V0.4.2 已完成 Box 可视化数据与保存同步：
 
@@ -202,6 +202,16 @@ V0.4.2 已完成 Box 可视化数据与保存同步：
 - size 大于 60 Å 时显示 warning 但允许保存。
 
 Box 可视化只是帮助定位 Vina 搜索空间，不代表自动识别结合口袋，也不会改变 Vina config 生成逻辑。
+
+V0.4.3 已支持 docking pose 查看：
+
+- 可读取 `runs/{run_id}/out.pdbqt` 中的 `MODEL/ENDMDL`；
+- 如果没有 `MODEL`，会作为单 pose 显示；
+- 如果 `runs/{run_id}/scores.csv` 存在，会按 mode 显示 affinity 与 RMSD 摘要；
+- 缺少 `scores.csv` 不阻止查看 pose，只显示 warning；
+- 选中 mode 后可以与 prepared receptor 一起显示。
+
+Docking pose 和 docking score 只供结构查看与趋势参考，不能证明真实结合或药效。
 
 ## 当前暂不支持
 

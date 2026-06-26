@@ -651,7 +651,8 @@ button {
   font-weight: 700;
 }
 
-.viewer-source-row select {
+.viewer-source-row select,
+.viewer-source-row input {
   min-height: 40px;
   min-width: 0;
   border: 1px solid #b7c7d8;

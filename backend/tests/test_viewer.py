@@ -107,6 +107,66 @@ class ViewerTests(unittest.TestCase):
             self.assertTrue(pose["ok"])
             self.assertIn("pose 2", pose["content"])
 
+    def test_docking_pose_scores_are_matched_by_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text(
+                "MODEL 1\nREMARK pose 1\nENDMDL\nMODEL 2\nREMARK pose 2\nENDMDL\n",
+                encoding="utf-8",
+            )
+            (run_dir / "scores.csv").write_text(
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n1,-7.1,0,0\n2,-6.4,1.2,2.3\n",
+                encoding="utf-8",
+            )
+
+            poses = viewer.list_docking_poses(str(project_dir), "run_001")
+            pose = viewer.load_docking_pose_for_viewer(str(project_dir), "run_001", 2)
+
+            self.assertTrue(poses["ok"])
+            self.assertEqual(poses["poses"][0]["affinity_kcal_mol"], -7.1)
+            self.assertEqual(poses["poses"][1]["rmsd_ub"], 2.3)
+            self.assertEqual(pose["score"]["affinity_kcal_mol"], -6.4)
+
+    def test_missing_scores_csv_keeps_pose_visible_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text("MODEL 1\nREMARK pose 1\nENDMDL\n", encoding="utf-8")
+
+            poses = viewer.list_docking_poses(str(project_dir), "run_001")
+
+            self.assertTrue(poses["ok"])
+            self.assertEqual(len(poses["poses"]), 1)
+            self.assertTrue(poses["warnings"])
+
+    def test_docking_output_without_model_is_single_pose(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text("REMARK single pose\nATOM\n", encoding="utf-8")
+
+            poses = viewer.list_docking_poses(str(project_dir), "run_001")
+
+            self.assertTrue(poses["ok"])
+            self.assertEqual(len(poses["poses"]), 1)
+            self.assertEqual(poses["poses"][0]["mode"], 1)
+
+    def test_missing_pose_mode_returns_structured_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text("MODEL 1\nREMARK pose 1\nENDMDL\n", encoding="utf-8")
+
+            response = viewer.load_docking_pose_for_viewer(str(project_dir), "run_001", 9)
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "VIEWER_POSE_MODE_NOT_FOUND")
+
     def test_oversized_file_returns_structured_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)

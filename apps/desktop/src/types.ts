@@ -234,6 +234,40 @@ export type ViewerStructureResult = {
   } | null;
   run_id?: string;
   mode?: number;
+  score?: PoseScoreSummary | null;
+};
+
+export type PoseScoreSummary = {
+  mode: number;
+  affinity_kcal_mol: number | null;
+  rmsd_lb: number | null;
+  rmsd_ub: number | null;
+};
+
+export type DockingPoseSummary = PoseScoreSummary & {
+  relative_path: string;
+  size_bytes: number;
+  line_count: number;
+  message: string;
+  warnings: string[];
+};
+
+export type DockingPoseListResponse = {
+  ok: boolean;
+  project_dir: string;
+  run_id: string;
+  relative_path: string;
+  format: string;
+  poses: DockingPoseSummary[];
+  scores_file: string;
+  message: string;
+  warnings: string[];
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
 };
 
 export type ViewerFileStatusResponse = {
