@@ -123,8 +123,7 @@ try:
     payload["import_available"] = True
     payload["version"] = getattr(rdkit, "__version__", "")
     payload["capabilities"]["import"] = {"status": "ok", "message": "RDKit 可导入。"}
-    sample = b"""
-DockStart
+    sample = b"""DockStart
   DockStart
 
   1  0  0  0  0  0            999 V2000

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.9
+
+- Created and validated a dedicated `dockstart-rdkit-meeko` conda environment for DockStart RDKit/Meeko preparation testing.
+- Configured DockStart local settings to use the conda environment Python as `configured` Python; `dockstart_settings.json` remains ignored and uncommitted.
+- Confirmed RDKit `2026.03.3` and Meeko `0.7.1` are detected, with ligand and receptor preparation capabilities available.
+- Successfully generated real temporary `prepared/ligand.pdbqt` and `prepared/receptor.pdbqt` from raw SDF/PDB samples, with preparation metadata/stdout/stderr/command/input/output records.
+- Fixed the RDKit inline SDF capability probe sample so real RDKit reports SDF read capability as `ok`.
+- Documented the recommended conda/mamba environment setup, the Microsoft Store Python caveat, and the Meeko receptor CLI compatibility need for `pkg_resources` / `setuptools<81`.
+- Did not add Open Babel, PLIP, MGLTools, 3D visualization, interaction analysis, drug efficacy judgement, Vina algorithm changes, SSL changes, or Python runtime binaries.
+
 ## v0.3.8
 
 - Validated V0.3 preparation toolchain behavior against the real local Python environment.

@@ -4,6 +4,8 @@
 
 V0.3.2 可以在检测到可用 Python + RDKit + Meeko 时，尝试把 ligand SDF/MOL raw 文件准备为 `prepared/ligand.pdbqt`。V0.3.3 可以在检测到可用 Python + Meeko receptor CLI 时，尝试把 receptor PDB/CIF raw 文件准备为 `prepared/receptor.pdbqt`。DockStart 当前仍不会自动处理 ligand MOL2 或 SMILES，也不会接入 Open Babel、PLIP 或 MGLTools。
 
+V0.3.9 真实工具链验收使用独立 `dockstart-rdkit-meeko` conda 环境完成。建议用户不要直接把 RDKit/Meeko 安装进 Microsoft Store Python，而是在 conda/mamba 环境中安装 `python=3.11 rdkit meeko numpy scipy`，再通过 DockStart 设置页配置该环境的 `python.exe`。
+
 ## 1. 什么是 raw 文件
 
 raw 文件是从结构数据库或其他来源得到的原始结构文件。DockStart 当前支持保存的典型 raw 文件包括：
@@ -87,6 +89,8 @@ PreparationPage 的“准备 receptor PDBQT”按钮会：
 - 自动判断金属离子、水分子、辅因子或链选择是否应该保留；
 - 保证质子化状态适合当前体系；
 - 判断 docking 结果是否具有药效意义。
+
+注意：V0.3.9 验收中 Meeko `mk_prepare_receptor.py` 需要 `pkg_resources`。如果本地环境使用较新的 `setuptools` 后出现 `No module named 'pkg_resources'`，可在独立 conda 环境中安装 `setuptools<81` 作为兼容处理。
 
 ## 7. 可选外部工具
 

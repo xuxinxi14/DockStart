@@ -415,3 +415,34 @@ V0.3.8 增加真实工具链兼容性验收视角：如果当前解析到的 Pyt
 - 药效判断。
 
 V0.4 以后再考虑 3D 可视化、box 可视化设置、相互作用分析和批量 docking。
+
+## V0.3.9 RDKit/Meeko 真实工具链验收
+
+### 测试目标
+
+验证 DockStart 可以使用独立 conda/mamba Python 环境检测 RDKit/Meeko，并在临时项目中真实生成 `prepared/ligand.pdbqt` 和 `prepared/receptor.pdbqt`。
+
+### 推荐环境
+
+```powershell
+conda create -n dockstart-rdkit-meeko -c conda-forge --override-channels python=3.11 rdkit meeko numpy scipy -y
+```
+
+如 Meeko receptor CLI 报 `No module named 'pkg_resources'`：
+
+```powershell
+conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setuptools<81" -y
+```
+
+然后在 DockStart 设置页配置该环境的 `python.exe`。不要把该环境目录、`python.exe`、`Lib/`、`DLLs/` 或 `site-packages/` 提交到 Git。
+
+### 通过标准
+
+- DockStart Python 来源显示为 `configured`。
+- RDKit import 和基础 SDF 读取能力为 `ok`。
+- Meeko import、ligand preparation capability、receptor preparation capability 为 `ok` 或给出结构化状态。
+- 临时项目可以从 ligand SDF 生成 `prepared/ligand.pdbqt`。
+- 临时项目可以从 receptor PDB 生成 `prepared/receptor.pdbqt`。
+- `preparation/ligand_001/` 和 `preparation/receptor_001/` 都包含 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`。
+- 工作流下一步建议应进入生成 `configs/vina_config.txt`，而不是把 raw 文件直接当作 Vina 输入。
+- 自动准备结果仍需用户检查质子化、电荷、构象、缺失残基、水、金属、辅因子和链选择等问题。

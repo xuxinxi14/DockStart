@@ -29,6 +29,36 @@ bundled > configured > current_environment
 
 Meeko/RDKit 的 import、能力检测和 V0.3 自动准备都会使用解析后的 Python。也就是说，如果 bundled Python 存在，Meeko/RDKit 检测与准备会优先使用 bundled Python；如果用户在设置页配置了 Python，则在没有 bundled Python 时使用 configured Python；否则使用 current_environment。
 
+## 推荐的 RDKit/Meeko conda 环境
+
+V0.3.9 真实工具链验收推荐使用独立 conda/mamba 环境，不建议直接使用 Microsoft Store Python 3.13 作为 DockStart 工具链。原因是 RDKit/Meeko 对 Python 版本、二进制依赖和脚本入口更敏感，独立环境更容易复现和排错。
+
+推荐环境名：
+
+```text
+dockstart-rdkit-meeko
+```
+
+推荐创建命令：
+
+```powershell
+conda create -n dockstart-rdkit-meeko -c conda-forge --override-channels python=3.11 rdkit meeko numpy scipy -y
+```
+
+如果使用 mamba，可将 `conda create` 替换为 `mamba create`。创建后在 DockStart 设置页中把 Python 路径配置为该环境的 `python.exe`，例如：
+
+```text
+C:\Users\<USER>\Miniconda3\envs\dockstart-rdkit-meeko\python.exe
+```
+
+V0.3.9 验收中，Meeko `0.7.1` 的 `mk_prepare_receptor.py` 仍依赖 `pkg_resources`。如果 receptor preparation 报错 `No module named 'pkg_resources'`，可以在该独立环境中安装兼容的 setuptools：
+
+```powershell
+conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setuptools<81" -y
+```
+
+这只是本地工具链环境兼容处理，不应把环境目录、`python.exe`、`Lib/`、`DLLs/` 或 `site-packages/` 提交到 Git。
+
 ## bundled Python 目录结构
 
 预期目录：
@@ -135,6 +165,8 @@ python -c "import rdkit"
 V0.3.2 开始，DockStart 可以使用 RDKit + Meeko 尝试把 ligand SDF/MOL raw 文件准备为 `prepared/ligand.pdbqt`。V0.3.3 开始，DockStart 可以使用 Meeko receptor CLI 尝试把 receptor PDB/CIF raw 文件准备为 `prepared/receptor.pdbqt`。当前仍不支持 MOL2/SMILES 自动准备，也不会把这些结果解释为药效判断。
 
 V0.3.8 的真实工具链验收确认了一个重要边界：如果当前解析到的 Python 缺少 RDKit 或 Meeko，DockStart 会返回 `missing` 和中文提示，不会自动安装依赖，也不会假装生成 PDBQT。用户需要在设置页配置一个已经安装 RDKit/Meeko 的 Python 环境，或自行准备 PDBQT 后走手动导入流程。
+
+V0.3.9 进一步确认：当 DockStart 配置到独立 `dockstart-rdkit-meeko` conda 环境后，RDKit/Meeko 可以被检测为 `ok`，并可在临时项目中真实生成 ligand/receptor PDBQT。该结果只说明工具链调用闭环可用，不代表自动准备结果在科学上一定正确。
 
 ## 许可证和依赖注意事项
 
