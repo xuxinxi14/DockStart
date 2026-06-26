@@ -71,6 +71,14 @@ V0.2.7 已支持结构来源查询增强：
 - SMILES 查询当前只返回“暂未支持”的中文结构化提示；
 - 不会用 RDKit 解析 SMILES，不会生成 3D，也不会转 PDBQT。
 
+V0.2.8 已增强 raw/prepared 流程引导：
+
+- 首页显示“下载 raw → 手动准备 PDBQT → 导入 prepared PDBQT → 设置参数 → 运行 Vina”的当前推荐流程；
+- 创建项目后继续提供“下载原始结构文件”和“直接导入 PDBQT”两个入口；
+- PDBQT 导入页强调 raw 文件不能直接运行 Vina；
+- StructureFetchPage 下载后提示下一步仍需手动准备并导入 prepared PDBQT；
+- ToolchainStatusPage 明确 Meeko/RDKit 当前只是检测，不会自动处理分子。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：

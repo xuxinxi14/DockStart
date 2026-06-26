@@ -1,6 +1,6 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.7 的 raw 原始结构下载、raw 记录管理与来源查询能力。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.8 的 raw 原始结构下载、raw 记录管理、来源查询与 raw/prepared 流程引导。
 
 ## 前置条件
 
@@ -11,7 +11,17 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.2.7 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
+V0.2.8 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
+
+当前推荐流程：
+
+```text
+下载 raw 原始结构
+手动准备 PDBQT
+导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
+设置 Box 和 Vina 参数
+运行 Vina
+```
 
 ## 1. 配置工具路径
 
@@ -54,6 +64,11 @@ project_name/
 
 - 项目目录已存在：换一个项目名，DockStart 不会覆盖已有项目；
 - 项目名称包含非法字符：避免使用 Windows 文件名保留字符，如 `\ / : * ? " < > |`。
+
+创建成功后，页面会提供两个入口：
+
+- 下载原始结构文件：适合还没有 raw PDB/CIF/SDF 的情况；
+- 直接导入 PDBQT：适合已经用外部工具准备好 receptor/ligand PDBQT 的情况。
 
 ## 3. 可选：下载原始结构文件
 
@@ -116,7 +131,7 @@ StructureFetchPage 会显示：
 
 - raw 文件不能直接运行 AutoDock Vina；
 - DockStart 当前不会自动生成 PDBQT；
-- 下载 raw 文件后，仍需准备并导入 `receptor.pdbqt` 和 `ligand.pdbqt`。
+- 下载 raw 文件后，下一步仍需手动准备并导入 `receptor.pdbqt` 和 `ligand.pdbqt`。
 
 常见错误：
 

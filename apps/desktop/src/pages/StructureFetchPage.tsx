@@ -419,6 +419,13 @@ export default function StructureFetchPage({
         </button>
       </div>
 
+      <div className="ready-note">
+        <span>下载 raw 文件后，下一步仍是手动准备 PDBQT，并在导入页选择 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。</span>
+        <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
+          去导入 prepared PDBQT
+        </button>
+      </div>
+
       <div className="warning-note">
         DockStart 当前不会调用 RDKit、Meeko、Open Babel、PLIP、MGLTools，也不会自动准备 docking 输入。raw 记录可以清除，
         但 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。

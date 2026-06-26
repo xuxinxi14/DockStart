@@ -313,6 +313,11 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
         </button>
       </div>
 
+      <div className="disclaimer-note">
+        Meeko 和 RDKit 当前只用于 import 检测。即使检测为可用，DockStart 也不会自动处理分子、不会生成 PDBQT，
+        raw 文件仍需用户手动准备为 prepared PDBQT 后再运行 Vina。
+      </div>
+
       {status ? (
         <>
           <div className="summary-grid">

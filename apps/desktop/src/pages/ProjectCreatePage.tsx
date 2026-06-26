@@ -94,6 +94,11 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
         </p>
       </div>
 
+      <div className="disclaimer-note">
+        创建项目后有两条入口：可以先下载 raw 原始结构，也可以直接导入已经准备好的 PDBQT。
+        raw 文件不能直接运行 Vina，prepared PDBQT 才是当前运行流程的输入。
+      </div>
+
       <div className="form-panel">
         <label htmlFor="project-name">项目名称</label>
         <input
@@ -124,7 +129,9 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       {message ? <p className="settings-message">{message}</p> : null}
       {createdProject ? (
         <div className="ready-note">
-          <span>项目已创建。下一步可以先下载 raw 原始结构，也可以直接导入已经准备好的 PDBQT。</span>
+          <span>
+            项目已创建。若还没有 PDBQT，可以先下载 raw 原始结构；若已经准备好 PDBQT，可以直接导入 prepared 文件。
+          </span>
           <button
             className="secondary-button"
             type="button"

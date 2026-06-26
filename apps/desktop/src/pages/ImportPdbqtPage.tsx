@@ -119,6 +119,11 @@ export default function ImportPdbqtPage({
         <code>{project.project_dir}</code>
       </div>
 
+      <div className="disclaimer-note">
+        raw 文件通常是 PDB、CIF 或 SDF；prepared PDBQT 是经过外部工具准备后的 Vina 输入。
+        DockStart 当前不会自动把 raw 转成 PDBQT，请在外部完成准备后再导入。
+      </div>
+
       <div className="import-grid">
         <article className="import-card">
           <div className="tool-card-header">

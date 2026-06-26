@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.8
+
+- Clarified the raw-to-prepared workflow across the desktop UI.
+- Added a home-page flow: download raw structures, manually prepare PDBQT, import prepared PDBQT, set parameters, run Vina.
+- Strengthened ProjectCreatePage guidance for the two entry points: raw download or direct PDBQT import.
+- Added ImportPdbqtPage guidance explaining raw files versus prepared PDBQT files.
+- Added StructureFetchPage next-step guidance to manually prepare and import PDBQT after raw download.
+- Added ToolchainStatusPage guidance that Meeko/RDKit are detection-only and do not process molecules.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.7
 
 - Added PubChem ligand lookup by compound name, saved as `raw/ligand_name_{name}.sdf`.

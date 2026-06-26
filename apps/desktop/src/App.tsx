@@ -265,6 +265,20 @@ export default function App() {
         </div>
       </section>
 
+      <section className="panel" aria-labelledby="raw-prepared-flow">
+        <h2 id="raw-prepared-flow">当前推荐流程</h2>
+        <ol className="step-list">
+          <li>下载 raw 原始结构</li>
+          <li>手动准备 PDBQT</li>
+          <li>导入 prepared PDBQT</li>
+          <li>设置 Box 和 Vina 参数</li>
+          <li>运行 Vina 并解析报告</li>
+        </ol>
+        <p className="placeholder-note">
+          raw 文件只是 PDB/CIF/SDF 原始结构；prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 才是 Vina 当前可用输入。
+        </p>
+      </section>
+
       <section className="panel" aria-labelledby="mvp-pages">
         <h2 id="mvp-pages">MVP 页面顺序</h2>
         <ol className="step-list">
