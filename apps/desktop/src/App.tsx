@@ -166,6 +166,10 @@ export default function App() {
           project={currentProject}
           onBack={() => setCurrentPage("import-pdbqt")}
           onProjectChange={setCurrentProject}
+          onOpenViewer={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("viewer");
+          }}
           onOpenVinaParams={(project) => {
             setCurrentProject(project);
             setCurrentPage("vina-param");
@@ -250,6 +254,10 @@ export default function App() {
           runId={currentRunId}
           onBack={() => setCurrentPage("run-execute")}
           onProjectChange={setCurrentProject}
+          onOpenViewer={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("viewer");
+          }}
           onOpenReportPage={(project, runId) => {
             setCurrentProject(project);
             setCurrentRunId(runId);

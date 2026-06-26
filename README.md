@@ -213,6 +213,14 @@ V0.4.3 已支持 docking pose 查看：
 
 Docking pose 和 docking score 只供结构查看与趋势参考，不能证明真实结合或药效。
 
+V0.4.4 已把 viewer 状态接入项目 workflow status：
+
+- `get_project_workflow_status` 会返回 raw/prepared/docking output 是否可查看；
+- 如果已有 `out.pdbqt`，会提示可以查看 docking pose；
+- BoxSetupPage 和 ResultPage 增加最小“打开 3D 查看 / 查看 docking pose”入口。
+
+这些入口只帮助用户进入 ViewerPage，不改变 Vina 执行、结果解析或报告导出逻辑。
+
 ## 当前暂不支持
 
 当前仍不支持：

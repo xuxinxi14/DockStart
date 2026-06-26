@@ -431,3 +431,5 @@ V0.4.1 已新增最小 ViewerPage。进入项目后，可以从 PreparationPage 
 V0.4.2 已在 ViewerPage 中加入 Box 可视化设置。页面会读取 `project.json.box`，显示 `center_x/y/z` 和 `size_x/y/z` 六个参数，单位为 Å；修改输入框时会刷新 viewer 中的 Box overlay，点击“保存 Box 参数”后写回同一个 `project.json.box` 字段。Box 可视化只是帮助查看搜索空间，不代表 DockStart 自动识别结合口袋。
 
 V0.4.3 已支持 docking pose 查看。输入 `run_001` 这类 run_id 后，ViewerPage 可以读取 `runs/{run_id}/out.pdbqt`，列出 mode，并在 `scores.csv` 存在时显示 affinity、rmsd_lb、rmsd_ub。点击某个 mode 后，页面会尝试同时显示 prepared receptor 和选中的 pose。该功能只用于几何查看和结果复核，不做相互作用分析或药效判断。
+
+V0.4.4 已把 viewer 状态接入项目 workflow status。项目状态会记录 raw/prepared/docking output 是否可查看，并给出推荐查看动作；BoxSetupPage 可以直接进入 ViewerPage 查看 Box，ResultPage 在 run finished 后可以进入 ViewerPage 查看 docking pose。

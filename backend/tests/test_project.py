@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -831,6 +832,53 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertEqual(response["preparation"]["receptor"]["status"], "not_started")
             self.assertEqual(response["prepared"]["receptor"]["status"], "ok")
+
+    def test_project_workflow_status_viewer_empty_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertFalse(response["viewer"]["can_view_raw_receptor"])
+            self.assertFalse(response["viewer"]["can_view_prepared_ligand"])
+            self.assertFalse(response["viewer"]["can_view_docking_output"])
+            self.assertEqual(response["viewer"]["available_runs"], [])
+
+    def test_project_workflow_status_viewer_raw_and_prepared_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project_with_imports(temp_dir)
+            raw_file = project_dir / "raw" / "receptor_1ABC.pdb"
+            raw_file.write_text("ATOM receptor\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["receptor"]["raw_file"] = "raw/receptor_1ABC.pdb"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(response["viewer"]["can_view_raw_receptor"])
+            self.assertTrue(response["viewer"]["can_view_prepared_receptor"])
+            self.assertTrue(response["viewer"]["can_view_prepared_ligand"])
+
+    def test_project_workflow_status_viewer_docking_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project_with_imports(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text("MODEL 1\nREMARK pose\nENDMDL\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["runs"] = [{"run_id": "run_001", "status": "finished"}]
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(response["viewer"]["can_view_docking_output"])
+            self.assertEqual(response["viewer"]["available_runs"][0]["run_id"], "run_001")
 
     def test_generate_vina_config_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

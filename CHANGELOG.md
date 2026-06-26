@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.4
+
+- Added viewer capability fields to `get_project_workflow_status`, including raw/prepared/docking-output visibility and available run outputs.
+- Added recommended viewer actions such as preview raw, view prepared files and Box, or inspect docking poses.
+- Added minimal workflow entry points from BoxSetupPage and ResultPage into ViewerPage.
+- Fixed `backend/tests/test_project.py` so `unittest.mock` is imported explicitly and the test module can run on its own.
+- Did not change existing workflow status field semantics, Vina execution, score parsing, or report export behavior.
+
 ## v0.4.3
 
 - Enhanced docking pose parsing for `runs/{run_id}/out.pdbqt`, including multi-`MODEL` files and single-pose files without `MODEL` records.

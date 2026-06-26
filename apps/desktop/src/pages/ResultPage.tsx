@@ -7,6 +7,7 @@ type ResultPageProps = {
   runId: string;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
+  onOpenViewer: (project: DockStartProject) => void;
   onOpenReportPage: (project: DockStartProject, runId: string) => void;
 };
 
@@ -59,6 +60,7 @@ export default function ResultPage({
   runId,
   onBack,
   onProjectChange,
+  onOpenViewer,
   onOpenReportPage,
 }: ResultPageProps) {
   const [project, setProject] = useState(initialProject);
@@ -222,6 +224,9 @@ export default function ResultPage({
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRunMetadata()}>
           重新加载 run metadata
+        </button>
+        <button className="secondary-button" type="button" disabled={status !== "finished"} onClick={() => onOpenViewer(project)}>
+          查看 docking pose
         </button>
         {scores.length > 0 || displayedScoresFile ? (
           <button className="secondary-button" type="button" disabled={isBusy} onClick={() => onOpenReportPage(project, runId)}>

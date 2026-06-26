@@ -6,6 +6,7 @@ type BoxSetupPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
+  onOpenViewer: (project: DockStartProject) => void;
   onOpenVinaParams: (project: DockStartProject) => void;
 };
 
@@ -56,6 +57,7 @@ export default function BoxSetupPage({
   project: initialProject,
   onBack,
   onProjectChange,
+  onOpenViewer,
   onOpenVinaParams,
 }: BoxSetupPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
@@ -201,6 +203,12 @@ export default function BoxSetupPage({
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadBox()}>
           重新加载项目
+        </button>
+      </div>
+
+      <div className="toolbar project-toolbar">
+        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
+          在 3D 中查看 Box
         </button>
       </div>
 

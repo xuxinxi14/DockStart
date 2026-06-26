@@ -1438,6 +1438,59 @@ def _workflow_preparation_summary(project: DockStartProject, target: str) -> dic
     }
 
 
+def _workflow_viewer_status(
+    project_path: Path,
+    project: DockStartProject,
+    receptor_raw: dict[str, Any],
+    ligand_raw: dict[str, Any],
+    receptor_prepared: dict[str, Any],
+    ligand_prepared: dict[str, Any],
+) -> dict[str, Any]:
+    available_runs: list[dict[str, Any]] = []
+    for run in project.runs or []:
+        if not isinstance(run, dict):
+            continue
+        run_id = str(run.get("run_id") or "")
+        if not RUN_ID_PATTERN.match(run_id):
+            continue
+        output_file = str(run.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())
+        output_status = _workflow_file_status(project_path, output_file)
+        if output_status["status"] == "ok":
+            available_runs.append(
+                {
+                    "run_id": run_id,
+                    "status": run.get("status", ""),
+                    "output_file": output_file,
+                    "size": output_status.get("size", 0),
+                }
+            )
+
+    can_view_raw_receptor = receptor_raw["status"] == "ok"
+    can_view_raw_ligand = ligand_raw["status"] == "ok"
+    can_view_prepared_receptor = receptor_prepared["status"] == "ok"
+    can_view_prepared_ligand = ligand_prepared["status"] == "ok"
+    can_view_docking_output = bool(available_runs)
+
+    if can_view_docking_output:
+        recommended = "已有 Vina out.pdbqt，可以打开 3D Viewer 查看 docking pose。"
+    elif can_view_prepared_receptor or can_view_prepared_ligand:
+        recommended = "已有 prepared PDBQT，可以打开 3D Viewer 查看结构和 Box。"
+    elif can_view_raw_receptor or can_view_raw_ligand:
+        recommended = "已有 raw 结构，可以打开 3D Viewer 预览；运行 Vina 前仍需准备 PDBQT。"
+    else:
+        recommended = "请先下载 raw 结构或准备 PDBQT 文件，再打开 3D Viewer。"
+
+    return {
+        "can_view_raw_receptor": can_view_raw_receptor,
+        "can_view_raw_ligand": can_view_raw_ligand,
+        "can_view_prepared_receptor": can_view_prepared_receptor,
+        "can_view_prepared_ligand": can_view_prepared_ligand,
+        "can_view_docking_output": can_view_docking_output,
+        "available_runs": available_runs,
+        "recommended_viewer_action": recommended,
+    }
+
+
 def get_project_workflow_status(project_dir: str) -> dict[str, Any]:
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
@@ -1514,6 +1567,14 @@ def get_project_workflow_status(project_dir: str) -> dict[str, Any]:
         },
         "config": config_status,
         "latest_run": latest_run,
+        "viewer": _workflow_viewer_status(
+            project_path,
+            project,
+            receptor_raw,
+            ligand_raw,
+            receptor_prepared,
+            ligand_prepared,
+        ),
         "next_recommended_action": next_action,
         "message": "项目工作流状态已读取。",
         "error": None,
