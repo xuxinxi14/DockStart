@@ -539,6 +539,28 @@ fn load_docking_pose_for_viewer(project_dir: String, run_id: String, mode: Optio
     }
 }
 
+#[tauri::command]
+fn get_box_visualization(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["box-visualization".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 Box 可视化数据。", &error),
+    }
+}
+
+#[tauri::command]
+fn update_box_from_visualization(project_dir: String, box_json: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["update-box-visualization".to_string(), project_dir, box_json],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法保存 Box 可视化参数。", &error),
+    }
+}
+
 fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String> {
     let backend_dir = find_backend_dir()
         .ok_or_else(|| "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string())?;
@@ -720,7 +742,9 @@ fn main() {
             get_viewer_file_status,
             load_structure_for_viewer,
             list_docking_poses,
-            load_docking_pose_for_viewer
+            load_docking_pose_for_viewer,
+            get_box_visualization,
+            update_box_from_visualization
         ])
         .run(tauri::generate_context!())
         .expect("error while running DockStart");

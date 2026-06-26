@@ -5,10 +5,18 @@ from __future__ import annotations
 import json
 import re
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dockstart_core.project import RUN_ID_PATTERN, _error, _project_from_dict, load_project
+from dockstart_core.project import (
+    RUN_ID_PATTERN,
+    _error,
+    _project_from_dict,
+    load_project,
+    update_box_params,
+    validate_box_params,
+)
 from dockstart_core.viewer_models import DockingPoseSummary, ViewerStructureResult
 
 MAX_VIEWER_FILE_BYTES = 20 * 1024 * 1024
@@ -275,6 +283,81 @@ def get_viewer_file_status(project_dir: str) -> dict[str, Any]:
     }
 
 
+def _build_box_payload(box: dict[str, Any]) -> dict[str, Any]:
+    center_x = float(box["center_x"])
+    center_y = float(box["center_y"])
+    center_z = float(box["center_z"])
+    size_x = float(box["size_x"])
+    size_y = float(box["size_y"])
+    size_z = float(box["size_z"])
+    min_x = center_x - size_x / 2
+    max_x = center_x + size_x / 2
+    min_y = center_y - size_y / 2
+    max_y = center_y + size_y / 2
+    min_z = center_z - size_z / 2
+    max_z = center_z + size_z / 2
+    corners = [
+        {"x": x, "y": y, "z": z}
+        for x in (min_x, max_x)
+        for y in (min_y, max_y)
+        for z in (min_z, max_z)
+    ]
+    return {
+        "center_x": center_x,
+        "center_y": center_y,
+        "center_z": center_z,
+        "size_x": size_x,
+        "size_y": size_y,
+        "size_z": size_z,
+        "unit": "angstrom",
+        "min": {"x": min_x, "y": min_y, "z": min_z},
+        "max": {"x": max_x, "y": max_y, "z": max_z},
+        "corners": corners,
+        "viewer_box_payload": {
+            "center": {"x": center_x, "y": center_y, "z": center_z},
+            "dimensions": {"w": size_x, "h": size_y, "d": size_z},
+            "color": "orange",
+            "alpha": 0.16,
+            "wireframe": True,
+        },
+    }
+
+
+def get_box_visualization(project_dir: str) -> dict[str, Any]:
+    project, error = _load_project_model(project_dir)
+    if error:
+        return error
+
+    box = asdict(project.box)
+    validation = validate_box_params(box)
+    if not validation.get("ok"):
+        validation["project_dir"] = str(_project_root(project_dir))
+        return validation
+
+    payload = _build_box_payload(validation.get("box", box))
+    return {
+        "ok": True,
+        "project_dir": str(_project_root(project_dir)),
+        "box": validation.get("box", box),
+        "visualization": payload,
+        "warnings": validation.get("warnings", []),
+        "message": "Box 可视化数据已生成。Box 只表示 Vina 搜索空间，不代表自动识别结合口袋。",
+        "error": None,
+    }
+
+
+def update_box_from_visualization(project_dir: str, box_params: dict[str, Any]) -> dict[str, Any]:
+    updated = update_box_params(project_dir, box_params)
+    if not updated.get("ok"):
+        return updated
+
+    visualization = get_box_visualization(project_dir)
+    if visualization.get("ok"):
+        visualization["project"] = updated.get("project")
+        visualization["message"] = "Box 参数已保存，并已更新 viewer 可视化数据。"
+    return visualization
+
+
 def load_structure_for_viewer(project_dir: str, file_kind: str) -> dict[str, Any]:
     if file_kind not in VIEWER_FILE_KINDS:
         return _viewer_error(
@@ -487,6 +570,25 @@ def main() -> None:
             _print_json(_viewer_error("VIEWER_LOAD_ARGS", "读取结构文件需要 project_dir 和 file_kind 参数。"))
             return
         _print_json(load_structure_for_viewer(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "box-visualization":
+        if len(sys.argv) < 3:
+            _print_json(_viewer_error("VIEWER_BOX_ARGS", "读取 Box 可视化数据需要 project_dir 参数。"))
+            return
+        _print_json(get_box_visualization(sys.argv[2]))
+        return
+
+    if command == "update-box-visualization":
+        if len(sys.argv) < 4:
+            _print_json(_viewer_error("VIEWER_BOX_UPDATE_ARGS", "保存 Box 可视化参数需要 project_dir 和 box JSON 参数。"))
+            return
+        try:
+            box_params = json.loads(sys.argv[3])
+        except Exception as exc:  # noqa: BLE001 - return structured errors.
+            _print_json(_viewer_error("VIEWER_BOX_JSON_INVALID", "Box JSON 格式无效。", raw_error=str(exc)))
+            return
+        _print_json(update_box_from_visualization(sys.argv[2], box_params))
         return
 
     if command == "list-poses":

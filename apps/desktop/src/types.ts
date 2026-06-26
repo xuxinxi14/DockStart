@@ -251,6 +251,42 @@ export type ViewerFileStatusResponse = {
   } | null;
 };
 
+export type BoxVisualizationPayload = {
+  center_x: number;
+  center_y: number;
+  center_z: number;
+  size_x: number;
+  size_y: number;
+  size_z: number;
+  unit: "angstrom";
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+  corners: Array<{ x: number; y: number; z: number }>;
+  viewer_box_payload: {
+    center: { x: number; y: number; z: number };
+    dimensions: { w: number; h: number; d: number };
+    color: string;
+    alpha: number;
+    wireframe: boolean;
+  };
+};
+
+export type BoxVisualizationResponse = {
+  ok: boolean;
+  project_dir: string;
+  project?: DockStartProject | null;
+  box: DockStartProject["box"];
+  visualization: BoxVisualizationPayload;
+  warnings: string[];
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type ScoreRow = {
   mode: number;
   affinity_kcal_mol: number;

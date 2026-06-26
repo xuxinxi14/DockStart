@@ -13,7 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from dockstart_core import viewer  # noqa: E402
-from dockstart_core.project import create_project  # noqa: E402
+from dockstart_core.project import create_project, get_box_params  # noqa: E402
 
 
 class ViewerTests(unittest.TestCase):
@@ -143,6 +143,89 @@ class ViewerTests(unittest.TestCase):
 
             with patch.object(subprocess, "run") as run_mock:
                 response = viewer.get_viewer_file_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            run_mock.assert_not_called()
+
+    def test_default_box_visualization_payload_is_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            response = viewer.get_box_visualization(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["visualization"]["unit"], "angstrom")
+            self.assertEqual(response["visualization"]["center_x"], 0.0)
+            self.assertEqual(response["visualization"]["size_x"], 20.0)
+            self.assertEqual(len(response["visualization"]["corners"]), 8)
+            self.assertEqual(response["visualization"]["viewer_box_payload"]["dimensions"]["w"], 20.0)
+
+    def test_invalid_box_size_is_rejected_for_visualization_update(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            response = viewer.update_box_from_visualization(
+                str(project_dir),
+                {
+                    "center_x": 0,
+                    "center_y": 0,
+                    "center_z": 0,
+                    "size_x": 0,
+                    "size_y": 20,
+                    "size_z": 20,
+                },
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "BOX_SIZE_NOT_POSITIVE")
+
+    def test_update_box_from_visualization_updates_project_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            response = viewer.update_box_from_visualization(
+                str(project_dir),
+                {
+                    "center_x": -1.5,
+                    "center_y": 2,
+                    "center_z": 3,
+                    "size_x": 16,
+                    "size_y": 18,
+                    "size_z": 22,
+                },
+            )
+            box_response = get_box_params(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["visualization"]["center_x"], -1.5)
+            self.assertEqual(box_response["box"]["center_x"], -1.5)
+            self.assertEqual(box_response["box"]["size_z"], 22)
+
+    def test_large_box_visualization_returns_warning_but_allows_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            response = viewer.update_box_from_visualization(
+                str(project_dir),
+                {
+                    "center_x": 0,
+                    "center_y": 0,
+                    "center_z": 0,
+                    "size_x": 61,
+                    "size_y": 20,
+                    "size_z": 20,
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertTrue(response["warnings"])
+
+    def test_box_visualization_does_not_call_external_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            with patch.object(subprocess, "run") as run_mock:
+                response = viewer.get_box_visualization(str(project_dir))
 
             self.assertTrue(response["ok"])
             run_mock.assert_not_called()

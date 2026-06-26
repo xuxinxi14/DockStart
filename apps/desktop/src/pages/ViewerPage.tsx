@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as $3Dmol from "3dmol";
-import type { DockStartProject, ViewerFileKind, ViewerFileStatusResponse, ViewerStructureResult } from "../types";
+import type {
+  BoxVisualizationPayload,
+  BoxVisualizationResponse,
+  DockStartProject,
+  ViewerFileKind,
+  ViewerFileStatusResponse,
+  ViewerStructureResult,
+} from "../types";
 
 type ViewerPageProps = {
   project: DockStartProject;
   onBack: () => void;
+  onProjectChange: (project: DockStartProject) => void;
 };
 
 const fileKindOptions: Array<{ value: ViewerFileKind; label: string; description: string }> = [
@@ -24,6 +32,10 @@ function parseViewerStatus(rawPayload: string): ViewerFileStatusResponse {
 
 function parseViewerStructure(rawPayload: string): ViewerStructureResult {
   return JSON.parse(rawPayload) as ViewerStructureResult;
+}
+
+function parseBoxVisualization(rawPayload: string): BoxVisualizationResponse {
+  return JSON.parse(rawPayload) as BoxVisualizationResponse;
 }
 
 function formatBytes(size: number): string {
@@ -49,10 +61,69 @@ function displayStatus(result: ViewerStructureResult | undefined): string {
   return result.message || result.error?.message || "不可读取";
 }
 
-export default function ViewerPage({ project, onBack }: ViewerPageProps) {
+function buildLocalBoxVisualization(box: DockStartProject["box"]): BoxVisualizationPayload | null {
+  const { center_x, center_y, center_z, size_x, size_y, size_z } = box;
+  if (![center_x, center_y, center_z, size_x, size_y, size_z].every(Number.isFinite)) {
+    return null;
+  }
+  if (size_x <= 0 || size_y <= 0 || size_z <= 0) {
+    return null;
+  }
+  const min = {
+    x: center_x - size_x / 2,
+    y: center_y - size_y / 2,
+    z: center_z - size_z / 2,
+  };
+  const max = {
+    x: center_x + size_x / 2,
+    y: center_y + size_y / 2,
+    z: center_z + size_z / 2,
+  };
+  return {
+    center_x,
+    center_y,
+    center_z,
+    size_x,
+    size_y,
+    size_z,
+    unit: "angstrom",
+    min,
+    max,
+    corners: [
+      { x: min.x, y: min.y, z: min.z },
+      { x: min.x, y: min.y, z: max.z },
+      { x: min.x, y: max.y, z: min.z },
+      { x: min.x, y: max.y, z: max.z },
+      { x: max.x, y: min.y, z: min.z },
+      { x: max.x, y: min.y, z: max.z },
+      { x: max.x, y: max.y, z: min.z },
+      { x: max.x, y: max.y, z: max.z },
+    ],
+    viewer_box_payload: {
+      center: { x: center_x, y: center_y, z: center_z },
+      dimensions: { w: size_x, h: size_y, d: size_z },
+      color: "orange",
+      alpha: 0.16,
+      wireframe: true,
+    },
+  };
+}
+
+function localBoxWarnings(box: DockStartProject["box"]): string[] {
+  return [box.size_x, box.size_y, box.size_z].some((value) => value > 60)
+    ? ["对接箱体尺寸较大，可能导致搜索变慢或结果不稳定，请确认是否覆盖了合理结合区域。"]
+    : [];
+}
+
+export default function ViewerPage({ project, onBack, onProjectChange }: ViewerPageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
   const [fileKind, setFileKind] = useState<ViewerFileKind>("receptor_prepared");
+  const [box, setBox] = useState(project.box);
+  const [boxVisualization, setBoxVisualization] = useState<BoxVisualizationPayload | null>(() =>
+    buildLocalBoxVisualization(project.box),
+  );
+  const [boxWarnings, setBoxWarnings] = useState<string[]>([]);
   const [status, setStatus] = useState<ViewerFileStatusResponse | null>(null);
   const [structure, setStructure] = useState<ViewerStructureResult | null>(null);
   const [message, setMessage] = useState("");
@@ -91,6 +162,9 @@ export default function ViewerPage({ project, onBack }: ViewerPageProps) {
         } else {
           viewer.setStyle({}, { stick: { radius: 0.24, colorscheme: "greenCarbon" } });
         }
+        if (boxVisualization) {
+          viewer.addBox(boxVisualization.viewer_box_payload);
+        }
         viewer.zoomTo();
         viewer.render();
         viewerRef.current = viewer;
@@ -99,7 +173,7 @@ export default function ViewerPage({ project, onBack }: ViewerPageProps) {
         setRawError(error instanceof Error ? error.message : String(error));
       }
     },
-    [clearViewer],
+    [boxVisualization, clearViewer],
   );
 
   const reloadStatus = useCallback(async () => {
@@ -150,12 +224,75 @@ export default function ViewerPage({ project, onBack }: ViewerPageProps) {
     }
   }, [clearViewer, fileKind, project.project_dir, renderStructure]);
 
+  const loadBoxVisualization = useCallback(async () => {
+    try {
+      const rawPayload = await invoke<string>("get_box_visualization", {
+        projectDir: project.project_dir,
+      });
+      const parsed = parseBoxVisualization(rawPayload);
+      if (!parsed.ok) {
+        setMessage(parsed.error?.message ?? "Box 可视化数据读取失败。");
+        setRawError(parsed.error?.raw_error ?? "");
+        return;
+      }
+      setBox(parsed.box);
+      setBoxVisualization(parsed.visualization);
+      setBoxWarnings(parsed.warnings ?? []);
+    } catch (error) {
+      setMessage("前端未能调用 Box 可视化命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    }
+  }, [project.project_dir]);
+
+  const saveBox = useCallback(async () => {
+    setIsBusy(true);
+    setRawError("");
+    try {
+      const rawPayload = await invoke<string>("update_box_from_visualization", {
+        projectDir: project.project_dir,
+        boxJson: JSON.stringify(box),
+      });
+      const parsed = parseBoxVisualization(rawPayload);
+      if (!parsed.ok) {
+        setMessage(parsed.error?.message ?? "Box 参数保存失败。");
+        setRawError(parsed.error?.raw_error ?? "");
+        return;
+      }
+      setBox(parsed.box);
+      setBoxVisualization(parsed.visualization);
+      setBoxWarnings(parsed.warnings ?? []);
+      if (parsed.project) {
+        onProjectChange(parsed.project);
+      }
+      setMessage(parsed.message ?? "Box 参数已保存。");
+    } catch (error) {
+      setMessage("前端未能调用 Box 保存命令。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [box, onProjectChange, project.project_dir]);
+
+  const updateBoxField = (key: keyof DockStartProject["box"], value: number) => {
+    const next = { ...box, [key]: value };
+    setBox(next);
+    setBoxVisualization(buildLocalBoxVisualization(next));
+    setBoxWarnings(localBoxWarnings(next));
+  };
+
   useEffect(() => {
     void reloadStatus();
+    void loadBoxVisualization();
     return () => {
       clearViewer();
     };
-  }, [clearViewer, reloadStatus]);
+  }, [clearViewer, loadBoxVisualization, reloadStatus]);
+
+  useEffect(() => {
+    if (structure?.ok) {
+      renderStructure(structure);
+    }
+  }, [boxVisualization, renderStructure, structure]);
 
   const selectedStatus = status?.files?.[fileKind];
   const selectedOption = fileKindOptions.find((item) => item.value === fileKind);
@@ -211,6 +348,41 @@ export default function ViewerPage({ project, onBack }: ViewerPageProps) {
             清空 viewer
           </button>
         </div>
+      </section>
+
+      <section className="panel viewer-controls" aria-label="Box visualization controls">
+        <h2>Box 可视化设置</h2>
+        <p className="placeholder-note">
+          单位：Å。Box 可视化只是帮助定位搜索空间，不代表自动识别结合口袋。
+        </p>
+        <div className="box-control-grid">
+          {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<keyof DockStartProject["box"]>).map(
+            (key) => (
+              <label key={key} className="box-control">
+                <span>{key}</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={box[key]}
+                  onChange={(event) => updateBoxField(key, Number(event.target.value))}
+                />
+              </label>
+            ),
+          )}
+        </div>
+        <div className="toolbar project-toolbar">
+          <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
+            保存 Box 参数
+          </button>
+          <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadBoxVisualization()}>
+            重新读取 Box
+          </button>
+        </div>
+        {(boxWarnings.length ? boxWarnings : localBoxWarnings(box)).map((warning) => (
+          <div className="warning-note" key={warning}>
+            {warning}
+          </div>
+        ))}
       </section>
 
       <section className="viewer-layout">

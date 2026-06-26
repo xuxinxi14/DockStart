@@ -192,7 +192,16 @@ V0.4.1 已新增最小 3Dmol.js ViewerPage：
 - 提供清空 viewer 和重新居中按钮；
 - 如果结构格式无法显示，会给出中文提示而不是崩溃。
 
-Box 线框叠加、pose 与 `scores.csv` 的对应显示、指定 run/mode 切换仍属于 V0.4.2–V0.4.4 的后续阶段。
+pose 与 `scores.csv` 的对应显示、指定 run/mode 切换仍属于 V0.4.3–V0.4.4 的后续阶段。
+
+V0.4.2 已完成 Box 可视化数据与保存同步：
+
+- ViewerPage 显示并可编辑 `center_x/y/z` 与 `size_x/y/z`；
+- Box overlay 会随输入变化刷新；
+- 保存后仍写入 `project.json.box`，与 BoxSetupPage 使用同一字段；
+- size 大于 60 Å 时显示 warning 但允许保存。
+
+Box 可视化只是帮助定位 Vina 搜索空间，不代表自动识别结合口袋，也不会改变 Vina config 生成逻辑。
 
 ## 当前暂不支持
 

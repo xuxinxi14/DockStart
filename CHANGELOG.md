@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.2
+
+- Added backend Box visualization payloads for center, size, min/max, corners, and 3Dmol box overlay data.
+- Added backend/Tauri commands to read Box visualization data and save Box updates back to `project.json`.
+- Updated ViewerPage with six Box inputs, live overlay refresh, warning display for large boxes, and save/reload controls.
+- Reused the existing Box validation rules and `project.json.box` field, so BoxSetupPage and ViewerPage stay synchronized.
+- Did not add pocket detection, automatic Box recommendation, Vina config semantic changes, RDKit/Meeko calls, or Vina execution changes.
+
 ## v0.4.1
 
 - Added a minimal local 3Dmol.js ViewerPage with structure source selection, load, clear, and zoom-to-fit controls.

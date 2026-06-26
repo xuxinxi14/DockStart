@@ -669,6 +669,30 @@ button {
   align-items: start;
 }
 
+.box-control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.box-control {
+  display: grid;
+  gap: 6px;
+  color: #243b53;
+  font-weight: 700;
+}
+
+.box-control input {
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid #b7c7d8;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #243b53;
+  font: inherit;
+}
+
 .viewer-canvas {
   min-height: 560px;
   border: 1px solid #c9d6e2;

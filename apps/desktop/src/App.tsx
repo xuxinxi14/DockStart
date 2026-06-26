@@ -263,7 +263,11 @@ export default function App() {
   if (currentPage === "viewer" && currentProject) {
     return (
       <main className="app-shell">
-        <ViewerPage project={currentProject} onBack={() => setCurrentPage("preparation")} />
+        <ViewerPage
+          project={currentProject}
+          onBack={() => setCurrentPage("preparation")}
+          onProjectChange={setCurrentProject}
+        />
       </main>
     );
   }

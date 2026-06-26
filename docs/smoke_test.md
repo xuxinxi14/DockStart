@@ -446,3 +446,25 @@ conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setup
 - `preparation/ligand_001/` 和 `preparation/receptor_001/` 都包含 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`。
 - 工作流下一步建议应进入生成 `configs/vina_config.txt`，而不是把 raw 文件直接当作 Vina 输入。
 - 自动准备结果仍需用户检查质子化、电荷、构象、缺失残基、水、金属、辅因子和链选择等问题。
+## V0.4.2 Viewer / Box 可视化 Smoke Test
+
+### 测试目标
+
+验证 V0.4 viewer 数据通道、最小 3D 页面和 Box overlay 能读取同一个 DockStart 项目状态。该测试可以使用 mock PDBQT/PDB 文本文件，不要求真实 Vina 或真实 docking 结果。
+
+### 手动测试步骤
+
+1. 创建或打开一个已有 DockStart 项目。
+2. 准备 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`，可以使用测试用小文件。
+3. 打开 ViewerPage。
+4. 选择 `receptor prepared`，点击加载结构，预期 viewer 不崩溃并显示文件路径、格式和大小。
+5. 修改 `center_x/y/z` 或 `size_x/y/z`，预期 Box overlay 随输入刷新。
+6. 点击“保存 Box 参数”，预期 `project.json.box` 更新。
+7. 返回 BoxSetupPage，预期读取到同一组 box 参数。
+
+### 边界
+
+- 不做 pocket prediction；
+- 不做相互作用分析；
+- 不判断 docking pose 是否真实结合；
+- 不修改 Vina config 生成语义。
