@@ -100,7 +100,7 @@ V0.3.0 已开始自动准备工作流基础：
 - `project.json` 新增 `preparation.receptor` 和 `preparation.ligand` 状态；
 - 新增后端准备状态读取、前置检查和重置能力；
 - 新增最小 PreparationPage 入口，用于查看 raw/prepared 文件、RDKit/Meeko 检测状态和准备状态；
-- 当前阶段只建立数据模型与入口，不执行真实 RDKit/Meeko 分子处理，也不会生成 PDBQT。
+- V0.3.0 阶段只建立数据模型与入口，不执行真实 RDKit/Meeko 分子处理，也不会生成 PDBQT。
 
 V0.3.1 已增强自动准备工具能力检测：
 
@@ -125,6 +125,13 @@ V0.3.3 已实现受体 PDBQT 自动准备的最小闭环：
 - 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
 - 受体准备采用保守默认设置，仍需用户检查缺失残基、金属离子、水分子、辅因子和质子化状态。
 
+V0.3.4 已把自动准备状态接回现有 Vina 主流程：
+
+- 生成 `vina_config.txt` 和准备 run 前，会识别“已下载 raw 但尚未生成 prepared PDBQT”的状态；
+- 如果 receptor/ligand preparation 上次失败，会提示用户回到 PreparationPage 查看日志；
+- 新增项目工作流状态接口，PreparationPage 会显示下一步建议；
+- 没有修改 Vina config、Vina 执行、结果解析或报告导出逻辑。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -138,24 +145,24 @@ V0.3.3 已实现受体 PDBQT 自动准备的最小闭环：
 
 当前边界：
 
-- 需要用户自己准备 PDBQT 文件；
+- 可以从部分 raw 文件尝试自动准备 PDBQT，也可以继续手动导入 prepared PDBQT；
 - 需要用户自己安装或配置 AutoDock Vina；
-- 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
+- raw 文件不能直接运行 Vina，Vina 输入仍然是 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - raw 文件不等于 prepared PDBQT；
 - V0.3.3 已新增 ligand SDF/MOL 和 receptor PDB/CIF 到 PDBQT 的自动准备；MOL2/SMILES 和复杂结构修复仍未实现；
 - 不提交完整 Python runtime；
-- 不调用 RDKit 进行配体处理；
-- 不调用 Meeko 进行受体/配体准备；
+- 不自动安装 RDKit / Meeko；
+- 不保证 RDKit / Meeko 生成的 PDBQT 在科学上一定正确；
 - 不做药效判断。
 
 ## 当前暂不支持
 
 当前仍不支持：
 
-- PDB / SDF / MOL2 自动转 PDBQT；
-- RDKit 配体处理；
-- Meeko 受体 / 配体准备；
+- MOL2 / SMILES 自动转 PDBQT；
+- 复杂受体结构修复；
+- 自动安装 RDKit / Meeko；
 - Open Babel；
 - PLIP / MGLTools；
 - 3D 可视化选框；

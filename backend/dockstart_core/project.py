@@ -787,6 +787,48 @@ def _project_relative_file(project_dir: Path, relative_path: str, role_label: st
     return file_path, None
 
 
+def _project_file_exists_non_empty(project_dir: Path, relative_path: str) -> bool:
+    if not relative_path:
+        return False
+    path = Path(relative_path)
+    if path.is_absolute():
+        return path.is_file() and path.stat().st_size > 0
+    resolved = (project_dir.resolve() / path).resolve()
+    try:
+        resolved.relative_to(project_dir.resolve())
+    except ValueError:
+        return False
+    return resolved.is_file() and resolved.stat().st_size > 0
+
+
+def _prepared_input_hint(project: DockStartProject, project_dir: Path, target: str, fallback_error: dict[str, Any]) -> dict[str, Any]:
+    target_label = "受体" if target == "receptor" else "配体"
+    file_ref = getattr(project, target)
+    preparation_result = getattr(project.preparation, target)
+    raw_file = str(file_ref.raw_file or "")
+    fallback_code = fallback_error.get("error", {}).get("code", f"{target.upper()}_FILE_NOT_READY")
+
+    if preparation_result.status == "failed":
+        prep_error = preparation_result.error if isinstance(preparation_result.error, dict) else {}
+        return _error(
+            f"{target.upper()}_PREPARATION_FAILED",
+            f"{target_label} PDBQT 自动准备上次失败，请先查看 preparation 日志。",
+            raw_error=str(prep_error.get("raw_error") or preparation_result.log_file or raw_file),
+            suggestion=f"请回到自动准备页面查看 {target} preparation 日志，修复后重新准备或手动导入 prepared/{target}.pdbqt。",
+        )
+
+    if raw_file and fallback_code in {f"{target.upper()}_FILE_NOT_SET", f"{target.upper()}_FILE_NOT_FOUND"}:
+        if _project_file_exists_non_empty(project_dir, raw_file):
+            return _error(
+                f"{target.upper()}_PDBQT_NOT_PREPARED",
+                f"已下载 raw {target}，但尚未准备 prepared/{target}.pdbqt。",
+                raw_error=raw_file,
+                suggestion=f"请前往自动准备页面生成 prepared/{target}.pdbqt，或手动导入已经准备好的 {target}.pdbqt。",
+            )
+
+    return fallback_error
+
+
 def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
@@ -805,10 +847,10 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
 
     _, receptor_error = _project_relative_file(project_path, project.receptor.file, "receptor")
     if receptor_error:
-        return receptor_error
+        return _prepared_input_hint(project, project_path, "receptor", receptor_error)
     _, ligand_error = _project_relative_file(project_path, project.ligand.file, "ligand")
     if ligand_error:
-        return ligand_error
+        return _prepared_input_hint(project, project_path, "ligand", ligand_error)
 
     box_validation = validate_box_params(asdict(project.box))
     if not box_validation.get("ok"):
@@ -1000,7 +1042,7 @@ def _project_relative_existing_file(
 
 
 def _status_from_error_code(code: str) -> str:
-    return "missing" if code.endswith("_NOT_SET") or code.endswith("_NOT_FOUND") else "error"
+    return "missing" if code.endswith("_NOT_SET") or code.endswith("_NOT_FOUND") or code.endswith("_NOT_PREPARED") else "error"
 
 
 def _build_vina_command(
@@ -1051,6 +1093,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
 
     receptor_path, receptor_error = _project_relative_file(project_path, project.receptor.file, "receptor")
     if receptor_error:
+        receptor_error = _prepared_input_hint(project, project_path, "receptor", receptor_error)
         error = receptor_error["error"]
         checks.append(
             _run_check(
@@ -1085,6 +1128,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
 
     ligand_path, ligand_error = _project_relative_file(project_path, project.ligand.file, "ligand")
     if ligand_error:
+        ligand_error = _prepared_input_hint(project, project_path, "ligand", ligand_error)
         error = ligand_error["error"]
         checks.append(
             _run_check(
@@ -1349,6 +1393,125 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             str(exc),
             "请确认项目 runs 目录可写，并重新准备运行记录。",
         )
+
+
+def _workflow_file_status(project_dir: Path, relative_path: str) -> dict[str, Any]:
+    if not relative_path:
+        return {"path": "", "exists": False, "non_empty": False, "status": "missing"}
+    path = Path(relative_path)
+    if not path.is_absolute():
+        path = project_dir / path
+    exists = path.exists()
+    is_file = path.is_file()
+    size = path.stat().st_size if exists and is_file else 0
+    if exists and is_file and size > 0:
+        status = "ok"
+    elif exists and is_file:
+        status = "empty"
+    else:
+        status = "missing"
+    return {
+        "path": relative_path,
+        "absolute_path": str(path),
+        "exists": exists,
+        "non_empty": size > 0,
+        "size": size,
+        "status": status,
+    }
+
+
+def _workflow_preparation_summary(project: DockStartProject, target: str) -> dict[str, Any]:
+    prep = getattr(project.preparation, target)
+    return {
+        "status": prep.status,
+        "method": prep.method,
+        "input_file": prep.input_file,
+        "output_file": prep.output_file,
+        "log_file": prep.log_file,
+        "error": prep.error,
+    }
+
+
+def get_project_workflow_status(project_dir: str) -> dict[str, Any]:
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        return loaded
+
+    project_path = Path(project_dir).expanduser()
+    project = _project_from_dict(loaded["project"], project_path)
+    receptor_raw = _workflow_file_status(project_path, project.receptor.raw_file)
+    ligand_raw = _workflow_file_status(project_path, project.ligand.raw_file)
+    receptor_prepared = _workflow_file_status(project_path, project.receptor.file)
+    ligand_prepared = _workflow_file_status(project_path, project.ligand.file)
+    config_file = _config_relative_path(project)
+    config_status = _workflow_file_status(project_path, config_file)
+    box_validation = validate_box_params(asdict(project.box))
+    vina_validation = validate_vina_params(asdict(project.vina))
+    latest_run = project.runs[-1] if project.runs else None
+
+    if receptor_prepared["status"] != "ok":
+        if project.preparation.receptor.status == "failed":
+            next_action = "receptor PDBQT 自动准备失败，请查看 preparation 日志并重新准备或手动导入。"
+        elif receptor_raw["status"] == "ok":
+            next_action = "已下载 raw receptor，请准备 receptor PDBQT。"
+        else:
+            next_action = "请先下载 receptor raw 文件，或直接导入 prepared/receptor.pdbqt。"
+    elif ligand_prepared["status"] != "ok":
+        if project.preparation.ligand.status == "failed":
+            next_action = "ligand PDBQT 自动准备失败，请查看 preparation 日志并重新准备或手动导入。"
+        elif ligand_raw["status"] == "ok":
+            next_action = "已下载 raw ligand，请准备 ligand PDBQT。"
+        else:
+            next_action = "请先下载 ligand raw 文件，或直接导入 prepared/ligand.pdbqt。"
+    elif not box_validation.get("ok"):
+        next_action = "请设置合法的 docking box 参数。"
+    elif not vina_validation.get("ok"):
+        next_action = "请设置合法的 Vina 参数。"
+    elif config_status["status"] != "ok":
+        next_action = "请生成 configs/vina_config.txt。"
+    elif not latest_run:
+        next_action = "输入文件和参数已就绪，可以准备并运行 Vina。"
+    elif latest_run.get("status") == "prepared":
+        next_action = f"{latest_run.get('run_id')} 已准备，可以执行 Vina。"
+    elif latest_run.get("status") == "finished":
+        next_action = f"{latest_run.get('run_id')} 已完成，可以查看结果或导出报告。"
+    elif latest_run.get("status") == "failed":
+        next_action = f"{latest_run.get('run_id')} 运行失败，请查看 stdout/stderr/log。"
+    else:
+        next_action = "请查看最新 run 状态，并按流程继续。"
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "raw": {
+            "receptor": receptor_raw,
+            "ligand": ligand_raw,
+        },
+        "prepared": {
+            "receptor": receptor_prepared,
+            "ligand": ligand_prepared,
+        },
+        "preparation": {
+            "receptor": _workflow_preparation_summary(project, "receptor"),
+            "ligand": _workflow_preparation_summary(project, "ligand"),
+        },
+        "box": {
+            "status": "ok" if box_validation.get("ok") else "error",
+            "warnings": box_validation.get("warnings", []),
+            "error": box_validation.get("error"),
+        },
+        "vina": {
+            "status": "ok" if vina_validation.get("ok") else "error",
+            "warnings": vina_validation.get("warnings", []),
+            "error": vina_validation.get("error"),
+        },
+        "config": config_status,
+        "latest_run": latest_run,
+        "next_recommended_action": next_action,
+        "message": "项目工作流状态已读取。",
+        "error": None,
+    }
 
 
 def load_run_metadata(project_dir: str, run_id: str) -> dict[str, Any]:
@@ -2684,6 +2847,13 @@ def main() -> None:
             _print_json(_error("RUN_PREPARE_ARGS", "准备运行记录需要 project_dir 参数。"))
             return
         _print_json(prepare_vina_run(sys.argv[2]))
+        return
+
+    if command == "workflow-status":
+        if len(sys.argv) < 3:
+            _print_json(_error("WORKFLOW_STATUS_ARGS", "读取项目工作流状态需要 project_dir 参数。"))
+            return
+        _print_json(get_project_workflow_status(sys.argv[2]))
         return
 
     if command == "load-run-metadata":

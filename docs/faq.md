@@ -17,9 +17,9 @@
 
 ## 2. 为什么 Meeko/RDKit 显示 missing？
 
-V0.1 只检测 Meeko/RDKit 是否存在，不使用它们自动处理分子结构。显示 missing 不影响本地 PDBQT docking MVP，只要你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，并且 Vina 可用，就可以继续 V0.1 流程。
+V0.1 只检测 Meeko/RDKit 是否存在，不使用它们自动处理分子结构。V0.3.1 之后会检测准备能力，V0.3.2/V0.3.3 可以在工具链可用时尝试生成 ligand/receptor PDBQT。显示 missing 不影响本地 PDBQT docking MVP，只要你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，并且 Vina 可用，就可以继续 V0.1 流程。
 
-Meeko/RDKit 自动处理会在后续单独设计、测试并审查许可证；当前 V0.2 raw workflow 仍不调用它们处理分子。
+DockStart 不会自动安装 Meeko/RDKit，也不会保证自动准备结果科学正确；生成的 PDBQT 仍需要用户检查。
 
 ## 3. 为什么现在只支持 PDBQT？
 
@@ -52,7 +52,7 @@ V0.3.3 支持 ligand SDF/MOL raw 文件到 `prepared/ligand.pdbqt`，以及 rece
 
 ## 6. 为什么下载了 raw 文件还不能运行 Vina？
 
-AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2 raw workflow 负责下载、记录来源、显示 raw 状态、清除 raw 记录、基础来源查询、流程引导、手动准备文档和 smoke test 整理；V0.3.0 增加准备状态入口，但仍不做这些化学处理。
+AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2 raw workflow 负责下载、记录来源、显示 raw 状态、清除 raw 记录、基础来源查询、流程引导、手动准备文档和 smoke test 整理；V0.3.2/V0.3.3 开始在工具链可用时尝试自动准备部分格式，V0.3.4 会在 config/run 前置检查里提示 raw 已有但 prepared PDBQT 还缺失的状态。
 
 ## 6.1 V0.3.0 的自动准备入口能直接生成 PDBQT 吗？
 

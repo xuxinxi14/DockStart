@@ -131,8 +131,8 @@ StructureFetchPage 会显示：
 注意：
 
 - raw 文件不能直接运行 AutoDock Vina；
-- DockStart 当前不会自动生成 PDBQT；
-- 下载 raw 文件后，下一步仍需手动准备并导入 `receptor.pdbqt` 和 `ligand.pdbqt`。
+- DockStart 可以在 V0.3 工具链条件满足时尝试自动准备 PDBQT；
+- 下载 raw 文件后，下一步仍需进入 PreparationPage 准备 PDBQT，或手动准备并导入 `receptor.pdbqt` 和 `ligand.pdbqt`。
 
 常见错误：
 
@@ -161,6 +161,8 @@ V0.3.1 会进一步显示 RDKit import / SDF 读取探测、Meeko import / ligan
 V0.3.2 新增“准备 ligand PDBQT”按钮：当 `ligand.raw_file` 是 SDF 或 MOL，且 Python、RDKit、Meeko 与 Meeko ligand preparation 能力可用时，可以生成 `prepared/ligand.pdbqt`。默认不会覆盖已有 ligand PDBQT；stdout、stderr 和日志会保存到 `prepared/logs/`。生成结果仍需要用户检查质子化、电荷、构象等问题。
 
 V0.3.3 新增“准备 receptor PDBQT”按钮：当 `receptor.raw_file` 是 PDB 或 CIF，且 Python、Meeko 与 Meeko receptor CLI 可用时，可以生成 `prepared/receptor.pdbqt`。默认不会覆盖已有 receptor PDBQT；stdout、stderr 和日志会保存到 `prepared/logs/`。受体准备仍需要用户检查缺失残基、金属离子、水分子、辅因子、链选择和质子化状态。
+
+V0.3.4 会在 PreparationPage 显示项目下一步建议。生成 config 或准备 run 时，如果 DockStart 发现已经下载了 raw receptor/ligand，但还没有 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`，会提示先准备 PDBQT；如果上一次 preparation 失败，会提示查看 preparation 日志。这个接入不会修改 Vina config、Vina 执行或结果解析逻辑。
 
 ## 5. 导入 receptor.pdbqt
 
@@ -266,6 +268,8 @@ configs/vina_config.txt
 常见错误：
 
 - receptor 或 ligand 尚未导入；
+- 已下载 raw receptor/ligand，但尚未准备 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
+- 上一次 receptor/ligand preparation 失败，需要回到 PreparationPage 查看日志；
 - box 或 Vina 参数格式不合法；
 - 项目目录不可写。
 

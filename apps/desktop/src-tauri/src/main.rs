@@ -374,6 +374,17 @@ fn prepare_vina_run(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn get_project_workflow_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.project",
+        vec!["workflow-status".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取项目工作流状态。", &error),
+    }
+}
+
+#[tauri::command]
 fn load_run_metadata(project_dir: String, run_id: String) -> String {
     match run_backend_module(
         "dockstart_core.project",
@@ -617,6 +628,7 @@ fn main() {
             generate_vina_config,
             validate_run_prerequisites,
             prepare_vina_run,
+            get_project_workflow_status,
             load_run_metadata,
             execute_prepared_vina_run,
             get_run_files_status,

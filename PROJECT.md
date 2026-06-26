@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口。当前仍未执行真实 PDBQT 自动生成或 RDKit/Meeko 分子处理。
+产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2/V0.3.3 分别实现 ligand 和 receptor 的最小 PDBQT 自动准备；V0.3.4 将 preparation 状态接入现有 config/run 前置检查和下一步建议。当前仍未实现 MOL2/SMILES 自动准备、复杂受体结构修复或 Vina 主流程改造。
 
 本项目不是新的分子对接算法，也不修改 AutoDock Vina 的打分函数或搜索算法。项目重点是：
 
@@ -716,4 +716,26 @@ V0.3.3 的真实含义是“在已有 receptor raw PDB/CIF 的基础上，使用
 * Open Babel、PLIP、MGLTools 接入；
 * 3D 可视化；
 * Vina 运行流程变更；
+* 药效判断。
+
+### 13.12 V0.3.4 preparation 接入现有 docking 主线
+
+V0.3.4 的真实含义是“让自动准备结果安全接入现有 Vina config/run 前置检查”，不是“改变 AutoDock Vina 运行、解析或报告逻辑”。
+
+当前已经具备：
+
+* 如果 `receptor.file` 缺失但 `receptor.raw_file` 存在，生成 config 或准备 run 时提示先准备 `prepared/receptor.pdbqt`；
+* 如果 `ligand.file` 缺失但 `ligand.raw_file` 存在，生成 config 或准备 run 时提示先准备 `prepared/ligand.pdbqt`；
+* 如果 preparation 状态为 `failed`，提示回到 preparation 日志排查；
+* `get_project_workflow_status(project_dir)` 返回 raw、prepared、box、Vina 参数、config、latest run 和下一步建议；
+* PreparationPage 显示项目下一步建议。
+
+当前仍然明确没有实现：
+
+* MOL2 或 SMILES 自动准备；
+* 复杂受体结构修复；
+* preparation 审计目录和多次 preparation run 记录；
+* Open Babel、PLIP、MGLTools 接入；
+* 3D 可视化；
+* Vina config、Vina 执行、score 解析或报告语义变更；
 * 药效判断。

@@ -101,6 +101,7 @@ export default function PreparationPage({
   const [response, setResponse] = useState<PreparationStatusResponse | null>(null);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const [nextAction, setNextAction] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
@@ -137,6 +138,15 @@ export default function PreparationPage({
         parsed.tools = toolStatus.tools ?? parsed.tools;
       } catch {
         // Preparation status already contains best-effort tool results; keep the page usable.
+      }
+      try {
+        const rawWorkflowPayload = await invoke<string>("get_project_workflow_status", {
+          projectDir: project.project_dir,
+        });
+        const workflowStatus = JSON.parse(rawWorkflowPayload) as { next_recommended_action?: string };
+        setNextAction(workflowStatus.next_recommended_action ?? "");
+      } catch {
+        setNextAction("");
       }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
@@ -269,8 +279,7 @@ export default function PreparationPage({
         <p className="eyebrow">PreparationPage</p>
         <h1 id="preparation-title">PDBQT 自动准备</h1>
         <p>
-          V0.3.0 先提供自动准备的数据模型、状态检查和最小入口。当前页面不会直接执行 RDKit/Meeko
-          分子处理。
+          V0.3 支持在工具链可用时，从 raw 文件尝试准备 receptor / ligand PDBQT。当前页面只提供最小入口和状态提示。
         </p>
       </div>
 
@@ -283,6 +292,12 @@ export default function PreparationPage({
       <div className="warning-note">
         自动准备结果仍需用户判断，不代表质子化、电荷、构象、链选择或受体结构处理一定科学正确，也不代表药效判断。
       </div>
+
+      {nextAction ? (
+        <div className="settings-message">
+          下一步建议：{nextAction}
+        </div>
+      ) : null}
 
       <div className="import-grid">
         <article className="import-card">

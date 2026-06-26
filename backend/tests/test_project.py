@@ -19,6 +19,7 @@ from dockstart_core.project import (  # noqa: E402
     generate_vina_config,
     get_box_params,
     get_next_run_id,
+    get_project_workflow_status,
     get_run_files_status,
     get_vina_config_preview,
     get_vina_params,
@@ -698,6 +699,65 @@ class ProjectTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "LIGAND_FILE_NOT_FOUND")
 
+    def test_config_raw_receptor_without_prepared_hints_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            raw_file = project_dir / "raw" / "receptor_1ABC.pdb"
+            raw_file.write_text("ATOM receptor\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["receptor"]["raw_file"] = "raw/receptor_1ABC.pdb"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_vina_config_preview(str(project_dir))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "RECEPTOR_PDBQT_NOT_PREPARED")
+            self.assertIn("尚未准备 prepared/receptor.pdbqt", response["error"]["message"])
+
+    def test_config_raw_ligand_without_prepared_hints_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            receptor_source = Path(temp_dir) / "receptor_source.pdbqt"
+            receptor_source.write_text("REMARK receptor\n", encoding="utf-8")
+            import_receptor_pdbqt(str(project_dir), str(receptor_source))
+            raw_file = project_dir / "raw" / "ligand_2244.sdf"
+            raw_file.write_text("ligand sdf\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["ligand"]["raw_file"] = "raw/ligand_2244.sdf"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_vina_config_preview(str(project_dir))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "LIGAND_PDBQT_NOT_PREPARED")
+            self.assertIn("尚未准备 prepared/ligand.pdbqt", response["error"]["message"])
+
+    def test_config_preparation_failed_hints_log(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            receptor_source = Path(temp_dir) / "receptor_source.pdbqt"
+            receptor_source.write_text("REMARK receptor\n", encoding="utf-8")
+            import_receptor_pdbqt(str(project_dir), str(receptor_source))
+            raw_file = project_dir / "raw" / "ligand_2244.sdf"
+            raw_file.write_text("ligand sdf\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["ligand"]["raw_file"] = "raw/ligand_2244.sdf"
+            project["preparation"]["ligand"]["status"] = "failed"
+            project["preparation"]["ligand"]["log_file"] = "prepared/logs/ligand_preparation_log.json"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_vina_config_preview(str(project_dir))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "LIGAND_PREPARATION_FAILED")
+            self.assertIn("preparation 日志", response["error"]["message"])
+
     def test_config_invalid_box_returns_structured_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project_with_imports(temp_dir)
@@ -723,6 +783,54 @@ class ProjectTests(unittest.TestCase):
 
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "VINA_PARAM_POSITIVE_REQUIRED")
+
+    def test_project_workflow_status_recommends_receptor_preparation_when_raw_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            raw_file = project_dir / "raw" / "receptor_1ABC.pdb"
+            raw_file.write_text("ATOM receptor\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["receptor"]["raw_file"] = "raw/receptor_1ABC.pdb"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["raw"]["receptor"]["status"], "ok")
+            self.assertEqual(response["prepared"]["receptor"]["status"], "missing")
+            self.assertIn("准备 receptor PDBQT", response["next_recommended_action"])
+
+    def test_project_workflow_status_reports_preparation_failed_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project_with_imports(temp_dir)
+            (project_dir / "prepared" / "ligand.pdbqt").unlink()
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["preparation"]["ligand"]["status"] = "failed"
+            project["preparation"]["ligand"]["log_file"] = "prepared/logs/ligand_preparation_log.json"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["preparation"]["ligand"]["status"], "failed")
+            self.assertIn("ligand PDBQT 自动准备失败", response["next_recommended_action"])
+
+    def test_project_workflow_status_old_project_without_preparation_is_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project_with_imports(temp_dir)
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project.pop("preparation", None)
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = get_project_workflow_status(str(project_dir))
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["preparation"]["receptor"]["status"], "not_started")
+            self.assertEqual(response["prepared"]["receptor"]["status"], "ok")
 
     def test_generate_vina_config_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -813,6 +921,24 @@ class ProjectTests(unittest.TestCase):
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "LIGAND_FILE_NOT_SET")
             self.assertEqual(response["checks"][-1]["key"], "ligand")
+
+    def test_validate_run_prerequisites_raw_receptor_without_prepared_hints_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            raw_file = project_dir / "raw" / "receptor_1ABC.pdb"
+            raw_file.write_text("ATOM receptor\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["receptor"]["raw_file"] = "raw/receptor_1ABC.pdb"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+
+            response = validate_run_prerequisites(str(project_dir))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "RECEPTOR_PDBQT_NOT_PREPARED")
+            self.assertEqual(response["checks"][-1]["key"], "receptor")
+            self.assertEqual(response["checks"][-1]["status"], "missing")
 
     def test_validate_run_prerequisites_empty_prepared_receptor_returns_structured_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

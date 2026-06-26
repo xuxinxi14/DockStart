@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备；V0.3.3 已实现 receptor PDB/CIF 到 prepared/receptor.pdbqt 的最小自动准备。当前仍未实现 MOL2/SMILES 自动准备或复杂结构修复。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备；V0.3.3 已实现 receptor PDB/CIF 到 prepared/receptor.pdbqt 的最小自动准备；V0.3.4 已将 preparation 状态接入现有 config/run 前置检查和下一步建议。当前仍未实现 MOL2/SMILES 自动准备、复杂结构修复或 Vina 主流程改造。
 
 第一阶段目标是实现最小闭环：
 
@@ -479,6 +479,7 @@ resources/
 * V0.2.9 新增手动 PDBQT 准备指南，不新增自动制备逻辑。
 * V0.2.10 整理 smoke test 与 release notes，不新增自动制备逻辑。
 * V0.3.0 建立 raw → prepared PDBQT 自动准备模型和入口，但不执行真实制备。
+* V0.3.4 将 preparation 状态接入现有 config/run 前置检查和下一步建议，不改变 Vina config、执行、解析或报告逻辑。
 
 Python runtime 当前解析优先级为：
 
@@ -488,7 +489,7 @@ bundled > configured > current_environment
 
 当前仓库只提交 `resources/python/README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。`scripts/prepare_bundled_python.py` 只复制本地 Python runtime、计算 `python.exe` sha256、读取版本并更新 manifest；它不联网、不安装 Python 包、不安装 RDKit、不安装 Meeko。
 
-Meeko/RDKit 当前已用于三类能力：V0.3.1 做 import、版本和准备能力检测；V0.3.2 可在 ligand raw 文件为 SDF/MOL 时，用已解析的 Python + RDKit + Meeko 尝试生成 `prepared/ligand.pdbqt`；V0.3.3 可在 receptor raw 文件为 PDB/CIF 且 Meeko receptor CLI 可发现时，尝试生成 `prepared/receptor.pdbqt`。当前仍不做 MOL2/SMILES 自动准备或复杂结构修复。
+Meeko/RDKit 当前已用于三类能力：V0.3.1 做 import、版本和准备能力检测；V0.3.2 可在 ligand raw 文件为 SDF/MOL 时，用已解析的 Python + RDKit + Meeko 尝试生成 `prepared/ligand.pdbqt`；V0.3.3 可在 receptor raw 文件为 PDB/CIF 且 Meeko receptor CLI 可发现时，尝试生成 `prepared/receptor.pdbqt`。V0.3.4 只在 config/run 前置检查中提示 raw 已有但 prepared 缺失、preparation 失败等状态。当前仍不做 MOL2/SMILES 自动准备或复杂结构修复。
 
 当前明确未实现：
 
@@ -588,7 +589,7 @@ V0.2.8 禁止：
 * 修改 Vina 运行流程；
 * 做药效判断。
 
-## 24. V0.3.1 / V0.3.2 / V0.3.3 自动准备能力边界
+## 24. V0.3.1 / V0.3.2 / V0.3.3 / V0.3.4 自动准备能力边界
 
 V0.3.1 允许：
 
@@ -620,6 +621,21 @@ V0.3.3 仍然禁止：
 * 做 3D 可视化；
 * 修改 Vina 运行流程或 scoring function；
 * 做药效判断。
+
+V0.3.4 允许：
+
+* 在 config/run 前置检查中提示 raw receptor/ligand 已有但 prepared PDBQT 缺失；
+* 在 preparation failed 时提示查看 preparation 日志；
+* 提供 `get_project_workflow_status(project_dir)` 和最小下一步建议；
+* 保持旧项目兼容。
+
+V0.3.4 禁止：
+
+* 修改 Vina config 核心语义；
+* 修改 Vina 执行逻辑；
+* 修改 score 解析逻辑；
+* 新增 Open Babel、PLIP、MGLTools；
+* 新增 3D 可视化、相互作用分析或药效判断。
 
 ## 21. V0.2.9 手动 PDBQT 准备指南边界
 

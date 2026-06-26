@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.4
+
+- Connected preparation state back into the existing config/run prerequisite checks without changing the Vina config, execution, parsing, or report semantics.
+- Added structured Chinese hints when raw receptor/ligand files exist but `prepared/receptor.pdbqt` or `prepared/ligand.pdbqt` is still missing.
+- Added preparation-failed hints that point users back to preparation logs before generating config or preparing a run.
+- Added `get_project_workflow_status` backend/Tauri entry point and a minimal PreparationPage next-action display.
+- Added mock-friendly backend tests for raw-but-not-prepared, preparation-failed, workflow next action, and old-project compatibility.
+- Did not add Open Babel, PLIP, MGLTools, 3D visualization, interaction analysis, drug efficacy judgement, or Vina algorithm changes.
+
 ## v0.3.3
 
 - Added receptor raw PDB/CIF to `prepared/receptor.pdbqt` preparation through detected Meeko receptor CLI.

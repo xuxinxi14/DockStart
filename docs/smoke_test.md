@@ -1,9 +1,10 @@
 # DockStart Smoke Tests
 
-本文档记录 DockStart 当前两条可验收流程：
+本文档记录 DockStart 当前三条可验收流程：
 
 - V0.1：本地 prepared PDBQT docking 完整流程；
 - V0.2：raw 原始结构下载、来源记录和 raw/prepared 边界检查。
+- V0.3：raw → prepared PDBQT 自动准备入口和 docking 主线提示。
 
 这些 smoke test 不验证 docking 科学结论，不判断药效，也不要求真实实验验证。
 
@@ -367,8 +368,30 @@ prepared/ligand.pdbqt
 
 - raw 文件是原始结构或原始配体数据，不等于 prepared PDBQT。
 - prepared PDBQT 才是 AutoDock Vina 当前运行流程需要的输入。
-- DockStart 当前仍不自动把 PDB/CIF/SDF/MOL2 转成 PDBQT。
-- DockStart 当前仍不调用 RDKit 做配体处理。
-- DockStart 当前仍不调用 Meeko 做受体/配体准备。
+- DockStart V0.3.2/V0.3.3 可以在工具链可用时尝试把 ligand SDF/MOL 和 receptor PDB/CIF 准备为 PDBQT。
+- DockStart 当前仍不自动把 MOL2/SMILES 转成 PDBQT。
+- DockStart 当前不自动安装 RDKit/Meeko，也不保证自动准备结果科学正确。
 - DockStart 当前仍不接入 Open Babel、PLIP 或 MGLTools。
-- 后续 V0.3 才考虑 RDKit/Meeko 自动准备的设计、测试和许可证审查。
+- V0.3.4 只把 preparation 状态接入 config/run 前置检查和下一步建议，不修改 Vina 主流程。
+
+## V0.3 Preparation 接入 Smoke Test
+
+### 测试目标
+
+验证 raw 文件已下载但 prepared PDBQT 缺失时，DockStart 会提示先进行 preparation；prepared PDBQT 存在后，原有 Vina config/run 流程继续可用。
+
+### 手动测试步骤
+
+1. 创建项目并下载 receptor raw PDB/CIF 与 ligand raw SDF。
+2. 不导入 PDBQT，直接尝试生成 `configs/vina_config.txt`。
+3. 预期：页面或后端返回中文结构化提示，说明已下载 raw receptor/ligand，但尚未准备 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`。
+4. 进入 PreparationPage，查看下一步建议。
+5. 如果本机 Python + RDKit + Meeko 能力可用，可尝试准备 ligand/receptor PDBQT；如果不可用，手动准备并导入 PDBQT。
+6. prepared 两个文件都存在后，再生成 config、准备 run、执行 Vina。
+
+### 通过标准
+
+- raw 文件不会被当作 Vina 输入。
+- `receptor.file` 和 `ligand.file` 仍指向 prepared PDBQT。
+- preparation 失败时提示查看日志。
+- prepared PDBQT 补齐后，V0.1 config/run/parse/report 流程不被破坏。
