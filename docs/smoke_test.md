@@ -490,3 +490,26 @@ conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setup
 - 不修改 `out.pdbqt`；
 - 不调用 AutoDock Vina；
 - 不把 docking score 解释为药效。
+
+## V0.4 Viewer Full Smoke Test
+
+该 smoke test 可以使用 mock 文件，不要求真实网络或真实 Vina：
+
+1. 创建 DockStart 项目。
+2. 写入或下载 raw receptor / raw ligand。
+3. 使用 V0.3 preparation mock 或手动导入 prepared receptor / ligand。
+4. 打开 ViewerPage。
+5. 加载 prepared receptor，确认 viewer 不崩溃并显示文件元信息。
+6. 加载 prepared ligand，确认 viewer 不崩溃并显示文件元信息。
+7. 调整 Box 参数并保存，确认 `project.json.box` 更新。
+8. 准备一个 mock `runs/run_001/out.pdbqt` 和可选 `runs/run_001/scores.csv`。
+9. 输入 `run_001`，读取 pose 列表，选择 mode 查看。
+10. 回到结果/报告流程，确认现有 Vina 结果解析和 Markdown 报告导出入口仍可用。
+
+验收边界：
+
+- viewer 不做相互作用分析；
+- viewer 不判断结合是否真实；
+- viewer 不做 pocket prediction；
+- viewer 不替代专业分子建模软件；
+- viewer 不修改 Vina 算法或 scoring function。

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.5
+
+- Documented the V0.4 viewer workflow across README, user guide, smoke tests, FAQ, roadmap, PROJECT, and CLAUDE guidance.
+- Added smoke-test guidance for opening ViewerPage, checking raw/prepared structures, saving Box overlay parameters, and viewing docking poses after a run.
+- Clarified that ViewerPage does not perform PLIP/ProLIF analysis, pocket prediction, interaction interpretation, molecular dynamics, or drug efficacy judgement.
+- Clarified that 3Dmol.js is used through npm-managed local dependencies and no external CDN is required.
+- Did not add new runtime behavior beyond documentation and version updates.
+
 ## v0.4.4
 
 - Added viewer capability fields to `get_project_workflow_status`, including raw/prepared/docking-output visibility and available run outputs.

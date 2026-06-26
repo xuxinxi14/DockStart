@@ -728,3 +728,8 @@ V0.3.0 禁止：
 * 做 3D 可视化；
 * 修改 Vina 运行流程；
 * 做药效判断。
+## V0.4 Viewer Boundary
+
+DockStart V0.4 viewer is a minimal workflow aid. It can display project-local raw/prepared structures, synchronize the existing Box parameters, and inspect docking pose modes from `out.pdbqt`.
+
+Do not describe the viewer as an interaction-analysis, pocket-prediction, drug-efficacy, or scientific-validation tool. Do not add PLIP, ProLIF, Open Babel, MGLTools, molecular dynamics, or scoring changes as part of the V0.4 viewer line.

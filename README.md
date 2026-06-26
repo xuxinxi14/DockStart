@@ -221,6 +221,15 @@ V0.4.4 已把 viewer 状态接入项目 workflow status：
 
 这些入口只帮助用户进入 ViewerPage，不改变 Vina 执行、结果解析或报告导出逻辑。
 
+V0.4.5 是 Viewer 文档与 smoke test 收尾版本：
+
+- 文档说明如何打开 ViewerPage；
+- 如何查看 raw receptor / raw ligand；
+- 如何查看 prepared receptor / ligand；
+- 如何显示和保存 Box；
+- 如何在运行 Vina 后查看 docking poses；
+- 明确 viewer 不做相互作用分析、不判断结合是否真实、不做 pocket prediction，也不能替代专业分子建模软件。
+
 ## 当前暂不支持
 
 当前仍不支持：
