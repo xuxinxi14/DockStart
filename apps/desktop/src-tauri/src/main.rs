@@ -223,6 +223,32 @@ fn get_preparation_tool_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn prepare_ligand_pdbqt(project_dir: String, overwrite: bool) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec![
+            "prepare-ligand".to_string(),
+            project_dir,
+            overwrite.to_string(),
+        ],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法自动准备 ligand PDBQT。", &error),
+    }
+}
+
+#[tauri::command]
+fn load_ligand_preparation_log(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["ligand-log".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 ligand preparation 日志。", &error),
+    }
+}
+
+#[tauri::command]
 fn reset_preparation_status(project_dir: String, target: String) -> String {
     match run_backend_module(
         "dockstart_core.preparation",
@@ -552,6 +578,8 @@ fn main() {
             get_preparation_status,
             validate_preparation_prerequisites,
             get_preparation_tool_status,
+            prepare_ligand_pdbqt,
+            load_ligand_preparation_log,
             reset_preparation_status,
             get_box_params,
             update_box_params,

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.2
+
+- Added ligand raw SDF/MOL to `prepared/ligand.pdbqt` preparation through the resolved Python + RDKit + Meeko toolchain.
+- Added ligand preparation validation, safe helper-script generation, stdout/stderr/log capture, and project.json updates.
+- Added Tauri commands and a minimal PreparationPage button for ligand preparation.
+- Default behavior does not overwrite existing `prepared/ligand.pdbqt`; overwrite must be explicitly enabled.
+- Added mock-first backend tests; tests do not depend on a real RDKit/Meeko installation.
+- Did not add receptor preparation, MOL2/SMILES preparation, Open Babel, PLIP, MGLTools, 3D visualization, drug efficacy judgement, or Vina workflow changes.
+
 ## v0.3.1
 
 - Added RDKit preparation capability detection for import, version, and inline SDF read probing.

@@ -109,6 +109,14 @@ V0.3.1 已增强自动准备工具能力检测：
 - PreparationPage 显示 Python 来源、RDKit/Meeko import 状态和准备能力状态；
 - 当前阶段仍不安装 RDKit/Meeko，不生成 PDBQT，不改变 Vina 主流程。
 
+V0.3.2 已实现配体 PDBQT 自动准备的最小闭环：
+
+- 支持从项目中的 `ligand.raw_file` 读取 SDF / MOL；
+- 使用当前解析到的 Python + RDKit + Meeko 生成 `prepared/ligand.pdbqt`；
+- 默认不覆盖已有 `prepared/ligand.pdbqt`，需要用户显式开启 overwrite；
+- 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
+- 当前仍不支持 receptor 自动准备、MOL2/SMILES 自动准备，也不改变 Vina 主流程。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -127,7 +135,7 @@ V0.3.1 已增强自动准备工具能力检测：
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - raw 文件不等于 prepared PDBQT；
-- V0.3.1 只提供自动准备模型、入口和 RDKit/Meeko 能力检测，尚未执行 RDKit/Meeko 分子处理；
+- V0.3.2 只新增 ligand SDF/MOL 到 PDBQT 的自动准备；receptor 自动准备、MOL2/SMILES 和复杂结构修复仍未实现；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；

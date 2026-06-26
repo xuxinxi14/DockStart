@@ -132,7 +132,7 @@ python -c "import rdkit"
 - Meeko：检测 import、版本，并通过安全 introspection / CLI 发现判断 ligand/receptor preparation 能力是否可确认；
 - 如果能力不可确认，返回 `unknown`，不把未知能力硬写成成功。
 
-DockStart 当前仍不会使用 RDKit 做配体清洗、构象生成或格式转换，也不会使用 Meeko 真正执行受体/配体准备。
+V0.3.2 开始，DockStart 可以使用 RDKit + Meeko 尝试把 ligand SDF/MOL raw 文件准备为 `prepared/ligand.pdbqt`。当前仍不会自动准备 receptor PDBQT，不支持 MOL2/SMILES 自动准备，也不会把该结果解释为药效判断。
 
 ## 许可证和依赖注意事项
 

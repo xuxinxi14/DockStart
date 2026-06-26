@@ -276,3 +276,16 @@ print(json.dumps(payload, ensure_ascii=False))
 
 
 detect_capabilities = detect_meeko_capabilities
+
+
+def run_preparation_command(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+    """Execute a Meeko/RDKit preparation helper through a safe argument array."""
+
+    return subprocess.run(
+        command,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
