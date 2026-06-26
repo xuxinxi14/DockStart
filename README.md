@@ -87,6 +87,14 @@ V0.2.9 已新增手动 PDBQT 准备指南：
 - 说明 Meeko、AutoDockTools/MGLTools、Open Babel 等外部工具的当前边界；
 - 明确 DockStart 当前不保证外部工具生成的 PDBQT 科学正确性。
 
+V0.2.10 已整理 smoke test 和 release notes：
+
+- [docs/smoke_test.md](docs/smoke_test.md) 现在区分 V0.1 本地 prepared PDBQT 完整流程和 V0.2 raw 下载流程；
+- V0.2 raw 下载流程的预期产物是 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`，以及 `raw/ligand_{cid}.sdf`；
+- Vina 当前运行流程仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
+- 文档明确 raw 文件不等于 prepared PDBQT，DockStart 当前仍不自动转 PDBQT；
+- 后续 V0.3 才考虑 RDKit/Meeko 自动准备的设计、测试和许可证审查。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -104,6 +112,7 @@ V0.2.9 已新增手动 PDBQT 准备指南：
 - 需要用户自己安装或配置 AutoDock Vina；
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
+- raw 文件不等于 prepared PDBQT；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；
@@ -247,6 +256,7 @@ npm run tauri dev
 prepared/receptor.pdbqt
 prepared/ligand.pdbqt
 raw/receptor_1HSG.pdb
+raw/receptor_1HSG.cif
 raw/ligand_2244.sdf
 configs/vina_config.txt
 runs/run_001/metadata.json
@@ -257,6 +267,8 @@ results/scores.csv
 runs/run_001/docking_report.md
 reports/docking_report.md
 ```
+
+其中 `raw/receptor_1HSG.pdb` 和 `raw/receptor_1HSG.cif` 通常根据用户选择二选一；raw 文件只是来源记录和后续准备材料，不会替代 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`。
 
 ## 许可证与第三方工具
 

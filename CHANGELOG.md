@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.10
+
+- Expanded `docs/smoke_test.md` with separate V0.1 local prepared PDBQT and V0.2 raw download smoke tests.
+- Documented expected raw outputs: `raw/receptor_{PDB_ID}.pdb` or `.cif`, and `raw/ligand_{cid}.sdf`.
+- Documented expected prepared inputs: `prepared/receptor.pdbqt` and `prepared/ligand.pdbqt`.
+- Clarified that raw files are not prepared PDBQT files and cannot directly run in AutoDock Vina.
+- Updated release notes and roadmap language for the completed V0.2 raw workflow documentation pass.
+- Kept RDKit/Meeko automatic preparation as a future V0.3 design topic.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.9
 
 - Added `docs/manual_pdbqt_preparation.md`.
