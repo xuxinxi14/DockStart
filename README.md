@@ -79,6 +79,14 @@ V0.2.8 已增强 raw/prepared 流程引导：
 - StructureFetchPage 下载后提示下一步仍需手动准备并导入 prepared PDBQT；
 - ToolchainStatusPage 明确 Meeko/RDKit 当前只是检测，不会自动处理分子。
 
+V0.2.9 已新增手动 PDBQT 准备指南：
+
+- 新增 [docs/manual_pdbqt_preparation.md](docs/manual_pdbqt_preparation.md)；
+- 解释 raw 文件和 prepared PDBQT 的区别；
+- 说明为什么 Vina 需要 PDBQT；
+- 说明 Meeko、AutoDockTools/MGLTools、Open Babel 等外部工具的当前边界；
+- 明确 DockStart 当前不保证外部工具生成的 PDBQT 科学正确性。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -229,6 +237,7 @@ npm run tauri dev
 12. 导出 `reports/docking_report.md`。
 
 详细步骤见 [docs/user_guide.md](docs/user_guide.md)，手动验收流程见 [docs/smoke_test.md](docs/smoke_test.md)。
+从 raw 文件到 prepared PDBQT 的当前人工流程见 [docs/manual_pdbqt_preparation.md](docs/manual_pdbqt_preparation.md)。
 
 ## 输出文件
 

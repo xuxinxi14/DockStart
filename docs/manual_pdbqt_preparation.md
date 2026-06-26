@@ -1,0 +1,101 @@
+# 手动 PDBQT 准备指南
+
+本文档说明 DockStart 当前如何理解 `raw/` 文件和 `prepared/` PDBQT 文件，以及用户在 DockStart 尚未自动准备 PDBQT 的阶段应如何安排工作流。
+
+DockStart 当前不会自动把 PDB、CIF、SDF、MOL2 或 SMILES 转成 PDBQT，也不会调用 RDKit、Meeko、Open Babel、PLIP 或 MGLTools 做分子处理。
+
+## 1. 什么是 raw 文件
+
+raw 文件是从结构数据库或其他来源得到的原始结构文件。DockStart 当前支持保存的典型 raw 文件包括：
+
+```text
+raw/receptor_1HSG.pdb
+raw/receptor_1HSG.cif
+raw/ligand_2244.sdf
+raw/ligand_name_aspirin.sdf
+```
+
+raw 文件用于记录来源和保留原始数据。它们不是 AutoDock Vina 当前可以直接使用的输入。
+
+## 2. 什么是 prepared PDBQT
+
+prepared PDBQT 是已经完成 docking 输入准备后的文件。DockStart 当前运行 Vina 时需要：
+
+```text
+prepared/receptor.pdbqt
+prepared/ligand.pdbqt
+```
+
+`project.json` 中：
+
+- `receptor.raw_file` / `ligand.raw_file` 记录原始结构；
+- `receptor.file` / `ligand.file` 记录 Vina 实际使用的 prepared PDBQT。
+
+## 3. 为什么 Vina 需要 PDBQT
+
+AutoDock Vina 使用 PDBQT 作为受体和配体输入格式。PDBQT 相比普通 PDB/SDF 包含 docking 所需的额外信息，例如原子类型、电荷和可旋转键相关信息。
+
+因此，下载到 PDB、CIF 或 SDF 后，通常还需要准备步骤，才能得到 Vina 可用的 PDBQT。
+
+## 4. 为什么下载 PDB/SDF 后还不能直接运行 Vina
+
+RCSB PDB 的 PDB/CIF 文件通常是结构坐标来源，PubChem 的 SDF 文件通常是配体结构来源。它们仍可能需要：
+
+- 选择合适链或模型；
+- 删除不需要的水、离子或配体；
+- 补充氢原子；
+- 处理电荷；
+- 为配体设置可旋转键；
+- 写出 PDBQT。
+
+这些步骤涉及化学和结构判断。DockStart 当前不自动执行，也不自动判断准备结果是否科学合理。
+
+## 5. 可选外部工具
+
+用户可以根据课程、实验室规范或教程选择外部工具准备 PDBQT。常见选择包括：
+
+- Meeko：常用于基于 Python 的 Vina 输入准备；
+- AutoDockTools / MGLTools：传统 AutoDock 工作流中常见的 PDBQT 准备工具；
+- Open Babel：常用于格式转换，但许可证和结果适用性需要谨慎确认。
+
+DockStart 当前只检测 Meeko/RDKit 是否可以 import，不使用它们自动处理受体或配体。
+
+## 6. 许可证注意事项
+
+当前 DockStart 不内置以下工具：
+
+- Open Babel；
+- MGLTools；
+- PLIP。
+
+原因包括许可证、分发方式、依赖体积和维护成本都需要单独评估。
+
+Meeko/RDKit 当前也只是检测，不代表 DockStart 已经内置完整分子准备流程。后续如真正接入自动准备，需要单独审查许可证文本、依赖来源、包体积、更新机制和测试覆盖。
+
+## 7. DockStart 当前不保证外部 PDBQT 的科学正确性
+
+如果用户使用外部工具生成 PDBQT，DockStart 当前只做基础文件检查和导入，不判断：
+
+- 受体是否选择了正确链；
+- 配体质子化状态是否合理；
+- 电荷是否正确；
+- 可旋转键是否合适；
+- docking box 是否覆盖合理结合区域；
+- 生成的 PDBQT 是否足以支持科研结论。
+
+Docking score 仅供结构结合趋势参考，不能替代实验验证。
+
+## 8. 后续自动准备的要求
+
+如果 DockStart 后续真正接入 raw → prepared PDBQT 自动准备，需要单独完成：
+
+- 清晰的受体准备流程设计；
+- 清晰的配体准备流程设计；
+- RDKit/Meeko 或其他工具的 adapter 边界；
+- 输入检查和错误恢复；
+- 可复现的参数记录；
+- 单元测试和示例数据；
+- 许可证和第三方依赖审查；
+- 面向初学者的中文错误解释。
+
+在这些条件满足前，DockStart 会继续把 raw 下载、手动准备和 prepared PDBQT 导入保持为不同步骤。

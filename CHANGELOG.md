@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.9
+
+- Added `docs/manual_pdbqt_preparation.md`.
+- Documented raw files, prepared PDBQT files, and why AutoDock Vina needs PDBQT.
+- Documented why downloaded PDB/CIF/SDF files cannot directly run in Vina.
+- Listed optional external preparation tools: Meeko, AutoDockTools/MGLTools, and Open Babel.
+- Clarified license boundaries: Open Babel, MGLTools, and PLIP are not bundled; Meeko/RDKit remain detection-only.
+- Stated that DockStart currently does not guarantee scientific correctness of externally generated PDBQT files.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.8
 
 - Clarified the raw-to-prepared workflow across the desktop UI.
