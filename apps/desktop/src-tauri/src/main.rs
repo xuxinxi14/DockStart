@@ -127,7 +127,8 @@ fn fetch_pdb_structure(
 #[tauri::command]
 fn fetch_pubchem_ligand(
     project_dir: String,
-    cid: String,
+    query: String,
+    query_type: String,
     format: String,
     overwrite: bool,
 ) -> String {
@@ -136,9 +137,10 @@ fn fetch_pubchem_ligand(
         vec![
             "fetch-pubchem".to_string(),
             project_dir,
-            cid,
+            query,
             format,
             overwrite.to_string(),
+            query_type,
         ],
     ) {
         Ok(payload) => payload,

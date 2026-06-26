@@ -63,6 +63,14 @@ V0.2.6 已支持 raw 文件管理增强：
 - 清除 raw 记录不会删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
 - 如选择同时删除文件，DockStart 只允许删除项目 `raw/` 目录下的文件。
 
+V0.2.7 已支持结构来源查询增强：
+
+- RCSB PDB 下载支持 `pdb` 和 `cif` 两种 raw 格式；
+- PubChem 配体下载继续支持 CID；
+- PubChem 配体下载新增名称查询，例如 `aspirin`；
+- SMILES 查询当前只返回“暂未支持”的中文结构化提示；
+- 不会用 RDKit 解析 SMILES，不会生成 3D，也不会转 PDBQT。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：

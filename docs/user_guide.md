@@ -1,6 +1,6 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.6 的 raw 原始结构下载与 raw 记录管理能力。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.7 的 raw 原始结构下载、raw 记录管理与来源查询能力。
 
 ## 前置条件
 
@@ -11,7 +11,7 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.2.6 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性，但不会自动把 PDB、SDF、MOL2 转成 PDBQT。运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
+V0.2.7 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
 ## 1. 配置工具路径
 
@@ -60,13 +60,16 @@ project_name/
 用户可以在 StructureFetchPage 下载：
 
 - RCSB PDB 受体原始结构，例如输入 `1HSG`；
-- PubChem CID 配体原始 SDF，例如输入 `2244`。
+- PubChem CID 配体原始 SDF，例如输入 `2244`；
+- PubChem 名称配体原始 SDF，例如输入 `aspirin`；
+- SMILES 查询目前会显示暂未支持，不会调用 RDKit 或生成 3D。
 
 输出位置：
 
 ```text
 raw/receptor_1HSG.pdb
 raw/ligand_2244.sdf
+raw/ligand_name_aspirin.sdf
 ```
 
 `project.json` 会记录：
@@ -119,6 +122,8 @@ StructureFetchPage 会显示：
 
 - PDB ID 不是 4 位字母/数字；
 - PubChem CID 不是正整数；
+- PubChem 名称为空或过长；
+- SMILES 查询暂未支持；
 - 网络超时或远端返回 404；
 - raw 文件已存在且未开启 overwrite。
 - project.json 记录了 raw_file 但文件被手动删除，此时 `record_consistent` 会显示需要检查。

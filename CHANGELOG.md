@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.7
+
+- Added PubChem ligand lookup by compound name, saved as `raw/ligand_name_{name}.sdf`.
+- Kept PubChem CID lookup compatible with the existing `raw/ligand_{cid}.sdf` path.
+- Added a structured SMILES placeholder that returns a Chinese "temporarily unsupported" error without calling RDKit or the network.
+- Added explicit tests for RCSB `.cif` naming, PubChem name lookup, and SMILES unsupported behavior.
+- Updated StructureFetchPage with PubChem query type selection: CID, name, and SMILES placeholder.
+- Did not add PDBQT auto-generation, RDKit/Meeko processing, Open Babel/PLIP/MGLTools, 3D visualization, or Vina workflow changes.
+
 ## v0.2.6
 
 - Enhanced raw file status reporting for receptor and ligand records.

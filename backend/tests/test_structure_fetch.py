@@ -20,6 +20,7 @@ from dockstart_core.structure_fetch import (  # noqa: E402
     get_raw_files_status,
     validate_pdb_id,
     validate_pubchem_cid,
+    validate_pubchem_name,
 )
 
 
@@ -85,6 +86,12 @@ class StructureFetchTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "PUBCHEM_CID_INVALID")
 
+    def test_validate_pubchem_name_accepts_non_empty_name(self) -> None:
+        result = validate_pubchem_name(" aspirin ")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["name"], "aspirin")
+
     def test_fetch_pdb_structure_writes_raw_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
@@ -95,6 +102,18 @@ class StructureFetchTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["raw_file"], "raw/receptor_1HSG.pdb")
             self.assertEqual(target.read_bytes(), b"HEADER TEST\n")
+
+    def test_fetch_pdb_structure_cif_writes_cif_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            result = fetch_pdb_structure(str(project_dir), "1hsg", format="cif", fetcher=self._fetcher(b"data_1HSG\n"))
+
+            target = project_dir / "raw" / "receptor_1HSG.cif"
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["format"], "cif")
+            self.assertEqual(result["raw_file"], "raw/receptor_1HSG.cif")
+            self.assertEqual(target.read_bytes(), b"data_1HSG\n")
 
     def test_fetch_pdb_structure_failure_returns_structured_error(self) -> None:
         def failing_fetcher(_url: str, _timeout: int) -> bytes:
@@ -141,6 +160,47 @@ class StructureFetchTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["raw_file"], "raw/ligand_2244.sdf")
             self.assertEqual(target.read_bytes(), b"aspirin sdf\n")
+
+    def test_fetch_pubchem_ligand_by_name_writes_sdf(self) -> None:
+        seen_urls: list[str] = []
+
+        def fetcher(url: str, timeout: int) -> bytes:
+            self.assertGreater(timeout, 0)
+            seen_urls.append(url)
+            return b"aspirin sdf by name\n"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            result = fetch_pubchem_ligand(
+                str(project_dir),
+                "aspirin",
+                query_type="name",
+                fetcher=fetcher,
+            )
+            loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            target = project_dir / "raw" / "ligand_name_aspirin.sdf"
+            self.assertTrue(result["ok"], result)
+            self.assertIn("/compound/name/aspirin/SDF", seen_urls[0])
+            self.assertEqual(result["query_type"], "name")
+            self.assertEqual(result["raw_file"], "raw/ligand_name_aspirin.sdf")
+            self.assertEqual(target.read_bytes(), b"aspirin sdf by name\n")
+            self.assertEqual(loaded["ligand"]["source"], "pubchem")
+            self.assertEqual(loaded["ligand"]["source_id"], "aspirin")
+            self.assertEqual(loaded["ligand"]["query_type"], "name")
+
+    def test_fetch_pubchem_smiles_returns_unsupported_without_fetching(self) -> None:
+        def fetcher(_url: str, _timeout: int) -> bytes:
+            self.fail("SMILES placeholder must not call the network fetcher")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+
+            result = fetch_pubchem_ligand(str(project_dir), "CCO", query_type="smiles", fetcher=fetcher)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "PUBCHEM_SMILES_UNSUPPORTED")
 
     def test_pubchem_download_failure_returns_structured_error(self) -> None:
         def failing_fetcher(_url: str, _timeout: int) -> bytes:

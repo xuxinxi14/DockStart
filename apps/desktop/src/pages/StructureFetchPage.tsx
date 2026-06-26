@@ -21,6 +21,7 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
     raw_file: parsed.raw_file,
     source: parsed.source,
     source_id: parsed.source_id,
+    query_type: parsed.query_type,
     format: parsed.format,
     url: parsed.url,
     deleted_file: parsed.deleted_file,
@@ -88,7 +89,8 @@ export default function StructureFetchPage({
   const [pdbFormat, setPdbFormat] = useState("pdb");
   const [overwritePdb, setOverwritePdb] = useState(false);
   const [deleteReceptorRawFile, setDeleteReceptorRawFile] = useState(false);
-  const [pubchemCid, setPubchemCid] = useState("");
+  const [pubchemQueryType, setPubchemQueryType] = useState<"cid" | "name" | "smiles">("cid");
+  const [pubchemQuery, setPubchemQuery] = useState("");
   const [overwritePubchem, setOverwritePubchem] = useState(false);
   const [deleteLigandRawFile, setDeleteLigandRawFile] = useState(false);
   const [message, setMessage] = useState("");
@@ -170,7 +172,8 @@ export default function StructureFetchPage({
     try {
       const rawPayload = await invoke<string>("fetch_pubchem_ligand", {
         projectDir: project.project_dir,
-        cid: pubchemCid,
+        query: pubchemQuery,
+        queryType: pubchemQueryType,
         format: "sdf",
         overwrite: overwritePubchem,
       });
@@ -351,15 +354,31 @@ export default function StructureFetchPage({
             </span>
           </div>
           {renderRawStatus(ligandStatus, project.ligand.raw_file)}
-          <label htmlFor="pubchem-cid">PubChem CID</label>
+          <label htmlFor="pubchem-query-type">PubChem 查询类型</label>
+          <select
+            id="pubchem-query-type"
+            value={pubchemQueryType}
+            onChange={(event) => setPubchemQueryType(event.target.value as "cid" | "name" | "smiles")}
+          >
+            <option value="cid">CID</option>
+            <option value="name">名称</option>
+            <option value="smiles">SMILES（暂未支持）</option>
+          </select>
+          <label htmlFor="pubchem-query">
+            {pubchemQueryType === "cid" ? "PubChem CID" : pubchemQueryType === "name" ? "PubChem 名称" : "SMILES"}
+          </label>
           <input
-            id="pubchem-cid"
+            id="pubchem-query"
             type="text"
-            value={pubchemCid}
-            onChange={(event) => setPubchemCid(event.target.value)}
-            placeholder="例如 2244"
+            value={pubchemQuery}
+            onChange={(event) => setPubchemQuery(event.target.value)}
+            placeholder={pubchemQueryType === "cid" ? "例如 2244" : pubchemQueryType === "name" ? "例如 aspirin" : "例如 CCO"}
           />
-          <p className="placeholder-note">本轮只支持 CID，并下载 SDF 原始文件；不会生成 3D 或转 PDBQT。</p>
+          <p className="placeholder-note">
+            {pubchemQueryType === "smiles"
+              ? "SMILES 查询当前只返回暂未支持提示；不会调用 RDKit，也不会生成 3D 或 PDBQT。"
+              : "当前会下载 PubChem SDF 原始文件；不会生成 3D 或转 PDBQT。"}
+          </p>
           <label className="checkbox-row">
             <input
               type="checkbox"

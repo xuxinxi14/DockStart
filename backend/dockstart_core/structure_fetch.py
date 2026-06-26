@@ -11,6 +11,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from dockstart_core.project import _error, _now_iso, _project_from_dict, _success, load_project, save_project
 
@@ -53,7 +54,7 @@ def validate_pubchem_cid(cid: str | int) -> dict[str, Any]:
             "PUBCHEM_CID_INVALID",
             "PubChem CID 必须是正整数。",
             raw_error=value,
-            suggestion="本轮只支持 PubChem CID，不支持名称或 SMILES。",
+            suggestion="如需按名称查询，请在前端选择“名称”；SMILES 查询当前暂未支持。",
         )
     number = int(value)
     if number <= 0:
@@ -66,8 +67,26 @@ def validate_pubchem_cid(cid: str | int) -> dict[str, Any]:
     return {"ok": True, "cid": str(number), "error": None}
 
 
+def validate_pubchem_name(name: str) -> dict[str, Any]:
+    value = str(name or "").strip()
+    if not value:
+        return _error(
+            "PUBCHEM_NAME_REQUIRED",
+            "PubChem 名称不能为空。",
+            suggestion="请输入化合物英文名，例如 aspirin。",
+        )
+    if len(value) > 120:
+        return _error(
+            "PUBCHEM_NAME_TOO_LONG",
+            "PubChem 名称过长。",
+            raw_error=value,
+            suggestion="请使用更短的常用英文名，或改用 PubChem CID。",
+        )
+    return {"ok": True, "name": value, "error": None}
+
+
 def _fetch_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "DockStart/0.2.6"})
+    request = urllib.request.Request(url, headers={"User-Agent": "DockStart/0.2.7"})
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS endpoints only.
         return response.read()
 
@@ -142,6 +161,16 @@ def _pubchem_url(cid: str) -> str:
     return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/SDF"
 
 
+def _pubchem_name_url(name: str) -> str:
+    return f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{quote(name, safe='')}/SDF"
+
+
+def _safe_file_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    return (slug or "query")[:80]
+
+
 def fetch_pdb_structure(
     project_dir: str,
     pdb_id: str,
@@ -207,15 +236,43 @@ def fetch_pdb_structure(
 
 def fetch_pubchem_ligand(
     project_dir: str,
-    cid: str | int,
+    query: str | int,
     format: str = "sdf",  # noqa: A002 - public API follows the task wording.
     overwrite: bool = False,
+    query_type: str = "cid",
     fetcher: Fetcher | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    validation = validate_pubchem_cid(cid)
-    if not validation.get("ok"):
-        return validation
+    normalized_query_type = str(query_type or "cid").strip().lower()
+    if normalized_query_type == "smiles":
+        return _error(
+            "PUBCHEM_SMILES_UNSUPPORTED",
+            "SMILES 查询暂未支持。",
+            raw_error=str(query or ""),
+            suggestion="请先使用 PubChem CID 或名称查询。本阶段不会用 RDKit 解析 SMILES，也不会生成 3D 或 PDBQT。",
+        )
+    if normalized_query_type not in {"cid", "name"}:
+        return _error(
+            "PUBCHEM_QUERY_TYPE_UNSUPPORTED",
+            "PubChem 查询类型暂不支持。",
+            raw_error=normalized_query_type,
+            suggestion="请选择 CID 或名称查询；SMILES 查询当前只提供暂未支持提示。",
+        )
+
+    if normalized_query_type == "cid":
+        validation = validate_pubchem_cid(query)
+        if not validation.get("ok"):
+            return validation
+        source_id = validation["cid"]
+        relative_file = Path("raw", f"ligand_{source_id}.sdf").as_posix()
+        url = _pubchem_url(source_id)
+    else:
+        validation = validate_pubchem_name(str(query))
+        if not validation.get("ok"):
+            return validation
+        source_id = validation["name"]
+        relative_file = Path("raw", f"ligand_name_{_safe_file_slug(source_id)}.sdf").as_posix()
+        url = _pubchem_name_url(source_id)
 
     file_format = str(format or "sdf").strip().lower()
     if file_format not in SUPPORTED_PUBCHEM_FORMATS:
@@ -231,11 +288,8 @@ def fetch_pubchem_ligand(
         return project_error
     assert project is not None
 
-    normalized_cid = validation["cid"]
-    relative_file = Path("raw", f"ligand_{normalized_cid}.sdf").as_posix()
     project_path = Path(project.project_dir).expanduser()
     target_path = project_path / relative_file
-    url = _pubchem_url(normalized_cid)
 
     data, download_error = _download(url, fetcher, timeout)
     if download_error:
@@ -247,8 +301,8 @@ def fetch_pubchem_ligand(
         return write_result
 
     project.ligand.source = "pubchem"
-    project.ligand.source_id = normalized_cid
-    project.ligand.query_type = "cid"
+    project.ligand.source_id = source_id
+    project.ligand.query_type = normalized_query_type
     project.ligand.downloaded_at = _now_iso()
     project.ligand.raw_file = relative_file
     if not project.ligand.file:
@@ -261,7 +315,8 @@ def fetch_pubchem_ligand(
     return {
         **_success(project, "PubChem 原始配体 SDF 已下载到 raw/ 目录。"),
         "source": "pubchem",
-        "source_id": normalized_cid,
+        "source_id": source_id,
+        "query_type": normalized_query_type,
         "format": file_format,
         "raw_file": relative_file,
         "url": url,
@@ -471,11 +526,12 @@ def main() -> None:
 
     if command == "fetch-pubchem":
         if len(sys.argv) < 4:
-            _print_json(_error("FETCH_PUBCHEM_ARGS", "下载 PubChem 配体需要 project_dir 和 cid 参数。"))
+            _print_json(_error("FETCH_PUBCHEM_ARGS", "下载 PubChem 配体需要 project_dir 和查询值参数。"))
             return
         file_format = sys.argv[4] if len(sys.argv) > 4 else "sdf"
         overwrite = _parse_bool(sys.argv[5]) if len(sys.argv) > 5 else False
-        _print_json(fetch_pubchem_ligand(sys.argv[2], sys.argv[3], file_format, overwrite))
+        query_type = sys.argv[6] if len(sys.argv) > 6 else "cid"
+        _print_json(fetch_pubchem_ligand(sys.argv[2], sys.argv[3], file_format, overwrite, query_type))
         return
 
     if command == "raw-files-status":

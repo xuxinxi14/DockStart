@@ -37,20 +37,22 @@ DockStart 不会自动判断“药效好/不好”，也不会输出“候选药
 
 ## 5. PDB/PubChem 下载现在支持到什么程度？
 
-V0.2.6 支持基础 raw 下载和 raw 记录管理：
+V0.2.7 支持基础 raw 下载、raw 记录管理和来源查询增强：
 
 - RCSB PDB：通过 4 位 PDB ID 下载受体原始结构，保存到 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`；
 - PubChem：通过 CID 下载配体原始 SDF，保存到 `raw/ligand_{cid}.sdf`。
+- PubChem：通过名称下载配体原始 SDF，保存到 `raw/ligand_name_{name}.sdf`。
+- SMILES 查询当前只返回“暂未支持”的中文结构化提示。
 - StructureFetchPage 会显示 raw 文件是否存在、文件大小、修改时间、绝对路径和记录一致性。
 - 可以清除 receptor/ligand 的 raw 记录。
 
 这些 raw 文件不能直接运行 Vina。DockStart 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
-当前不会自动转 PDBQT，不会调用 RDKit，不会调用 Meeko，也不会生成 3D 构象。
+当前不会自动转 PDBQT，不会调用 RDKit，不会调用 Meeko，也不会生成 3D 构象。SMILES 查询暂未支持的原因也是为了避免在当前阶段引入 RDKit 解析和分子处理。
 
 ## 6. 为什么下载了 raw 文件还不能运行 Vina？
 
-AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2.6 只负责下载、记录来源、显示 raw 状态和清除 raw 记录，不做这些化学处理。
+AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2.7 只负责下载、记录来源、显示 raw 状态、清除 raw 记录和基础来源查询，不做这些化学处理。
 
 ## 7. 清除 raw 记录会删除 prepared PDBQT 吗？
 

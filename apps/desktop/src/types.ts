@@ -261,6 +261,7 @@ export type ProjectResponse = {
   raw_file?: string;
   source?: string;
   source_id?: string;
+  query_type?: string;
   format?: string;
   url?: string;
   receptor?: RawStructureStatus;

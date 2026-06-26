@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理。当前仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询。当前仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 第一阶段目标是实现最小闭环：
 
@@ -474,6 +474,7 @@ resources/
 * 后续可继续做离线 runtime 管理，但默认不提交二进制 runtime。
 * V0.2.5 实现 PDB/PubChem 原始结构下载基础层，只保存 raw 文件并记录来源。
 * V0.2.6 实现 raw 文件状态增强和 raw 记录清除，不改变 prepared PDBQT 文件。
+* V0.2.7 实现 RCSB/PubChem raw 来源查询增强，SMILES 只返回暂未支持提示。
 * raw → prepared PDBQT 自动准备仍然延后。
 
 Python runtime 当前解析优先级为：
@@ -537,6 +538,27 @@ V0.2.6 只允许：
 V0.2.6 禁止：
 
 * 删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
+* 自动转 PDBQT；
+* 调用 RDKit 做分子处理；
+* 调用 Meeko 做受体或配体准备；
+* 接入 Open Babel、PLIP、MGLTools；
+* 修改 Vina 运行流程；
+* 做 3D 可视化或药效判断。
+
+## 19. V0.2.7 结构来源查询边界
+
+V0.2.7 只允许：
+
+* RCSB PDB raw 下载支持 `pdb` / `cif`；
+* PubChem CID 查询保持兼容；
+* PubChem 名称查询下载 raw SDF；
+* SMILES 查询返回中文结构化“暂未支持”提示；
+* 在 `project.json` 中记录 `source`、`source_id`、`query_type`、`raw_file` 和 `downloaded_at`。
+
+V0.2.7 禁止：
+
+* 解析 SMILES；
+* 自动生成 3D 构象；
 * 自动转 PDBQT；
 * 调用 RDKit 做分子处理；
 * 调用 Meeko 做受体或配体准备；
