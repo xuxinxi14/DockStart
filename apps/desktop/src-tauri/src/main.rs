@@ -212,6 +212,17 @@ fn validate_preparation_prerequisites(project_dir: String, target: String) -> St
 }
 
 #[tauri::command]
+fn get_preparation_tool_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["tool-status".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 PDBQT 自动准备工具能力。", &error),
+    }
+}
+
+#[tauri::command]
 fn reset_preparation_status(project_dir: String, target: String) -> String {
     match run_backend_module(
         "dockstart_core.preparation",
@@ -540,6 +551,7 @@ fn main() {
             clear_ligand_raw_record,
             get_preparation_status,
             validate_preparation_prerequisites,
+            get_preparation_tool_status,
             reset_preparation_status,
             get_box_params,
             update_box_params,

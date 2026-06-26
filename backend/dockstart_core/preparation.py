@@ -89,12 +89,30 @@ def _file_status(project_path: Path, relative_file: str, key: str, name: str) ->
 
 def _tool_status() -> dict[str, Any]:
     python_result = get_resolved_python()
-    rdkit_result = rdkit_adapter.detect(python_result.path, python_result.source)
-    meeko_result = meeko_adapter.detect(python_result.path, python_result.source)
+    rdkit_result = rdkit_adapter.detect_rdkit_capabilities(python_result.path, python_result.source)
+    meeko_result = meeko_adapter.detect_meeko_capabilities(python_result.path, python_result.source)
     return {
         "python": python_result.to_dict(),
-        "rdkit": rdkit_result.to_dict(),
-        "meeko": meeko_result.to_dict(),
+        "rdkit": rdkit_result,
+        "meeko": meeko_result,
+    }
+
+
+def get_preparation_tool_status(project_dir: str) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    tools = _tool_status()
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "tools": tools,
+        "python_path": tools["python"].get("path", ""),
+        "python_source": tools["python"].get("source", "unknown"),
+        "message": "自动准备工具能力检测已完成。本阶段只检测能力，不执行分子处理。",
+        "error": None,
     }
 
 
@@ -241,6 +259,13 @@ def main() -> None:
             _print_json(_error("PREPARATION_VALIDATE_ARGS", "准备前置检查需要 project_dir 和 target 参数。"))
             return
         _print_json(validate_preparation_prerequisites(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "tool-status":
+        if len(sys.argv) < 3:
+            _print_json(_error("PREPARATION_TOOL_STATUS_ARGS", "读取准备工具能力需要 project_dir 参数。"))
+            return
+        _print_json(get_preparation_tool_status(sys.argv[2]))
         return
 
     if command == "reset":

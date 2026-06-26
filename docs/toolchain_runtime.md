@@ -121,14 +121,18 @@ python scripts/prepare_bundled_python.py C:\Path\To\Python\python.exe
 
 ## Meeko/RDKit 当前状态
 
-当前 Meeko/RDKit 只做 import 检测：
+V0.3.1 开始，Meeko/RDKit 不再只显示 import 是否成功，还会做准备能力检测：
 
 ```text
 python -c "import meeko"
 python -c "import rdkit"
 ```
 
-DockStart 当前不会使用 RDKit 做配体读取、清洗、构象生成或格式转换，也不会使用 Meeko 做受体/配体准备。
+- RDKit：检测 import、版本，并用内联 SDF 样本探测基础 SDF 读取能力，不写项目目录；
+- Meeko：检测 import、版本，并通过安全 introspection / CLI 发现判断 ligand/receptor preparation 能力是否可确认；
+- 如果能力不可确认，返回 `unknown`，不把未知能力硬写成成功。
+
+DockStart 当前仍不会使用 RDKit 做配体清洗、构象生成或格式转换，也不会使用 Meeko 真正执行受体/配体准备。
 
 ## 许可证和依赖注意事项
 

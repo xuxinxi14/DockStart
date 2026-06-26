@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.1
+
+- Added RDKit preparation capability detection for import, version, and inline SDF read probing.
+- Added Meeko capability detection for import, version, and candidate ligand/receptor preparation API or CLI discovery.
+- Added `get_preparation_tool_status` backend/Tauri entry point.
+- Updated PreparationPage to show RDKit/Meeko preparation capability status and Python source.
+- Did not install packages, generate PDBQT, run RDKit/Meeko molecule processing, or change the Vina workflow.
+- Did not add Open Babel, PLIP, MGLTools, 3D visualization, drug efficacy judgement, or Vina algorithm changes.
+
 ## v0.3.0
 
 - Added preparation workflow data models for receptor and ligand PDBQT preparation.

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   DockStartProject,
+  PreparationToolCapabilityResult,
+  PreparationToolStatusResponse,
   PreparationResult,
   PreparationStatusResponse,
   PreparationTarget,
@@ -31,6 +33,10 @@ function parsePreparationResponse(rawPayload: string): PreparationStatusResponse
     message: parsed.message,
     error: parsed.error,
   };
+}
+
+function parsePreparationToolStatusResponse(rawPayload: string): PreparationToolStatusResponse {
+  return JSON.parse(rawPayload) as PreparationToolStatusResponse;
 }
 
 function statusText(status: string | undefined): string {
@@ -67,11 +73,22 @@ function fileLine(file: RunFileStatus | undefined, fallback: string): string {
   return `${file.path || fallback || "未记录"} · ${statusText(file.status)}`;
 }
 
-function toolLine(tool: ToolCheckResult | undefined): string {
+function toolLine(tool: ToolCheckResult | PreparationToolCapabilityResult | undefined): string {
   if (!tool) {
     return "未检测";
   }
   return `${statusText(tool.status)} · ${tool.version || "无版本"} · ${tool.source || "unknown"}`;
+}
+
+function capabilityLine(
+  tool: PreparationToolCapabilityResult | undefined,
+  capabilityKey: string,
+): string {
+  const capability = tool?.capabilities?.[capabilityKey];
+  if (!capability) {
+    return "未检测";
+  }
+  return `${statusText(capability.status)} · ${capability.message}`;
 }
 
 export default function PreparationPage({
@@ -109,7 +126,17 @@ export default function PreparationPage({
       const rawPayload = await invoke<string>("get_preparation_status", {
         projectDir: project.project_dir,
       });
-      applyResponse(parsePreparationResponse(rawPayload), "准备状态已刷新。");
+      const parsed = parsePreparationResponse(rawPayload);
+      try {
+        const rawToolPayload = await invoke<string>("get_preparation_tool_status", {
+          projectDir: project.project_dir,
+        });
+        const toolStatus = parsePreparationToolStatusResponse(rawToolPayload);
+        parsed.tools = toolStatus.tools ?? parsed.tools;
+      } catch {
+        // Preparation status already contains best-effort tool results; keep the page usable.
+      }
+      applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
       setMessage("前端未能调用准备状态命令。");
       setRawError(error instanceof Error ? error.message : String(error));
@@ -202,8 +229,20 @@ export default function PreparationPage({
               <dd>{toolLine(tools?.rdkit)}</dd>
             </div>
             <div>
+              <dt>RDKit SDF 读取</dt>
+              <dd>{capabilityLine(tools?.rdkit, "sdf_inline_read")}</dd>
+            </div>
+            <div>
               <dt>Meeko</dt>
               <dd>{toolLine(tools?.meeko)}</dd>
+            </div>
+            <div>
+              <dt>Meeko 配体准备能力</dt>
+              <dd>{capabilityLine(tools?.meeko, "ligand_preparation")}</dd>
+            </div>
+            <div>
+              <dt>Meeko 受体准备能力</dt>
+              <dd>{capabilityLine(tools?.meeko, "receptor_preparation")}</dd>
             </div>
           </dl>
         </article>

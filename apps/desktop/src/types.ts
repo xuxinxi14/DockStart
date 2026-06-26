@@ -22,6 +22,48 @@ export type ToolCheckResult = {
   is_bundled: boolean;
 };
 
+export type PreparationCapabilityDetail = {
+  status: ToolStatus;
+  message: string;
+  raw_error?: string;
+  api_candidates_found?: string[];
+  cli_candidates_found?: string[];
+  [key: string]: unknown;
+};
+
+export type PreparationToolCapabilityResult = {
+  key: string;
+  name: string;
+  status: ToolStatus;
+  version: string;
+  path: string;
+  python_path: string;
+  python_source: ToolSource;
+  message: string;
+  raw_error: string;
+  source: ToolSource;
+  capabilities: Record<string, PreparationCapabilityDetail>;
+};
+
+export type PreparationToolStatusResponse = {
+  ok: boolean;
+  project_dir: string;
+  tools?: {
+    python?: ToolCheckResult;
+    rdkit?: PreparationToolCapabilityResult;
+    meeko?: PreparationToolCapabilityResult;
+  };
+  python_path?: string;
+  python_source?: ToolSource;
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  };
+};
+
 export type ToolchainFullStatus = "partial" | "ready" | "missing";
 export type ToolchainRuntimeMode = "dev" | "packaged" | "unknown";
 export type BundledPackageStatus = "ready" | "incomplete" | "missing";
@@ -273,8 +315,8 @@ export type PreparationStatusResponse = {
   preparation: PreparationState | null;
   tools?: {
     python?: ToolCheckResult;
-    rdkit?: ToolCheckResult;
-    meeko?: ToolCheckResult;
+    rdkit?: PreparationToolCapabilityResult;
+    meeko?: PreparationToolCapabilityResult;
   };
   files?: {
     receptor_raw?: RunFileStatus;

@@ -102,6 +102,13 @@ V0.3.0 已开始自动准备工作流基础：
 - 新增最小 PreparationPage 入口，用于查看 raw/prepared 文件、RDKit/Meeko 检测状态和准备状态；
 - 当前阶段只建立数据模型与入口，不执行真实 RDKit/Meeko 分子处理，也不会生成 PDBQT。
 
+V0.3.1 已增强自动准备工具能力检测：
+
+- RDKit 检测区分 import、版本和基础内联 SDF 读取探测；
+- Meeko 检测区分 import、版本、候选 ligand preparation API/CLI 和 receptor preparation API/CLI；
+- PreparationPage 显示 Python 来源、RDKit/Meeko import 状态和准备能力状态；
+- 当前阶段仍不安装 RDKit/Meeko，不生成 PDBQT，不改变 Vina 主流程。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -120,7 +127,7 @@ V0.3.0 已开始自动准备工作流基础：
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - raw 文件不等于 prepared PDBQT；
-- V0.3.0 只提供自动准备模型和入口，尚未执行 RDKit/Meeko 分子处理；
+- V0.3.1 只提供自动准备模型、入口和 RDKit/Meeko 能力检测，尚未执行 RDKit/Meeko 分子处理；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；

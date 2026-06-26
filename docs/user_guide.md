@@ -1,6 +1,6 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.3.0 的 raw 原始结构下载、raw 记录管理、来源查询、raw/prepared 流程引导、手动 PDBQT 准备文档、smoke test 和自动准备状态入口。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2 raw workflow 与 V0.3 preparation 入口。
 
 ## 前置条件
 
@@ -11,7 +11,7 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.3.0 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。V0.3.0 新增自动准备状态入口，但当前只做模型、前置检查和重置，不执行真实 RDKit/Meeko 分子处理。手动准备说明见 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md)，验收说明见 [smoke_test.md](smoke_test.md)。
+V0.2.5 到 V0.2.10 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。V0.3.0 新增自动准备状态入口，V0.3.1 新增 RDKit/Meeko 能力检测；当前仍不执行真实 RDKit/Meeko 分子处理。手动准备说明见 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md)，验收说明见 [smoke_test.md](smoke_test.md)。
 
 当前推荐流程：
 
@@ -155,6 +155,8 @@ PreparationPage 会显示：
 - receptor / ligand preparation status。
 
 V0.3.0 只做准备状态模型、前置检查和重置。页面不会真正调用 RDKit/Meeko 生成 PDBQT。自动准备结果即使在后续版本生成，也仍需用户检查质子化、电荷、构象、受体链选择和结构完整性。
+
+V0.3.1 会进一步显示 RDKit import / SDF 读取探测、Meeko import / ligand preparation / receptor preparation 能力状态。`unknown` 表示 DockStart 暂时无法确认该能力，不代表工具一定不可用；当前仍不会生成 PDBQT。
 
 ## 5. 导入 receptor.pdbqt
 
