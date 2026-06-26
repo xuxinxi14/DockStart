@@ -420,3 +420,8 @@ reports/docking_report.md
 ## 结果解释限制
 
 Docking score 仅供结构结合趋势参考，不能替代实验验证。DockStart V0.1 不判断药效，不证明真实结合能力，不包含相互作用分析，也不包含分子动力学验证。
+## V0.4.0 Viewer 数据模型说明
+
+V0.4.0 已提供后端 viewer 读取接口，可以把项目内的 `raw/`、`prepared/` 和 `runs/{run_id}/out.pdbqt` 文本结构文件安全传给后续前端 viewer。当前阶段仍没有正式 3D 页面；V0.4.1 才会接入最小 3Dmol.js ViewerPage。
+
+这些接口只读取文本结构文件，不调用 RDKit、Meeko 或 AutoDock Vina，不做相互作用分析，也不会判断 docking pose 是否代表真实结合或药效。超过 20 MB 的结构文件会被拒绝一次性读取，并返回中文结构化提示。

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.0
+
+- Added backend viewer data models and project-local structure file loading for raw receptor, raw ligand, prepared receptor, prepared ligand, and docking output files.
+- Added safe viewer path validation that rejects absolute paths, path traversal, empty files, and structure files larger than 20 MB.
+- Added docking pose text listing/loading from `runs/{run_id}/out.pdbqt`, including single-pose fallback when `MODEL` records are absent.
+- Added Tauri commands for viewer file status, structure loading, docking pose listing, and docking pose loading.
+- Did not add PLIP/ProLIF, interaction analysis, pocket prediction, drug efficacy judgement, Vina algorithm changes, or frontend 3D rendering yet.
+
 ## v0.3.9
 
 - Created and validated a dedicated `dockstart-rdkit-meeko` conda environment for DockStart RDKit/Meeko preparation testing.

@@ -176,6 +176,17 @@ V0.3.7 是 V0.3 后端冻结审计：
 - 不保证 RDKit / Meeko 生成的 PDBQT 在科学上一定正确；
 - 不做药效判断。
 
+## V0.4 Viewer 当前进展
+
+V0.4.0 已建立 3D viewer 所需的后端数据通道：
+
+- 可以读取项目内的 receptor raw、ligand raw、prepared receptor、prepared ligand 和 Vina docking output 文本结构文件；
+- 可以列出和读取 `runs/{run_id}/out.pdbqt` 中的 docking pose 文本；
+- 读取前会限制文件必须位于项目目录内，并对超过 20 MB 的结构文件返回中文结构化提示；
+- 该阶段只传递结构文本给前端，不调用 RDKit、Meeko 或 AutoDock Vina，也不做相互作用分析。
+
+V0.4.0 还没有完成 3Dmol.js 页面、Box 线框叠加、pose 与 `scores.csv` 的对应显示。这些属于 V0.4.1–V0.4.4 的后续阶段。
+
 ## 当前暂不支持
 
 当前仍不支持：

@@ -494,6 +494,51 @@ fn get_report_status(project_dir: String, run_id: String) -> String {
     }
 }
 
+#[tauri::command]
+fn get_viewer_file_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["file-status".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 3D Viewer 文件状态。", &error),
+    }
+}
+
+#[tauri::command]
+fn load_structure_for_viewer(project_dir: String, file_kind: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["load-structure".to_string(), project_dir, file_kind],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 3D Viewer 结构文件。", &error),
+    }
+}
+
+#[tauri::command]
+fn list_docking_poses(project_dir: String, run_id: String) -> String {
+    match run_backend_module(
+        "dockstart_core.viewer",
+        vec!["list-poses".to_string(), project_dir, run_id],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 docking pose 列表。", &error),
+    }
+}
+
+#[tauri::command]
+fn load_docking_pose_for_viewer(project_dir: String, run_id: String, mode: Option<i32>) -> String {
+    let mut args = vec!["load-pose".to_string(), project_dir, run_id];
+    if let Some(value) = mode {
+        args.push(value.to_string());
+    }
+    match run_backend_module("dockstart_core.viewer", args) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 docking pose 内容。", &error),
+    }
+}
+
 fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String> {
     let backend_dir = find_backend_dir()
         .ok_or_else(|| "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string())?;
@@ -671,7 +716,11 @@ fn main() {
             analyze_vina_run_results,
             load_scores_csv,
             export_markdown_report,
-            get_report_status
+            get_report_status,
+            get_viewer_file_status,
+            load_structure_for_viewer,
+            list_docking_poses,
+            load_docking_pose_for_viewer
         ])
         .run(tauri::generate_context!())
         .expect("error while running DockStart");
