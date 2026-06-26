@@ -26,5 +26,45 @@
     "cpu": 0,
     "seed": null
   },
+  "preparation": {
+    "receptor": {
+      "target": "receptor",
+      "status": "not_started",
+      "method": null,
+      "input_file": null,
+      "output_file": "prepared/receptor.pdbqt",
+      "started_at": null,
+      "finished_at": null,
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": []
+    },
+    "ligand": {
+      "target": "ligand",
+      "status": "not_started",
+      "method": null,
+      "input_file": null,
+      "output_file": "prepared/ligand.pdbqt",
+      "started_at": null,
+      "finished_at": null,
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": []
+    }
+  },
   "runs": []
 }

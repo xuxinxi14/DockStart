@@ -37,7 +37,7 @@ DockStart 不会自动判断“药效好/不好”，也不会输出“候选药
 
 ## 5. PDB/PubChem 下载现在支持到什么程度？
 
-V0.2.10 支持基础 raw 下载、raw 记录管理、来源查询增强、流程引导和 smoke test 整理：
+V0.2.5 到 V0.2.10 已支持基础 raw 下载、raw 记录管理、来源查询增强、流程引导和 smoke test 整理。V0.3.0 额外新增自动准备状态模型和入口，但还不执行真实 PDBQT 准备：
 
 - RCSB PDB：通过 4 位 PDB ID 下载受体原始结构，保存到 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`；
 - PubChem：通过 CID 下载配体原始 SDF，保存到 `raw/ligand_{cid}.sdf`。
@@ -48,11 +48,15 @@ V0.2.10 支持基础 raw 下载、raw 记录管理、来源查询增强、流程
 
 这些 raw 文件不能直接运行 Vina。DockStart 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
-当前不会自动转 PDBQT，不会调用 RDKit，不会调用 Meeko，也不会生成 3D 构象。SMILES 查询暂未支持的原因也是为了避免在当前阶段引入 RDKit 解析和分子处理。
+V0.3.0 仍不会自动转 PDBQT，不会调用 RDKit/Meeko 做真实分子处理，也不会生成 3D 构象。SMILES 查询暂未支持的原因也是为了避免在当前阶段引入 RDKit 解析和分子处理。
 
 ## 6. 为什么下载了 raw 文件还不能运行 Vina？
 
-AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2.10 只负责下载、记录来源、显示 raw 状态、清除 raw 记录、基础来源查询、流程引导、手动准备文档和 smoke test 整理，不做这些化学处理。
+AutoDock Vina 需要 PDBQT 输入。PDB、CIF、SDF 是原始结构或分子文件，仍需要准备步骤，例如加氢、处理电荷、设置可旋转键、写出 PDBQT。V0.2 raw workflow 负责下载、记录来源、显示 raw 状态、清除 raw 记录、基础来源查询、流程引导、手动准备文档和 smoke test 整理；V0.3.0 增加准备状态入口，但仍不做这些化学处理。
+
+## 6.1 V0.3.0 的自动准备入口能直接生成 PDBQT 吗？
+
+不能。V0.3.0 只建立 `project.json` 中的 `preparation` 数据模型、准备状态读取、前置检查和状态重置入口。真实 ligand/receptor PDBQT 自动生成会在后续阶段单独实现，并且仍需要用户检查科学合理性。
 
 V0.2.8 开始在首页、创建页、下载页、导入页和工具链状态页明确提示当前流程：
 

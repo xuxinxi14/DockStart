@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes。当前仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口。当前仍未执行真实 PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 第一阶段目标是实现最小闭环：
 
@@ -478,7 +478,7 @@ resources/
 * V0.2.8 实现 raw/prepared 流程 UI 引导增强，不新增自动制备逻辑。
 * V0.2.9 新增手动 PDBQT 准备指南，不新增自动制备逻辑。
 * V0.2.10 整理 smoke test 与 release notes，不新增自动制备逻辑。
-* raw → prepared PDBQT 自动准备仍然延后。
+* V0.3.0 建立 raw → prepared PDBQT 自动准备模型和入口，但不执行真实制备。
 
 Python runtime 当前解析优先级为：
 
@@ -624,6 +624,27 @@ V0.2.10 禁止：
 
 * 自动生成 PDBQT；
 * 调用 RDKit 做分子处理；
+* 调用 Meeko 做受体或配体准备；
+* 接入 Open Babel、PLIP、MGLTools；
+* 做 3D 可视化；
+* 修改 Vina 运行流程；
+* 做药效判断。
+
+## 23. V0.3.0 自动准备工作流模型边界
+
+V0.3.0 允许：
+
+* 新增 `preparation` 数据模型；
+* 新增准备状态读取、前置检查和重置；
+* 检测 Python/RDKit/Meeko 状态；
+* 新增最小 PreparationPage 入口；
+* 保持旧项目兼容。
+
+V0.3.0 禁止：
+
+* 真实生成 ligand PDBQT；
+* 真实生成 receptor PDBQT；
+* 调用 RDKit 做配体处理；
 * 调用 Meeko 做受体或配体准备；
 * 接入 Open Babel、PLIP、MGLTools；
 * 做 3D 可视化；

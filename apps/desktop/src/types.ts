@@ -202,6 +202,40 @@ export type ProjectFileRef = {
   file: string;
 };
 
+export type PreparationStatus = "not_started" | "checking" | "ready" | "running" | "finished" | "failed";
+export type PreparationTarget = "receptor" | "ligand";
+export type PreparationMethod = "meeko" | "rdkit_meeko" | "external_manual";
+
+export type PreparationResult = {
+  target: PreparationTarget;
+  status: PreparationStatus;
+  method: PreparationMethod | null;
+  input_file: string | null;
+  output_file: string;
+  started_at: string | null;
+  finished_at: string | null;
+  python_path: string;
+  python_source: string;
+  rdkit_available: boolean;
+  meeko_available: boolean;
+  command: string[];
+  stdout_file: string;
+  stderr_file: string;
+  log_file: string;
+  error: {
+    code?: string;
+    message?: string;
+    raw_error?: string;
+    suggestion?: string;
+  } | null;
+  warnings: string[];
+};
+
+export type PreparationState = {
+  receptor: PreparationResult;
+  ligand: PreparationResult;
+};
+
 export type DockStartProject = {
   project_name: string;
   created_at: string;
@@ -228,7 +262,36 @@ export type DockStartProject = {
     vina_config_file: string;
     generated_at: string;
   };
+  preparation: PreparationState;
   runs: Array<Record<string, unknown>>;
+};
+
+export type PreparationStatusResponse = {
+  ok: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  preparation: PreparationState | null;
+  tools?: {
+    python?: ToolCheckResult;
+    rdkit?: ToolCheckResult;
+    meeko?: ToolCheckResult;
+  };
+  files?: {
+    receptor_raw?: RunFileStatus;
+    ligand_raw?: RunFileStatus;
+    receptor_prepared?: RunFileStatus;
+    ligand_prepared?: RunFileStatus;
+  };
+  target?: PreparationTarget;
+  ready?: boolean;
+  missing_tools?: string[];
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  };
 };
 
 export type ProjectResponse = {

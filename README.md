@@ -95,6 +95,13 @@ V0.2.10 已整理 smoke test 和 release notes：
 - 文档明确 raw 文件不等于 prepared PDBQT，DockStart 当前仍不自动转 PDBQT；
 - 后续 V0.3 才考虑 RDKit/Meeko 自动准备的设计、测试和许可证审查。
 
+V0.3.0 已开始自动准备工作流基础：
+
+- `project.json` 新增 `preparation.receptor` 和 `preparation.ligand` 状态；
+- 新增后端准备状态读取、前置检查和重置能力；
+- 新增最小 PreparationPage 入口，用于查看 raw/prepared 文件、RDKit/Meeko 检测状态和准备状态；
+- 当前阶段只建立数据模型与入口，不执行真实 RDKit/Meeko 分子处理，也不会生成 PDBQT。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -113,6 +120,7 @@ V0.2.10 已整理 smoke test 和 release notes：
 - 只下载 raw PDB/SDF，不自动准备 receptor / ligand；
 - raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
 - raw 文件不等于 prepared PDBQT；
+- V0.3.0 只提供自动准备模型和入口，尚未执行 RDKit/Meeko 分子处理；
 - 不提交完整 Python runtime；
 - 不调用 RDKit 进行配体处理；
 - 不调用 Meeko 进行受体/配体准备；

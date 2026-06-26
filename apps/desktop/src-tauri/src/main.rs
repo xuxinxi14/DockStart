@@ -190,6 +190,39 @@ fn clear_ligand_raw_record(project_dir: String, delete_file: bool) -> String {
 }
 
 #[tauri::command]
+fn get_preparation_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["status".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 PDBQT 自动准备状态。", &error),
+    }
+}
+
+#[tauri::command]
+fn validate_preparation_prerequisites(project_dir: String, target: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["validate".to_string(), project_dir, target],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法完成 PDBQT 自动准备前置检查。", &error),
+    }
+}
+
+#[tauri::command]
+fn reset_preparation_status(project_dir: String, target: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["reset".to_string(), project_dir, target],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法重置 PDBQT 自动准备状态。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_box_params(project_dir: String) -> String {
     match run_backend_module(
         "dockstart_core.project",
@@ -505,6 +538,9 @@ fn main() {
             get_raw_files_status,
             clear_receptor_raw_record,
             clear_ligand_raw_record,
+            get_preparation_status,
+            validate_preparation_prerequisites,
+            reset_preparation_status,
             get_box_params,
             update_box_params,
             get_vina_params,

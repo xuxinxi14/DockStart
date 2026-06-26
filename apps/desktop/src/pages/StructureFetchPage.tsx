@@ -6,6 +6,7 @@ type StructureFetchPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onOpenImportPdbqt: (project: DockStartProject) => void;
+  onOpenPreparation: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
 
@@ -79,6 +80,7 @@ export default function StructureFetchPage({
   project: initialProject,
   onBack,
   onOpenImportPdbqt,
+  onOpenPreparation,
   onProjectChange,
 }: StructureFetchPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
@@ -417,12 +419,18 @@ export default function StructureFetchPage({
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
           进入 PDBQT 导入页
         </button>
+        <button className="secondary-button" type="button" onClick={() => onOpenPreparation(project)}>
+          进入自动准备页
+        </button>
       </div>
 
       <div className="ready-note">
         <span>下载 raw 文件后，下一步仍是手动准备 PDBQT，并在导入页选择 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。</span>
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
           去导入 prepared PDBQT
+        </button>
+        <button className="secondary-button" type="button" onClick={() => onOpenPreparation(project)}>
+          查看自动准备入口
         </button>
       </div>
 

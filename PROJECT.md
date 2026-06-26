@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes。当前仍未实现 PDBQT 自动生成或 RDKit/Meeko 分子处理。
+产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口。当前仍未执行真实 PDBQT 自动生成或 RDKit/Meeko 分子处理。
 
 本项目不是新的分子对接算法，也不修改 AutoDock Vina 的打分函数或搜索算法。项目重点是：
 
@@ -623,6 +623,30 @@ V0.2.10 的真实含义是“验收说明和发布记录整理”，不是“新
 * raw PDB/SDF/MOL2 自动转 PDBQT；
 * RDKit 配体处理；
 * Meeko 受体/配体准备；
+* Open Babel、PLIP、MGLTools 接入；
+* 3D 可视化；
+* Vina 运行流程变更；
+* 药效判断。
+
+### 13.8 V0.3.0 自动准备工作流模型
+
+V0.3.0 的真实含义是“建立 raw → prepared PDBQT 自动准备的数据模型、状态接口和最小入口”，不是“已经完成自动准备”。
+
+当前已经具备：
+
+* `project.json` 中的 `preparation.receptor` 和 `preparation.ligand` 状态；
+* `get_preparation_status(project_dir)`；
+* `validate_preparation_prerequisites(project_dir, target)`；
+* `reset_preparation_status(project_dir, target)`；
+* Tauri commands 和最小 PreparationPage；
+* 旧项目缺少 `preparation` 字段时自动补齐默认状态。
+
+当前仍然明确没有实现：
+
+* ligand PDBQT 自动生成；
+* receptor PDBQT 自动生成；
+* RDKit 配体处理；
+* Meeko 受体/配体准备执行；
 * Open Babel、PLIP、MGLTools 接入；
 * 3D 可视化；
 * Vina 运行流程变更；

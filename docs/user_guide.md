@@ -1,6 +1,6 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2.10 的 raw 原始结构下载、raw 记录管理、来源查询、raw/prepared 流程引导、手动 PDBQT 准备文档和 smoke test。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.3.0 的 raw 原始结构下载、raw 记录管理、来源查询、raw/prepared 流程引导、手动 PDBQT 准备文档、smoke test 和自动准备状态入口。
 
 ## 前置条件
 
@@ -11,13 +11,13 @@
 - 已经准备好的 `ligand.pdbqt`；
 - 一个用于保存 DockStart 项目的本地目录。
 
-V0.2.10 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。手动准备说明见 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md)，验收说明见 [smoke_test.md](smoke_test.md)。
+V0.3.0 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。DockStart 仍不会自动把 PDB、CIF、SDF、MOL2 转成 PDBQT，运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。V0.3.0 新增自动准备状态入口，但当前只做模型、前置检查和重置，不执行真实 RDKit/Meeko 分子处理。手动准备说明见 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md)，验收说明见 [smoke_test.md](smoke_test.md)。
 
 当前推荐流程：
 
 ```text
 下载 raw 原始结构
-手动准备 PDBQT
+检查自动准备条件或手动准备 PDBQT
 导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
 设置 Box 和 Vina 参数
 运行 Vina
@@ -144,7 +144,19 @@ StructureFetchPage 会显示：
 - raw 文件已存在且未开启 overwrite。
 - project.json 记录了 raw_file 但文件被手动删除，此时 `record_consistent` 会显示需要检查。
 
-## 4. 导入 receptor.pdbqt
+## 4. 可选：检查自动准备状态
+
+PreparationPage 会显示：
+
+- 当前项目路径；
+- receptor / ligand raw 文件；
+- receptor / ligand prepared PDBQT 文件；
+- Python、RDKit、Meeko 检测状态；
+- receptor / ligand preparation status。
+
+V0.3.0 只做准备状态模型、前置检查和重置。页面不会真正调用 RDKit/Meeko 生成 PDBQT。自动准备结果即使在后续版本生成，也仍需用户检查质子化、电荷、构象、受体链选择和结构完整性。
+
+## 5. 导入 receptor.pdbqt
 
 用户需要输入：
 
@@ -166,7 +178,7 @@ prepared/receptor.pdbqt
 
 如果你只有 PDB/CIF/SDF/MOL2 等 raw 文件，请先参考 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md) 在外部工具中准备 PDBQT。DockStart 当前不会自动完成这一步。
 
-## 5. 导入 ligand.pdbqt
+## 6. 导入 ligand.pdbqt
 
 用户需要输入：
 
@@ -185,7 +197,7 @@ prepared/ligand.pdbqt
 - 文件不存在或为空；
 - 误导入 PDB、SDF、MOL2：V0.1 不做自动格式转换，请先在外部工具中准备 PDBQT。
 
-## 6. 设置 Box 参数
+## 7. 设置 Box 参数
 
 用户需要输入：
 
@@ -210,7 +222,7 @@ prepared/ligand.pdbqt
 - 输入非数字：请使用整数或小数；
 - box 过大：运行会变慢，且可能降低搜索效率。
 
-## 7. 设置 Vina 参数
+## 8. 设置 Vina 参数
 
 用户需要输入：
 
@@ -231,7 +243,7 @@ prepared/ligand.pdbqt
 - `cpu` 为负数；
 - seed 不是整数。
 
-## 8. 生成 vina_config.txt
+## 9. 生成 vina_config.txt
 
 用户需要输入：
 
@@ -249,7 +261,7 @@ configs/vina_config.txt
 - box 或 Vina 参数格式不合法；
 - 项目目录不可写。
 
-## 9. 准备 run
+## 10. 准备 run
 
 用户需要输入：
 
@@ -270,7 +282,7 @@ runs/run_001/config_snapshot.txt
 - receptor 或 ligand 文件缺失；
 - run 目录已存在时，DockStart 会自动选择下一个 run id。
 
-## 10. 执行 Vina
+## 11. 执行 Vina
 
 用户需要输入：
 
@@ -292,7 +304,7 @@ runs/run_001/metadata.json
 - 没有生成非空 `out.pdbqt`：检查输入 PDBQT、box、参数和 Vina 版本；
 - command 不是数组：重新准备 run。
 
-## 11. 解析结果
+## 12. 解析结果
 
 用户需要输入：
 
@@ -324,7 +336,7 @@ mode,affinity_kcal_mol,rmsd_lb,rmsd_ub
 - `log.txt` 中没有 Vina score 表格；
 - score 表格行格式异常。
 
-## 12. 导出 Markdown 报告
+## 13. 导出 Markdown 报告
 
 用户需要输入：
 

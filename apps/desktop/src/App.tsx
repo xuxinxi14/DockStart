@@ -1,6 +1,7 @@
 import { useState } from "react";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
+import PreparationPage from "./pages/PreparationPage";
 import ProjectCreatePage from "./pages/ProjectCreatePage";
 import ReportPage from "./pages/ReportPage";
 import ResultPage from "./pages/ResultPage";
@@ -19,6 +20,7 @@ const nextPages = [
   "内置工具链状态",
   "创建项目",
   "下载原始结构",
+  "自动准备 PDBQT",
   "导入 PDBQT",
   "设置对接箱体",
   "设置 Vina 参数",
@@ -37,6 +39,7 @@ export default function App() {
     | "settings"
     | "project-create"
     | "structure-fetch"
+    | "preparation"
     | "import-pdbqt"
     | "box-setup"
     | "vina-param"
@@ -96,6 +99,26 @@ export default function App() {
         <StructureFetchPage
           project={currentProject}
           onBack={() => setCurrentPage("project-create")}
+          onProjectChange={setCurrentProject}
+          onOpenImportPdbqt={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("import-pdbqt");
+          }}
+          onOpenPreparation={(project) => {
+            setCurrentProject(project);
+            setCurrentPage("preparation");
+          }}
+        />
+      </main>
+    );
+  }
+
+  if (currentPage === "preparation" && currentProject) {
+    return (
+      <main className="app-shell">
+        <PreparationPage
+          project={currentProject}
+          onBack={() => setCurrentPage("structure-fetch")}
           onProjectChange={setCurrentProject}
           onOpenImportPdbqt={(project) => {
             setCurrentProject(project);
@@ -269,7 +292,7 @@ export default function App() {
         <h2 id="raw-prepared-flow">当前推荐流程</h2>
         <ol className="step-list">
           <li>下载 raw 原始结构</li>
-          <li>手动准备 PDBQT</li>
+          <li>检查/准备 PDBQT</li>
           <li>导入 prepared PDBQT</li>
           <li>设置 Box 和 Vina 参数</li>
           <li>运行 Vina 并解析报告</li>

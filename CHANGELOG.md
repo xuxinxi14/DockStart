@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0
+
+- Added preparation workflow data models for receptor and ligand PDBQT preparation.
+- Added `preparation` state to `project.json` while keeping old projects compatible.
+- Added backend status, prerequisite-check, and reset helpers for preparation workflow.
+- Added minimal Tauri commands and a minimal PreparationPage entry.
+- Clarified that this stage does not execute RDKit/Meeko molecule processing yet.
+- Did not add Open Babel, PLIP, MGLTools, 3D visualization, drug efficacy judgement, or Vina workflow changes.
+
 ## v0.2.10
 
 - Expanded `docs/smoke_test.md` with separate V0.1 local prepared PDBQT and V0.2 raw download smoke tests.
