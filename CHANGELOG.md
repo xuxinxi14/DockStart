@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.6
+
+- Documented the V0.3 automated PDBQT preparation workflow from raw downloads through preparation, box/config/run, result parsing, and Markdown report export.
+- Added a mock preparation smoke test that checks raw receptor/ligand records can become prepared PDBQT files and then generate `vina_config.txt` without real RDKit/Meeko or Vina.
+- Clarified preparation limits: protonation, charges, conformers, missing residues, waters, metals, cofactors, and chain choices still require scientific review.
+- Clarified that V0.3 does not add Open Babel, MGLTools, PLIP, 3D visualization, interaction analysis, molecular dynamics, PDF reports, or drug efficacy judgement.
+
 ## v0.3.5
 
 - Added auditable preparation run records under `preparation/{target}_{NNN}/`.

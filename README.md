@@ -139,6 +139,13 @@ V0.3.5 已新增 preparation 审计记录：
 - `project.json` 会记录 `latest_preparation`，便于追踪最近一次准备；
 - 失败的 preparation 也会保留 metadata 和 stdout/stderr，方便排查。
 
+V0.3.6 已完成 preparation 工作流文档收尾：
+
+- 文档描述 raw 下载、RDKit/Meeko 能力检查、ligand/receptor PDBQT 准备、Box/config/run、结果解析和 Markdown 报告导出的一条完整路径；
+- 新增 mock preparation smoke test，不依赖真实 RDKit/Meeko/Vina；
+- 明确自动准备不保证质子化、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确；
+- 仍不包含 Open Babel、MGLTools、PLIP、3D 可视化、相互作用分析、分子动力学、PDF 报告或药效判断。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -280,8 +287,8 @@ npm run tauri dev
 1. 配置 AutoDock Vina 路径。
 2. 创建 DockStart 项目。
 3. 可选：下载 RCSB PDB / PubChem CID 原始结构到 `raw/`。
-4. 导入已经准备好的 `receptor.pdbqt`。
-5. 导入已经准备好的 `ligand.pdbqt`。
+4. 可选：在 PreparationPage 用已检测到的 RDKit/Meeko 尝试准备 PDBQT。
+5. 导入或确认 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 6. 设置 docking box。
 7. 设置 Vina 参数。
 8. 生成 `configs/vina_config.txt`。

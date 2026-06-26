@@ -98,4 +98,8 @@ Open Babel、MGLTools、PLIP 等工具涉及不同许可证和分发边界。没
 
 当前不会。
 
-DockStart 目前只做基础文件导入和运行流程管理，不判断受体链选择、质子化状态、电荷、可旋转键或 docking box 是否科学合理。外部工具生成的 PDBQT 仍需要用户按课程、实验室规范或研究方案自行确认。
+DockStart V0.3 可以尝试用 RDKit/Meeko 自动准备部分 receptor/ligand PDBQT，但不判断受体链选择、质子化状态、电荷、可旋转键、缺失残基、水分子、金属离子、辅因子或 docking box 是否科学合理。自动或外部工具生成的 PDBQT 都仍需要用户按课程、实验室规范或研究方案自行确认。
+
+## 12. V0.3 之后下一步做什么？
+
+V0.4 以后才考虑 3D 可视化、可视化 box 设置、相互作用分析和批量 docking。V0.3 当前不做 Open Babel、MGLTools、PLIP、分子动力学、PDF 报告或药效判断。

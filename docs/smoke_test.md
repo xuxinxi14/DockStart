@@ -380,6 +380,8 @@ prepared/ligand.pdbqt
 
 验证 raw 文件已下载但 prepared PDBQT 缺失时，DockStart 会提示先进行 preparation；prepared PDBQT 存在后，原有 Vina config/run 流程继续可用。
 
+V0.3.6 的自动准备 smoke test 使用 mock runner，不依赖真实 RDKit/Meeko，也不调用 AutoDock Vina。真实科学结果仍需要用户用实际工具和结构检查。
+
 ### 手动测试步骤
 
 1. 创建项目并下载 receptor raw PDB/CIF 与 ligand raw SDF。
@@ -397,3 +399,16 @@ prepared/ligand.pdbqt
 - preparation 失败时提示查看日志。
 - 每次 preparation 都保留独立 metadata、stdout、stderr、command、input snapshot 和 output check。
 - prepared PDBQT 补齐后，V0.1 config/run/parse/report 流程不被破坏。
+
+## V0.3 当前仍不做
+
+- Open Babel；
+- MGLTools；
+- PLIP；
+- 3D 可视化；
+- 相互作用分析；
+- 分子动力学；
+- PDF 报告；
+- 药效判断。
+
+V0.4 以后再考虑 3D 可视化、box 可视化设置、相互作用分析和批量 docking。

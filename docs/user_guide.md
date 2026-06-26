@@ -17,10 +17,12 @@ V0.2.5 到 V0.2.10 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw
 
 ```text
 下载 raw 原始结构
-检查自动准备条件或手动准备 PDBQT
-导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
+检查 RDKit/Meeko 准备能力
+准备或手动导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
 设置 Box 和 Vina 参数
+生成 vina_config.txt
 运行 Vina
+解析结果并导出 Markdown 报告
 ```
 
 ## 1. 配置工具路径
@@ -183,6 +185,23 @@ output_check.json
 ```
 
 这些记录用于排查工具版本、输入、命令和输出状态。它们说明 preparation 过程可追踪，但不代表结果已经经过科学验证。
+
+V0.3.6 的完整工作流可以理解为：
+
+1. 下载 receptor raw 文件。
+2. 下载 ligand raw 文件。
+3. 检查 Python / RDKit / Meeko 能力。
+4. 准备 ligand PDBQT。
+5. 准备 receptor PDBQT。
+6. 人工检查 prepared PDBQT。
+7. 设置 Box。
+8. 设置 Vina 参数。
+9. 生成 `configs/vina_config.txt`。
+10. 准备并运行 Vina。
+11. 解析结果。
+12. 导出 Markdown 报告。
+
+自动准备不保证 protonation、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确，也不等于药效判断。
 
 ## 5. 导入 receptor.pdbqt
 
