@@ -9,7 +9,7 @@
 
 目标不是开发新的 docking 算法，而是围绕 AutoDock Vina 构建现代化、中文化、可复现的图形化工作流。
 
-产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备；V0.3.3 已实现 receptor PDB/CIF 到 prepared/receptor.pdbqt 的最小自动准备；V0.3.4 已将 preparation 状态接入现有 config/run 前置检查和下一步建议。当前仍未实现 MOL2/SMILES 自动准备、复杂结构修复或 Vina 主流程改造。
+产品定位已经从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina；后续 DockStart Full 应逐步实现分发简单、内置工具链、开箱即用、中文引导，并覆盖分子对接全过程。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2 已实现 ligand SDF/MOL 到 prepared/ligand.pdbqt 的最小自动准备；V0.3.3 已实现 receptor PDB/CIF 到 prepared/receptor.pdbqt 的最小自动准备；V0.3.4 已将 preparation 状态接入现有 config/run 前置检查和下一步建议；V0.3.5 已新增 preparation 审计记录。当前仍未实现 MOL2/SMILES 自动准备、复杂结构修复或 Vina 主流程改造。
 
 第一阶段目标是实现最小闭环：
 
@@ -480,6 +480,7 @@ resources/
 * V0.2.10 整理 smoke test 与 release notes，不新增自动制备逻辑。
 * V0.3.0 建立 raw → prepared PDBQT 自动准备模型和入口，但不执行真实制备。
 * V0.3.4 将 preparation 状态接入现有 config/run 前置检查和下一步建议，不改变 Vina config、执行、解析或报告逻辑。
+* V0.3.5 为每次 preparation 写入独立记录目录和 metadata/stdout/stderr/command/input/output 记录。
 
 Python runtime 当前解析优先级为：
 
@@ -636,6 +637,21 @@ V0.3.4 禁止：
 * 修改 score 解析逻辑；
 * 新增 Open Babel、PLIP、MGLTools；
 * 新增 3D 可视化、相互作用分析或药效判断。
+
+V0.3.5 允许：
+
+* 为 ligand/receptor preparation 生成独立审计目录；
+* 写入 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`；
+* 更新 `project.json` 的 `latest_preparation`；
+* 失败时保留 metadata 和日志。
+
+V0.3.5 禁止：
+
+* 调用 Vina；
+* 解析 docking 结果；
+* 把 preparation 记录解释为科学验证；
+* 接入 Open Babel、PLIP、MGLTools；
+* 做 3D 可视化、相互作用分析或药效判断。
 
 ## 21. V0.2.9 手动 PDBQT 准备指南边界
 

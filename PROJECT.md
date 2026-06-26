@@ -739,3 +739,24 @@ V0.3.4 的真实含义是“让自动准备结果安全接入现有 Vina config/
 * 3D 可视化；
 * Vina config、Vina 执行、score 解析或报告语义变更；
 * 药效判断。
+
+### 13.13 V0.3.5 preparation 审计记录
+
+V0.3.5 的真实含义是“让自动准备过程可追踪、可复现、可排查”，不是“证明 preparation 结果科学正确”。
+
+当前已经具备：
+
+* 每次 ligand preparation 写入 `preparation/ligand_001/`、`preparation/ligand_002/` 等独立目录；
+* 每次 receptor preparation 写入 `preparation/receptor_001/`、`preparation/receptor_002/` 等独立目录；
+* 每个目录包含 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`；
+* 失败的 preparation 也保留 metadata 和 stdout/stderr；
+* `project.json` 记录 `latest_preparation.ligand` 和 `latest_preparation.receptor`；
+* 新增读取 preparation 列表、metadata 和 latest 记录的后端/Tauri 命令。
+
+当前仍然明确没有实现：
+
+* preparation 结果科学正确性判断；
+* docking 结果解析变更；
+* Open Babel、PLIP、MGLTools 接入；
+* 3D 可视化；
+* 药效判断。

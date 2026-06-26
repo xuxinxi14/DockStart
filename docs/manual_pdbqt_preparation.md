@@ -59,7 +59,7 @@ PreparationPage 的“准备 ligand PDBQT”按钮会：
 - 使用当前解析到的 Python + RDKit + Meeko；
 - 输出 `prepared/ligand.pdbqt`；
 - 默认不覆盖已有 `prepared/ligand.pdbqt`；
-- 保存 stdout、stderr 和日志到 `prepared/logs/`。
+- 保存 stdout、stderr 和 metadata 到独立记录目录，例如 `preparation/ligand_001/`。
 
 当前不会：
 
@@ -76,7 +76,7 @@ PreparationPage 的“准备 receptor PDBQT”按钮会：
 - 使用当前解析到的 Python + Meeko receptor CLI；
 - 输出 `prepared/receptor.pdbqt`；
 - 默认不覆盖已有 `prepared/receptor.pdbqt`；
-- 保存 stdout、stderr 和日志到 `prepared/logs/`。
+- 保存 stdout、stderr 和 metadata 到独立记录目录，例如 `preparation/receptor_001/`。
 
 当前不会：
 
@@ -94,7 +94,7 @@ PreparationPage 的“准备 receptor PDBQT”按钮会：
 - AutoDockTools / MGLTools：传统 AutoDock 工作流中常见的 PDBQT 准备工具；
 - Open Babel：常用于格式转换，但许可证和结果适用性需要谨慎确认。
 
-DockStart 当前只检测 Meeko/RDKit 是否可以 import，不使用它们自动处理受体或配体。
+DockStart V0.3 可以在工具链能力可确认时尝试使用 RDKit/Meeko 自动准备部分 PDBQT，但不会自动安装这些工具，也不会保证自动准备结果科学正确。
 
 ## 8. 许可证注意事项
 

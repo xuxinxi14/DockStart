@@ -132,6 +132,13 @@ V0.3.4 已把自动准备状态接回现有 Vina 主流程：
 - 新增项目工作流状态接口，PreparationPage 会显示下一步建议；
 - 没有修改 Vina config、Vina 执行、结果解析或报告导出逻辑。
 
+V0.3.5 已新增 preparation 审计记录：
+
+- 每次 ligand/receptor 自动准备都会写入独立目录，例如 `preparation/ligand_001/` 或 `preparation/receptor_001/`；
+- 记录包含 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`；
+- `project.json` 会记录 `latest_preparation`，便于追踪最近一次准备；
+- 失败的 preparation 也会保留 metadata 和 stdout/stderr，方便排查。
+
 当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
 
 `scripts/prepare_bundled_python.py` 只做本地装配：
@@ -304,6 +311,8 @@ runs/run_001/scores.csv
 results/scores.csv
 runs/run_001/docking_report.md
 reports/docking_report.md
+preparation/ligand_001/metadata.json
+preparation/receptor_001/metadata.json
 ```
 
 其中 `raw/receptor_1HSG.pdb` 和 `raw/receptor_1HSG.cif` 通常根据用户选择二选一；raw 文件只是来源记录和后续准备材料，不会替代 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`。

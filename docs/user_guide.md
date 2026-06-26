@@ -164,6 +164,26 @@ V0.3.3 新增“准备 receptor PDBQT”按钮：当 `receptor.raw_file` 是 PDB
 
 V0.3.4 会在 PreparationPage 显示项目下一步建议。生成 config 或准备 run 时，如果 DockStart 发现已经下载了 raw receptor/ligand，但还没有 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`，会提示先准备 PDBQT；如果上一次 preparation 失败，会提示查看 preparation 日志。这个接入不会修改 Vina config、Vina 执行或结果解析逻辑。
 
+V0.3.5 开始，每次自动准备都会生成独立记录目录：
+
+```text
+preparation/ligand_001/
+preparation/receptor_001/
+```
+
+每个目录包含：
+
+```text
+metadata.json
+stdout.txt
+stderr.txt
+command.json
+input_snapshot.json
+output_check.json
+```
+
+这些记录用于排查工具版本、输入、命令和输出状态。它们说明 preparation 过程可追踪，但不代表结果已经经过科学验证。
+
 ## 5. 导入 receptor.pdbqt
 
 用户需要输入：

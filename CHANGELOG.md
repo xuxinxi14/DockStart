@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.5
+
+- Added auditable preparation run records under `preparation/{target}_{NNN}/`.
+- Each ligand/receptor preparation execution now writes `metadata.json`, `stdout.txt`, `stderr.txt`, `command.json`, `input_snapshot.json`, and `output_check.json`.
+- Added `latest_preparation` tracking in `project.json`.
+- Added backend/Tauri entry points to list preparation runs, load preparation metadata, and read the latest preparation record.
+- Kept failed preparation attempts traceable with metadata and stdout/stderr.
+- Did not call AutoDock Vina, parse docking results, add Open Babel/PLIP/MGLTools, add 3D visualization, or make drug efficacy judgements.
+
 ## v0.3.4
 
 - Connected preparation state back into the existing config/run prerequisite checks without changing the Vina config, execution, parsing, or report semantics.

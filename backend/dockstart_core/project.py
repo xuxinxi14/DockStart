@@ -18,7 +18,7 @@ from adapters import vina_adapter
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
 from dockstart_core.settings import load_settings
 
-PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports")
+PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation")
 PROJECT_NAME_PATTERN = re.compile(r"^[^<>:\"/\\|?*\x00-\x1f]+$")
 RUN_ID_PATTERN = re.compile(r"^run_(\d{3,})$")
 VINA_NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -78,6 +78,7 @@ class DockStartProject:
     vina: VinaSettings = field(default_factory=VinaSettings)
     config: ConfigSettings = field(default_factory=ConfigSettings)
     preparation: PreparationState = field(default_factory=PreparationState)
+    latest_preparation: dict[str, str] = field(default_factory=lambda: {"receptor": "", "ligand": ""})
     runs: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -141,6 +142,7 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
     vina = data.get("vina") if isinstance(data.get("vina"), dict) else {}
     config = data.get("config") if isinstance(data.get("config"), dict) else {}
     preparation = data.get("preparation") if isinstance(data.get("preparation"), dict) else {}
+    latest_preparation = data.get("latest_preparation") if isinstance(data.get("latest_preparation"), dict) else {}
     runs = data.get("runs") if isinstance(data.get("runs"), list) else []
 
     return DockStartProject(
@@ -184,6 +186,10 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
             generated_at=str(config.get("generated_at", "") or ""),
         ),
         preparation=preparation_state_from_dict(preparation),
+        latest_preparation={
+            "receptor": str(latest_preparation.get("receptor", "") or ""),
+            "ligand": str(latest_preparation.get("ligand", "") or ""),
+        },
         runs=runs,
     )
 

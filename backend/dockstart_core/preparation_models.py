@@ -24,6 +24,7 @@ ALLOWED_PREPARATION_METHODS: set[str] = {"meeko", "rdkit_meeko", "external_manua
 @dataclass
 class PreparationResult:
     target: PreparationTarget
+    prep_id: str = ""
     status: PreparationStatus = "not_started"
     method: PreparationMethod | None = None
     input_file: str | None = None
@@ -38,6 +39,11 @@ class PreparationResult:
     stdout_file: str = ""
     stderr_file: str = ""
     log_file: str = ""
+    metadata_file: str = ""
+    command_file: str = ""
+    input_snapshot_file: str = ""
+    output_check_file: str = ""
+    exit_code: int | None = None
     error: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
 
@@ -92,8 +98,15 @@ def preparation_result_from_dict(target: PreparationTarget, data: Any) -> Prepar
     if error is not None and not isinstance(error, dict):
         error = {"message": str(error)}
 
+    exit_code_value = source.get("exit_code")
+    try:
+        exit_code = int(exit_code_value) if exit_code_value not in ("", None) else None
+    except (TypeError, ValueError):
+        exit_code = None
+
     return PreparationResult(
         target=target,
+        prep_id=str(source.get("prep_id") or ""),
         status=status,  # type: ignore[arg-type]
         method=method,  # type: ignore[arg-type]
         input_file=str(source.get("input_file")) if source.get("input_file") else None,
@@ -108,6 +121,11 @@ def preparation_result_from_dict(target: PreparationTarget, data: Any) -> Prepar
         stdout_file=str(source.get("stdout_file") or ""),
         stderr_file=str(source.get("stderr_file") or ""),
         log_file=str(source.get("log_file") or ""),
+        metadata_file=str(source.get("metadata_file") or ""),
+        command_file=str(source.get("command_file") or ""),
+        input_snapshot_file=str(source.get("input_snapshot_file") or ""),
+        output_check_file=str(source.get("output_check_file") or ""),
+        exit_code=exit_code,
         error=error,
         warnings=warnings,
     )

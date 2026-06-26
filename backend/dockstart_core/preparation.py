@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ LIGAND_PREPARATION_LOG = Path("prepared", "logs", "ligand_preparation_log.json")
 RECEPTOR_PREPARATION_STDOUT = Path("prepared", "logs", "receptor_stdout.txt")
 RECEPTOR_PREPARATION_STDERR = Path("prepared", "logs", "receptor_stderr.txt")
 RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.json")
+PREPARATION_RECORD_ROOT = Path("preparation")
+PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
 
 
 def _now_iso() -> str:
@@ -114,6 +117,119 @@ def _relative_path(path: Path, project_path: Path) -> str:
         return path.resolve().relative_to(project_path.resolve()).as_posix()
     except ValueError:
         return path.as_posix()
+
+
+def _write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _preparation_record_dir(project_path: Path, prep_id: str) -> Path:
+    return project_path / PREPARATION_RECORD_ROOT / prep_id
+
+
+def _validate_prep_id_for_target(target: PreparationTarget, prep_id: str) -> dict[str, Any] | None:
+    match = PREPARATION_ID_PATTERN.match(str(prep_id or ""))
+    if not match or match.group(1) != target:
+        return _error(
+            "PREPARATION_ID_INVALID",
+            "preparation 记录编号无效。",
+            raw_error=str(prep_id),
+            suggestion=f"请使用形如 {target}_001 的 preparation 记录编号。",
+        )
+    return None
+
+
+def get_next_preparation_id(project_dir: str, target: str) -> str:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        raise ValueError("preparation target must be receptor or ligand")
+
+    project_path = Path(project_dir).expanduser()
+    root = project_path / PREPARATION_RECORD_ROOT
+    max_index = 0
+    if root.is_dir():
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            match = PREPARATION_ID_PATTERN.match(child.name)
+            if match and match.group(1) == normalized_target:
+                max_index = max(max_index, int(match.group(2)))
+    return f"{normalized_target}_{max_index + 1:03d}"
+
+
+def _make_preparation_record_paths(project_path: Path, prep_id: str) -> dict[str, Any]:
+    record_dir = _preparation_record_dir(project_path, prep_id)
+    return {
+        "prep_id": prep_id,
+        "record_dir": record_dir,
+        "record_dir_relative": _relative_path(record_dir, project_path),
+        "metadata_file": _relative_path(record_dir / "metadata.json", project_path),
+        "stdout_file": _relative_path(record_dir / "stdout.txt", project_path),
+        "stderr_file": _relative_path(record_dir / "stderr.txt", project_path),
+        "command_file": _relative_path(record_dir / "command.json", project_path),
+        "input_snapshot_file": _relative_path(record_dir / "input_snapshot.json", project_path),
+        "output_check_file": _relative_path(record_dir / "output_check.json", project_path),
+    }
+
+
+def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    is_file = path.is_file()
+    size = path.stat().st_size if exists and is_file else 0
+    modified_at = (
+        datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
+        if exists and is_file
+        else ""
+    )
+    return {
+        "path": _relative_path(path, project_path),
+        "absolute_path": str(path.resolve()) if exists else str(path),
+        "exists": exists,
+        "is_file": is_file,
+        "size": size,
+        "non_empty": size > 0,
+        "modified_at": modified_at,
+    }
+
+
+def _build_preparation_metadata(
+    *,
+    prep_id: str,
+    target: PreparationTarget,
+    status: str,
+    method: str,
+    created_at: str,
+    started_at: str | None,
+    finished_at: str | None,
+    built: dict[str, Any],
+    exit_code: int | None = None,
+    warnings: list[str] | None = None,
+    error: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tools = built.get("tools", {})
+    python_tool = tools.get("python", {}) if isinstance(tools, dict) else {}
+    rdkit_tool = tools.get("rdkit", {}) if isinstance(tools, dict) else {}
+    meeko_tool = tools.get("meeko", {}) if isinstance(tools, dict) else {}
+    return {
+        "prep_id": prep_id,
+        "target": target,
+        "status": status,
+        "method": method,
+        "created_at": created_at,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "python_path": str(python_tool.get("path") or ""),
+        "python_source": str(python_tool.get("source") or "unknown"),
+        "rdkit_version": str(rdkit_tool.get("version") or ""),
+        "meeko_version": str(meeko_tool.get("version") or ""),
+        "input_file": built.get("input_file", ""),
+        "output_file": built.get("output_file", ""),
+        "command": built.get("command", []),
+        "exit_code": exit_code,
+        "warnings": warnings or [],
+        "error": error,
+    }
 
 
 def _project_error_payload(
@@ -435,15 +551,21 @@ def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False)
     }
 
 
-def build_ligand_preparation_command_or_script(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+def build_ligand_preparation_command_or_script(
+    project_dir: str,
+    overwrite: bool = False,
+    prep_id: str | None = None,
+) -> dict[str, Any]:
     validation = validate_ligand_preparation_input(project_dir, overwrite=overwrite)
     if not validation.get("ok"):
         return validation
 
     project_path = Path(validation["project_dir"]).expanduser()
-    logs_dir = project_path / LIGAND_PREPARATION_LOG_DIR
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    script_path = logs_dir / "prepare_ligand_rdkit_meeko.py"
+    selected_prep_id = prep_id or get_next_preparation_id(project_dir, "ligand")
+    paths = _make_preparation_record_paths(project_path, selected_prep_id)
+    record_dir = paths["record_dir"]
+    record_dir.mkdir(parents=True, exist_ok=False)
+    script_path = record_dir / "prepare_ligand_rdkit_meeko.py"
     script_path.write_text(_ligand_preparation_script_text(), encoding="utf-8")
 
     command = [
@@ -454,17 +576,24 @@ def build_ligand_preparation_command_or_script(project_dir: str, overwrite: bool
     ]
     return {
         **validation,
+        "prep_id": selected_prep_id,
+        "record_dir": paths["record_dir_relative"],
         "command": command,
         "script_file": _relative_path(script_path, project_path),
-        "stdout_file": LIGAND_PREPARATION_STDOUT.as_posix(),
-        "stderr_file": LIGAND_PREPARATION_STDERR.as_posix(),
-        "log_file": LIGAND_PREPARATION_LOG.as_posix(),
+        "stdout_file": paths["stdout_file"],
+        "stderr_file": paths["stderr_file"],
+        "log_file": paths["metadata_file"],
+        "metadata_file": paths["metadata_file"],
+        "command_file": paths["command_file"],
+        "input_snapshot_file": paths["input_snapshot_file"],
+        "output_check_file": paths["output_check_file"],
     }
 
 
 def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
     _ = options or {}
-    built = build_ligand_preparation_command_or_script(project_dir, overwrite=overwrite)
+    prep_id = get_next_preparation_id(project_dir, "ligand")
+    built = build_ligand_preparation_command_or_script(project_dir, overwrite=overwrite, prep_id=prep_id)
     if not built.get("ok"):
         return built
 
@@ -476,12 +605,17 @@ def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dic
     project_path = Path(project.project_dir).expanduser()
     stdout_path = project_path / built["stdout_file"]
     stderr_path = project_path / built["stderr_file"]
-    log_path = project_path / built["log_file"]
     output_path = Path(built["output_path"])
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path = project_path / built["metadata_file"]
+    command_path = project_path / built["command_file"]
+    input_snapshot_path = project_path / built["input_snapshot_file"]
+    output_check_path = project_path / built["output_check_file"]
 
     prep = project.preparation.ligand
+    created_at = _now_iso()
     started_at = _now_iso()
+    prep.prep_id = prep_id
     prep.status = "running"
     prep.method = "rdkit_meeko"
     prep.input_file = built["input_file"]
@@ -496,8 +630,40 @@ def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dic
     prep.stdout_file = built["stdout_file"]
     prep.stderr_file = built["stderr_file"]
     prep.log_file = built["log_file"]
+    prep.metadata_file = built["metadata_file"]
+    prep.command_file = built["command_file"]
+    prep.input_snapshot_file = built["input_snapshot_file"]
+    prep.output_check_file = built["output_check_file"]
+    prep.exit_code = None
     prep.error = None
     prep.warnings = list(built.get("warnings", []))
+    project.latest_preparation["ligand"] = prep_id
+    _write_json(command_path, {"prep_id": prep_id, "target": "ligand", "command": built["command"]})
+    _write_json(
+        input_snapshot_path,
+        {
+            "prep_id": prep_id,
+            "target": "ligand",
+            "input_file": built["input_file"],
+            "input": _file_snapshot(Path(built["input_path"]), project_path),
+            "tools": built.get("tools", {}),
+            "warnings": prep.warnings,
+        },
+    )
+    _write_json(
+        metadata_path,
+        _build_preparation_metadata(
+            prep_id=prep_id,
+            target="ligand",
+            status="running",
+            method="rdkit_meeko",
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=None,
+            built=built,
+            warnings=prep.warnings,
+        ),
+    )
     saved = save_project(project)
     if not saved.get("ok"):
         return saved
@@ -517,6 +683,15 @@ def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dic
 
     finished_at = _now_iso()
     output_ok = output_path.is_file() and output_path.stat().st_size > 0
+    output_check = {
+        "prep_id": prep_id,
+        "target": "ligand",
+        "output_file": LIGAND_PREPARATION_OUTPUT,
+        "output": _file_snapshot(output_path, project_path),
+        "exit_code": exit_code,
+        "success": exit_code == 0 and output_ok,
+    }
+    _write_json(output_check_path, output_check)
     success = exit_code == 0 and output_ok
     if success:
         prep.status = "finished"
@@ -537,24 +712,32 @@ def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dic
         prep.error = error
 
     prep.finished_at = finished_at
-    log_payload = {
-        "target": "ligand",
-        "status": prep.status,
-        "method": prep.method,
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "input_file": built["input_file"],
-        "output_file": LIGAND_PREPARATION_OUTPUT,
-        "command": built["command"],
-        "exit_code": exit_code,
-        "stdout_file": built["stdout_file"],
-        "stderr_file": built["stderr_file"],
-        "output_exists": output_path.is_file(),
-        "output_non_empty": output_ok,
-        "warnings": prep.warnings,
-        "error": error,
-    }
-    log_path.write_text(json.dumps(log_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    prep.exit_code = exit_code
+    metadata_payload = _build_preparation_metadata(
+        prep_id=prep_id,
+        target="ligand",
+        status=prep.status,
+        method="rdkit_meeko",
+        created_at=created_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        built=built,
+        exit_code=exit_code,
+        warnings=prep.warnings,
+        error=error,
+    )
+    metadata_payload.update(
+        {
+            "stdout_file": built["stdout_file"],
+            "stderr_file": built["stderr_file"],
+            "command_file": built["command_file"],
+            "input_snapshot_file": built["input_snapshot_file"],
+            "output_check_file": built["output_check_file"],
+            "output_exists": output_path.is_file(),
+            "output_non_empty": output_ok,
+        }
+    )
+    _write_json(metadata_path, metadata_payload)
     saved = save_project(project)
     if not saved.get("ok"):
         return saved
@@ -564,6 +747,8 @@ def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dic
         {
             "ok": success,
             "target": "ligand",
+            "prep_id": prep_id,
+            "metadata_file": built["metadata_file"],
             "output_file": LIGAND_PREPARATION_OUTPUT,
             "stdout_file": built["stdout_file"],
             "stderr_file": built["stderr_file"],
@@ -705,14 +890,19 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
     }
 
 
-def build_receptor_preparation_command_or_script(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+def build_receptor_preparation_command_or_script(
+    project_dir: str,
+    overwrite: bool = False,
+    prep_id: str | None = None,
+) -> dict[str, Any]:
     validation = validate_receptor_preparation_input(project_dir, overwrite=overwrite)
     if not validation.get("ok"):
         return validation
 
     project_path = Path(validation["project_dir"]).expanduser()
-    logs_dir = project_path / LIGAND_PREPARATION_LOG_DIR
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    selected_prep_id = prep_id or get_next_preparation_id(project_dir, "receptor")
+    paths = _make_preparation_record_paths(project_path, selected_prep_id)
+    paths["record_dir"].mkdir(parents=True, exist_ok=False)
     cli_path = str(validation["receptor_cli"])
     output_stem = str((project_path / RECEPTOR_PREPARATION_OUTPUT).with_suffix(""))
     python_path = validation["tools"]["python"]["path"]
@@ -723,16 +913,23 @@ def build_receptor_preparation_command_or_script(project_dir: str, overwrite: bo
 
     return {
         **validation,
+        "prep_id": selected_prep_id,
+        "record_dir": paths["record_dir_relative"],
         "command": command,
-        "stdout_file": RECEPTOR_PREPARATION_STDOUT.as_posix(),
-        "stderr_file": RECEPTOR_PREPARATION_STDERR.as_posix(),
-        "log_file": RECEPTOR_PREPARATION_LOG.as_posix(),
+        "stdout_file": paths["stdout_file"],
+        "stderr_file": paths["stderr_file"],
+        "log_file": paths["metadata_file"],
+        "metadata_file": paths["metadata_file"],
+        "command_file": paths["command_file"],
+        "input_snapshot_file": paths["input_snapshot_file"],
+        "output_check_file": paths["output_check_file"],
     }
 
 
 def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
     _ = options or {}
-    built = build_receptor_preparation_command_or_script(project_dir, overwrite=overwrite)
+    prep_id = get_next_preparation_id(project_dir, "receptor")
+    built = build_receptor_preparation_command_or_script(project_dir, overwrite=overwrite, prep_id=prep_id)
     if not built.get("ok"):
         return built
 
@@ -744,12 +941,17 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
     project_path = Path(project.project_dir).expanduser()
     stdout_path = project_path / built["stdout_file"]
     stderr_path = project_path / built["stderr_file"]
-    log_path = project_path / built["log_file"]
     output_path = Path(built["output_path"])
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path = project_path / built["metadata_file"]
+    command_path = project_path / built["command_file"]
+    input_snapshot_path = project_path / built["input_snapshot_file"]
+    output_check_path = project_path / built["output_check_file"]
 
     prep = project.preparation.receptor
+    created_at = _now_iso()
     started_at = _now_iso()
+    prep.prep_id = prep_id
     prep.status = "running"
     prep.method = "meeko"
     prep.input_file = built["input_file"]
@@ -764,8 +966,40 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
     prep.stdout_file = built["stdout_file"]
     prep.stderr_file = built["stderr_file"]
     prep.log_file = built["log_file"]
+    prep.metadata_file = built["metadata_file"]
+    prep.command_file = built["command_file"]
+    prep.input_snapshot_file = built["input_snapshot_file"]
+    prep.output_check_file = built["output_check_file"]
+    prep.exit_code = None
     prep.error = None
     prep.warnings = list(built.get("warnings", []))
+    project.latest_preparation["receptor"] = prep_id
+    _write_json(command_path, {"prep_id": prep_id, "target": "receptor", "command": built["command"]})
+    _write_json(
+        input_snapshot_path,
+        {
+            "prep_id": prep_id,
+            "target": "receptor",
+            "input_file": built["input_file"],
+            "input": _file_snapshot(Path(built["input_path"]), project_path),
+            "tools": built.get("tools", {}),
+            "warnings": prep.warnings,
+        },
+    )
+    _write_json(
+        metadata_path,
+        _build_preparation_metadata(
+            prep_id=prep_id,
+            target="receptor",
+            status="running",
+            method="meeko",
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=None,
+            built=built,
+            warnings=prep.warnings,
+        ),
+    )
     saved = save_project(project)
     if not saved.get("ok"):
         return saved
@@ -785,6 +1019,15 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
 
     finished_at = _now_iso()
     output_ok = output_path.is_file() and output_path.stat().st_size > 0
+    output_check = {
+        "prep_id": prep_id,
+        "target": "receptor",
+        "output_file": RECEPTOR_PREPARATION_OUTPUT,
+        "output": _file_snapshot(output_path, project_path),
+        "exit_code": exit_code,
+        "success": exit_code == 0 and output_ok,
+    }
+    _write_json(output_check_path, output_check)
     success = exit_code == 0 and output_ok
     if success:
         prep.status = "finished"
@@ -805,24 +1048,32 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
         prep.error = error
 
     prep.finished_at = finished_at
-    log_payload = {
-        "target": "receptor",
-        "status": prep.status,
-        "method": prep.method,
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "input_file": built["input_file"],
-        "output_file": RECEPTOR_PREPARATION_OUTPUT,
-        "command": built["command"],
-        "exit_code": exit_code,
-        "stdout_file": built["stdout_file"],
-        "stderr_file": built["stderr_file"],
-        "output_exists": output_path.is_file(),
-        "output_non_empty": output_ok,
-        "warnings": prep.warnings,
-        "error": error,
-    }
-    log_path.write_text(json.dumps(log_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    prep.exit_code = exit_code
+    metadata_payload = _build_preparation_metadata(
+        prep_id=prep_id,
+        target="receptor",
+        status=prep.status,
+        method="meeko",
+        created_at=created_at,
+        started_at=started_at,
+        finished_at=finished_at,
+        built=built,
+        exit_code=exit_code,
+        warnings=prep.warnings,
+        error=error,
+    )
+    metadata_payload.update(
+        {
+            "stdout_file": built["stdout_file"],
+            "stderr_file": built["stderr_file"],
+            "command_file": built["command_file"],
+            "input_snapshot_file": built["input_snapshot_file"],
+            "output_check_file": built["output_check_file"],
+            "output_exists": output_path.is_file(),
+            "output_non_empty": output_ok,
+        }
+    )
+    _write_json(metadata_path, metadata_payload)
     saved = save_project(project)
     if not saved.get("ok"):
         return saved
@@ -832,6 +1083,8 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
         {
             "ok": success,
             "target": "receptor",
+            "prep_id": prep_id,
+            "metadata_file": built["metadata_file"],
             "output_file": RECEPTOR_PREPARATION_OUTPUT,
             "stdout_file": built["stdout_file"],
             "stderr_file": built["stderr_file"],
@@ -873,6 +1126,143 @@ def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
         "message": "receptor preparation 日志已读取。",
         "error": None,
     }
+
+
+def list_preparation_runs(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    root = project_path / PREPARATION_RECORD_ROOT
+    runs: list[dict[str, Any]] = []
+    if root.is_dir():
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            match = PREPARATION_ID_PATTERN.match(child.name)
+            if not match or match.group(1) != normalized_target:
+                continue
+            metadata_file = child / "metadata.json"
+            metadata: dict[str, Any] = {}
+            if metadata_file.is_file():
+                try:
+                    metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    metadata = {"metadata_error": str(exc)}
+            runs.append(
+                {
+                    "prep_id": child.name,
+                    "target": normalized_target,
+                    "record_dir": _relative_path(child, project_path),
+                    "metadata_file": _relative_path(metadata_file, project_path),
+                    "metadata_exists": metadata_file.is_file(),
+                    "status": metadata.get("status", "unknown"),
+                    "created_at": metadata.get("created_at", ""),
+                    "finished_at": metadata.get("finished_at", ""),
+                    "metadata": metadata,
+                }
+            )
+
+    runs.sort(key=lambda item: int(PREPARATION_ID_PATTERN.match(item["prep_id"]).group(2)))  # type: ignore[union-attr]
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": normalized_target,
+        "runs": runs,
+        "message": "preparation 记录列表已读取。",
+        "error": None,
+    }
+
+
+def load_preparation_metadata(project_dir: str, target: str, prep_id: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+    prep_id_error = _validate_prep_id_for_target(normalized_target, prep_id)
+    if prep_id_error:
+        return prep_id_error
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    metadata_path = _preparation_record_dir(project_path, prep_id) / "metadata.json"
+    if not metadata_path.is_file():
+        return _error(
+            "PREPARATION_METADATA_NOT_FOUND",
+            "没有找到 preparation metadata.json。",
+            raw_error=str(metadata_path),
+            suggestion="请先执行一次自动准备，或确认 prep_id 是否正确。",
+        )
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return _error(
+            "PREPARATION_METADATA_INVALID",
+            "preparation metadata.json 不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请检查该 preparation 记录是否被手动修改。",
+        )
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": normalized_target,
+        "prep_id": prep_id,
+        "metadata_file": _relative_path(metadata_path, project_path),
+        "metadata": metadata,
+        "message": "preparation metadata 已读取。",
+        "error": None,
+    }
+
+
+def get_latest_preparation(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    latest = project.latest_preparation.get(normalized_target, "")
+    if latest:
+        loaded = load_preparation_metadata(project.project_dir, normalized_target, latest)
+        if loaded.get("ok"):
+            loaded["latest"] = True
+            return loaded
+
+    runs = list_preparation_runs(project.project_dir, normalized_target)
+    if not runs.get("ok"):
+        return runs
+    run_items = runs.get("runs", [])
+    if not run_items:
+        return {
+            "ok": True,
+            "project_dir": project.project_dir,
+            "target": normalized_target,
+            "prep_id": "",
+            "metadata": None,
+            "latest": False,
+            "message": "当前还没有 preparation 记录。",
+            "error": None,
+        }
+
+    latest_item = run_items[-1]
+    loaded = load_preparation_metadata(project.project_dir, normalized_target, latest_item["prep_id"])
+    if loaded.get("ok"):
+        loaded["latest"] = True
+    return loaded
 
 
 def reset_preparation_status(project_dir: str, target: str) -> dict[str, Any]:
@@ -954,6 +1344,27 @@ def main() -> None:
             _print_json(_error("RECEPTOR_PREPARATION_LOG_ARGS", "读取 receptor preparation 日志需要 project_dir 参数。"))
             return
         _print_json(load_receptor_preparation_log(sys.argv[2]))
+        return
+
+    if command == "list-runs":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_LIST_ARGS", "列出 preparation 记录需要 project_dir 和 target 参数。"))
+            return
+        _print_json(list_preparation_runs(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "metadata":
+        if len(sys.argv) < 5:
+            _print_json(_error("PREPARATION_METADATA_ARGS", "读取 preparation metadata 需要 project_dir、target 和 prep_id 参数。"))
+            return
+        _print_json(load_preparation_metadata(sys.argv[2], sys.argv[3], sys.argv[4]))
+        return
+
+    if command == "latest":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_LATEST_ARGS", "读取 latest preparation 需要 project_dir 和 target 参数。"))
+            return
+        _print_json(get_latest_preparation(sys.argv[2], sys.argv[3]))
         return
 
     if command == "reset":

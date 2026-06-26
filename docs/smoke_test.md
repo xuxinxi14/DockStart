@@ -388,10 +388,12 @@ prepared/ligand.pdbqt
 4. 进入 PreparationPage，查看下一步建议。
 5. 如果本机 Python + RDKit + Meeko 能力可用，可尝试准备 ligand/receptor PDBQT；如果不可用，手动准备并导入 PDBQT。
 6. prepared 两个文件都存在后，再生成 config、准备 run、执行 Vina。
+7. 检查 preparation 记录目录，例如 `preparation/ligand_001/metadata.json` 和 `preparation/receptor_001/metadata.json`。
 
 ### 通过标准
 
 - raw 文件不会被当作 Vina 输入。
 - `receptor.file` 和 `ligand.file` 仍指向 prepared PDBQT。
 - preparation 失败时提示查看日志。
+- 每次 preparation 都保留独立 metadata、stdout、stderr、command、input snapshot 和 output check。
 - prepared PDBQT 补齐后，V0.1 config/run/parse/report 流程不被破坏。

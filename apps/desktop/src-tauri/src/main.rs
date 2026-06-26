@@ -275,6 +275,39 @@ fn load_receptor_preparation_log(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn list_preparation_runs(project_dir: String, target: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["list-runs".to_string(), project_dir, target],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法列出 preparation 记录。", &error),
+    }
+}
+
+#[tauri::command]
+fn load_preparation_metadata(project_dir: String, target: String, prep_id: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["metadata".to_string(), project_dir, target, prep_id],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 preparation metadata。", &error),
+    }
+}
+
+#[tauri::command]
+fn get_latest_preparation(project_dir: String, target: String) -> String {
+    match run_backend_module(
+        "dockstart_core.preparation",
+        vec!["latest".to_string(), project_dir, target],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 latest preparation。", &error),
+    }
+}
+
+#[tauri::command]
 fn reset_preparation_status(project_dir: String, target: String) -> String {
     match run_backend_module(
         "dockstart_core.preparation",
@@ -619,6 +652,9 @@ fn main() {
             load_ligand_preparation_log,
             prepare_receptor_pdbqt,
             load_receptor_preparation_log,
+            list_preparation_runs,
+            load_preparation_metadata,
+            get_latest_preparation,
             reset_preparation_status,
             get_box_params,
             update_box_params,
