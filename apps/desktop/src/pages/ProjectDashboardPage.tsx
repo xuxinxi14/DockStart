@@ -7,13 +7,16 @@ import FilePathText from "../components/FilePathText";
 import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
+import WorkflowStepper from "../components/WorkflowStepper";
 import type { DockStartProject, ProjectWorkflowStatusResponse, WorkflowFileStatus } from "../types";
 import type { PageId } from "../navigation/pages";
+import { buildWorkflowSteps } from "../utils/workflowSteps";
 
 type ProjectDashboardPageProps = {
   project: DockStartProject | null;
   onNavigate: (page: PageId) => void;
   onProjectChange: (project: DockStartProject) => void;
+  onWorkflowChange?: (workflow: ProjectWorkflowStatusResponse | null) => void;
 };
 
 type SummaryItem = {
@@ -93,7 +96,12 @@ function runSummary(latestRun: Record<string, unknown> | null | undefined): Summ
   };
 }
 
-export default function ProjectDashboardPage({ project, onNavigate, onProjectChange }: ProjectDashboardPageProps) {
+export default function ProjectDashboardPage({
+  project,
+  onNavigate,
+  onProjectChange,
+  onWorkflowChange,
+}: ProjectDashboardPageProps) {
   const [workflow, setWorkflow] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -102,6 +110,7 @@ export default function ProjectDashboardPage({ project, onNavigate, onProjectCha
   const loadWorkflow = useCallback(async () => {
     if (!project) {
       setWorkflow(null);
+      onWorkflowChange?.(null);
       return;
     }
     setIsBusy(true);
@@ -113,6 +122,7 @@ export default function ProjectDashboardPage({ project, onNavigate, onProjectCha
       });
       const parsed = parseWorkflowStatus(rawPayload);
       setWorkflow(parsed);
+      onWorkflowChange?.(parsed);
       if (parsed.project) {
         onProjectChange(parsed.project);
       }
@@ -126,7 +136,7 @@ export default function ProjectDashboardPage({ project, onNavigate, onProjectCha
     } finally {
       setIsBusy(false);
     }
-  }, [onProjectChange, project]);
+  }, [onProjectChange, onWorkflowChange, project]);
 
   useEffect(() => {
     void loadWorkflow();
@@ -163,6 +173,8 @@ export default function ProjectDashboardPage({ project, onNavigate, onProjectCha
       },
     ];
   }, [workflow]);
+
+  const workflowSteps = useMemo(() => buildWorkflowSteps(project, workflow), [project, workflow]);
 
   if (!project) {
     return (
@@ -218,6 +230,17 @@ export default function ProjectDashboardPage({ project, onNavigate, onProjectCha
           <strong>{workflow?.next_recommended_action || "正在读取项目状态..."}</strong>
           {workflow?.viewer?.recommended_viewer_action ? <p>{workflow.viewer.recommended_viewer_action}</p> : null}
         </div>
+      </SectionCard>
+
+      <SectionCard title="DockStart 工作流" description="按状态推导当前可做步骤，帮助新手减少来回猜页面。">
+        <WorkflowStepper
+          steps={workflowSteps}
+          onAction={(step) => {
+            if (step.targetPage) {
+              onNavigate(step.targetPage as PageId);
+            }
+          }}
+        />
       </SectionCard>
 
       <SectionCard title="工作流总览">

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.2
+
+- Added a guided workflow stepper that maps DockStart project state to create/raw/preparation/Box/Vina/config/run/result/report/viewer steps.
+- Dashboard now shows the full workflow stepper with action buttons for each step.
+- Sidebar can show a compact workflow status summary when project workflow data has been loaded.
+- Workflow status is derived from existing project status fields; no backend scientific capability or Vina behavior was changed.
+
 ## v0.5.1
 
 - Added ProjectDashboardPage as the main project entry point after a project is created.

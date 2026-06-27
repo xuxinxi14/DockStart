@@ -4,11 +4,14 @@ export type WorkflowStep = {
   title: string;
   description: string;
   status: WorkflowStepState;
+  actionLabel?: string;
+  targetPage?: string;
 };
 
 type WorkflowStepperProps = {
   steps: WorkflowStep[];
   compact?: boolean;
+  onAction?: (step: WorkflowStep) => void;
 };
 
 const statusLabel: Record<WorkflowStepState, string> = {
@@ -20,7 +23,7 @@ const statusLabel: Record<WorkflowStepState, string> = {
   failed: "失败",
 };
 
-export default function WorkflowStepper({ steps, compact = false }: WorkflowStepperProps) {
+export default function WorkflowStepper({ steps, compact = false, onAction }: WorkflowStepperProps) {
   return (
     <ol className={compact ? "workflow-stepper compact" : "workflow-stepper"}>
       {steps.map((step) => (
@@ -28,6 +31,11 @@ export default function WorkflowStepper({ steps, compact = false }: WorkflowStep
           <span>{statusLabel[step.status]}</span>
           <strong>{step.title}</strong>
           {!compact ? <p>{step.description}</p> : null}
+          {!compact && step.actionLabel && onAction ? (
+            <button className="text-button inline" type="button" onClick={() => onAction(step)}>
+              {step.actionLabel}
+            </button>
+          ) : null}
         </li>
       ))}
     </ol>

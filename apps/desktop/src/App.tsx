@@ -17,13 +17,15 @@ import ToolchainStatusPage from "./pages/ToolchainStatusPage";
 import ViewerPage from "./pages/ViewerPage";
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
-import type { DockStartProject } from "./types";
+import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
 import { getWorkflowSummary } from "./utils/workflowSummary";
+import { buildWorkflowSteps } from "./utils/workflowSteps";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<PageId>("home");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
+  const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
 
   function navigateTo(page: PageId) {
     setCurrentPage(page);
@@ -36,6 +38,7 @@ export default function App() {
           project={currentProject}
           onNavigate={navigateTo}
           onProjectChange={setCurrentProject}
+          onWorkflowChange={setWorkflowStatus}
         />
       );
     }
@@ -58,6 +61,7 @@ export default function App() {
           onBack={() => navigateTo("home")}
           onCreated={(project) => {
             setCurrentProject(project);
+            setWorkflowStatus(null);
             navigateTo("home");
           }}
         />
@@ -245,6 +249,7 @@ export default function App() {
         project={currentProject}
         onNavigate={navigateTo}
         onProjectChange={setCurrentProject}
+        onWorkflowChange={setWorkflowStatus}
       />
     );
   }
@@ -254,6 +259,7 @@ export default function App() {
       currentPage={currentPage}
       project={currentProject}
       workflowSummary={getWorkflowSummary(currentProject, currentPage)}
+      workflowSteps={buildWorkflowSteps(currentProject, workflowStatus)}
       onNavigate={navigateTo}
     >
       {renderPage()}

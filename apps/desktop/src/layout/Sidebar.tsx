@@ -1,13 +1,15 @@
 import type { DockStartProject } from "../types";
 import { navigationItems, resolveNavigationTarget, type PageId } from "../navigation/pages";
+import WorkflowStepper, { type WorkflowStep } from "../components/WorkflowStepper";
 
 type SidebarProps = {
   currentPage: PageId;
   project: DockStartProject | null;
+  workflowSteps?: WorkflowStep[];
   onNavigate: (page: PageId) => void;
 };
 
-export default function Sidebar({ currentPage, project, onNavigate }: SidebarProps) {
+export default function Sidebar({ currentPage, project, workflowSteps = [], onNavigate }: SidebarProps) {
   const hasProject = Boolean(project);
 
   return (
@@ -35,6 +37,12 @@ export default function Sidebar({ currentPage, project, onNavigate }: SidebarPro
           );
         })}
       </nav>
+      {workflowSteps.length ? (
+        <div className="sidebar-steps">
+          <span>流程状态</span>
+          <WorkflowStepper steps={workflowSteps.slice(0, 6)} compact />
+        </div>
+      ) : null}
     </aside>
   );
 }
