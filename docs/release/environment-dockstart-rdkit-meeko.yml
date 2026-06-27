@@ -1,0 +1,13 @@
+# DockStart recommended RDKit/Meeko environment template
+# This file is a lightweight reproducibility guide, not a committed conda env.
+# Use scripts/export_toolchain_environment.py to export local detected versions.
+name: dockstart-rdkit-meeko
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - rdkit
+  - meeko
+  - numpy
+  - scipy
+

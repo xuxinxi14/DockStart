@@ -552,6 +552,18 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
               <p className="placeholder-note">
                 本页面只做 import 和能力检测，不安装 Python 包；真正的 Meeko/RDKit preparation 只在 PreparationPage 中由用户手动触发。
               </p>
+              {status.python_source !== "configured" ? (
+                <p className="placeholder-note">
+                  建议为 RDKit/Meeko 准备独立 conda 环境，并在设置页配置该环境的 python.exe。详细步骤见
+                  docs/release/toolchain_environment.md。
+                </p>
+              ) : null}
+              {status.rdkit_for_python?.status !== "ok" || status.meeko_for_python?.status !== "ok" ? (
+                <p className="warning-note">
+                  当前 Python 环境中的 RDKit 或 Meeko 尚未全部检测通过。DockStart 不会自动安装依赖；请先配置可用的
+                  dockstart-rdkit-meeko 环境，再回到 PreparationPage 准备 PDBQT。
+                </p>
+              ) : null}
             </article>
 
             <article className="tool-card">

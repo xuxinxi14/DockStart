@@ -37,6 +37,8 @@ resources/vina/vina.exe
 
 旧路径 `resources/tools/vina/vina.exe` 只作为兼容回退。新发布材料和 manifest 应优先记录 `resources/vina/vina.exe`。
 
+RDKit/Meeko 不随 V0.6 轻量包自动安装。可使用 `scripts/export_toolchain_environment.py` 导出推荐 conda 环境 yml，供用户或发布者复现 `dockstart-rdkit-meeko` 环境。
+
 ## Current Tauri Resource Policy
 
 `apps/desktop/src-tauri/tauri.conf.json` 当前会把仓库根目录的 `resources/` 映射为打包资源：

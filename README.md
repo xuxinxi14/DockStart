@@ -258,12 +258,13 @@ V0.6 开始整理 Windows 打包和发布流程：
 
 - V0.6.0 新增 release strategy、Windows packaging 和 release checklist 文档；
 - V0.6.1 完善 bundled Vina 准备脚本与完整性检查，优先使用 `resources/vina/vina.exe`，旧 `resources/tools/vina/vina.exe` 仅作为兼容回退；
+- V0.6.2 新增 RDKit/Meeko conda 工具链环境导出脚本和环境说明文档；
 - 发布类型区分 Developer build、Lightweight release、Toolchain-assisted release 和未来 Full offline release；
 - V0.6 目标是生成 Windows 安装包、整理 bundled Vina/Python 检测和发布材料；
 - 当前仍不提交 `vina.exe`、`python.exe`、`Lib/`、`DLLs/`、`site-packages/`、conda 环境、安装包、真实 docking 输出或大型第三方源码 zip；
 - DockStart 不自动安装 RDKit/Meeko，用户仍需通过设置页配置可用 Python 工具链。
 
-发布工程说明见 [docs/release/release_strategy.md](docs/release/release_strategy.md)、[docs/release/windows_packaging.md](docs/release/windows_packaging.md) 和 [docs/release/release_checklist.md](docs/release/release_checklist.md)。
+发布工程说明见 [docs/release/release_strategy.md](docs/release/release_strategy.md)、[docs/release/windows_packaging.md](docs/release/windows_packaging.md)、[docs/release/release_checklist.md](docs/release/release_checklist.md) 和 [docs/release/toolchain_environment.md](docs/release/toolchain_environment.md)。
 
 ## 当前暂不支持
 

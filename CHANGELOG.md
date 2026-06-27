@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.2
+
+- Added `scripts/export_toolchain_environment.py` to export configured conda Python metadata into a lightweight RDKit/Meeko environment yml.
+- Added `docs/release/toolchain_environment.md` and a recommended `environment-dockstart-rdkit-meeko.yml` template.
+- Added tests for non-conda structured hints and mocked conda yml generation.
+- Updated ToolchainStatusPage guidance for configured Python and missing RDKit/Meeko.
+- Reconfirmed DockStart does not auto-install RDKit/Meeko and does not commit conda env, `python.exe`, `Lib/`, `DLLs/`, or `site-packages/`.
+
 ## v0.6.1
 
 - Updated bundled Vina resolution to prefer `resources/vina/vina.exe` while retaining `resources/tools/vina/vina.exe` as a legacy fallback.
