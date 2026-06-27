@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.6
+
+- Added a shared Vina workflow bar across config generation, run preparation, Vina execution, result parsing, and Markdown report export pages.
+- Unified VinaConfigPage and RunPreparePage warning/error presentation with shared warning and command-result components.
+- Made run_id context visible across execute/result/report steps.
+- Kept Vina config generation, execution, score parsing, and report export backend behavior unchanged.
+
 ## v0.5.5
 
 - Reworked ViewerPage into a three-column workspace: left controls, central 3D canvas, and right inspection panel.

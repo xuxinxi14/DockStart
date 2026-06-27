@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CommandResultPanel from "../components/CommandResultPanel";
+import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
 
@@ -162,6 +163,8 @@ export default function RunExecutePage({
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
+
+      <VinaWorkflowBar current="execute" runId={runId} />
 
       <div className="summary-grid">
         <div className="param-summary">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CommandResultPanel from "../components/CommandResultPanel";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
 
@@ -196,6 +197,8 @@ export default function ResultPage({
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
+
+      <VinaWorkflowBar current="result" runId={runId} />
 
       <div className="summary-grid">
         <div className="param-summary">

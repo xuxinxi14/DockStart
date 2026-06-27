@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import VinaWorkflowBar from "../components/VinaWorkflowBar";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunCheckResult, ToolStatus } from "../types";
 
 type RunPreparePageProps = {
@@ -151,6 +154,8 @@ export default function RunPreparePage({
         <code>{project.project_dir}</code>
       </div>
 
+      <VinaWorkflowBar current="prepare" runId={nextRunId || prepared?.run_id} />
+
       <div className="summary-grid">
         <div className="param-summary">
           <span>受体 receptor.pdbqt</span>
@@ -239,17 +244,11 @@ export default function RunPreparePage({
       ) : null}
 
       {warnings.map((warning) => (
-        <p className="warning-note" key={warning}>
-          {warning}
-        </p>
+        <WarningCallout key={warning} title="运行前检查提示">
+          <p>{warning}</p>
+        </WarningCallout>
       ))}
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="运行准备命令结果" message={message} rawError={rawError} />
     </section>
   );
 }

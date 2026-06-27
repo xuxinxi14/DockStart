@@ -495,3 +495,15 @@ V0.5.5 将 ViewerPage 整理为三栏工作区：
 - 右侧：当前文件状态、可查看文件列表、pose 列表和技术错误详情。
 
 这次改动只调整前端信息架构。ViewerPage 仍然只做 raw/prepared/docking output 的几何查看、Box overlay 和 pose mode 切换，不做 pocket prediction、PLIP/ProLIF、相互作用解释、药效判断或 Vina 算法修改。
+
+## V0.5.6 Vina 运行流程页面
+
+V0.5.6 在 Vina 主线页面顶部加入统一流程条：
+
+```text
+生成 config -> 准备 run -> 执行 Vina -> 解析结果 -> 导出报告
+```
+
+该流程条出现在 VinaConfigPage、RunPreparePage、RunExecutePage、ResultPage 和 ReportPage，用于提示当前步骤和 run_id。VinaConfigPage 与 RunPreparePage 也改用统一的 warning / command-result 展示方式。
+
+这次改动不改变 `vina_config.txt` 生成内容，不改变 AutoDock Vina 调用命令，不改变 score 解析逻辑，也不改变 Markdown 报告字段。

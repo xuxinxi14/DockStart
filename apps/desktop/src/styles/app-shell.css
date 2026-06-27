@@ -555,6 +555,74 @@
   background: #ffffff;
 }
 
+.vina-workflow-bar {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.vina-workflow-bar ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vina-workflow-bar li {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.vina-workflow-bar li.current {
+  border-color: #9fbbd7;
+  background: #eef4fa;
+}
+
+.vina-workflow-bar li > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vina-workflow-bar li > div span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #dce8f4;
+  color: #38608f;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.vina-workflow-bar strong {
+  color: #243b53;
+}
+
+.vina-workflow-bar p {
+  margin-bottom: 0;
+  color: #61758a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vina-workflow-run {
+  border-top: 1px solid #edf1f5;
+  padding-top: 10px;
+  font-weight: 800;
+}
+
 @media (max-width: 980px) {
   .dockstart-shell {
     grid-template-columns: 1fr;
@@ -578,6 +646,10 @@
 
   .topbar-status {
     flex-wrap: wrap;
+  }
+
+  .vina-workflow-bar ol {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 

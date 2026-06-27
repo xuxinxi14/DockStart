@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import VinaWorkflowBar from "../components/VinaWorkflowBar";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse } from "../types";
 
 type VinaConfigPageProps = {
@@ -121,6 +124,8 @@ export default function VinaConfigPage({
         <code>{project.project_dir}</code>
       </div>
 
+      <VinaWorkflowBar current="config" />
+
       <div className="import-grid">
         <article className="import-card">
           <div className="tool-card-header">
@@ -193,17 +198,11 @@ export default function VinaConfigPage({
 
       {configFile ? <p className="settings-message">配置文件路径：{configFile}</p> : null}
       {warnings.map((warning) => (
-        <p className="warning-note" key={warning}>
-          {warning}
-        </p>
+        <WarningCallout key={warning} title="配置生成提示">
+          <p>{warning}</p>
+        </WarningCallout>
       ))}
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="配置文件命令结果" message={message} rawError={rawError} />
     </section>
   );
 }
