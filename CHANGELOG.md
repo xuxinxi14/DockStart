@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.4
+
+- Added `scripts/build_windows_release.ps1` for repeatable Windows release checks and Tauri build execution.
+- Added `npm run build:desktop` as a desktop bundle alias.
+- The release script checks branch, clean git state, version consistency, Python tests, frontend build, Cargo check, and optional Tauri bundle output.
+- Documented local Windows build commands and artifact locations without committing installers, `dist/`, or `target/`.
+
 ## v0.6.3
 
 - Added first-run toolchain guidance to backend toolchain status.

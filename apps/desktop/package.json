@@ -1,11 +1,12 @@
 {
   "name": "dockstart-desktop",
   "private": true,
-  "version": "0.6.3",
+  "version": "0.6.4",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
+    "build:desktop": "tauri build",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "tauri": "tauri"
   },

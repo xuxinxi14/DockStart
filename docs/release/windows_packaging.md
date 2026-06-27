@@ -68,9 +68,32 @@ RDKit/Meeko 不随 V0.6 轻量包自动安装。可使用 `scripts/export_toolch
 - `dockstart_settings.json`
 - 真实 docking 输出和大型 raw 下载文件
 
-## Manual Build Preview
+## Release Build Script
 
-V0.6.4 会提供正式脚本。在此之前，开发者可手动执行：
+V0.6.4 新增：
+
+```powershell
+cd E:\DockStart
+scripts\build_windows_release.ps1
+```
+
+脚本会检查：
+
+- 当前分支是否为 `main`；
+- `git status --short` 是否干净；
+- 版本号是否一致；
+- 后端 unittest；
+- 前端 `npm run build`；
+- Rust/Tauri `cargo check`；
+- `npm run tauri build`。
+
+如只想验证脚本前半段，可使用：
+
+```powershell
+scripts\build_windows_release.ps1 -SkipTauriBuild
+```
+
+手动构建仍可执行：
 
 ```powershell
 cd E:\DockStart\apps\desktop

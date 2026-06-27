@@ -34,6 +34,12 @@ cd E:\DockStart
 scripts\build_windows_release.ps1
 ```
 
+如只验证发布脚本的检查段：
+
+```powershell
+scripts\build_windows_release.ps1 -SkipTauriBuild
+```
+
 ## Toolchain
 
 - bundled Vina 状态已检查。
@@ -75,4 +81,3 @@ scripts\build_windows_release.ps1
 - 没有修改 AutoDock Vina 算法或 scoring function；
 - 没有使用外部 CDN；
 - 没有关闭 SSL 校验。
-
