@@ -743,3 +743,34 @@ V0.5 is the frontend workflow overhaul line. It includes AppShell, ProjectDashbo
 V0.5.8 is a freeze audit stage. Only version consistency, documentation accuracy, small type/layout/copy bugs, and missing frontend wiring may be fixed.
 
 Do not treat V0.5 as interaction analysis. Do not add PLIP, ProLIF, Open Babel, MGLTools, pocket prediction, drug-efficacy judgement, external CDN resources, Vina algorithm/scoring changes, large structure files, real docking outputs, or Python runtime binaries.
+
+## V0.6 Release Packaging Boundary
+
+V0.6 is the release engineering line. It covers Windows packaging, release scripts, bundled toolchain distribution strategy, first-run toolchain guidance, GitHub Release materials, and local installer validation.
+
+V0.6.0 only establishes release structure and documentation:
+
+```text
+docs/release/release_strategy.md
+docs/release/windows_packaging.md
+docs/release/release_checklist.md
+resources/vina/README.md
+```
+
+Allowed in V0.6:
+
+* Tauri Windows build and installer workflow;
+* release checklist and artifact hash scripts;
+* bundled Vina and bundled Python runtime preparation and integrity checks;
+* first-run guidance for configuring Vina and Python/RDKit/Meeko;
+* local installer build validation without committing installer artifacts.
+
+Forbidden in V0.6:
+
+* new scientific features;
+* PLIP / ProLIF / Open Babel / MGLTools integration;
+* interaction analysis, pocket prediction, molecular dynamics, or drug efficacy judgement;
+* AutoDock Vina algorithm or scoring changes;
+* external CDN resources;
+* committed installers, `dist`, `target`, real docking outputs, third-party source archives, `python.exe`, `Lib`, `DLLs`, `site-packages`, or conda environments;
+* disabling SSL verification or force pushing.

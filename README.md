@@ -252,6 +252,18 @@ V0.5 已完成一轮前端信息架构整理：
 
 V0.5 不改变 Vina config 生成、Vina 执行、score 解析、报告导出、RDKit/Meeko preparation 或 viewer 后端数据通道。V0.5 也没有新增 PLIP/ProLIF、相互作用分析、pocket prediction、药效判断、Open Babel、MGLTools、外部 CDN 或 Vina 算法修改。
 
+## V0.6 发布工程准备
+
+V0.6 开始整理 Windows 打包和发布流程：
+
+- V0.6.0 新增 release strategy、Windows packaging 和 release checklist 文档；
+- 发布类型区分 Developer build、Lightweight release、Toolchain-assisted release 和未来 Full offline release；
+- V0.6 目标是生成 Windows 安装包、整理 bundled Vina/Python 检测和发布材料；
+- 当前仍不提交 `vina.exe`、`python.exe`、`Lib/`、`DLLs/`、`site-packages/`、conda 环境、安装包、真实 docking 输出或大型第三方源码 zip；
+- DockStart 不自动安装 RDKit/Meeko，用户仍需通过设置页配置可用 Python 工具链。
+
+发布工程说明见 [docs/release/release_strategy.md](docs/release/release_strategy.md)、[docs/release/windows_packaging.md](docs/release/windows_packaging.md) 和 [docs/release/release_checklist.md](docs/release/release_checklist.md)。
+
 ## 当前暂不支持
 
 当前仍不支持：

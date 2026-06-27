@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.0
+
+- Added the V0.6 release engineering structure and packaging strategy docs.
+- Added `docs/release/release_strategy.md`, `docs/release/windows_packaging.md`, and `docs/release/release_checklist.md`.
+- Added `resources/vina/README.md` as the V0.6 bundled Vina directory placeholder while keeping real Vina binaries ignored.
+- Documented Developer build, Lightweight release, Toolchain-assisted release, and future Full offline release boundaries.
+- Clarified that V0.6 prepares Windows packaging and release workflow only; it does not add scientific features or bundled conda/RDKit/Meeko runtime files.
+
 ## v0.5.9
 
 - Validated the V0.5 frontend shell with Vite and Tauri dev startup.

@@ -38,6 +38,13 @@ resources/tools/vina/vina
 resources/tools/vina/*.dll
 resources/tools/vina/*.so
 resources/tools/vina/*.dylib
+resources/vina/vina.exe
+resources/vina/vina
+resources/vina/*.dll
+resources/vina/*.so
+resources/vina/*.dylib
+resources/vina/*.zip
+resources/vina/*.tar.gz
 
 # Optional bundled Python runtime. Keep the README and manifest tracked.
 resources/python/python.exe
