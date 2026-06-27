@@ -121,7 +121,9 @@ DockStart Full：
 - 内置 RDKit / Meeko；
 - 自动准备 receptor / ligand；
 - PDB / PubChem 下载；
-- 3D 可视化；
+- 专业级 3D 建模检查或相互作用可视化；
 - 相互作用分析；
 - PDF 报告；
 - AI 药效判断。
+
+注：V0.4 已有最小 3Dmol.js ViewerPage，用于项目内结构、Box 和 docking pose 的几何查看；它不属于本工具链设计文档所说的内置工具链能力，也不做相互作用分析或科学验证。

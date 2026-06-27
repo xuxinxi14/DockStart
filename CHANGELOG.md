@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.6
+
+- Performed a V0.4 viewer workflow freeze audit.
+- Unified project version numbers to `0.4.6`.
+- Clarified current viewer documentation so V0.4 is no longer described as future-only 3D work.
+- Reconfirmed ViewerPage is only for geometry review, Box synchronization, and docking pose inspection, not PLIP/ProLIF analysis, pocket prediction, interaction interpretation, scientific validation, or drug efficacy judgement.
+- Reconfirmed no Vina algorithm/scoring changes, external CDN resources, large structure files, real docking outputs, or Python runtime binaries were added.
+
 ## v0.4.5
 
 - Documented the V0.4 viewer workflow across README, user guide, smoke tests, FAQ, roadmap, PROJECT, and CLAUDE guidance.

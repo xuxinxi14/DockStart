@@ -144,7 +144,7 @@ V0.3.6 已完成 preparation 工作流文档收尾：
 - 文档描述 raw 下载、RDKit/Meeko 能力检查、ligand/receptor PDBQT 准备、Box/config/run、结果解析和 Markdown 报告导出的一条完整路径；
 - 新增 mock preparation smoke test，不依赖真实 RDKit/Meeko/Vina；
 - 明确自动准备不保证质子化、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确；
-- 仍不包含 Open Babel、MGLTools、PLIP、3D 可视化、相互作用分析、分子动力学、PDF 报告或药效判断。
+- V0.3.6 阶段仍不包含 Open Babel、MGLTools、PLIP、3D 可视化、相互作用分析、分子动力学、PDF 报告或药效判断。
 
 V0.3.7 是 V0.3 后端冻结审计：
 
@@ -192,8 +192,6 @@ V0.4.1 已新增最小 3Dmol.js ViewerPage：
 - 提供清空 viewer 和重新居中按钮；
 - 如果结构格式无法显示，会给出中文提示而不是崩溃。
 
-workflow status 的 viewer 推荐入口仍属于 V0.4.4 的后续阶段。
-
 V0.4.2 已完成 Box 可视化数据与保存同步：
 
 - ViewerPage 显示并可编辑 `center_x/y/z` 与 `size_x/y/z`；
@@ -230,6 +228,13 @@ V0.4.5 是 Viewer 文档与 smoke test 收尾版本：
 - 如何在运行 Vina 后查看 docking poses；
 - 明确 viewer 不做相互作用分析、不判断结合是否真实、不做 pocket prediction，也不能替代专业分子建模软件。
 
+V0.4.6 是 Viewer 冻结审计版本：
+
+- 统一版本号到 `0.4.6`；
+- 校准文档中 V0.4 viewer 的当前状态；
+- 确认 ViewerPage 仍只是几何查看和流程复核入口，不做 PLIP/ProLIF、相互作用分析、pocket prediction、药效判断或 Vina 算法变更；
+- 确认未提交大型结构文件、真实 docking 输出、Python runtime 二进制或外部 CDN 资源。
+
 ## 当前暂不支持
 
 当前仍不支持：
@@ -239,7 +244,7 @@ V0.4.5 是 Viewer 文档与 smoke test 收尾版本：
 - 自动安装 RDKit / Meeko；
 - Open Babel；
 - PLIP / MGLTools；
-- 3D 可视化选框；
+- 交互式拖拽 Box、自动 pocket prediction 或自动 Box 推荐；
 - PLIP / ProLIF 相互作用分析；
 - 分子动力学；
 - PDF 报告；

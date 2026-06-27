@@ -414,7 +414,7 @@ V0.3.8 增加真实工具链兼容性验收视角：如果当前解析到的 Pyt
 - PDF 报告；
 - 药效判断。
 
-V0.4 以后再考虑 3D 可视化、box 可视化设置、相互作用分析和批量 docking。
+V0.4 已补充基础 3D viewer、Box overlay 和 docking pose 查看 smoke test。相互作用分析、批量 docking、专业级结构修复和药效判断仍属于后续版本边界外。
 
 ## V0.3.9 RDKit/Meeko 真实工具链验收
 
