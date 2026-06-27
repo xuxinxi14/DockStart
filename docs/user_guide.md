@@ -507,3 +507,15 @@ V0.5.6 在 Vina 主线页面顶部加入统一流程条：
 该流程条出现在 VinaConfigPage、RunPreparePage、RunExecutePage、ResultPage 和 ReportPage，用于提示当前步骤和 run_id。VinaConfigPage 与 RunPreparePage 也改用统一的 warning / command-result 展示方式。
 
 这次改动不改变 `vina_config.txt` 生成内容，不改变 AutoDock Vina 调用命令，不改变 score 解析逻辑，也不改变 Markdown 报告字段。
+
+## V0.5.7 内置帮助与新手引导
+
+V0.5.7 新增 HelpPage，并在 Sidebar 中开放“文档帮助”入口。帮助页说明：
+
+- 推荐新手流程；
+- raw 文件与 prepared PDBQT 的区别；
+- `configs/vina_config.txt` 和 `runs/run_XXX/` 的作用；
+- 工具链、结构获取、PDBQT 准备、3D 查看、Vina 运行和报告导出的页面定位；
+- DockStart 不做药效判断、相互作用解释或 pocket prediction。
+
+项目总览在没有项目时也会显示一组 onboarding 步骤，帮助用户先创建项目并理解后续流程。这些引导只改变前端说明，不会自动安装工具、自动运行 Vina 或自动判断科学结论。

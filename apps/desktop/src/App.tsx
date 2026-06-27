@@ -2,6 +2,7 @@ import { useState } from "react";
 import AppShell from "./layout/AppShell";
 import type { PageId } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
+import HelpPage from "./pages/HelpPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
 import PreparationPage from "./pages/PreparationPage";
 import ProjectCreatePage from "./pages/ProjectCreatePage";
@@ -66,6 +67,10 @@ export default function App() {
           }}
         />
       );
+    }
+
+    if (currentPage === "help") {
+      return <HelpPage project={currentProject} onNavigate={navigateTo} />;
     }
 
     if (currentPage === "structure-fetch" && currentProject) {

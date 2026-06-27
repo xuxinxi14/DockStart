@@ -623,6 +623,35 @@
   font-weight: 800;
 }
 
+.onboarding-guide,
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.onboarding-step,
+.help-grid article {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.onboarding-step strong,
+.help-grid strong {
+  color: #243b53;
+}
+
+.onboarding-step p,
+.help-grid p {
+  margin-bottom: 0;
+  color: #52616f;
+  line-height: 1.55;
+}
+
 @media (max-width: 980px) {
   .dockstart-shell {
     grid-template-columns: 1fr;

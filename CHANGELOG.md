@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.7
+
+- Added a built-in HelpPage with a beginner workflow, file-type explanations, page quick reference, and scientific boundary reminders.
+- Enabled the sidebar help navigation item and connected HelpPage to App routing.
+- Added a lightweight onboarding guide to the empty project dashboard state and dashboard shortcuts.
+- Kept changes frontend-only; no backend commands, tool installation, docking behavior, preparation behavior, or viewer science features were added.
+
 ## v0.5.6
 
 - Added a shared Vina workflow bar across config generation, run preparation, Vina execution, result parsing, and Markdown report export pages.

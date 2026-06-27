@@ -4,6 +4,7 @@ import ActionButton from "../components/ActionButton";
 import EmptyState from "../components/EmptyState";
 import ErrorPanel from "../components/ErrorPanel";
 import FilePathText from "../components/FilePathText";
+import OnboardingGuide from "../components/OnboardingGuide";
 import PageHeader from "../components/PageHeader";
 import PreparedFileStatusCard from "../components/PreparedFileStatusCard";
 import RawFileStatusCard from "../components/RawFileStatusCard";
@@ -183,15 +184,23 @@ export default function ProjectDashboardPage({
 
   if (!project) {
     return (
-      <EmptyState
-        title="还没有 DockStart 项目"
-        description="先创建一个项目。项目会保存 raw 文件、prepared PDBQT、Vina config、run metadata、结果和报告。"
-        action={
-          <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>
-            创建项目
-          </ActionButton>
-        }
-      />
+      <>
+        <EmptyState
+          title="还没有 DockStart 项目"
+          description="先创建一个项目。项目会保存 raw 文件、prepared PDBQT、Vina config、run metadata、结果和报告。"
+          action={
+            <>
+              <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>
+                创建项目
+              </ActionButton>
+              <ActionButton onClick={() => onNavigate("help")}>查看新手帮助</ActionButton>
+            </>
+          }
+        />
+        <SectionCard title="第一次使用可以这样走" description="这是前端引导，不会自动运行任何外部工具。">
+          <OnboardingGuide onNavigate={onNavigate} />
+        </SectionCard>
+      </>
     );
   }
 
@@ -305,6 +314,10 @@ export default function ProjectDashboardPage({
           <button className="action-card" type="button" onClick={() => onNavigate("result")}>
             <strong>查看结果报告</strong>
             <span>解析 scores 并导出 Markdown 报告</span>
+          </button>
+          <button className="action-card" type="button" onClick={() => onNavigate("help")}>
+            <strong>查看帮助</strong>
+            <span>新手流程、文件类型和科学边界说明</span>
           </button>
         </div>
       </SectionCard>

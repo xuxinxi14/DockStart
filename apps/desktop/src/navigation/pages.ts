@@ -14,17 +14,18 @@ export type PageId =
   | "run-execute"
   | "result"
   | "viewer"
-  | "report";
+  | "report"
+  | "help";
 
 export type NavigationItem = {
-  id: PageId | "help";
+  id: PageId;
   label: string;
   description: string;
   requiresProject?: boolean;
   disabled?: boolean;
 };
 
-export const appVersion = "0.5.6";
+export const appVersion = "0.5.7";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -70,8 +71,7 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "help",
     label: "文档帮助",
-    description: "V0.5.7 将提供内置帮助页",
-    disabled: true,
+    description: "查看新手流程、文件说明和科学边界",
   },
 ];
 
@@ -92,6 +92,7 @@ export const pageTitles: Record<PageId, string> = {
   result: "查看结果",
   viewer: "3D 查看 / Box",
   report: "导出报告",
+  help: "文档帮助",
 };
 
 export function resolveNavigationTarget(item: NavigationItem, hasProject: boolean): PageId {
@@ -100,9 +101,6 @@ export function resolveNavigationTarget(item: NavigationItem, hasProject: boolea
   }
   if (item.requiresProject && !hasProject) {
     return "project-create";
-  }
-  if (item.id === "help") {
-    return "home";
   }
   return item.id;
 }
