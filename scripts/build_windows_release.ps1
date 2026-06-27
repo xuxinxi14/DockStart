@@ -32,8 +32,20 @@ function Invoke-Checked {
 
 function Read-JsonVersion {
     param([string]$Path)
-    $json = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-    return [string]$json.version
+    $content = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    try {
+        $json = $content | ConvertFrom-Json
+        return [string]$json.version
+    }
+    catch {
+        # Windows PowerShell 5 can fail on package-lock.json because it contains
+        # an empty-string package key. Fall back to the top-level version field.
+        $match = [regex]::Match($content, '"version"\s*:\s*"([^"]+)"')
+        if (-not $match.Success) {
+            throw
+        }
+        return $match.Groups[1].Value
+    }
 }
 
 function Read-RegexVersion {
@@ -76,7 +88,7 @@ $versions = [ordered]@{
     "tauri.conf.json" = Read-JsonVersion (Join-Path $tauriDir "tauri.conf.json")
     "navigation" = Read-RegexVersion (Join-Path $desktopDir "src\navigation\pages.ts") "appVersion\s*=\s*`"([^`"]+)`""
 }
-$uniqueVersions = $versions.Values | Select-Object -Unique
+$uniqueVersions = @($versions.Values | Select-Object -Unique)
 if (@($uniqueVersions).Count -ne 1) {
     $versions.GetEnumerator() | ForEach-Object { Write-Host "$($_.Key): $($_.Value)" }
     throw "Version numbers are not consistent."
@@ -112,4 +124,3 @@ else {
 
 Write-Step "Done"
 Write-Host "Do not commit target/, dist/, installers, or bundle outputs."
-

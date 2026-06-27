@@ -108,3 +108,9 @@ apps/desktop/src-tauri/target/release/bundle/
 ```
 
 产物路径和大小必须记录到 release build report，但安装包本身不能提交进 Git。
+
+V0.6.5 的本地构建验收记录见：
+
+```text
+docs/release/v0_6_5_build_report.md
+```

@@ -34,6 +34,12 @@ cd E:\DockStart
 scripts\build_windows_release.ps1
 ```
 
+安装包产物路径和大小应记录到当前版本 build report，例如：
+
+```text
+docs/release/v0_6_5_build_report.md
+```
+
 如只验证发布脚本的检查段：
 
 ```powershell

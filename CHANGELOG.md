@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.5
+
+- Validated a real Windows Tauri release build and recorded the result in `docs/release/v0_6_5_build_report.md`.
+- Produced local MSI and NSIS installer artifacts under `apps/desktop/src-tauri/target/release/bundle/`.
+- Fixed the release build script version check for Windows PowerShell 5 and `package-lock.json`.
+- Added explicit Tauri bundle icon configuration using the existing local `icons/icon.ico`.
+- Confirmed the V0.6.5 lightweight build does not include bundled Vina, bundled Python runtime, conda env, user settings, or real docking outputs.
+
 ## v0.6.4
 
 - Added `scripts/build_windows_release.ps1` for repeatable Windows release checks and Tauri build execution.
