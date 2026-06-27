@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import ReportStatusCard from "../components/ReportStatusCard";
+import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
 
 type ReportPageProps = {
@@ -174,9 +178,14 @@ export default function ReportPage({
         </div>
       </div>
 
-      {!hasScores ? <p className="warning-note">未找到 scores.csv，请先回到结果页解析结果。</p> : null}
+      {!hasScores ? (
+        <WarningCallout title="报告暂不可导出">
+          <p>未找到 scores.csv，请先回到结果页解析结果。</p>
+        </WarningCallout>
+      ) : null}
 
-      <p className="disclaimer-note">Docking score 仅供结构结合趋势参考，不能替代实验验证。</p>
+      <ScientificDisclaimer kind="score" />
+      <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
@@ -223,13 +232,7 @@ export default function ReportPage({
         </div>
       ) : null}
 
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="报告命令结果" message={message} rawError={rawError} />
     </section>
   );
 }

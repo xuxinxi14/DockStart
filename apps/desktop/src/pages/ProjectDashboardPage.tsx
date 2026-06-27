@@ -5,6 +5,11 @@ import EmptyState from "../components/EmptyState";
 import ErrorPanel from "../components/ErrorPanel";
 import FilePathText from "../components/FilePathText";
 import PageHeader from "../components/PageHeader";
+import PreparedFileStatusCard from "../components/PreparedFileStatusCard";
+import RawFileStatusCard from "../components/RawFileStatusCard";
+import ReportStatusCard from "../components/ReportStatusCard";
+import RunStatusCard from "../components/RunStatusCard";
+import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WorkflowStepper from "../components/WorkflowStepper";
@@ -244,6 +249,20 @@ export default function ProjectDashboardPage({
       </SectionCard>
 
       <SectionCard title="工作流总览">
+        <div className="unified-status-grid">
+          <RawFileStatusCard title="raw receptor" file={workflow?.raw?.receptor} />
+          <RawFileStatusCard title="raw ligand" file={workflow?.raw?.ligand} />
+          <PreparedFileStatusCard title="prepared receptor" file={workflow?.prepared?.receptor} />
+          <PreparedFileStatusCard title="prepared ligand" file={workflow?.prepared?.ligand} />
+          <RunStatusCard
+            runId={workflow?.latest_run?.run_id ? String(workflow.latest_run.run_id) : ""}
+            status={workflow?.latest_run?.status ? String(workflow.latest_run.status) : "missing"}
+          />
+          <ReportStatusCard
+            status={workflow?.latest_run?.status === "finished" ? "ready" : "missing"}
+            path={workflow?.latest_run?.status === "finished" ? "reports/docking_report.md" : ""}
+          />
+        </div>
         <div className="dashboard-status-grid">
           {summaryItems.map((item) => (
             <article className="dashboard-status-card" key={item.label}>
@@ -292,8 +311,8 @@ export default function ProjectDashboardPage({
 
       <SectionCard title="风险提示">
         <div className="dashboard-risk-grid">
-          <p>Docking score 只能作为结构结合趋势参考，不能证明真实结合或药效。</p>
-          <p>自动准备 PDBQT 仍需要人工检查质子化、电荷、缺失残基、水、金属、辅因子和 Box 合理性。</p>
+          <ScientificDisclaimer kind="score" />
+          <ScientificDisclaimer kind="preparation" />
         </div>
       </SectionCard>
 

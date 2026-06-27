@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
 
 type RunExecutePageProps = {
@@ -176,7 +178,11 @@ export default function RunExecutePage({
         </div>
       </div>
 
-      {disabledReason ? <p className="warning-note">{disabledReason}</p> : null}
+      {disabledReason ? (
+        <WarningCallout title="暂不能执行">
+          <p>{disabledReason}</p>
+        </WarningCallout>
+      ) : null}
 
       <div className="config-preview-panel">
         <div className="tool-card-header">
@@ -236,22 +242,16 @@ export default function RunExecutePage({
       ) : null}
 
       {status === "failed" ? (
-        <div className="warning-note">
+        <WarningCallout title="Vina 执行失败">
           <strong>Vina 执行失败。</strong>
           <p>{metadataString(metadata, "error_message") || "请查看 stderr.txt 和 log.txt。"}</p>
           <code>{metadataString(metadata, "stderr_file")}</code>
-        </div>
+        </WarningCallout>
       ) : null}
 
       <p className="placeholder-note">执行页只负责运行和记录状态；解析 docking score 请进入结果页。</p>
 
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="Vina 执行结果" message={message} rawError={rawError} />
     </section>
   );
 }

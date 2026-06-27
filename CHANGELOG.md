@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.3
+
+- Added unified status, warning, disclaimer, command-result, log-preview, file-status, run-status, report-status, and tool-status presentation components.
+- Started replacing page-local warning/error/status markup in Dashboard, ResultPage, ReportPage, and RunExecutePage.
+- Centralized scientific disclaimer text for score, preparation, and viewer limitations.
+- Kept changes presentation-only and did not alter Vina execution, score parsing, preparation, viewer loading, or backend commands.
+
 ## v0.5.2
 
 - Added a guided workflow stepper that maps DockStart project state to create/raw/preparation/Box/Vina/config/run/result/report/viewer steps.

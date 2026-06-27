@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
 
 type ResultPageProps = {
@@ -210,10 +213,12 @@ export default function ResultPage({
       </div>
 
       {status !== "finished" ? (
-        <p className="warning-note">需要先成功运行 Vina，run.status 为 finished 后才能解析结果。</p>
+        <WarningCallout title="结果暂不可解析">
+          <p>需要先成功运行 Vina，run.status 为 finished 后才能解析结果。</p>
+        </WarningCallout>
       ) : null}
 
-      <p className="disclaimer-note">Docking score 仅供结构结合趋势参考，不能替代实验验证。</p>
+      <ScientificDisclaimer kind="score" />
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={!canAnalyze} onClick={() => void analyzeResults()}>
@@ -283,13 +288,7 @@ export default function ResultPage({
         <p className="placeholder-note">尚未加载 scores.csv。解析成功后这里会显示结果表格。</p>
       )}
 
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="结果解析命令结果" message={message} rawError={rawError} />
     </section>
   );
 }
