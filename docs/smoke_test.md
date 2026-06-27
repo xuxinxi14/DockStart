@@ -416,6 +416,22 @@ V0.3.8 增加真实工具链兼容性验收视角：如果当前解析到的 Pyt
 
 V0.4 已补充基础 3D viewer、Box overlay 和 docking pose 查看 smoke test。相互作用分析、批量 docking、专业级结构修复和药效判断仍属于后续版本边界外。
 
+## V0.5 frontend workflow smoke test
+
+V0.5 smoke test 只检查前端工作流是否可导航、状态是否清楚，不验证新的科学能力。
+
+建议检查：
+
+1. 启动桌面端后，Sidebar 能进入项目总览、工具链、获取结构、准备 PDBQT、3D 查看 / Box、Vina 运行、结果报告和文档帮助。
+2. 没有项目时，ProjectDashboardPage 显示创建项目入口和 onboarding 步骤。
+3. 创建项目后，Dashboard 显示项目基本信息、下一步推荐、workflow stepper、状态卡片和快捷操作。
+4. StructureFetchPage 和 PreparationPage 能显示 raw/prepared 区别、warning、命令结果和下一步入口。
+5. ViewerPage 使用左侧控制、中间 3D 画布、右侧文件/pose 信息的工作区布局。
+6. Vina config、run prepare、run execute、result、report 页面顶部显示同一条 Vina 流程条。
+7. HelpPage 能说明 raw、prepared PDBQT、config、run 记录和科学边界。
+
+V0.5 smoke test 不应要求真实 docking，不应引入 PLIP/ProLIF，不应做相互作用分析、pocket prediction 或药效判断。
+
 ## V0.3.9 RDKit/Meeko 真实工具链验收
 
 ### 测试目标

@@ -735,3 +735,11 @@ DockStart V0.4 viewer is a minimal workflow aid. It can display project-local ra
 Do not describe the viewer as an interaction-analysis, pocket-prediction, drug-efficacy, or scientific-validation tool. Do not add PLIP, ProLIF, Open Babel, MGLTools, molecular dynamics, or scoring changes as part of the V0.4 viewer line.
 
 V0.4.6 is a freeze audit stage. Only version consistency, documentation accuracy, missing tests, small type issues, and unclear Chinese messages may be fixed. Do not add new viewer features or refactor the frontend workflow during this stage.
+
+## V0.5 Frontend Workflow Boundary
+
+V0.5 is the frontend workflow overhaul line. It includes AppShell, ProjectDashboardPage, workflow stepper, shared status/error/disclaimer components, raw/preparation page cleanup, ViewerPage workspace cleanup, Vina run workflow bar, HelpPage, and onboarding.
+
+V0.5.8 is a freeze audit stage. Only version consistency, documentation accuracy, small type/layout/copy bugs, and missing frontend wiring may be fixed.
+
+Do not treat V0.5 as interaction analysis. Do not add PLIP, ProLIF, Open Babel, MGLTools, pocket prediction, drug-efficacy judgement, external CDN resources, Vina algorithm/scoring changes, large structure files, real docking outputs, or Python runtime binaries.

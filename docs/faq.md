@@ -108,6 +108,8 @@ DockStart V0.3 可以尝试用 RDKit/Meeko 自动准备部分 receptor/ligand PD
 
 V0.4 已完成基础 3D viewer、Box overlay 和 docking pose 查看。后续才考虑相互作用分析、批量 docking、更专业的结构检查和报告增强。当前仍不做 Open Babel、MGLTools、PLIP、分子动力学、PDF 报告或药效判断。
 
+V0.5 已完成前端工作流整改：项目总览、侧边栏、workflow stepper、统一状态/错误展示、HelpPage 和关键页面信息层级整理。V0.5 不新增相互作用分析，不改变 Vina 算法，也不改变 RDKit/Meeko preparation 后端逻辑。
+
 ## V0.4.0 Viewer 后端已经能做什么？
 
 V0.4.0 已完成 3D viewer 所需的后端结构文件读取接口，但该阶段还没有正式 3D 页面。V0.4.0 接口可以读取项目内 raw/prepared/out.pdbqt 文本结构文件，并能列出 docking pose 文本；V0.4.1 已接入最小 3Dmol.js ViewerPage。

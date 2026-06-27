@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.8
+
+- Performed a V0.5 frontend workflow freeze audit and unified version numbers to `0.5.8`.
+- Corrected roadmap wording so V0.5 is documented as frontend workflow overhaul, not interaction analysis.
+- Clarified that V0.5 keeps backend docking, preparation, viewer data, Vina execution, score parsing, and reporting behavior unchanged.
+- Reconfirmed no PLIP/ProLIF, interaction analysis, pocket prediction, drug efficacy judgement, external CDN, large structure/runtime files, or Vina algorithm/scoring changes were added.
+
 ## v0.5.7
 
 - Added a built-in HelpPage with a beginner workflow, file-type explanations, page quick reference, and scientific boundary reminders.
