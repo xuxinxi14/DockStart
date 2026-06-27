@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.4
+
+- Improved StructureFetchPage information hierarchy around receptor/ligand raw files.
+- Improved PreparationPage copy and grouping so raw inputs, prepared outputs, toolchain status, preparation actions, logs, and warnings are clearer.
+- Reused unified warning, disclaimer, and command-result components on raw/preparation pages.
+- Kept raw downloading and RDKit/Meeko preparation backend behavior unchanged.
+
 ## v0.5.3
 
 - Added unified status, warning, disclaimer, command-result, log-preview, file-status, run-status, report-status, and tool-status presentation components.

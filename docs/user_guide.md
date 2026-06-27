@@ -476,3 +476,12 @@ V0.5.2 在 Dashboard 中加入完整工作流 stepper，并在 Sidebar 中显示
 11. 3D 查看 / pose 查看
 
 每一步会显示 `未开始`、`可进行`、`需确认`、`已完成`、`未就绪` 或 `失败`。这些状态来自现有 project/workflow 信息的前端推导，用来引导用户下一步操作；它不会自动判断分子是否科学合理，也不会新增 docking、preparation 或相互作用分析能力。
+
+## V0.5.4 raw 与 PDBQT 准备页面
+
+V0.5.4 调整了两个核心页面的信息层级：
+
+- StructureFetchPage 标题调整为“获取原始结构文件”，按 receptor / ligand 两栏展示 raw 文件状态、下载表单、overwrite 说明、清除 raw 记录和下一步入口。
+- PreparationPage 标题调整为“准备 Vina 输入文件 PDBQT”，按工具链状态、receptor preparation、ligand preparation 展示 raw input、prepared output、Python/RDKit/Meeko 状态、prepare 按钮和日志路径。
+
+这次改动只改善页面结构和中文提示，不改变 RCSB/PubChem 下载逻辑，不改变 RDKit/Meeko preparation 核心逻辑，也不新增 Open Babel、PLIP、MGLTools 或相互作用分析。

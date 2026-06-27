@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RawStructureStatus, RunFileStatus } from "../types";
 
 type StructureFetchPageProps = {
@@ -278,9 +280,9 @@ export default function StructureFetchPage({
 
       <div className="page-heading">
         <p className="eyebrow">StructureFetchPage</p>
-        <h1 id="structure-fetch-title">下载原始结构文件</h1>
+        <h1 id="structure-fetch-title">获取原始结构文件</h1>
         <p>
-          当前页面只下载 raw 原始结构文件，不会自动生成 PDBQT。运行 Vina 仍需
+          raw 文件来自结构数据库，不能直接运行 Vina。本页只获取和管理原始结构，不会自动生成 PDBQT。运行 Vina 仍需
           prepared/receptor.pdbqt 和 prepared/ligand.pdbqt。
         </p>
       </div>
@@ -291,15 +293,17 @@ export default function StructureFetchPage({
         <code>{project.project_dir}</code>
       </div>
 
-      <div className="disclaimer-note">
-        raw 文件是从 RCSB/PubChem 下载的原始结构；prepared PDBQT 是 AutoDock Vina 可以读取的对接输入。
-        下载 raw 后仍需要手动准备并导入 receptor.pdbqt 与 ligand.pdbqt。
-      </div>
+      <WarningCallout title="raw 不等于 Vina 输入">
+        <p>
+          raw 文件是从 RCSB/PubChem 下载的原始结构；prepared PDBQT 才是 AutoDock Vina 可以读取的对接输入。
+          下载 raw 后仍需要进入“准备 PDBQT”或手动导入 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。
+        </p>
+      </WarningCallout>
 
       <div className="import-grid raw-fetch-grid">
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>受体 raw 文件</h2>
+            <h2>受体 receptor</h2>
             <span className={`status-badge ${statusClass(receptorStatus?.status)}`}>
               {statusText(receptorStatus?.status)}
             </span>
@@ -350,7 +354,7 @@ export default function StructureFetchPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>配体 raw 文件</h2>
+            <h2>配体 ligand</h2>
             <span className={`status-badge ${statusClass(ligandStatus?.status)}`}>
               {statusText(ligandStatus?.status)}
             </span>
@@ -434,19 +438,15 @@ export default function StructureFetchPage({
         </button>
       </div>
 
-      <div className="warning-note">
-        下载页本身只保存 raw 文件，不会直接准备 docking 输入。后续可到 PreparationPage 使用已检测到的 RDKit/Meeko
-        尝试准备 PDBQT；DockStart 当前仍不接入 Open Babel、PLIP 或 MGLTools。raw 记录可以清除，但
-        prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。
-      </div>
+      <WarningCallout title="下一步：准备 PDBQT">
+        <p>
+          下载页本身只保存 raw 文件，不会直接准备 docking 输入。后续可到 PreparationPage 使用已检测到的 RDKit/Meeko
+          尝试准备 PDBQT；DockStart 当前仍不接入 Open Babel、PLIP 或 MGLTools。raw 记录可以清除，但
+          prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。
+        </p>
+      </WarningCallout>
 
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <CommandResultPanel title="结构获取结果" message={message} rawError={rawError} />
     </section>
   );
 }

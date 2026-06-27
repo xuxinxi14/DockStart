@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import CommandResultPanel from "../components/CommandResultPanel";
+import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import WarningCallout from "../components/WarningCallout";
 import type {
   DockStartProject,
   PreparationToolCapabilityResult,
@@ -279,9 +282,9 @@ export default function PreparationPage({
 
       <div className="page-heading">
         <p className="eyebrow">PreparationPage</p>
-        <h1 id="preparation-title">PDBQT 自动准备</h1>
+        <h1 id="preparation-title">准备 Vina 输入文件 PDBQT</h1>
         <p>
-          V0.3 支持在工具链可用时，从 raw 文件尝试准备 receptor / ligand PDBQT。当前页面只提供最小入口和状态提示。
+          prepared PDBQT 才能用于 Vina。本页会显示 raw input、prepared output、工具链状态、准备按钮、日志和 warning。
         </p>
       </div>
 
@@ -291,9 +294,7 @@ export default function PreparationPage({
         <code>{project.project_dir}</code>
       </div>
 
-      <div className="warning-note">
-        自动准备结果仍需用户判断，不代表质子化、电荷、构象、链选择或受体结构处理一定科学正确，也不代表药效判断。
-      </div>
+      <ScientificDisclaimer kind="preparation" />
 
       {nextAction ? (
         <div className="settings-message">
@@ -303,7 +304,7 @@ export default function PreparationPage({
 
       <div className="import-grid">
         <article className="import-card">
-          <h2>工具链检测</h2>
+          <h2>工具链状态</h2>
           <dl className="tool-meta">
             <div>
               <dt>Python</dt>
@@ -334,7 +335,7 @@ export default function PreparationPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>受体准备状态</h2>
+            <h2>receptor preparation</h2>
             <span className={`status-badge ${statusClass(receptorPrep?.status)}`}>{statusText(receptorPrep?.status)}</span>
           </div>
           <dl className="tool-meta">
@@ -389,7 +390,7 @@ export default function PreparationPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>配体准备状态</h2>
+            <h2>ligand preparation</h2>
             <span className={`status-badge ${statusClass(ligandPrep?.status)}`}>{statusText(ligandPrep?.status)}</span>
           </div>
           <dl className="tool-meta">
@@ -458,13 +459,14 @@ export default function PreparationPage({
         </button>
       </div>
 
-      {message ? <p className="settings-message">{message}</p> : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>查看 raw_error</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      <WarningCallout title="科学检查仍然必要">
+        <p>
+          自动准备只能帮助生成 PDBQT，不保证质子化、电荷、缺失残基、水、金属、辅因子或构象选择完全合理。
+          运行 Vina 前请结合研究目标自行检查。
+        </p>
+      </WarningCallout>
+
+      <CommandResultPanel title="PDBQT 准备结果" message={message} rawError={rawError} />
     </section>
   );
 }
