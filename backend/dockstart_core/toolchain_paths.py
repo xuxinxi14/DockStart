@@ -56,7 +56,25 @@ def get_toolchain_manifest_path(project_root: str | Path | None = None) -> Path:
 
 
 def get_bundled_vina_path(project_root: str | Path | None = None) -> Path:
+    return get_toolchain_root(project_root) / "vina" / "vina.exe"
+
+
+def get_legacy_bundled_vina_path(project_root: str | Path | None = None) -> Path:
     return get_toolchain_root(project_root) / "tools" / "vina" / "vina.exe"
+
+
+def get_bundled_vina_candidates(project_root: str | Path | None = None) -> list[Path]:
+    return [
+        get_bundled_vina_path(project_root),
+        get_legacy_bundled_vina_path(project_root),
+    ]
+
+
+def get_existing_bundled_vina_path(project_root: str | Path | None = None) -> Path:
+    for candidate in get_bundled_vina_candidates(project_root):
+        if candidate.is_file():
+            return candidate
+    return get_bundled_vina_path(project_root)
 
 
 def get_bundled_python_path(project_root: str | Path | None = None) -> Path:

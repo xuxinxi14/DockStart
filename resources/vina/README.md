@@ -18,6 +18,13 @@ resources/vina/
 - `resources/vina/vina.exe` 是 V0.6 推荐的新 bundled Vina 路径；
 - 旧版 `resources/tools/vina/vina.exe` 可作为兼容回退；
 - 准备脚本只使用本地文件，不联网、不下载 Vina；
+- 可使用 `--dry-run` 只更新 manifest 元数据，不复制二进制；
 - 打包前必须确认 AutoDock Vina license、来源、版本和 sha256；
 - 不要把未经确认的二进制提交进 Git。
 
+示例：
+
+```powershell
+python scripts/prepare_bundled_vina.py C:\Path\To\vina.exe --source-label "local-vina-1.2.7"
+python scripts/prepare_bundled_vina.py C:\Path\To\vina.exe --dry-run
+```

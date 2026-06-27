@@ -3,10 +3,19 @@
   "toolchain_name": "DockStart Full",
   "status": "partial",
   "description": "DockStart 内置工具链目录规范。当前提交建立 Vina 与 Python runtime 的内置路径识别，不随仓库强制提交二进制运行时。",
+  "vina": {
+    "exists": false,
+    "path": "resources/vina/vina.exe",
+    "version": "",
+    "sha256": "",
+    "source_label": "",
+    "prepared_at": "",
+    "dry_run": false
+  },
   "bundled_vina": {
     "name": "AutoDock Vina",
     "version": "",
-    "binary_path": "resources/tools/vina/vina.exe",
+    "binary_path": "resources/vina/vina.exe",
     "license": "Apache-2.0",
     "source": "",
     "bundled": false,
@@ -27,7 +36,7 @@
     "vina": {
       "name": "AutoDock Vina",
       "role": "docking_engine",
-      "bundled_path": "resources/tools/vina/vina.exe",
+      "bundled_path": "resources/vina/vina.exe",
       "required_for_mvp_run": true,
       "bundled_by_default": false,
       "license": "Apache-2.0",

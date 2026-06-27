@@ -39,7 +39,7 @@ class ToolchainIntegrityTests(unittest.TestCase):
                     "bundled_vina": {
                         "name": "AutoDock Vina",
                         "version": "1.2.7",
-                        "binary_path": "resources/tools/vina/vina.exe",
+                        "binary_path": "resources/vina/vina.exe",
                         "license": "Apache-2.0",
                         "source": "unit-test",
                         "bundled": bundled,
@@ -105,8 +105,8 @@ class ToolchainIntegrityTests(unittest.TestCase):
 
             response = prepare_bundled_vina(source_dir, repo_root=root, version="1.2.7", source_label="unit-test")
 
-            target_binary = root / "resources" / "tools" / "vina" / "vina.exe"
-            target_dll = root / "resources" / "tools" / "vina" / "support.dll"
+            target_binary = root / "resources" / "vina" / "vina.exe"
+            target_dll = root / "resources" / "vina" / "support.dll"
             target_license = root / "resources" / "licenses" / "AutoDock-Vina_LICENSE.txt"
             manifest = json.loads((root / "resources" / "toolchain_manifest.json").read_text(encoding="utf-8"))
 
@@ -153,7 +153,7 @@ class ToolchainIntegrityTests(unittest.TestCase):
     def test_missing_license_returns_incomplete_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "repo"
-            vina_path = root / "resources" / "tools" / "vina" / "vina.exe"
+            vina_path = root / "resources" / "vina" / "vina.exe"
             vina_path.parent.mkdir(parents=True)
             vina_path.write_bytes(b"fake vina binary")
             sha256 = calculate_file_sha256(vina_path)
@@ -172,7 +172,7 @@ class ToolchainIntegrityTests(unittest.TestCase):
     def test_license_and_notice_ready_package(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "repo"
-            vina_path = root / "resources" / "tools" / "vina" / "vina.exe"
+            vina_path = root / "resources" / "vina" / "vina.exe"
             license_path = root / "resources" / "licenses" / "AutoDock-Vina_LICENSE.txt"
             vina_path.parent.mkdir(parents=True)
             license_path.parent.mkdir(parents=True)

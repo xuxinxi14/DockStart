@@ -13,7 +13,9 @@ from dockstart_core.models import ToolCheckResult
 from dockstart_core.settings import load_settings
 from dockstart_core.toolchain_paths import (
     get_bundled_python_path,
+    get_bundled_vina_candidates,
     get_bundled_vina_path,
+    get_existing_bundled_vina_path,
     get_licenses_dir,
     get_resource_dir,
     get_runtime_mode,
@@ -58,18 +60,28 @@ def _manifest_section(section_name: str) -> tuple[dict[str, Any], str]:
     return section if isinstance(section, dict) else {}, manifest_error
 
 
+def _manifest_section_with_aliases(section_name: str, *aliases: str) -> tuple[dict[str, Any], str]:
+    manifest, manifest_error = _read_manifest(get_toolchain_manifest_path())
+    for name in (section_name, *aliases):
+        section = manifest.get(name)
+        if isinstance(section, dict):
+            return section, manifest_error
+    return {}, manifest_error
+
+
 def _binary_integrity(
     section_name: str,
     binary_path: Path,
     display_name: str,
     missing_message: str,
 ) -> dict[str, Any]:
-    bundled_manifest, manifest_error = _manifest_section(section_name)
+    aliases = ("vina",) if section_name == "bundled_vina" else ()
+    bundled_manifest, manifest_error = _manifest_section_with_aliases(section_name, *aliases)
     binary_exists = binary_path.is_file()
     sha256 = calculate_file_sha256(binary_path) if binary_exists else ""
     manifest_sha256 = str(bundled_manifest.get("sha256", "") or "")
     sha256_matches = bool(sha256 and manifest_sha256 and sha256 == manifest_sha256)
-    manifest_bundled = bool(bundled_manifest.get("bundled"))
+    manifest_bundled = bool(bundled_manifest.get("bundled", bundled_manifest.get("exists", False)))
 
     warnings: list[str] = []
     if not binary_exists:
@@ -99,14 +111,14 @@ def _binary_integrity(
         "sha256_matches": sha256_matches,
         "manifest_bundled": manifest_bundled,
         "manifest_version": str(bundled_manifest.get("version", "") or ""),
-        "manifest_source": str(bundled_manifest.get("source", "") or ""),
+        "manifest_source": str(bundled_manifest.get("source", bundled_manifest.get("source_label", "")) or ""),
         "manifest_prepared_at": str(bundled_manifest.get("prepared_at", "") or ""),
         "warnings": warnings,
     }
 
 
 def get_bundled_vina_integrity() -> dict[str, Any]:
-    bundled_vina_path = get_bundled_vina_path()
+    bundled_vina_path = get_existing_bundled_vina_path()
     licenses_dir = get_licenses_dir()
     license_path = licenses_dir / AUTODOCK_VINA_LICENSE_FILE
     notices_path = licenses_dir / "THIRD_PARTY_NOTICES.md"
@@ -229,12 +241,14 @@ def get_toolchain_status() -> dict[str, Any]:
     resource_dir = get_resource_dir()
     resources_dir = get_toolchain_root()
     tools_dir = resources_dir / "tools"
-    vina_dir = tools_dir / "vina"
+    vina_dir = resources_dir / "vina"
+    legacy_vina_dir = tools_dir / "vina"
     python_dir = resources_dir / "python"
     licenses_dir = get_licenses_dir()
     notices_path = licenses_dir / "THIRD_PARTY_NOTICES.md"
     manifest_path = get_toolchain_manifest_path()
-    bundled_vina_path = get_bundled_vina_path()
+    bundled_vina_path = get_existing_bundled_vina_path()
+    preferred_bundled_vina_path = get_bundled_vina_path()
     bundled_python_path = get_bundled_python_path()
     manifest, manifest_error = _read_manifest(manifest_path)
     bundled_vina_integrity = get_bundled_vina_integrity()
@@ -281,12 +295,13 @@ def get_toolchain_status() -> dict[str, Any]:
         "bundled_vina": {
             "exists": bundled_vina_exists,
             "path": str(bundled_vina_path),
+            "preferred_path": str(preferred_bundled_vina_path),
             "version": bundled_vina_detection.version if bundled_vina_detection else "",
             "status": bundled_vina_status,
             "message": (
                 bundled_vina_detection.message
                 if bundled_vina_detection
-                else "未发现内置 Vina。可将 vina.exe 放置到 resources/tools/vina/ 后重新检测。"
+                else "未发现内置 Vina。可将 vina.exe 放置到 resources/vina/ 后重新检测，或在设置页配置外部 Vina。"
             ),
             "raw_error": bundled_vina_detection.raw_error if bundled_vina_detection else "",
             "sha256": bundled_vina_integrity["sha256"],
@@ -328,6 +343,8 @@ def get_toolchain_status() -> dict[str, Any]:
             "exists": resources_dir.is_dir(),
             "tools_dir_exists": tools_dir.is_dir(),
             "vina_dir_exists": vina_dir.is_dir(),
+            "legacy_vina_dir_exists": legacy_vina_dir.is_dir(),
+            "bundled_vina_candidates": [str(path) for path in get_bundled_vina_candidates()],
             "python_dir_exists": python_dir.is_dir(),
         },
         "full_status": full_status,

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.1
+
+- Updated bundled Vina resolution to prefer `resources/vina/vina.exe` while retaining `resources/tools/vina/vina.exe` as a legacy fallback.
+- Updated `scripts/prepare_bundled_vina.py` to copy local Vina files into `resources/vina/`, compute sha256, update manifest fields, and support `--dry-run`.
+- Added manifest `vina` metadata alongside the compatible `bundled_vina` section.
+- Expanded ToolchainStatusPage bundled Vina details with manifest source and clearer missing-bundled guidance.
+- Kept Vina integration limited to detection and packaging preparation; no docking algorithm, docking run behavior, or scientific result interpretation changed.
+
 ## v0.6.0
 
 - Added the V0.6 release engineering structure and packaging strategy docs.

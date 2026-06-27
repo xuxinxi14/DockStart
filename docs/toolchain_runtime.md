@@ -87,6 +87,28 @@ resources/python/README.md
 - `resources/python/Scripts/`
 - `resources/python/site-packages/`
 
+## bundled Vina 目录结构
+
+V0.6 推荐的 bundled AutoDock Vina 路径为：
+
+```text
+resources/vina/vina.exe
+```
+
+旧版实验路径仍可作为兼容回退：
+
+```text
+resources/tools/vina/vina.exe
+```
+
+解析优先级为：
+
+```text
+resources/vina/vina.exe > resources/tools/vina/vina.exe > 用户配置路径 > PATH
+```
+
+仓库默认不提交真实 `vina.exe` 或 DLL 文件。准备 bundled Vina 时必须使用本地文件，记录版本、来源和 `sha256`，并确认 AutoDock Vina license 和 `THIRD_PARTY_NOTICES.md`。
+
 ## toolchain_manifest.json 的作用
 
 `resources/toolchain_manifest.json` 记录工具链资源的可追踪信息。对 bundled Python，当前字段包括：

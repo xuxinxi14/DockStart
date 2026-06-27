@@ -29,6 +29,14 @@ cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 - bundled 二进制的 sha256；
 - `.gitignore` 是否仍然排除大体积 runtime 和安装包产物。
 
+V0.6 bundled Vina 推荐路径：
+
+```text
+resources/vina/vina.exe
+```
+
+旧路径 `resources/tools/vina/vina.exe` 只作为兼容回退。新发布材料和 manifest 应优先记录 `resources/vina/vina.exe`。
+
 ## Current Tauri Resource Policy
 
 `apps/desktop/src-tauri/tauri.conf.json` 当前会把仓库根目录的 `resources/` 映射为打包资源：
@@ -75,4 +83,3 @@ apps/desktop/src-tauri/target/release/bundle/
 ```
 
 产物路径和大小必须记录到 release build report，但安装包本身不能提交进 Git。
-

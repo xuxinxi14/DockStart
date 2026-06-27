@@ -13,6 +13,7 @@
 
 - 在命令行运行 `vina --version` 或 `vina.exe --version`；
 - 如果命令行找不到，回到 DockStart 设置页填写 `vina.exe` 的完整路径；
+- 如果你正在准备 V0.6 toolchain-assisted release，可用 `scripts/prepare_bundled_vina.py` 从本地 Vina 文件装配到 `resources/vina/`，DockStart 会优先检测该路径；
 - 保存设置后重新运行工具检测。
 
 ## 2. 为什么 Meeko/RDKit 显示 missing？

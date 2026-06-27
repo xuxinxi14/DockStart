@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT_ENV_VAR = "DOCKSTART_REPO_ROOT"
-VINA_BINARY_RELATIVE = Path("resources", "tools", "vina", "vina.exe")
+VINA_BINARY_RELATIVE = Path("resources", "vina", "vina.exe")
 LICENSE_TARGET_RELATIVE = Path("resources", "licenses", "AutoDock-Vina_LICENSE.txt")
 MANIFEST_RELATIVE = Path("resources", "toolchain_manifest.json")
 LICENSE_CANDIDATE_NAMES = {
@@ -132,28 +132,30 @@ def prepare_bundled_vina(
     version: str = "",
     license_path: str | Path | None = None,
     source_label: str = "",
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     root = get_repo_root(repo_root)
     source_path = Path(source).expanduser().resolve()
     vina_binary = find_vina_binary(source_path)
     target_binary = root / VINA_BINARY_RELATIVE
-    copied_binary = _copy_file(vina_binary, target_binary)
+    copied_binary = False if dry_run else _copy_file(vina_binary, target_binary)
 
     copied_dlls: list[str] = []
     for dll in find_dlls(vina_binary):
         target_dll = target_binary.parent / dll.name
-        if _copy_file(dll, target_dll):
+        if not dry_run and _copy_file(dll, target_dll):
             copied_dlls.append(str(target_dll))
 
     selected_license = find_license_file(source_path, license_path)
     license_target = root / LICENSE_TARGET_RELATIVE
     license_copied = False
-    if selected_license:
+    if selected_license and not dry_run:
         license_copied = _copy_file(selected_license, license_target)
 
-    sha256 = calculate_file_sha256(target_binary)
+    sha256 = calculate_file_sha256(vina_binary if dry_run else target_binary)
     prepared_at = datetime.now(UTC).isoformat()
-    resolved_version = version.strip() or detect_vina_version(target_binary)
+    version_probe_binary = vina_binary if dry_run else target_binary
+    resolved_version = version.strip() or detect_vina_version(version_probe_binary)
     manifest_path = root / MANIFEST_RELATIVE
     manifest = _load_manifest(manifest_path)
     manifest["status"] = "partial"
@@ -165,9 +167,18 @@ def prepare_bundled_vina(
         "binary_path": VINA_BINARY_RELATIVE.as_posix(),
         "license": "Apache-2.0",
         "source": source_label.strip() or str(source_path),
-        "bundled": True,
+        "bundled": not dry_run,
         "sha256": sha256,
         "prepared_at": prepared_at,
+    }
+    manifest["vina"] = {
+        "exists": not dry_run,
+        "path": VINA_BINARY_RELATIVE.as_posix(),
+        "version": resolved_version,
+        "sha256": sha256,
+        "source_label": source_label.strip() or str(source_path),
+        "prepared_at": prepared_at,
+        "dry_run": dry_run,
     }
     manifest["tools"]["vina"] = {
         "name": "AutoDock Vina",
@@ -185,6 +196,7 @@ def prepare_bundled_vina(
     return {
         "ok": True,
         "source": str(source_path),
+        "dry_run": dry_run,
         "vina_binary_source": str(vina_binary),
         "target_binary": str(target_binary),
         "copied_binary": copied_binary,
@@ -196,7 +208,11 @@ def prepare_bundled_vina(
         "sha256": sha256,
         "prepared_at": prepared_at,
         "manifest_path": str(manifest_path),
-        "message": "Bundled Vina resources prepared from local files. No network download was performed.",
+        "message": (
+            "Bundled Vina manifest updated in dry-run mode. No binary was copied and no network download was performed."
+            if dry_run
+            else "Bundled Vina resources prepared from local files. No network download was performed."
+        ),
     }
 
 
@@ -207,6 +223,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--version", default="", help="Optional Vina version override for the manifest.")
     parser.add_argument("--license-path", default="", help="Optional explicit AutoDock Vina license file path.")
     parser.add_argument("--source-label", default="", help="Optional source label recorded in the manifest.")
+    parser.add_argument("--dry-run", action="store_true", help="Only update manifest metadata without copying vina.exe.")
     return parser.parse_args(argv)
 
 
@@ -219,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             version=args.version,
             license_path=args.license_path or None,
             source_label=args.source_label,
+            dry_run=args.dry_run,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

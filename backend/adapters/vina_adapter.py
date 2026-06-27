@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from dockstart_core.models import ToolCheckResult
-from dockstart_core.toolchain_paths import get_bundled_vina_path
+from dockstart_core.toolchain_paths import get_existing_bundled_vina_path
 
 _VINA_CANDIDATES = ("vina", "vina.exe")
 
@@ -98,7 +98,11 @@ def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCh
 
 def detect(configured_path: str = "", bundled_path: str = "") -> ToolCheckResult:
     configured_path = configured_path.strip()
-    resolved_bundled_path = str(Path(bundled_path).expanduser()) if bundled_path else str(get_bundled_vina_path())
+    resolved_bundled_path = (
+        str(Path(bundled_path).expanduser())
+        if bundled_path
+        else str(get_existing_bundled_vina_path())
+    )
 
     if Path(resolved_bundled_path).expanduser().is_file():
         return _run_version_check(

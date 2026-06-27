@@ -414,6 +414,10 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd title={status.bundled_vina.sha256}>{shortHash(status.bundled_vina.sha256)}</dd>
                 </div>
                 <div>
+                  <dt>来源记录</dt>
+                  <dd>{status.bundled_vina_integrity?.manifest_source || "manifest 尚未记录来源"}</dd>
+                </div>
+                <div>
                   <dt>LICENSE</dt>
                   <dd>
                     {status.bundled_vina_integrity?.license_path || "未获取"}（
@@ -425,6 +429,11 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd>{booleanText(Boolean(status.bundled_vina_integrity?.third_party_notices_has_autodock_vina))}</dd>
                 </div>
               </dl>
+              {!status.bundled_vina.exists ? (
+                <p className="placeholder-note">
+                  未发现 bundled Vina。可以把本地 vina.exe 准备到 resources/vina/，或在设置页配置外部 AutoDock Vina。
+                </p>
+              ) : null}
             </article>
 
             <article className="tool-card">

@@ -31,6 +31,7 @@ from dockstart_core.toolchain_paths import (  # noqa: E402
     TOOLCHAIN_ROOT_ENV_VAR,
     get_bundled_python_path,
     get_bundled_vina_path,
+    get_legacy_bundled_vina_path,
     get_licenses_dir,
     get_runtime_mode,
     get_toolchain_manifest_path,
@@ -166,7 +167,7 @@ class ToolCheckTests(unittest.TestCase):
 
     def test_vina_missing_returns_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            bundled_path = str(Path(temp_dir) / "resources" / "vina" / "vina.exe")
             with patch.object(vina_adapter.shutil, "which", return_value=None):
                 result = vina_adapter.detect(bundled_path=bundled_path)
 
@@ -177,7 +178,7 @@ class ToolCheckTests(unittest.TestCase):
 
     def test_configured_vina_missing_returns_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            bundled_path = str(Path(temp_dir) / "resources" / "vina" / "vina.exe")
             result = vina_adapter.detect("Z:/missing/vina.exe", bundled_path=bundled_path)
 
         self.assertEqual(result.key, "vina")
@@ -189,7 +190,7 @@ class ToolCheckTests(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = str(Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe")
+            bundled_path = str(Path(temp_dir) / "resources" / "vina" / "vina.exe")
             with (
                 patch.object(vina_adapter.shutil, "which", return_value="C:/tools/vina.exe"),
                 patch.object(vina_adapter.subprocess, "run", return_value=completed),
@@ -205,7 +206,7 @@ class ToolCheckTests(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            bundled_path = Path(temp_dir) / "resources" / "vina" / "vina.exe"
             configured_path = Path(temp_dir) / "configured" / "vina.exe"
             bundled_path.parent.mkdir(parents=True)
             configured_path.parent.mkdir(parents=True)
@@ -221,11 +222,32 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.path, str(bundled_path))
         self.assertEqual(run_mock.call_args[0][0][0], str(bundled_path))
 
+    def test_legacy_bundled_vina_is_detected_when_preferred_path_missing(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_path = root / "resources" / "tools" / "vina" / "vina.exe"
+            legacy_path.parent.mkdir(parents=True)
+            legacy_path.write_text("fake legacy bundled vina", encoding="utf-8")
+
+            with (
+                patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root)}, clear=False),
+                patch.object(vina_adapter.subprocess, "run", return_value=completed) as run_mock,
+            ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                result = vina_adapter.detect()
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "bundled")
+        self.assertEqual(result.path, str(legacy_path))
+        self.assertEqual(run_mock.call_args[0][0][0], str(legacy_path))
+
     def test_configured_vina_takes_priority_over_path_when_no_bundled(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            bundled_path = Path(temp_dir) / "resources" / "vina" / "vina.exe"
             configured_path = Path(temp_dir) / "configured" / "vina.exe"
             configured_path.parent.mkdir(parents=True)
             configured_path.write_text("fake configured vina", encoding="utf-8")
@@ -245,7 +267,7 @@ class ToolCheckTests(unittest.TestCase):
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundled_path = Path(temp_dir) / "resources" / "tools" / "vina" / "vina.exe"
+            bundled_path = Path(temp_dir) / "resources" / "vina" / "vina.exe"
             configured_path = Path(temp_dir) / "configured" / "vina.exe"
             configured_path.parent.mkdir(parents=True)
             configured_path.write_text("fake configured vina", encoding="utf-8")
@@ -265,7 +287,8 @@ class ToolCheckTests(unittest.TestCase):
 
                 self.assertEqual(get_runtime_mode(), "dev")
                 self.assertEqual(get_toolchain_root(), root / "resources")
-                self.assertEqual(get_bundled_vina_path(), root / "resources" / "tools" / "vina" / "vina.exe")
+                self.assertEqual(get_bundled_vina_path(), root / "resources" / "vina" / "vina.exe")
+                self.assertEqual(get_legacy_bundled_vina_path(), root / "resources" / "tools" / "vina" / "vina.exe")
                 self.assertEqual(get_bundled_python_path(), root / "resources" / "python" / "python.exe")
                 self.assertEqual(get_licenses_dir(), root / "resources" / "licenses")
                 self.assertEqual(get_toolchain_manifest_path(), root / "resources" / "toolchain_manifest.json")
@@ -283,7 +306,11 @@ class ToolCheckTests(unittest.TestCase):
             ):
                 self.assertEqual(get_runtime_mode(), "packaged")
                 self.assertEqual(get_toolchain_root(), resource_dir / "resources")
-                self.assertEqual(get_bundled_vina_path(), resource_dir / "resources" / "tools" / "vina" / "vina.exe")
+                self.assertEqual(get_bundled_vina_path(), resource_dir / "resources" / "vina" / "vina.exe")
+                self.assertEqual(
+                    get_legacy_bundled_vina_path(),
+                    resource_dir / "resources" / "tools" / "vina" / "vina.exe",
+                )
                 self.assertEqual(get_bundled_python_path(), resource_dir / "resources" / "python" / "python.exe")
 
     def test_toolchain_status_returns_structured_result(self) -> None:
@@ -291,7 +318,7 @@ class ToolCheckTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            bundled_path = root / "resources" / "tools" / "vina" / "vina.exe"
+            bundled_path = root / "resources" / "vina" / "vina.exe"
             notices_path = root / "resources" / "licenses" / "THIRD_PARTY_NOTICES.md"
             license_path = root / "resources" / "licenses" / "AutoDock-Vina_LICENSE.txt"
             manifest_path = root / "resources" / "toolchain_manifest.json"
@@ -330,7 +357,7 @@ class ToolCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             resource_dir = Path(temp_dir) / "tauri_resource_dir"
             toolchain_root = resource_dir / "resources"
-            bundled_path = toolchain_root / "tools" / "vina" / "vina.exe"
+            bundled_path = toolchain_root / "vina" / "vina.exe"
             notices_path = toolchain_root / "licenses" / "THIRD_PARTY_NOTICES.md"
             license_path = toolchain_root / "licenses" / "AutoDock-Vina_LICENSE.txt"
             manifest_path = toolchain_root / "toolchain_manifest.json"
