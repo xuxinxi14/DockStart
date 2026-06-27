@@ -86,17 +86,17 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">ProjectCreatePage</p>
+        <p className="eyebrow">项目</p>
         <h1 id="project-create-title">创建 DockStart 项目</h1>
         <p>
-          这一步只创建项目文件夹和 project.json。后续导入的 receptor.pdbqt 和
-          ligand.pdbqt 会复制到项目的 prepared 目录中。
+          这一步只创建项目文件夹和 project.json。后续导入的受体 PDBQT 和
+          配体 PDBQT 会复制到项目的 Vina 输入目录中。
         </p>
       </div>
 
       <div className="disclaimer-note">
-        创建项目后有两条入口：可以先下载 raw 原始结构，也可以直接导入已经准备好的 PDBQT。
-        raw 文件不能直接运行 Vina，prepared PDBQT 才是当前运行流程的输入。
+        创建项目后有两条入口：可以先获取原始结构，也可以直接导入已经准备好的 PDBQT。
+        原始结构文件不能直接运行 Vina，准备后的 PDBQT 才是当前运行流程的输入。
       </div>
 
       <div className="form-panel">
@@ -130,7 +130,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       {createdProject ? (
         <div className="ready-note">
           <span>
-            项目已创建。若还没有 PDBQT，可以先下载 raw 原始结构；若已经准备好 PDBQT，可以直接导入 prepared 文件。
+            项目已创建。若还没有 PDBQT，可以先获取原始结构；若已经准备好 PDBQT，可以直接导入 Vina 输入文件。
           </span>
           <button
             className="secondary-button"

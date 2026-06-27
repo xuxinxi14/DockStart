@@ -279,7 +279,7 @@ export default function StructureFetchPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">StructureFetchPage</p>
+        <p className="eyebrow">原始结构</p>
         <h1 id="structure-fetch-title">获取原始结构文件</h1>
         <p>
           raw 文件来自结构数据库，不能直接运行 Vina。本页只获取和管理原始结构，不会自动生成 PDBQT。运行 Vina 仍需
@@ -288,7 +288,7 @@ export default function StructureFetchPage({
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -303,7 +303,7 @@ export default function StructureFetchPage({
       <div className="import-grid raw-fetch-grid">
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>受体 receptor</h2>
+            <h2>受体</h2>
             <span className={`status-badge ${statusClass(receptorStatus?.status)}`}>
               {statusText(receptorStatus?.status)}
             </span>
@@ -354,7 +354,7 @@ export default function StructureFetchPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>配体 ligand</h2>
+            <h2>配体</h2>
             <span className={`status-badge ${statusClass(ligandStatus?.status)}`}>
               {statusText(ligandStatus?.status)}
             </span>
@@ -421,10 +421,10 @@ export default function StructureFetchPage({
           重新加载 raw 状态
         </button>
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
-          进入 PDBQT 导入页
+          导入 Vina 输入
         </button>
         <button className="secondary-button" type="button" onClick={() => onOpenPreparation(project)}>
-          进入自动准备页
+          准备 Vina 输入
         </button>
       </div>
 
@@ -440,7 +440,7 @@ export default function StructureFetchPage({
 
       <WarningCallout title="下一步：准备 PDBQT">
         <p>
-          下载页本身只保存 raw 文件，不会直接准备 docking 输入。后续可到 PreparationPage 使用已检测到的 RDKit/Meeko
+          下载页本身只保存原始结构文件，不会直接准备 Vina 输入。后续可到“准备 Vina 输入”使用已检测到的 RDKit/Meeko
           尝试准备 PDBQT；DockStart 当前仍不接入 Open Babel、PLIP 或 MGLTools。raw 记录可以清除，但
           prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 不会因此删除。
         </p>

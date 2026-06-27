@@ -15,9 +15,9 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
   return (
     <section className="project-page">
       <PageHeader
-        eyebrow="HelpPage"
+        eyebrow="文档帮助"
         title="DockStart 帮助与新手流程"
-        description="这里解释 DockStart 的主要页面、文件类型和科学边界。V0.5.7 只新增前端帮助入口，不新增 docking、preparation 或 viewer 后端功能。"
+        description="这里解释 DockStart 的主要页面、文件类型和科学边界。帮助页只做工作流说明，不新增 docking、准备或 viewer 后端功能。"
         actions={
           <button className="primary-button" type="button" onClick={() => onNavigate(project ? "home" : "project-create")}>
             {project ? "回到项目总览" : "创建项目"}
@@ -33,11 +33,11 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
         <div className="help-grid">
           <article>
             <strong>先看工具链</strong>
-            <p>进入“工具链”页确认 AutoDock Vina、Python、RDKit 和 Meeko 状态。没有 Vina 时不能执行 docking。</p>
+            <p>进入“工具链”页确认 AutoDock Vina、Python、RDKit 和 Meeko 状态。没有 Vina 时不能执行对接。</p>
           </article>
           <article>
             <strong>再配置路径</strong>
-            <p>如果 Vina 或 Python missing，进入设置页配置 `vina.exe` 和独立 conda 环境中的 `python.exe`。</p>
+            <p>如果 Vina 或 Python 未配置，进入设置页配置 `vina.exe` 和独立 conda 环境中的 `python.exe`。</p>
           </article>
           <article>
             <strong>RDKit/Meeko 不会自动安装</strong>
@@ -53,11 +53,11 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
       <SectionCard title="文件类型怎么理解">
         <div className="help-grid">
           <article>
-            <strong>raw 文件</strong>
-            <p>从 RCSB/PubChem 下载或记录的 PDB/CIF/SDF/MOL 等原始文件。raw 文件不能直接运行 AutoDock Vina。</p>
+            <strong>原始结构文件</strong>
+            <p>从 RCSB/PubChem 下载或记录的 PDB/CIF/SDF/MOL 等原始文件。原始结构文件不能直接运行 AutoDock Vina。</p>
           </article>
           <article>
-            <strong>prepared PDBQT</strong>
+            <strong>Vina 输入文件</strong>
             <p>`prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt` 才是 Vina 输入。可以自动准备，也可以手动导入。</p>
           </article>
           <article>
@@ -65,8 +65,8 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <p>由项目内 prepared 文件、Box 参数和 Vina 参数生成。生成 config 不会执行 Vina。</p>
           </article>
           <article>
-            <strong>runs/run_XXX/</strong>
-            <p>每次 run 保存 metadata、命令、stdout、stderr、log、out 和后续 scores/report。</p>
+            <strong>对接运行记录</strong>
+            <p>每次运行保存命令、stdout、stderr、log、out 和后续 scores/report，便于复现和排查。</p>
           </article>
         </div>
       </SectionCard>
@@ -79,21 +79,21 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
           </article>
           <article>
             <strong>获取结构 / 准备 PDBQT</strong>
-            <p>先管理 raw，再生成或导入 prepared PDBQT。自动准备结果仍需人工检查。</p>
+            <p>先管理原始结构，再生成或导入 Vina 输入文件。自动准备结果仍需人工检查。</p>
           </article>
           <article>
             <strong>3D 查看 / Box</strong>
-            <p>显示结构、Box overlay 和 docking pose。它不是 pocket prediction 或相互作用分析工具。</p>
+            <p>显示结构、搜索范围和对接构象。它不是 pocket prediction 或相互作用分析工具。</p>
           </article>
           <article>
             <strong>Vina 运行 / 结果报告</strong>
-            <p>按 config、prepare run、execute、parse、report 顺序走，便于保留可复现记录。</p>
+            <p>按运行配置、创建运行记录、执行、解析、导出实验记录顺序走，便于保留可复现记录。</p>
           </article>
         </div>
       </SectionCard>
 
-      <WarningCallout title="不要把 raw 文件当成 Vina 输入">
-        <p>如果已经下载 raw receptor 或 raw ligand，但没有 prepared PDBQT，请先进入“准备 PDBQT”或手动导入 PDBQT。</p>
+      <WarningCallout title="不要把原始结构当成 Vina 输入">
+        <p>如果已经下载原始受体或原始配体，但没有 PDBQT，请先进入“准备 Vina 输入”或手动导入 PDBQT。</p>
       </WarningCallout>
 
       <ScientificDisclaimer kind="preparation" />

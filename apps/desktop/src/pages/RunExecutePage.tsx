@@ -83,12 +83,12 @@ export default function RunExecutePage({
   const status = metadataString(metadata, "status") || "unknown";
   const exitCode = metadataNumber(metadata, "exit_code");
   const command = useMemo(() => metadataCommand(metadata), [metadata]);
-  const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "metadata.command 为空或格式无效。";
+  const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "命令记录为空或格式无效。";
   const canExecute = status === "prepared" && !isBusy;
   const disabledReason =
     status === "prepared"
       ? ""
-      : `当前 run 状态为 ${runStatusText[status] ?? status}，只能执行 prepared 状态的 run。`;
+      : `当前运行状态为 ${runStatusText[status] ?? status}，只能执行已准备的对接运行。`;
 
   const applyResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string) => {
@@ -150,16 +150,16 @@ export default function RunExecutePage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">RunExecutePage</p>
+        <p className="eyebrow">AutoDock Vina</p>
         <h1 id="run-execute-title">执行 AutoDock Vina</h1>
         <p>
-          这一步会真实执行 run metadata 中保存的命令数组，并保存 stdout、stderr、log 和 out 文件。
-          当前版本只负责运行和记录状态，暂时不解析 affinity，也不生成结果表格。
+          这一步会真实执行已保存的命令数组，并保存 stdout、stderr、log 和 out 文件。
+          这里仅负责运行和记录状态；对接评分表格请在结果页解析。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -168,7 +168,7 @@ export default function RunExecutePage({
 
       <div className="summary-grid">
         <div className="param-summary">
-          <span>run_id</span>
+          <span>运行记录</span>
           <strong>{runId}</strong>
         </div>
         <div className="param-summary">
@@ -189,7 +189,7 @@ export default function RunExecutePage({
 
       <div className="config-preview-panel">
         <div className="tool-card-header">
-          <h2>命令数组预览</h2>
+          <h2>技术详情：命令数组预览</h2>
           <span>不会使用 shell 拼接字符串</span>
         </div>
         <pre className="config-preview">{commandPreview}</pre>
@@ -224,10 +224,10 @@ export default function RunExecutePage({
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={!canExecute} onClick={() => void executeRun()}>
-          {isBusy ? "执行中..." : "执行 Vina"}
+          {isBusy ? "执行中..." : "开始对接"}
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRun()}>
-          重新加载 run 状态
+          重新加载运行状态
         </button>
       </div>
 
@@ -239,7 +239,7 @@ export default function RunExecutePage({
             <code>{metadataString(metadata, "log_file")}</code>
           </div>
           <button className="secondary-button" type="button" onClick={() => onOpenResultPage(project, runId)}>
-            进入结果页
+            查看对接结果
           </button>
         </div>
       ) : null}
@@ -252,7 +252,7 @@ export default function RunExecutePage({
         </WarningCallout>
       ) : null}
 
-      <p className="placeholder-note">执行页只负责运行和记录状态；解析 docking score 请进入结果页。</p>
+      <p className="placeholder-note">执行页只负责运行和记录状态；解析对接评分请进入结果页。</p>
 
       <CommandResultPanel title="Vina 执行结果" message={message} rawError={rawError} />
     </section>

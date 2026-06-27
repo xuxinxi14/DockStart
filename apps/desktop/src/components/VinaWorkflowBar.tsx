@@ -8,11 +8,11 @@ type VinaWorkflowBarProps = {
 };
 
 const steps: Array<{ id: VinaWorkflowStepId; label: string; description: string }> = [
-  { id: "config", label: "生成 config", description: "写入 configs/vina_config.txt" },
-  { id: "prepare", label: "准备 run", description: "创建 metadata 与命令快照" },
-  { id: "execute", label: "执行 Vina", description: "保存 stdout / stderr / log / out" },
+  { id: "config", label: "生成运行配置", description: "写入 configs/vina_config.txt" },
+  { id: "prepare", label: "创建运行记录", description: "保存命令预览与配置快照" },
+  { id: "execute", label: "开始对接", description: "保存 stdout / stderr / log / out" },
   { id: "result", label: "解析结果", description: "从 log.txt 生成 scores.csv" },
-  { id: "report", label: "导出报告", description: "生成 Markdown 报告" },
+  { id: "report", label: "导出实验记录", description: "生成 Markdown 实验记录" },
 ];
 
 export default function VinaWorkflowBar({ current, runId }: VinaWorkflowBarProps) {
@@ -37,7 +37,7 @@ export default function VinaWorkflowBar({ current, runId }: VinaWorkflowBarProps
           );
         })}
       </ol>
-      {runId ? <p className="vina-workflow-run">当前 run_id：{runId}</p> : null}
+      {runId ? <p className="vina-workflow-run">运行记录：{runId}</p> : null}
     </nav>
   );
 }

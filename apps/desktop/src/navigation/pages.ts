@@ -19,57 +19,86 @@ export type PageId =
 
 export type NavigationItem = {
   id: PageId;
+  group: "Project" | "Workflow" | "Workbench" | "Support";
   label: string;
   description: string;
   requiresProject?: boolean;
   disabled?: boolean;
 };
 
-export const appVersion = "0.6.7";
+export const appVersion = "0.7.0";
 
 export const navigationItems: NavigationItem[] = [
   {
     id: "home",
-    label: "项目总览",
-    description: "查看当前项目、下一步和主要入口",
+    group: "Project",
+    label: "总览",
+    description: "项目状态、下一步和主要入口",
+  },
+  {
+    id: "project-create",
+    group: "Project",
+    label: "创建 / 打开项目",
+    description: "建立项目文件夹和 project.json",
   },
   {
     id: "toolchain-status",
+    group: "Support",
     label: "工具链",
-    description: "检查 Vina、Python、RDKit、Meeko 和内置资源",
+    description: "配置 Vina、Python、RDKit 和 Meeko",
   },
   {
     id: "structure-fetch",
-    label: "获取结构",
-    description: "下载或管理 raw receptor / ligand",
+    group: "Workflow",
+    label: "1 获取结构",
+    description: "获取原始结构文件",
     requiresProject: true,
   },
   {
     id: "preparation",
-    label: "准备 PDBQT",
-    description: "从 raw 文件生成或确认 prepared PDBQT",
+    group: "Workflow",
+    label: "2 准备 PDBQT",
+    description: "生成或确认 Vina 输入文件",
     requiresProject: true,
   },
   {
-    id: "viewer",
-    label: "3D 查看 / Box",
-    description: "查看结构、Box 和 docking pose",
+    id: "box-setup",
+    group: "Workflow",
+    label: "3 设置 Box",
+    description: "设置对接搜索范围",
     requiresProject: true,
   },
   {
     id: "vina-config",
-    label: "Vina 运行",
-    description: "设置参数、生成 config、准备并执行 run",
+    group: "Workflow",
+    label: "4 运行 Vina",
+    description: "配置、准备并执行对接运行",
     requiresProject: true,
   },
   {
     id: "result",
-    label: "结果报告",
-    description: "解析结果并导出 Markdown 报告",
+    group: "Workflow",
+    label: "5 查看结果",
+    description: "解析 scores 并查看对接构象",
+    requiresProject: true,
+  },
+  {
+    id: "viewer",
+    group: "Workbench",
+    label: "3D 查看",
+    description: "结构、搜索范围和对接构象工作台",
+    requiresProject: true,
+  },
+  {
+    id: "report",
+    group: "Workbench",
+    label: "报告",
+    description: "导出 Markdown 实验记录",
     requiresProject: true,
   },
   {
     id: "help",
+    group: "Support",
     label: "文档帮助",
     description: "查看新手流程、文件说明和科学边界",
   },
@@ -78,20 +107,20 @@ export const navigationItems: NavigationItem[] = [
 export const pageTitles: Record<PageId, string> = {
   home: "项目总览",
   "tool-check": "工具检测",
-  "toolchain-status": "内置工具链状态",
+  "toolchain-status": "配置工具链",
   settings: "工具路径设置",
   "project-create": "创建项目",
   "structure-fetch": "获取原始结构文件",
-  preparation: "准备 PDBQT",
-  "import-pdbqt": "导入 PDBQT",
-  "box-setup": "设置对接箱体",
+  preparation: "准备 Vina 输入文件",
+  "import-pdbqt": "导入 Vina 输入",
+  "box-setup": "设置搜索范围",
   "vina-param": "设置 Vina 参数",
-  "vina-config": "生成 Vina 配置",
-  "run-prepare": "运行前检查",
-  "run-execute": "执行 Vina",
-  result: "查看结果",
-  viewer: "3D 查看 / Box",
-  report: "导出报告",
+  "vina-config": "生成运行配置",
+  "run-prepare": "准备对接运行",
+  "run-execute": "执行 AutoDock Vina",
+  result: "查看对接结果",
+  viewer: "3D 查看",
+  report: "导出实验记录",
   help: "文档帮助",
 };
 

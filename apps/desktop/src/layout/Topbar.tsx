@@ -1,6 +1,5 @@
 import type { DockStartProject } from "../types";
 import StatusBadge from "../components/StatusBadge";
-import FilePathText from "../components/FilePathText";
 import { appVersion, pageTitles, type PageId } from "../navigation/pages";
 
 type TopbarProps = {
@@ -13,15 +12,18 @@ export default function Topbar({ currentPage, project, workflowSummary }: Topbar
   return (
     <header className="app-topbar">
       <div className="topbar-main">
-        <span>当前页面</span>
+        <span className="topbar-label">工作流阶段</span>
         <strong>{pageTitles[currentPage]}</strong>
+        <small>{workflowSummary}</small>
       </div>
       <div className="topbar-project">
-        <span>当前项目</span>
-        <FilePathText value={project?.project_dir} emptyText="尚未创建或加载项目" />
+        <span className="topbar-label">项目</span>
+        <strong>{project?.project_name || "未加载项目"}</strong>
+        <small>{project?.project_dir || "创建项目后会在这里显示项目目录"}</small>
       </div>
       <div className="topbar-status">
-        <StatusBadge tone={project ? "info" : "warning"}>{workflowSummary}</StatusBadge>
+        <StatusBadge tone={project ? "info" : "warning"}>{project ? "项目已加载" : "等待项目"}</StatusBadge>
+        <StatusBadge tone="muted">工具链按需检测</StatusBadge>
         <span className="version-pill">v{appVersion}</span>
       </div>
     </header>

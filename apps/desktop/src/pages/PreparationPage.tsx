@@ -281,15 +281,15 @@ export default function PreparationPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">PreparationPage</p>
-        <h1 id="preparation-title">准备 Vina 输入文件 PDBQT</h1>
+        <p className="eyebrow">Vina 输入</p>
+        <h1 id="preparation-title">准备 Vina 输入文件</h1>
         <p>
-          prepared PDBQT 才能用于 Vina。本页会显示 raw input、prepared output、工具链状态、准备按钮、日志和 warning。
+          Vina 输入文件是准备后的 PDBQT。本页显示原始结构、输出文件、工具链状态、准备按钮和可折叠日志。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -335,16 +335,16 @@ export default function PreparationPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>receptor preparation</h2>
+            <h2>受体输入文件</h2>
             <span className={`status-badge ${statusClass(receptorPrep?.status)}`}>{statusText(receptorPrep?.status)}</span>
           </div>
           <dl className="tool-meta">
             <div>
-              <dt>receptor raw file</dt>
+              <dt>受体原始结构</dt>
               <dd><code>{fileLine(files?.receptor_raw, project.receptor.raw_file)}</code></dd>
             </div>
             <div>
-              <dt>receptor prepared file</dt>
+              <dt>受体 Vina 输入</dt>
               <dd><code>{fileLine(files?.receptor_prepared, project.receptor.file)}</code></dd>
             </div>
             <div>
@@ -374,7 +374,7 @@ export default function PreparationPage({
           </label>
           <div className="toolbar project-toolbar">
             <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareReceptor()}>
-              准备 receptor PDBQT
+              准备受体输入
             </button>
             <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void validateTarget("receptor")}>
               检查受体准备条件
@@ -390,16 +390,16 @@ export default function PreparationPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>ligand preparation</h2>
+            <h2>配体输入文件</h2>
             <span className={`status-badge ${statusClass(ligandPrep?.status)}`}>{statusText(ligandPrep?.status)}</span>
           </div>
           <dl className="tool-meta">
             <div>
-              <dt>ligand raw file</dt>
+              <dt>配体原始结构</dt>
               <dd><code>{fileLine(files?.ligand_raw, project.ligand.raw_file)}</code></dd>
             </div>
             <div>
-              <dt>ligand prepared file</dt>
+              <dt>配体 Vina 输入</dt>
               <dd><code>{fileLine(files?.ligand_prepared, project.ligand.file)}</code></dd>
             </div>
             <div>
@@ -429,7 +429,7 @@ export default function PreparationPage({
           </label>
           <div className="toolbar project-toolbar">
             <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareLigand()}>
-              准备 ligand PDBQT
+              准备配体输入
             </button>
             <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void validateTarget("ligand")}>
               检查配体准备条件
@@ -449,7 +449,7 @@ export default function PreparationPage({
           重新读取准备状态
         </button>
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
-          去导入 prepared PDBQT
+          导入 Vina 输入
         </button>
       </div>
 

@@ -17,12 +17,12 @@ const boxFields: Array<{
   label: string;
   help: string;
 }> = [
-  { key: "center_x", label: "center_x", help: "对接箱体中心 X 坐标，可为负数。" },
-  { key: "center_y", label: "center_y", help: "对接箱体中心 Y 坐标，可为负数。" },
-  { key: "center_z", label: "center_z", help: "对接箱体中心 Z 坐标，可为负数。" },
-  { key: "size_x", label: "size_x", help: "对接箱体 X 方向尺寸，必须大于 0。" },
-  { key: "size_y", label: "size_y", help: "对接箱体 Y 方向尺寸，必须大于 0。" },
-  { key: "size_z", label: "size_z", help: "对接箱体 Z 方向尺寸，必须大于 0。" },
+  { key: "center_x", label: "中心 X", help: "对接箱体中心 X 坐标，可为负数。" },
+  { key: "center_y", label: "中心 Y", help: "对接箱体中心 Y 坐标，可为负数。" },
+  { key: "center_z", label: "中心 Z", help: "对接箱体中心 Z 坐标，可为负数。" },
+  { key: "size_x", label: "尺寸 X", help: "对接箱体 X 方向尺寸，必须大于 0。" },
+  { key: "size_y", label: "尺寸 Y", help: "对接箱体 Y 方向尺寸，必须大于 0。" },
+  { key: "size_z", label: "尺寸 Z", help: "对接箱体 Z 方向尺寸，必须大于 0。" },
 ];
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -142,7 +142,7 @@ export default function BoxSetupPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">BoxSetupPage</p>
+        <p className="eyebrow">搜索范围</p>
         <h1 id="box-setup-title">设置对接箱体</h1>
         <p>
           这里只编辑手动 Box 参数，不生成 Vina 配置，也不做 3D 可视化选框。
@@ -151,7 +151,7 @@ export default function BoxSetupPage({
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -199,7 +199,7 @@ export default function BoxSetupPage({
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
-          {isBusy ? "保存中..." : "保存 Box 参数"}
+          {isBusy ? "保存中..." : "保存搜索范围"}
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadBox()}>
           重新加载项目
@@ -208,7 +208,7 @@ export default function BoxSetupPage({
 
       <div className="toolbar project-toolbar">
         <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
-          在 3D 中查看 Box
+          在 3D 中查看搜索范围
         </button>
       </div>
 

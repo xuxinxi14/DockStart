@@ -140,16 +140,16 @@ export default function RunPreparePage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">RunPreparePage</p>
-        <h1 id="run-prepare-title">运行前检查与运行记录准备</h1>
+        <p className="eyebrow">对接运行</p>
+        <h1 id="run-prepare-title">准备对接运行</h1>
         <p>
-          本页面只准备运行记录，不执行 AutoDock Vina。这里会检查输入文件、配置文件、参数和 Vina
-          可用性，然后生成 run 目录中的 metadata、命令预览和配置快照；下一页再执行 prepared run。
+          本页面只创建对接运行记录，不执行 AutoDock Vina。这里会检查输入文件、配置文件、参数和 Vina
+          可用性，然后保存命令预览和配置快照；下一页再开始对接。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -158,11 +158,11 @@ export default function RunPreparePage({
 
       <div className="summary-grid">
         <div className="param-summary">
-          <span>受体 receptor.pdbqt</span>
+          <span>受体 Vina 输入</span>
           <strong>{fileStatus(project, "receptor")}</strong>
         </div>
         <div className="param-summary">
-          <span>配体 ligand.pdbqt</span>
+          <span>配体 Vina 输入</span>
           <strong>{fileStatus(project, "ligand")}</strong>
         </div>
         <div className="param-summary">
@@ -204,22 +204,22 @@ export default function RunPreparePage({
 
       <div className="config-preview-panel">
         <div className="tool-card-header">
-          <h2>命令预览</h2>
-          <span>{nextRunId ? `下一条运行记录：${nextRunId}` : "尚未生成 run_id"}</span>
+          <h2>技术详情：命令预览</h2>
+          <span>{nextRunId ? `下一条运行记录：${nextRunId}` : "尚未生成运行编号"}</span>
         </div>
         <pre className="config-preview">
           {commandPreview || "运行前检查通过后，这里会显示将来执行 Vina 时使用的命令数组预览。"}
         </pre>
       </div>
 
-      <p className="placeholder-note">准备运行记录时不会创建 out.pdbqt 或 log.txt；执行页会真实运行 Vina，但仍不解析 docking 结果。</p>
+      <p className="placeholder-note">创建运行记录时不会生成 out.pdbqt 或 log.txt；执行页会真实运行 Vina，结果解析在下一步完成。</p>
 
       <div className="toolbar project-toolbar">
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadChecks()}>
           重新检查
         </button>
         <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareRun()}>
-          {isBusy ? "准备中..." : "准备运行记录"}
+          {isBusy ? "准备中..." : "创建对接运行记录"}
         </button>
       </div>
 
@@ -237,7 +237,7 @@ export default function RunPreparePage({
               type="button"
               onClick={() => onOpenRunExecute(prepared.project!, prepared.run_id!)}
             >
-              进入 Vina 执行页
+              执行 AutoDock Vina
             </button>
           ) : null}
         </div>

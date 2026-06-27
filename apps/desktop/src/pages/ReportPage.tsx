@@ -150,16 +150,16 @@ export default function ReportPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">ReportPage</p>
-        <h1 id="report-title">导出 Markdown 报告</h1>
+        <p className="eyebrow">实验记录</p>
+        <h1 id="report-title">导出实验记录</h1>
         <p>
-          本页只基于 finished run 和已解析的 scores.csv 导出可复现 Markdown 报告。不生成 PDF，不做 AI 总结，
+          本页只基于已完成的对接运行和已解析的 scores.csv 导出可复现 Markdown 实验记录。不生成 PDF，不做 AI 总结，
           不包含相互作用分析，也不做药效判断。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目路径</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -168,7 +168,7 @@ export default function ReportPage({
 
       <div className="summary-grid">
         <div className="param-summary">
-          <span>run_id</span>
+          <span>运行记录</span>
           <strong>{runId}</strong>
         </div>
         <div className="param-summary">
@@ -192,7 +192,7 @@ export default function ReportPage({
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-          {isBusy ? "处理中..." : "导出 Markdown 报告"}
+          {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadReportStatus()}>
           重新检查报告状态
@@ -226,7 +226,7 @@ export default function ReportPage({
 
       {reportStatus === "exported" || displayedReportedAt ? (
         <div className="ready-note run-result-note">
-          <span>Markdown 报告已导出。</span>
+          <span>Markdown 实验记录已导出。</span>
           <div className="run-result-files">
             <code>{displayedProjectReportFile}</code>
             <code>{displayedReportFile}</code>

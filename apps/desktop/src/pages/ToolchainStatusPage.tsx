@@ -4,41 +4,31 @@ import type { ToolCheckResult, ToolSource, ToolStatus, ToolchainStatusResponse }
 
 type ToolchainStatusPageProps = {
   onBack: () => void;
+  onOpenHelp?: () => void;
+  onOpenSettings?: () => void;
 };
 
 const statusText: Record<ToolStatus, string> = {
-  ok: "已检测",
-  missing: "未检测",
+  ok: "可用",
+  missing: "未配置",
   error: "检测错误",
   unknown: "状态未知",
 };
 
 const sourceText: Record<ToolSource, string> = {
-  bundled: "内置工具链",
-  configured: "用户配置",
-  auto: "自动检测",
-  current_environment: "当前环境",
+  bundled: "DockStart 内置资源",
+  configured: "用户配置路径",
+  auto: "系统自动检测",
+  current_environment: "Python 运行环境",
   frontend_dependency: "前端依赖",
-  missing: "未找到来源",
+  missing: "尚未找到",
   unknown: "未知来源",
 };
 
-const fullStatusText: Record<ToolchainStatusResponse["full_status"], string> = {
-  ready: "ready：内置 Vina 打包条件已满足",
-  partial: "partial：工具链目录已建立，但 Full 工具链尚未完整",
-  missing: "missing：工具链资源目录缺失",
-};
-
-const runtimeModeText: Record<ToolchainStatusResponse["runtime_mode"], string> = {
-  dev: "dev：开发环境，使用项目根目录下的 resources/",
-  packaged: "packaged：打包环境，使用 Tauri resource_dir 下的 resources/",
-  unknown: "unknown：无法判断运行模式",
-};
-
 const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"], string> = {
-  ready: "ready：可用于 Full 打包",
-  incomplete: "incomplete：文件存在，但 manifest 或完整性信息尚未完整",
-  missing: "missing：未发现内置二进制",
+  ready: "可用",
+  incomplete: "待补全",
+  missing: "未发现",
 };
 
 function normalizeTool(item: Partial<ToolCheckResult> | null | undefined, fallbackKey = "tool"): ToolCheckResult | null {
@@ -172,7 +162,7 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
     status: "error",
     version: "",
     path: "",
-    message: "前端未能调用内置工具链状态命令。",
+    message: "前端未能调用工具链状态命令。",
     raw_error: rawError,
     source: "unknown",
     bundled_path: "",
@@ -241,7 +231,7 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
       python_dir_exists: false,
     },
     full_status: "missing",
-    message: "读取内置工具链状态失败。",
+    message: "读取工具链状态失败。",
     error: {
       code: "FRONTEND_TOOLCHAIN_STATUS_ERROR",
       message: frontendTool.message,
@@ -251,15 +241,11 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
   };
 }
 
-function booleanText(value: boolean): string {
-  return value ? "存在" : "不存在";
-}
-
-function fullStatusClass(status: ToolchainStatusResponse["full_status"]): string {
-  if (status === "ready") {
+function statusClass(status: ToolStatus | undefined): string {
+  if (status === "ok") {
     return "status-ok";
   }
-  if (status === "partial") {
+  if (status === "missing" || status === "unknown") {
     return "status-missing";
   }
   return "status-error";
@@ -275,11 +261,19 @@ function packageStatusClass(status: NonNullable<ToolchainStatusResponse["bundled
   return "status-error";
 }
 
+function booleanText(value: boolean): string {
+  return value ? "存在" : "不存在";
+}
+
 function shortHash(value: string): string {
   return value ? `${value.slice(0, 16)}...` : "未计算";
 }
 
-export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps) {
+function pathOrEmpty(path: string | undefined): string {
+  return path && path.trim() ? path : "未获取";
+}
+
+export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings }: ToolchainStatusPageProps) {
   const [status, setStatus] = useState<ToolchainStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
@@ -317,155 +311,43 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
   return (
     <section className="toolchain-status-page" aria-labelledby="toolchain-status-title">
       <button className="text-button" type="button" onClick={onBack}>
-        返回
+        返回总览
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">ToolchainStatusPage</p>
-        <h1 id="toolchain-status-title">内置工具链状态</h1>
+        <p className="eyebrow">工具链</p>
+        <h1 id="toolchain-status-title">配置工具链</h1>
         <p>
-          这里只检查 DockStart 的内置工具链目录、AutoDock Vina 和 Python runtime 解析状态。
-          当前版本不会下载工具、不会安装 Python 包，也不会改变 docking 主流程。
+          检查 AutoDock Vina、Python、RDKit、Meeko 和内置资源。这里不下载工具、不安装 Python 包，也不会运行对接。
         </p>
       </div>
 
       <div className="toolbar">
         <button className="primary-button" type="button" onClick={loadStatus} disabled={isLoading}>
-          {isLoading ? "读取中..." : "重新读取状态"}
+          {isLoading ? "检测中..." : "重新检测"}
         </button>
-      </div>
-
-      <div className="disclaimer-note">
-        本页只负责检测 Meeko / RDKit / Python 工具链是否可用，不会在这里处理分子或生成 PDBQT。
-        如果工具链满足条件，PDBQT 自动准备需要用户进入 PreparationPage 后手动点击准备按钮；生成结果仍需人工检查。
-      </div>
-      <div className="disclaimer-note">
-        来源说明：bundled 表示 DockStart 内置资源；configured 表示设置页手动配置；PATH/current_environment 表示使用系统命令或当前运行环境。
-        推荐首次使用时先配置 AutoDock Vina，并为 RDKit/Meeko 准备独立 conda Python。
+        {onOpenSettings ? (
+          <button className="secondary-button" type="button" onClick={onOpenSettings}>
+            配置路径
+          </button>
+        ) : null}
+        {onOpenHelp ? (
+          <button className="secondary-button" type="button" onClick={onOpenHelp}>
+            查看说明
+          </button>
+        ) : null}
       </div>
 
       {status ? (
         <>
-          <div className="summary-grid">
-            <article className="tool-card">
+          <div className="toolchain-wizard-grid">
+            <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
-                <h2>Full 工具链状态</h2>
-                <span className={`status-badge ${fullStatusClass(status.full_status)}`}>
-                  {status.full_status}
-                </span>
-              </div>
-              <dl className="tool-meta">
                 <div>
-                  <dt>当前运行模式</dt>
-                  <dd>{runtimeModeText[status.runtime_mode]}</dd>
+                  <h2>AutoDock Vina</h2>
+                  <p>执行对接所需的外部命令行工具。</p>
                 </div>
-                <div>
-                  <dt>状态说明</dt>
-                  <dd>{fullStatusText[status.full_status]}</dd>
-                </div>
-                <div>
-                  <dt>后端说明</dt>
-                  <dd>{status.message || "暂无说明。"}</dd>
-                </div>
-              </dl>
-            </article>
-
-            <article className="tool-card">
-              <div className="tool-card-header">
-                <h2>工具链目录</h2>
-              </div>
-              <dl className="tool-meta">
-                <div>
-                  <dt>resources</dt>
-                  <dd>{status.toolchain_root || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>Tauri resource_dir</dt>
-                  <dd>{status.resource_dir || "开发环境未使用 DOCKSTART_RESOURCE_DIR"}</dd>
-                </div>
-                <div>
-                  <dt>tools 目录</dt>
-                  <dd>
-                    {status.tools_dir || "未获取"}（{booleanText(status.resources.tools_dir_exists)}）
-                  </dd>
-                </div>
-                <div>
-                  <dt>Python 目录</dt>
-                  <dd>
-                    {status.bundled_python.path ? status.bundled_python.path.replace(/[/\\]python\.exe$/i, "") : "未获取"}（
-                    {booleanText(status.resources.python_dir_exists)}）
-                  </dd>
-                </div>
-                <div>
-                  <dt>manifest</dt>
-                  <dd>
-                    {status.manifest_file || "未获取"}（{booleanText(status.manifest_exists)}）
-                  </dd>
-                </div>
-              </dl>
-              {status.manifest_error ? (
-                <details className="raw-error">
-                  <summary>查看 manifest_error</summary>
-                  <pre>{status.manifest_error}</pre>
-                </details>
-              ) : null}
-            </article>
-
-            <article className="tool-card">
-              <div className="tool-card-header">
-                <h2>Bundled Vina</h2>
-                <span className={`status-badge status-${status.bundled_vina.status}`}>
-                  {statusText[status.bundled_vina.status] ?? statusText.unknown}
-                </span>
-              </div>
-              <dl className="tool-meta">
-                <div>
-                  <dt>是否存在</dt>
-                  <dd>{booleanText(status.bundled_vina.exists)}</dd>
-                </div>
-                <div>
-                  <dt>Full 打包状态</dt>
-                  <dd>{packageStatusText[status.bundled_vina.package_status]}</dd>
-                </div>
-                <div>
-                  <dt>路径</dt>
-                  <dd>{status.bundled_vina.path || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>版本</dt>
-                  <dd>{status.bundled_vina.version || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>sha256</dt>
-                  <dd title={status.bundled_vina.sha256}>{shortHash(status.bundled_vina.sha256)}</dd>
-                </div>
-                <div>
-                  <dt>来源记录</dt>
-                  <dd>{status.bundled_vina_integrity?.manifest_source || "manifest 尚未记录来源"}</dd>
-                </div>
-                <div>
-                  <dt>LICENSE</dt>
-                  <dd>
-                    {status.bundled_vina_integrity?.license_path || "未获取"}（
-                    {booleanText(Boolean(status.bundled_vina_integrity?.license_exists))}）
-                  </dd>
-                </div>
-                <div>
-                  <dt>THIRD_PARTY_NOTICES 记录</dt>
-                  <dd>{booleanText(Boolean(status.bundled_vina_integrity?.third_party_notices_has_autodock_vina))}</dd>
-                </div>
-              </dl>
-              {!status.bundled_vina.exists ? (
-                <p className="placeholder-note">
-                  未发现 bundled Vina。可以把本地 vina.exe 准备到 resources/vina/，或在设置页配置外部 AutoDock Vina。
-                </p>
-              ) : null}
-            </article>
-
-            <article className="tool-card">
-              <div className="tool-card-header">
-                <h2>当前实际使用的 Vina</h2>
-                <span className={`status-badge status-${status.active_vina?.status ?? "unknown"}`}>
+                <span className={`status-badge ${statusClass(status.active_vina?.status)}`}>
                   {statusText[status.active_vina?.status ?? "unknown"]}
                 </span>
               </div>
@@ -475,75 +357,39 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   <dd>{sourceText[status.active_source] ?? sourceText.unknown}</dd>
                 </div>
                 <div>
-                  <dt>路径</dt>
-                  <dd>{status.active_vina?.path || "未检测到路径"}</dd>
-                </div>
-                <div>
                   <dt>版本</dt>
-                  <dd>{status.active_vina?.version || "未获取"}</dd>
+                  <dd>{status.active_vina?.version || status.bundled_vina.version || "未获取"}</dd>
                 </div>
                 <div>
-                  <dt>说明</dt>
-                  <dd>{status.active_vina?.message || "暂无说明。"}</dd>
+                  <dt>路径</dt>
+                  <dd>{pathOrEmpty(status.active_vina?.path || status.bundled_vina.path)}</dd>
+                </div>
+                <div>
+                  <dt>建议</dt>
+                  <dd>{status.active_vina?.message || status.first_run_guidance?.recommended_action || "状态正常时即可继续创建项目。"}</dd>
                 </div>
               </dl>
-            </article>
-
-            <article className="tool-card">
-              <div className="tool-card-header">
-                <h2>Bundled Python</h2>
-                <span className={`status-badge status-${status.bundled_python.status}`}>
-                  {statusText[status.bundled_python.status] ?? statusText.unknown}
-                </span>
+              <div className="toolbar">
+                {onOpenSettings ? (
+                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                    配置 Vina 路径
+                  </button>
+                ) : null}
+                {onOpenHelp ? (
+                  <button className="text-button inline" type="button" onClick={onOpenHelp}>
+                    查看工具链说明
+                  </button>
+                ) : null}
               </div>
-              <dl className="tool-meta">
-                <div>
-                  <dt>是否存在</dt>
-                  <dd>{booleanText(status.bundled_python.exists)}</dd>
-                </div>
-                <div>
-                  <dt>Full 打包状态</dt>
-                  <dd>
-                    <span className={`status-badge ${packageStatusClass(status.bundled_python.package_status)}`}>
-                      {packageStatusText[status.bundled_python.package_status]}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>路径</dt>
-                  <dd>{status.bundled_python.path || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>版本</dt>
-                  <dd>{status.bundled_python.version || status.bundled_python_integrity?.manifest_version || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>sha256</dt>
-                  <dd title={status.bundled_python.sha256}>{shortHash(status.bundled_python.sha256)}</dd>
-                </div>
-                <div>
-                  <dt>manifest sha256</dt>
-                  <dd title={status.bundled_python_integrity?.manifest_sha256 ?? ""}>
-                    {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
-                  </dd>
-                </div>
-                <div>
-                  <dt>说明</dt>
-                  <dd>{status.bundled_python.message}</dd>
-                </div>
-              </dl>
-              {status.bundled_python.raw_error ? (
-                <details className="raw-error">
-                  <summary>查看 bundled Python raw_error</summary>
-                  <pre>{status.bundled_python.raw_error}</pre>
-                </details>
-              ) : null}
             </article>
 
-            <article className="tool-card">
+            <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
-                <h2>Python / Meeko / RDKit 检测来源</h2>
-                <span className={`status-badge status-${status.resolved_python?.status ?? "unknown"}`}>
+                <div>
+                  <h2>Python + RDKit + Meeko</h2>
+                  <p>从原始结构生成 Vina 输入文件时需要这些 Python 工具。</p>
+                </div>
+                <span className={`status-badge ${statusClass(status.resolved_python?.status)}`}>
                   {statusText[status.resolved_python?.status ?? "unknown"]}
                 </span>
               </div>
@@ -554,69 +400,113 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                 </div>
                 <div>
                   <dt>Python 路径</dt>
-                  <dd>{status.resolved_python?.path || "未检测到路径"}</dd>
+                  <dd>{pathOrEmpty(status.resolved_python?.path)}</dd>
                 </div>
                 <div>
-                  <dt>Python 版本</dt>
-                  <dd>{status.resolved_python?.version || "未获取"}</dd>
-                </div>
-                <div>
-                  <dt>Meeko 检测使用来源</dt>
+                  <dt>RDKit</dt>
                   <dd>
-                    {sourceText[status.meeko_python_source] ?? sourceText.unknown}；
-                    {statusText[status.meeko_for_python?.status ?? "unknown"]}
+                    <span className={`status-badge ${statusClass(status.rdkit_for_python?.status)}`}>
+                      {statusText[status.rdkit_for_python?.status ?? "unknown"]}
+                    </span>
+                    <span className="inline-meta">{status.rdkit_for_python?.version || "未获取版本"}</span>
                   </dd>
                 </div>
                 <div>
-                  <dt>RDKit 检测使用来源</dt>
+                  <dt>Meeko</dt>
                   <dd>
-                    {sourceText[status.rdkit_python_source] ?? sourceText.unknown}；
-                    {statusText[status.rdkit_for_python?.status ?? "unknown"]}
+                    <span className={`status-badge ${statusClass(status.meeko_for_python?.status)}`}>
+                      {statusText[status.meeko_for_python?.status ?? "unknown"]}
+                    </span>
+                    <span className="inline-meta">{status.meeko_for_python?.version || "未获取版本"}</span>
                   </dd>
                 </div>
               </dl>
               <div className="toolbar">
-                <button className="secondary-button" type="button" onClick={copyPythonPath}>
-                  复制当前 Python 路径
+                {onOpenSettings ? (
+                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                    配置 Python
+                  </button>
+                ) : null}
+                <button className="text-button inline" type="button" onClick={copyPythonPath}>
+                  复制 Python 路径
                 </button>
               </div>
               {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
               <p className="placeholder-note">
-                本页面只做 import 和能力检测，不安装 Python 包；真正的 Meeko/RDKit preparation 只在 PreparationPage 中由用户手动触发。
+                DockStart 只检测和调用已有环境，不会自动安装 RDKit 或 Meeko。自动准备结果仍需人工检查。
               </p>
-              {status.python_source !== "configured" ? (
-                <p className="placeholder-note">
-                  建议为 RDKit/Meeko 准备独立 conda 环境，并在设置页配置该环境的 python.exe。详细步骤见
-                  docs/release/toolchain_environment.md。
-                </p>
-              ) : null}
-              {status.rdkit_for_python?.status !== "ok" || status.meeko_for_python?.status !== "ok" ? (
-                <p className="warning-note">
-                  当前 Python 环境中的 RDKit 或 Meeko 尚未全部检测通过。DockStart 不会自动安装依赖；请先配置可用的
-                  dockstart-rdkit-meeko 环境，再回到 PreparationPage 准备 PDBQT。
-                </p>
-              ) : null}
             </article>
 
-            <article className="tool-card">
+            <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
-                <h2>许可证目录</h2>
+                <div>
+                  <h2>内置资源</h2>
+                  <p>用于 Windows 打包版本的随附 Vina、Python 和许可证资源。</p>
+                </div>
+                <span className={`status-badge ${packageStatusClass(status.bundled_vina.package_status)}`}>
+                  {packageStatusText[status.bundled_vina.package_status]}
+                </span>
               </div>
               <dl className="tool-meta">
                 <div>
-                  <dt>resources/licenses</dt>
-                  <dd>
-                    {status.licenses_dir || "未获取"}（{booleanText(status.licenses.exists)}）
-                  </dd>
+                  <dt>随附 Vina</dt>
+                  <dd>{booleanText(status.bundled_vina.exists)}，{status.bundled_vina.version || "未获取版本"}</dd>
                 </div>
                 <div>
-                  <dt>THIRD_PARTY_NOTICES.md</dt>
-                  <dd>
-                    {status.licenses.third_party_notices || "未获取"}（
-                    {booleanText(status.licenses.third_party_notices_exists)}）
-                  </dd>
+                  <dt>随附 Python</dt>
+                  <dd>{booleanText(status.bundled_python.exists)}，{status.bundled_python.version || "未获取版本"}</dd>
+                </div>
+                <div>
+                  <dt>许可证记录</dt>
+                  <dd>{booleanText(status.licenses.third_party_notices_exists)}</dd>
+                </div>
+                <div>
+                  <dt>资源完整度</dt>
+                  <dd>{status.message || "暂无说明。"}</dd>
                 </div>
               </dl>
+              <details className="technical-details">
+                <summary>技术详情</summary>
+                <dl className="tool-meta">
+                  <div>
+                    <dt>runtime_mode</dt>
+                    <dd>{status.runtime_mode}</dd>
+                  </div>
+                  <div>
+                    <dt>resource_dir</dt>
+                    <dd>{pathOrEmpty(status.resource_dir)}</dd>
+                  </div>
+                  <div>
+                    <dt>toolchain_root</dt>
+                    <dd>{pathOrEmpty(status.toolchain_root)}</dd>
+                  </div>
+                  <div>
+                    <dt>manifest</dt>
+                    <dd>{pathOrEmpty(status.manifest_file)}（{booleanText(status.manifest_exists)}）</dd>
+                  </div>
+                  <div>
+                    <dt>Vina sha256</dt>
+                    <dd title={status.bundled_vina.sha256}>{shortHash(status.bundled_vina.sha256)}</dd>
+                  </div>
+                  <div>
+                    <dt>Python sha256</dt>
+                    <dd title={status.bundled_python.sha256}>{shortHash(status.bundled_python.sha256)}</dd>
+                  </div>
+                  <div>
+                    <dt>manifest sha256</dt>
+                    <dd title={status.bundled_python_integrity?.manifest_sha256 ?? ""}>
+                      {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Vina LICENSE</dt>
+                    <dd>{pathOrEmpty(status.bundled_vina_integrity?.license_path)}</dd>
+                  </div>
+                </dl>
+                {status.manifest_error ? <pre>{status.manifest_error}</pre> : null}
+                {status.bundled_vina.raw_error ? <pre>{status.bundled_vina.raw_error}</pre> : null}
+                {status.bundled_python.raw_error ? <pre>{status.bundled_python.raw_error}</pre> : null}
+              </details>
             </article>
           </div>
 
@@ -629,7 +519,7 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
 
           {status.warnings.length ? (
             <div className="warning-note">
-              <strong>内置工具链检查提示</strong>
+              <strong>工具链检查提示</strong>
               <ul>
                 {status.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>
@@ -639,7 +529,7 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
           ) : null}
         </>
       ) : (
-        <p className="placeholder-note">正在读取内置工具链状态...</p>
+        <p className="placeholder-note">正在读取工具链状态...</p>
       )}
     </section>
   );

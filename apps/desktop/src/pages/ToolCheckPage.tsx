@@ -17,7 +17,7 @@ const sourceText: Record<ToolSource, string> = {
   bundled: "内置工具链",
   configured: "用户配置",
   auto: "自动检测",
-  current_environment: "当前环境",
+  current_environment: "Python 运行环境",
   frontend_dependency: "前端依赖",
   missing: "未找到来源",
   unknown: "未知来源",
@@ -83,7 +83,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
   return (
     <section className="tool-check" aria-labelledby="tool-check-title">
       <div className="page-heading">
-        <p className="eyebrow">ToolCheckPage</p>
+        <p className="eyebrow">工具检测</p>
         <h1 id="tool-check-title">工具检测</h1>
         <p>
           这一步只确认本机是否具备 DockStart MVP 需要的运行环境。检测不会下载数据库，
@@ -125,7 +125,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
               </div>
               {tool.bundled_path ? (
                 <div>
-                  <dt>内置 Vina 路径</dt>
+                <dt>随附 Vina 路径</dt>
                   <dd>{tool.bundled_path}</dd>
                 </div>
               ) : null}
@@ -137,7 +137,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
 
             {tool.raw_error ? (
               <details className="raw-error">
-                <summary>查看 raw_error</summary>
+                <summary>技术详情</summary>
                 <pre>{tool.raw_error}</pre>
               </details>
             ) : null}

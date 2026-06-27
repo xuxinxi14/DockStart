@@ -128,9 +128,9 @@ export default function ResultPage({
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "run metadata 已重新加载。");
+      applyResponse(parseProjectResponse(rawPayload), "运行记录已重新加载。");
     } catch (error) {
-      setMessage("前端未能读取 run metadata。");
+      setMessage("前端未能读取运行记录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -184,16 +184,16 @@ export default function ResultPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">ResultPage</p>
-        <h1 id="result-title">Vina 结果表格</h1>
+        <p className="eyebrow">对接结果</p>
+        <h1 id="result-title">查看对接结果</h1>
         <p>
-          本页只解析已完成 run 的 log.txt docking score 表格，导出 scores.csv，并显示 mode、affinity 和 RMSD bounds。
-          不解析 pose，不生成报告，也不做药效判断。
+          本页只解析已完成对接运行的 log.txt 对接评分表格，导出 scores.csv，并显示构象、对接评分和 RMSD。
+          不做药效判断。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目路径</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -202,11 +202,11 @@ export default function ResultPage({
 
       <div className="summary-grid">
         <div className="param-summary">
-          <span>run_id</span>
+          <span>运行记录</span>
           <strong>{runId}</strong>
         </div>
         <div className="param-summary">
-          <span>run 状态</span>
+          <span>运行状态</span>
           <strong>{runStatusText[status] ?? status}</strong>
         </div>
         <div className="param-summary">
@@ -225,20 +225,20 @@ export default function ResultPage({
 
       <div className="toolbar project-toolbar">
         <button className="primary-button" type="button" disabled={!canAnalyze} onClick={() => void analyzeResults()}>
-          {isBusy ? "处理中..." : "解析结果"}
+          {isBusy ? "处理中..." : "解析并查看 scores"}
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadScores()}>
           重新加载 scores.csv
         </button>
         <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRunMetadata()}>
-          重新加载 run metadata
+          重新加载运行记录
         </button>
         <button className="secondary-button" type="button" disabled={status !== "finished"} onClick={() => onOpenViewer(project)}>
-          查看 docking pose
+          查看对接构象
         </button>
         {scores.length > 0 || displayedScoresFile ? (
           <button className="secondary-button" type="button" disabled={isBusy} onClick={() => onOpenReportPage(project, runId)}>
-            进入报告页
+            导出实验记录
           </button>
         ) : null}
       </div>
@@ -246,19 +246,19 @@ export default function ResultPage({
       {displayedBestAffinity !== null ? (
         <div className="summary-grid">
           <div className="param-summary">
-            <span>best_affinity</span>
+            <span>最佳对接评分</span>
             <strong>{displayedBestAffinity} kcal/mol</strong>
           </div>
           <div className="param-summary">
-            <span>run scores.csv</span>
+            <span>本次 scores.csv</span>
             <strong>{displayedScoresFile || "尚未生成"}</strong>
           </div>
           <div className="param-summary">
-            <span>project scores.csv</span>
+            <span>项目 scores.csv</span>
             <strong>{displayedProjectScoresFile || "尚未生成"}</strong>
           </div>
           <div className="param-summary">
-            <span>analyzed_at</span>
+            <span>解析时间</span>
             <strong>{displayedAnalyzedAt || "尚未分析"}</strong>
           </div>
         </div>
@@ -269,8 +269,8 @@ export default function ResultPage({
           <table className="scores-table">
             <thead>
               <tr>
-                <th>Mode</th>
-                <th>Affinity kcal/mol</th>
+                <th>构象</th>
+                <th>对接评分 kcal/mol</th>
                 <th>RMSD l.b.</th>
                 <th>RMSD u.b.</th>
               </tr>

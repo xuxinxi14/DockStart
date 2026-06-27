@@ -13,7 +13,7 @@ type RunRequiredPageProps = {
 const pageText: Record<RunRequiredPageProps["requestedPage"], { title: string; description: string }> = {
   "run-execute": {
     title: "还没有可执行的 run",
-    description: "需要先生成 vina_config.txt，并在运行前检查页准备 run metadata，才能进入执行页。",
+    description: "需要先生成 vina_config.txt，并在运行前检查页创建运行记录，才能进入执行页。",
   },
   result: {
     title: "还没有可解析的 run",
@@ -33,7 +33,7 @@ export default function RunRequiredPage({ project, requestedPage, onNavigate }: 
       <VinaWorkflowBar current={requestedPage === "run-execute" ? "execute" : requestedPage === "result" ? "result" : "report"} />
       <EmptyState
         title={text.title}
-        description={`${text.description} 当前项目：${project.project_name}`}
+        description={`${text.description} 项目：${project.project_name}`}
         action={
           <>
             <ActionButton variant="primary" onClick={() => onNavigate("vina-config")}>

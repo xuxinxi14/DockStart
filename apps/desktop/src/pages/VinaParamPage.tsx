@@ -19,31 +19,31 @@ const vinaFields: Array<{
 }> = [
   {
     key: "exhaustiveness",
-    label: "exhaustiveness",
+    label: "搜索彻底程度",
     help: "搜索彻底程度，越高越慢，新手建议 8。",
     inputMode: "numeric",
   },
   {
     key: "num_modes",
-    label: "num_modes",
+    label: "输出构象数量",
     help: "输出构象数量，新手建议 9。",
     inputMode: "numeric",
   },
   {
     key: "energy_range",
-    label: "energy_range",
+    label: "能量范围",
     help: "保留能量范围，单位 kcal/mol，新手建议 3 或 4。",
     inputMode: "decimal",
   },
   {
     key: "cpu",
-    label: "cpu",
+    label: "CPU 核心数",
     help: "使用 CPU 核心数，0 表示自动。",
     inputMode: "numeric",
   },
   {
     key: "seed",
-    label: "seed",
+    label: "随机种子",
     help: "随机种子，留空表示随机；填写整数可提高复现性。",
     inputMode: "numeric",
   },
@@ -176,7 +176,7 @@ export default function VinaParamPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">VinaParamPage</p>
+        <p className="eyebrow">运行参数</p>
         <h1 id="vina-param-title">设置 Vina 参数</h1>
         <p>
           这里只保存运行参数到 project.json，不生成 vina_config.txt，也不调用 AutoDock Vina。
@@ -185,7 +185,7 @@ export default function VinaParamPage({
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>

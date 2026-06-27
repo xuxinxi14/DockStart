@@ -8,10 +8,12 @@ type PageHeaderProps = {
 };
 
 export default function PageHeader({ eyebrow, title, description, actions }: PageHeaderProps) {
+  const visibleEyebrow = eyebrow && !/Page$/.test(eyebrow) ? eyebrow : "";
+
   return (
     <header className="page-header">
       <div>
-        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
+        {visibleEyebrow ? <p className="eyebrow">{visibleEyebrow}</p> : null}
         <h1>{title}</h1>
         {description ? <p>{description}</p> : null}
       </div>

@@ -50,7 +50,13 @@ export default function App() {
     }
 
     if (currentPage === "toolchain-status") {
-      return <ToolchainStatusPage onBack={() => navigateTo("home")} />;
+      return (
+        <ToolchainStatusPage
+          onBack={() => navigateTo("home")}
+          onOpenHelp={() => navigateTo("help")}
+          onOpenSettings={() => navigateTo("settings")}
+        />
+      );
     }
 
     if (currentPage === "tool-check") {

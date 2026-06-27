@@ -106,8 +106,8 @@ export default function ImportPdbqtPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">ImportPdbqtPage</p>
-        <h1 id="import-pdbqt-title">导入 PDBQT 文件</h1>
+        <p className="eyebrow">Vina 输入</p>
+        <h1 id="import-pdbqt-title">导入 Vina 输入文件</h1>
         <p>
           第一版只接受已经准备好的 .pdbqt 文件。导入时会复制到项目 prepared
           目录，并更新 project.json。
@@ -116,7 +116,7 @@ export default function ImportPdbqtPage({
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>

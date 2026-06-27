@@ -25,11 +25,11 @@ type ViewerPageProps = {
 };
 
 const fileKindOptions: Array<{ value: ViewerFileKind; label: string; description: string }> = [
-  { value: "receptor_raw", label: "受体 raw", description: "project.json 中的 receptor.raw_file" },
-  { value: "ligand_raw", label: "配体 raw", description: "project.json 中的 ligand.raw_file" },
-  { value: "receptor_prepared", label: "受体 prepared", description: "prepared/receptor.pdbqt" },
-  { value: "ligand_prepared", label: "配体 prepared", description: "prepared/ligand.pdbqt" },
-  { value: "docking_output", label: "docking output", description: "最近 run 的 out.pdbqt" },
+  { value: "receptor_raw", label: "受体原始结构", description: "项目中记录的受体原始文件" },
+  { value: "ligand_raw", label: "配体原始结构", description: "项目中记录的配体原始文件" },
+  { value: "receptor_prepared", label: "受体 Vina 输入", description: "prepared/receptor.pdbqt" },
+  { value: "ligand_prepared", label: "配体 Vina 输入", description: "prepared/ligand.pdbqt" },
+  { value: "docking_output", label: "对接构象", description: "最近对接运行的 out.pdbqt" },
 ];
 
 const viewerFormats = new Set(["pdb", "pdbqt", "cif", "sdf", "mol", "mol2"]);
@@ -150,6 +150,18 @@ function latestRunId(project: DockStartProject): string {
   return "";
 }
 
+function boxFieldLabel(key: keyof DockStartProject["box"]): string {
+  const labels: Record<keyof DockStartProject["box"], string> = {
+    center_x: "中心 X",
+    center_y: "中心 Y",
+    center_z: "中心 Z",
+    size_x: "尺寸 X",
+    size_y: "尺寸 Y",
+    size_z: "尺寸 Z",
+  };
+  return labels[key];
+}
+
 export default function ViewerPage({ project, onBack, onProjectChange }: ViewerPageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
@@ -245,7 +257,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         viewer.render();
         viewerRef.current = viewer;
       } catch (error) {
-        setMessage("3Dmol.js 未能显示该 docking pose。");
+        setMessage("3Dmol.js 未能显示该对接构象。");
         setRawError(error instanceof Error ? error.message : String(error));
       }
     },
@@ -303,7 +315,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
 
   const loadPoseList = useCallback(async () => {
     if (!runId.trim()) {
-      setMessage("请先输入 run_id，例如 run_001。");
+      setMessage("请先输入运行记录，例如 run_001。");
       return;
     }
     setIsBusy(true);
@@ -341,17 +353,17 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         });
         const parsed = parseViewerStructure(rawPayload);
         if (!parsed.ok) {
-          setMessage(parsed.error?.message ?? "docking pose 读取失败。");
+          setMessage(parsed.error?.message ?? "对接构象读取失败。");
           setRawError(parsed.error?.raw_error ?? "");
           return;
         }
         setStructure(parsed);
         setSelectedPose(poseList?.poses.find((pose) => pose.mode === mode) ?? null);
         setFileKind("docking_output");
-        setMessage("已加载 docking pose。Docking pose 和 docking score 仅供结构查看与趋势参考，不能证明真实结合或药效。");
+        setMessage("已加载对接构象。对接构象和对接评分仅供结构查看与趋势参考，不能证明真实结合或药效。");
         await renderPoseWithReceptor(parsed);
       } catch (error) {
-        setMessage("前端未能调用 docking pose 读取命令。");
+        setMessage("前端未能调用对接构象读取命令。");
         setRawError(error instanceof Error ? error.message : String(error));
       } finally {
         setIsBusy(false);
@@ -440,9 +452,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   return (
     <section className="project-page viewer-page">
       <PageHeader
-        eyebrow="ViewerPage"
-        title="3D 结构、Box 与 pose 工作区"
-        description="查看项目内 raw、prepared 和 docking output 结构文件，并把 Box 可视化设置同步回 project.json。当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。"
+        eyebrow="3D 工作台"
+        title="3D 查看工作台"
+        description="查看项目内原始结构、Vina 输入和对接构象，并把搜索范围可视化设置同步回项目。当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。"
         actions={
           <button className="text-button" type="button" onClick={onBack}>
             返回上一页
@@ -451,7 +463,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       />
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -459,7 +471,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       <ScientificDisclaimer kind="viewer" />
 
       <section className="viewer-workspace-grid" aria-label="3D viewer workspace">
-        <aside className="viewer-control-column" aria-label="Viewer controls">
+        <aside className="viewer-control-column" aria-label="结构 Inspector">
           <SectionCard title="结构来源" description={selectedOption?.description}>
             <label className="viewer-source-row">
               <span>结构来源</span>
@@ -482,11 +494,11 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           </SectionCard>
 
           <SectionCard
-            title="Docking pose"
-            description="读取 runs/<run_id>/out.pdbqt 中的 mode。score 只用于查看构象列表，不代表真实结合或药效。"
+            title="对接构象"
+            description="读取对接运行输出中的 mode。对接评分只用于查看构象列表，不代表真实结合或药效。"
           >
             <label className="viewer-source-row">
-              <span>run_id</span>
+                <span>运行记录</span>
               <input
                 type="text"
                 value={runId}
@@ -501,11 +513,11 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 disabled={isBusy || !runId.trim()}
                 onClick={() => void loadPoseList()}
               >
-                读取 pose 列表
+                读取构象列表
               </button>
             </div>
             {poseList?.warnings?.length ? (
-              <WarningCallout title="Pose 读取提示">
+              <WarningCallout title="构象读取提示">
                 {poseList.warnings.map((warning) => (
                   <p key={warning}>{warning}</p>
                 ))}
@@ -514,15 +526,15 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           </SectionCard>
 
           <SectionCard
-            title="Box 可视化设置"
-            description="单位：Å。Box 可视化只是帮助定位搜索空间，不代表自动识别结合口袋。"
+            title="搜索范围"
+            description="单位：Å。可视化只是帮助定位搜索空间，不代表自动识别结合口袋。"
           >
             <div className="box-control-grid">
               {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<
                 keyof DockStartProject["box"]
               >).map((key) => (
                 <label key={key} className="box-control">
-                  <span>{key}</span>
+                  <span>{boxFieldLabel(key)}</span>
                   <input
                     type="number"
                     step="0.1"
@@ -534,14 +546,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </div>
             <div className="toolbar project-toolbar">
               <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
-                保存 Box 参数
+                保存搜索范围
               </button>
               <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadBoxVisualization()}>
-                重新读取 Box
+                重新读取范围
               </button>
             </div>
             {(boxWarnings.length ? boxWarnings : localBoxWarnings(box)).map((warning) => (
-              <WarningCallout key={warning} title="Box 尺寸提示">
+              <WarningCallout key={warning} title="搜索范围提示">
                 <p>{warning}</p>
               </WarningCallout>
             ))}
@@ -556,20 +568,20 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </div>
             <div className="toolbar project-toolbar">
               <button className="text-button inline" type="button" onClick={zoomToFit}>
-                重新居中
+                Zoom to fit
               </button>
               <button className="text-button inline" type="button" onClick={clearViewer}>
-                清空 viewer
+                清空视图
               </button>
             </div>
           </div>
           <div className="viewer-canvas" ref={containerRef} aria-label="3D molecular viewer canvas" />
           <WarningCallout title="Viewer 边界">
-            <p>只显示几何结构、Box 和 pose，不自动解释氢键、疏水、盐桥或药效。</p>
+            <p>只显示几何结构、搜索范围和对接构象，不自动解释氢键、疏水、盐桥或药效。</p>
           </WarningCallout>
         </section>
 
-        <aside className="viewer-inspector-column" aria-label="Viewer inspector">
+        <aside className="viewer-inspector-column" aria-label="Properties">
           <SectionCard title="当前文件">
             <dl className="tool-meta">
               <div>
@@ -629,10 +641,10 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 <table className="scores-table">
                   <thead>
                     <tr>
-                      <th>mode</th>
-                      <th>affinity</th>
-                      <th>rmsd_lb</th>
-                      <th>rmsd_ub</th>
+                      <th>构象</th>
+                      <th>对接评分</th>
+                      <th>RMSD l.b.</th>
+                      <th>RMSD u.b.</th>
                       <th>操作</th>
                     </tr>
                   </thead>
@@ -659,14 +671,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 </table>
               </div>
             ) : (
-              <p className="placeholder-note">尚未读取 pose 列表。</p>
+              <p className="placeholder-note">尚未读取构象列表。</p>
             )}
             <dl className="tool-meta">
               <div>
-                <dt>当前 pose</dt>
+                <dt>当前构象</dt>
                 <dd>
                   {selectedPose
-                    ? `mode ${selectedPose.mode}, affinity ${selectedPose.affinity_kcal_mol ?? "未解析"}`
+                    ? `mode ${selectedPose.mode}, 对接评分 ${selectedPose.affinity_kcal_mol ?? "未解析"}`
                     : "未选择"}
                 </dd>
               </div>

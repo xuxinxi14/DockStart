@@ -110,16 +110,16 @@ export default function VinaConfigPage({
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">VinaConfigPage</p>
-        <h1 id="vina-config-title">生成 Vina 配置文件</h1>
+        <p className="eyebrow">运行配置</p>
+        <h1 id="vina-config-title">生成运行配置</h1>
         <p>
-          根据项目内的 prepared PDBQT、Box 参数和 Vina 参数生成 configs/vina_config.txt。
+          根据项目内的 Vina 输入文件、对接箱体和 Vina 参数生成 configs/vina_config.txt。
           这里只生成配置文件，不运行 AutoDock Vina。
         </p>
       </div>
 
       <div className="project-summary">
-        <span>当前项目</span>
+        <span>项目</span>
         <strong>{project.project_name}</strong>
         <code>{project.project_dir}</code>
       </div>
@@ -129,7 +129,7 @@ export default function VinaConfigPage({
       <div className="import-grid">
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>受体 receptor.pdbqt</h2>
+            <h2>受体 Vina 输入</h2>
             <span className={`status-badge ${project.receptor.file ? "status-ok" : "status-missing"}`}>
               {project.receptor.file ? "已导入" : "未导入"}
             </span>
@@ -139,7 +139,7 @@ export default function VinaConfigPage({
 
         <article className="import-card">
           <div className="tool-card-header">
-            <h2>配体 ligand.pdbqt</h2>
+            <h2>配体 Vina 输入</h2>
             <span className={`status-badge ${project.ligand.file ? "status-ok" : "status-missing"}`}>
               {project.ligand.file ? "已导入" : "未导入"}
             </span>
@@ -181,15 +181,15 @@ export default function VinaConfigPage({
           重新生成预览
         </button>
         <button className="primary-button" type="button" disabled={isBusy} onClick={() => void generateConfig()}>
-          {isBusy ? "生成中..." : "生成 vina_config.txt"}
+          {isBusy ? "生成中..." : "生成运行配置"}
         </button>
       </div>
 
-      <p className="placeholder-note">下一步先进入运行前检查和 run 记录准备，然后可以执行 prepared run。</p>
+      <p className="placeholder-note">下一步先进入运行前检查并创建对接运行记录，然后可以执行 AutoDock Vina。</p>
 
       {canOpenRunPrepare ? (
         <div className="ready-note">
-          <span>vina_config.txt 已生成，可以进入运行前检查。</span>
+          <span>运行配置已生成，可以进入运行前检查。</span>
           <button className="secondary-button" type="button" onClick={() => onOpenRunPrepare(project)}>
             进入运行前检查
           </button>

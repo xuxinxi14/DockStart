@@ -133,17 +133,17 @@ function summarizeFile(label: string, file?: WorkflowFileStatus): SummaryItem {
 function runSummary(latestRun: Record<string, unknown> | null | undefined): SummaryItem {
   if (!latestRun) {
     return {
-      label: "latest run 状态",
+      label: "对接运行",
       status: "未创建",
-      detail: "尚未准备 Vina run",
+      detail: "尚未创建对接运行记录",
       tone: "warning",
     };
   }
   const status = String(latestRun.status ?? "unknown");
   return {
-    label: "latest run 状态",
+    label: "对接运行",
     status,
-    detail: String(latestRun.run_id ?? "未记录 run_id"),
+    detail: String(latestRun.run_id ?? "未记录运行编号"),
     tone: status === "finished" ? "ok" : status === "failed" ? "error" : "info",
   };
 }
@@ -176,7 +176,7 @@ function sourceText(source: ToolSource): string {
     bundled: "内置工具链",
     configured: "用户配置",
     auto: "PATH 自动检测",
-    current_environment: "当前环境",
+    current_environment: "Python 运行环境",
     frontend_dependency: "前端依赖",
     missing: "未找到",
     unknown: "未知来源",
@@ -256,10 +256,10 @@ export default function ProjectDashboardPage({
       return [];
     }
     return [
-      summarizeFile("raw receptor", workflow.raw?.receptor),
-      summarizeFile("raw ligand", workflow.raw?.ligand),
-      summarizeFile("prepared receptor", workflow.prepared?.receptor),
-      summarizeFile("prepared ligand", workflow.prepared?.ligand),
+      summarizeFile("受体原始结构", workflow.raw?.receptor),
+      summarizeFile("配体原始结构", workflow.raw?.ligand),
+      summarizeFile("受体 Vina 输入", workflow.prepared?.receptor),
+      summarizeFile("配体 Vina 输入", workflow.prepared?.ligand),
       {
         label: "Box 参数",
         status: workflow.box?.status === "ok" ? "已就绪" : "需检查",
@@ -272,12 +272,12 @@ export default function ProjectDashboardPage({
         detail: workflow.vina?.warnings?.join("；") || workflow.vina?.error?.message || "运行参数已记录",
         tone: workflow.vina?.status === "ok" ? "ok" : "error",
       },
-      summarizeFile("config 状态", workflow.config),
+      summarizeFile("运行配置", workflow.config),
       runSummary(workflow.latest_run),
       {
-        label: "report 状态",
+        label: "实验记录",
         status: workflow.latest_run?.status === "finished" ? "可导出" : "待生成",
-        detail: workflow.latest_run?.status === "finished" ? "可进入结果页解析并导出 Markdown 报告" : "需要先完成 Vina run 和结果解析",
+        detail: workflow.latest_run?.status === "finished" ? "可进入结果页解析并导出 Markdown 实验记录" : "需要先完成对接运行和结果解析",
         tone: workflow.latest_run?.status === "finished" ? "info" : "warning",
       },
     ];
@@ -289,20 +289,23 @@ export default function ProjectDashboardPage({
     return (
       <>
         <EmptyState
-          title="还没有 DockStart 项目"
-          description="先创建一个项目。项目会保存 raw 文件、prepared PDBQT、Vina config、run metadata、结果和报告。"
+          title="开始一个 DockStart 项目"
+          description="从数据库获取结构，或直接导入 PDBQT，完成一次 AutoDock Vina 对接。"
           action={
             <>
               <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>
                 创建项目
               </ActionButton>
-              <ActionButton onClick={() => onNavigate("help")}>查看新手帮助</ActionButton>
+              <ActionButton disabled title="当前版本尚未提供打开已有项目入口">
+                打开已有项目
+              </ActionButton>
+              <ActionButton onClick={() => onNavigate("help")}>查看新手流程</ActionButton>
             </>
           }
         />
         <SectionCard
           title="首次启动工具链检查"
-          description="这里只读取工具链状态，不安装软件，也不会运行 Vina、RDKit 或 Meeko preparation。"
+          description="这里只读取工具链状态，不安装软件，也不会运行 Vina、RDKit 或 Meeko 准备流程。"
         >
           {firstRunToolchain ? (
             <>
@@ -341,7 +344,7 @@ export default function ProjectDashboardPage({
                       {toolStatusText(firstRunToolchain.meekoStatus)}
                     </StatusBadge>
                   </div>
-                  <p>受体/配体 preparation 依赖 Meeko；生成结果仍需人工检查。</p>
+                  <p>受体/配体准备依赖 Meeko；生成结果仍需人工检查。</p>
                 </article>
               </div>
               <div className="next-action-card">
@@ -362,7 +365,7 @@ export default function ProjectDashboardPage({
             </div>
           )}
         </SectionCard>
-        <SectionCard title="第一次使用可以这样走" description="这是前端引导，不会自动运行任何外部工具。">
+        <SectionCard title="4 步入门流程" description="这是前端引导，不会自动运行任何外部工具。">
           <OnboardingGuide onNavigate={onNavigate} />
         </SectionCard>
       </>
@@ -372,7 +375,7 @@ export default function ProjectDashboardPage({
   return (
     <>
       <PageHeader
-        eyebrow="ProjectDashboardPage"
+        eyebrow="项目驾驶舱"
         title={project.project_name || "DockStart 项目"}
         description="从这里查看项目状态、确认下一步，并进入各个工作流页面。"
         actions={
@@ -386,32 +389,32 @@ export default function ProjectDashboardPage({
       <SectionCard title="项目基本信息">
         <div className="dashboard-meta-grid">
           <div>
-            <span>project name</span>
+            <span>项目名称</span>
             <strong>{project.project_name}</strong>
           </div>
           <div>
-            <span>project dir</span>
+            <span>项目目录</span>
             <FilePathText value={project.project_dir} />
           </div>
           <div>
-            <span>created_at</span>
+            <span>创建时间</span>
             <strong>{project.created_at || "未记录"}</strong>
           </div>
           <div>
-            <span>updated_at</span>
+            <span>更新时间</span>
             <strong>{project.updated_at || "未记录"}</strong>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="下一步推荐" description="来自后端 get_project_workflow_status，不做额外科学判断。">
+      <SectionCard title="下一步建议" description="根据项目文件状态推导，只做工作流引导，不做额外科学判断。">
         <div className="next-action-card">
           <strong>{workflow?.next_recommended_action || "正在读取项目状态..."}</strong>
           {workflow?.viewer?.recommended_viewer_action ? <p>{workflow.viewer.recommended_viewer_action}</p> : null}
         </div>
       </SectionCard>
 
-      <SectionCard title="DockStart 工作流" description="按状态推导当前可做步骤，帮助新手减少来回猜页面。">
+      <SectionCard title="Workflow Timeline" description="项目、原始结构、Vina 输入、Box、对接运行、结果报告的状态。">
         <WorkflowStepper
           steps={workflowSteps}
           onAction={(step) => {
@@ -424,10 +427,10 @@ export default function ProjectDashboardPage({
 
       <SectionCard title="工作流总览">
         <div className="unified-status-grid">
-          <RawFileStatusCard title="raw receptor" file={workflow?.raw?.receptor} />
-          <RawFileStatusCard title="raw ligand" file={workflow?.raw?.ligand} />
-          <PreparedFileStatusCard title="prepared receptor" file={workflow?.prepared?.receptor} />
-          <PreparedFileStatusCard title="prepared ligand" file={workflow?.prepared?.ligand} />
+          <RawFileStatusCard title="受体原始结构" file={workflow?.raw?.receptor} />
+          <RawFileStatusCard title="配体原始结构" file={workflow?.raw?.ligand} />
+          <PreparedFileStatusCard title="受体 Vina 输入" file={workflow?.prepared?.receptor} />
+          <PreparedFileStatusCard title="配体 Vina 输入" file={workflow?.prepared?.ligand} />
           <RunStatusCard
             runId={workflow?.latest_run?.run_id ? String(workflow.latest_run.run_id) : ""}
             status={workflow?.latest_run?.status ? String(workflow.latest_run.status) : "missing"}
@@ -453,32 +456,32 @@ export default function ProjectDashboardPage({
       <SectionCard title="快捷操作">
         <div className="action-card-grid">
           <button className="action-card" type="button" onClick={() => onNavigate("structure-fetch")}>
-            <strong>下载原始结构</strong>
-            <span>获取或管理 raw receptor / ligand</span>
+            <strong>获取结构</strong>
+            <span>获取或管理受体/配体原始结构</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("preparation")}>
-            <strong>准备 PDBQT</strong>
-            <span>检查工具链并生成 prepared PDBQT</span>
+            <strong>准备 Vina 输入</strong>
+            <span>检查工具链并生成 PDBQT</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("box-setup")}>
-            <strong>设置 Box</strong>
+            <strong>设置搜索范围</strong>
             <span>编辑 docking box 参数</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("viewer")}>
             <strong>打开 3D 查看</strong>
-            <span>查看结构、Box 和 docking pose</span>
+            <span>查看结构、搜索范围和对接构象</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("vina-config")}>
-            <strong>生成 config</strong>
+            <strong>生成运行配置</strong>
             <span>预览并生成 configs/vina_config.txt</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("run-prepare")}>
-            <strong>运行 Vina</strong>
-            <span>检查、准备 run 并执行</span>
+            <strong>开始对接</strong>
+            <span>检查、创建运行记录并执行</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("result")}>
-            <strong>查看结果报告</strong>
-            <span>解析 scores 并导出 Markdown 报告</span>
+            <strong>导出实验记录</strong>
+            <span>解析 scores 并导出 Markdown 记录</span>
           </button>
           <button className="action-card" type="button" onClick={() => onNavigate("help")}>
             <strong>查看帮助</strong>

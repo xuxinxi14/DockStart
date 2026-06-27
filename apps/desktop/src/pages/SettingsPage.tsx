@@ -135,11 +135,11 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       </button>
 
       <div className="page-heading">
-        <p className="eyebrow">SettingsPage</p>
+        <p className="eyebrow">本机路径</p>
         <h1 id="settings-title">工具路径配置</h1>
         <p>
           这里仅保存本机工具路径。DockStart 会优先使用这些路径检测 Vina 和
-          Python；留空时继续走自动检测或当前环境。
+          Python；留空时继续走自动检测。
         </p>
       </div>
 
@@ -232,7 +232,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       {message ? <p className="settings-message">{message}</p> : null}
       {rawError ? (
         <details className="raw-error">
-          <summary>查看 raw_error</summary>
+        <summary>技术详情</summary>
           <pre>{rawError}</pre>
         </details>
       ) : null}

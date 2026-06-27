@@ -1,0 +1,139 @@
+.viewer-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(440px, 1fr) minmax(280px, 360px);
+  gap: var(--ds-space-4);
+  align-items: start;
+}
+
+.viewer-control-column,
+.viewer-inspector-column,
+.viewer-stage {
+  display: grid;
+  gap: var(--ds-space-4);
+  min-width: 0;
+}
+
+.viewer-stage {
+  position: sticky;
+  top: calc(var(--ds-topbar-height) + var(--ds-space-4));
+}
+
+.viewer-stage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-elevated);
+  padding: var(--ds-space-3) var(--ds-space-4);
+}
+
+.viewer-stage-toolbar div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.viewer-stage-toolbar span {
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.viewer-stage-toolbar strong {
+  color: var(--ds-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.viewer-canvas {
+  position: relative;
+  min-height: 620px;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: var(--ds-radius-lg);
+  background:
+    linear-gradient(90deg, rgba(18, 103, 163, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(18, 103, 163, 0.06) 1px, transparent 1px),
+    #ffffff;
+  background-size: 24px 24px;
+  overflow: hidden;
+  box-shadow: var(--ds-shadow-panel);
+}
+
+.viewer-canvas:empty::before {
+  content: "请选择结构或对接构象";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ds-text-muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.viewer-source-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ds-space-3);
+}
+
+.viewer-file-status-list {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.viewer-file-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ds-space-2);
+  border-bottom: 1px solid var(--ds-border);
+  padding-bottom: var(--ds-space-2);
+}
+
+.viewer-file-status-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.viewer-file-status-row div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.viewer-file-status-row strong {
+  color: var(--ds-text-primary);
+  font-size: 13px;
+}
+
+.viewer-file-status-row span {
+  color: var(--ds-text-secondary);
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.compact-score-table {
+  margin-top: 0;
+}
+
+.compact-score-table .scores-table {
+  min-width: 520px;
+}
+
+@media (max-width: 1180px) {
+  .viewer-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-stage {
+    position: static;
+  }
+
+  .viewer-canvas {
+    min-height: 440px;
+  }
+}
