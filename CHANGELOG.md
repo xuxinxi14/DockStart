@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.9
+
+- Validated the V0.5 frontend shell with Vite and Tauri dev startup.
+- Added a local SVG favicon to remove the browser `favicon.ico` 404 during frontend validation.
+- Updated ToolchainStatusPage wording so it reflects V0.3 preparation reality: the page detects RDKit/Meeko, while PDBQT preparation is triggered from PreparationPage.
+- Hid Sidebar workflow steps until a project is loaded, keeping the no-project dashboard cleaner.
+- Added a run-required empty state for run execute, result, and report pages when no `run_id` is selected.
+- Kept changes limited to frontend usability, documentation/versioning, and did not alter scientific workflow behavior.
+
 ## v0.5.8
 
 - Performed a V0.5 frontend workflow freeze audit and unified version numbers to `0.5.8`.

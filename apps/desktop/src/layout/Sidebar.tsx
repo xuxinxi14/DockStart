@@ -37,7 +37,7 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
           );
         })}
       </nav>
-      {workflowSteps.length ? (
+      {hasProject && workflowSteps.length ? (
         <div className="sidebar-steps">
           <span>流程状态</span>
           <WorkflowStepper steps={workflowSteps.slice(0, 6)} compact />

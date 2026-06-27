@@ -248,6 +248,7 @@ V0.5 已完成一轮前端信息架构整理：
 - V0.5.6 在 Vina config、run 准备、执行、结果解析和报告页加入统一流程条；
 - V0.5.7 新增 HelpPage 和轻量 onboarding；
 - V0.5.8 完成前端工作流冻结审计。
+- V0.5.9 完成真实前端可用性验收与小修，包括 favicon、无项目 Sidebar、run 缺失占位页和工具链文案校准。
 
 V0.5 不改变 Vina config 生成、Vina 执行、score 解析、报告导出、RDKit/Meeko preparation 或 viewer 后端数据通道。V0.5 也没有新增 PLIP/ProLIF、相互作用分析、pocket prediction、药效判断、Open Babel、MGLTools、外部 CDN 或 Vina 算法修改。
 

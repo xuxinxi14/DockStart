@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DockStart">
+  <rect width="64" height="64" rx="14" fill="#38608f"/>
+  <circle cx="22" cy="22" r="7" fill="#f6f8fb"/>
+  <circle cx="42" cy="21" r="5" fill="#f6f8fb"/>
+  <circle cx="36" cy="43" r="8" fill="#f6f8fb"/>
+  <path d="M27 24 36 39M27 22l10-1M40 26l-3 10" stroke="#d8e7f5" stroke-width="4" stroke-linecap="round"/>
+</svg>

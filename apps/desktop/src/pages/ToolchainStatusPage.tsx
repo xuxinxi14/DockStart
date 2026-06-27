@@ -314,8 +314,8 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
       </div>
 
       <div className="disclaimer-note">
-        Meeko 和 RDKit 当前只用于 import 检测。即使检测为可用，DockStart 也不会自动处理分子、不会生成 PDBQT，
-        raw 文件仍需用户手动准备为 prepared PDBQT 后再运行 Vina。
+        本页只负责检测 Meeko / RDKit / Python 工具链是否可用，不会在这里处理分子或生成 PDBQT。
+        如果工具链满足条件，PDBQT 自动准备需要用户进入 PreparationPage 后手动点击准备按钮；生成结果仍需人工检查。
       </div>
 
       {status ? (
@@ -541,7 +541,7 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                 </div>
               </dl>
               <p className="placeholder-note">
-                当前页面只做 import 检测，不安装 Python 包，也不执行 Meeko/RDKit 分子处理。
+                本页面只做 import 和能力检测，不安装 Python 包；真正的 Meeko/RDKit preparation 只在 PreparationPage 中由用户手动触发。
               </p>
             </article>
 

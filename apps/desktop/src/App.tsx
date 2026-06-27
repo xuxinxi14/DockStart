@@ -9,6 +9,7 @@ import ProjectCreatePage from "./pages/ProjectCreatePage";
 import ProjectDashboardPage from "./pages/ProjectDashboardPage";
 import ReportPage from "./pages/ReportPage";
 import ResultPage from "./pages/ResultPage";
+import RunRequiredPage from "./pages/RunRequiredPage";
 import RunExecutePage from "./pages/RunExecutePage";
 import RunPreparePage from "./pages/RunPreparePage";
 import SettingsPage from "./pages/SettingsPage";
@@ -208,6 +209,10 @@ export default function App() {
       );
     }
 
+    if (currentPage === "run-execute" && currentProject && !currentRunId) {
+      return <RunRequiredPage project={currentProject} requestedPage="run-execute" onNavigate={navigateTo} />;
+    }
+
     if (currentPage === "result" && currentProject && currentRunId) {
       return (
         <ResultPage
@@ -226,6 +231,10 @@ export default function App() {
           }}
         />
       );
+    }
+
+    if (currentPage === "result" && currentProject && !currentRunId) {
+      return <RunRequiredPage project={currentProject} requestedPage="result" onNavigate={navigateTo} />;
     }
 
     if (currentPage === "viewer" && currentProject) {
@@ -247,6 +256,10 @@ export default function App() {
           onProjectChange={setCurrentProject}
         />
       );
+    }
+
+    if (currentPage === "report" && currentProject && !currentRunId) {
+      return <RunRequiredPage project={currentProject} requestedPage="report" onNavigate={navigateTo} />;
     }
 
     return (
