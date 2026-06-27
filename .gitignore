@@ -7,6 +7,12 @@ dist/
 # Rust/Tauri build outputs
 target/
 
+# Release installer outputs
+*.msi
+*.msix
+*.appinstaller
+DockStart_*_x64-setup.exe
+
 # Python caches and virtual environments
 __pycache__/
 **/__pycache__/

@@ -263,6 +263,7 @@ V0.6 开始整理 Windows 打包和发布流程：
 - V0.6.4 新增 Windows release build 脚本，用于发布前重复执行测试、构建和 Tauri 打包；
 - V0.6.5 已完成一次本地 Windows 安装包构建验收，产物路径和大小记录在 `docs/release/v0_6_5_build_report.md`；
 - V0.6.6 新增 GitHub Release 模板和本地 SHA256 checksum 脚本，用于发布前整理说明和校验值；
+- V0.6.7 完成发布冻结审计，统一版本号并复查 release 文档、仓库卫生和禁止提交项；
 - 发布类型区分 Developer build、Lightweight release、Toolchain-assisted release 和未来 Full offline release；
 - V0.6 目标是生成 Windows 安装包、整理 bundled Vina/Python 检测和发布材料；
 - 当前仍不提交 `vina.exe`、`python.exe`、`Lib/`、`DLLs/`、`site-packages/`、conda 环境、安装包、真实 docking 输出或大型第三方源码 zip；

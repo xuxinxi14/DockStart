@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.7
+
+- Performed the V0.6 release packaging freeze audit and unified version numbers to `0.6.7`.
+- Updated the GitHub Release template to the V0.6.7 preview version.
+- Added installer filename patterns to `.gitignore` while keeping `dist/`, `target/`, runtime binaries, and conda environments excluded.
+- Rechecked repository hygiene and confirmed no installer, build output, Python runtime, conda env, real docking output, or third-party source archive is tracked.
+- Kept the audit limited to release packaging, documentation, versioning, and repository hygiene; no scientific functionality was added.
+
 ## v0.6.6
 
 - Added `docs/release/github_release_template.md` for GitHub Release notes and installation guidance.

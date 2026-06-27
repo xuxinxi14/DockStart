@@ -60,6 +60,7 @@ scripts\build_windows_release.ps1 -SkipTauriBuild
 确认没有误提交：
 
 - installer `.msi` / `.exe`
+- release installer 文件名模式，例如 `DockStart_*_x64-setup.exe`
 - `dist/`
 - `target/`
 - `node_modules/`
