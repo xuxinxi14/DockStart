@@ -17,18 +17,30 @@ for import_path in (BACKEND_ROOT, SCRIPTS_ROOT):
 
 from dockstart_core.settings import SETTINGS_ENV_VAR  # noqa: E402
 from dockstart_core.toolchain import (  # noqa: E402
+    build_first_run_toolchain_guidance,
     calculate_file_sha256,
     get_bundled_python_integrity,
     get_bundled_vina_integrity,
     validate_bundled_python_package,
     validate_bundled_vina_package,
 )
+from dockstart_core.models import ToolCheckResult  # noqa: E402
 from dockstart_core.toolchain_paths import RESOURCE_DIR_ENV_VAR, TOOLCHAIN_ROOT_ENV_VAR  # noqa: E402
 from prepare_bundled_python import prepare_bundled_python  # noqa: E402
 from prepare_bundled_vina import prepare_bundled_vina  # noqa: E402
 
 
 class ToolchainIntegrityTests(unittest.TestCase):
+    def _tool(self, key: str, status: str = "ok", source: str = "configured") -> ToolCheckResult:
+        return ToolCheckResult(
+            key=key,
+            name=key,
+            status=status,  # type: ignore[arg-type]
+            path=f"C:/fake/{key}.exe",
+            message=f"{key} {status}",
+            source=source,  # type: ignore[arg-type]
+        )
+
     def _write_manifest(self, repo_root: Path, sha256: str, bundled: bool = True) -> None:
         manifest_path = repo_root / "resources" / "toolchain_manifest.json"
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +233,39 @@ class ToolchainIntegrityTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertEqual(response["status"], "ready")
             self.assertEqual(response["warnings"], [])
+
+    def test_first_run_guidance_requires_vina_first(self) -> None:
+        guidance = build_first_run_toolchain_guidance(
+            self._tool("vina", "missing", "missing"),
+            self._tool("python"),
+            self._tool("rdkit"),
+            self._tool("meeko"),
+        )
+
+        self.assertEqual(guidance["status"], "needs_vina")
+        self.assertEqual(guidance["primary_page"], "settings")
+
+    def test_first_run_guidance_requires_rdkit_meeko_when_missing(self) -> None:
+        guidance = build_first_run_toolchain_guidance(
+            self._tool("vina"),
+            self._tool("python"),
+            self._tool("rdkit", "missing"),
+            self._tool("meeko", "ok"),
+        )
+
+        self.assertEqual(guidance["status"], "needs_rdkit_meeko")
+        self.assertIn("RDKit/Meeko", guidance["recommended_action"])
+
+    def test_first_run_guidance_ready_for_configured_python(self) -> None:
+        guidance = build_first_run_toolchain_guidance(
+            self._tool("vina"),
+            self._tool("python", "ok", "configured"),
+            self._tool("rdkit"),
+            self._tool("meeko"),
+        )
+
+        self.assertEqual(guidance["status"], "ready")
+        self.assertEqual(guidance["primary_page"], "project-create")
 
 
 if __name__ == "__main__":

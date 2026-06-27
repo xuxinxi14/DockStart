@@ -29,6 +29,27 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
         <OnboardingGuide onNavigate={onNavigate} />
       </SectionCard>
 
+      <SectionCard title="首次使用 DockStart">
+        <div className="help-grid">
+          <article>
+            <strong>先看工具链</strong>
+            <p>进入“工具链”页确认 AutoDock Vina、Python、RDKit 和 Meeko 状态。没有 Vina 时不能执行 docking。</p>
+          </article>
+          <article>
+            <strong>再配置路径</strong>
+            <p>如果 Vina 或 Python missing，进入设置页配置 `vina.exe` 和独立 conda 环境中的 `python.exe`。</p>
+          </article>
+          <article>
+            <strong>RDKit/Meeko 不会自动安装</strong>
+            <p>DockStart 只检测和调用已存在的环境。推荐环境说明在 `docs/release/toolchain_environment.md`。</p>
+          </article>
+          <article>
+            <strong>准备结果需要人工检查</strong>
+            <p>自动 PDBQT preparation 不代表质子化、电荷、构象、金属或辅因子处理一定正确。</p>
+          </article>
+        </div>
+      </SectionCard>
+
       <SectionCard title="文件类型怎么理解">
         <div className="help-grid">
           <article>

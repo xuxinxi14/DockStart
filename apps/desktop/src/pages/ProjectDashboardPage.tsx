@@ -14,7 +14,7 @@ import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WorkflowStepper from "../components/WorkflowStepper";
-import type { DockStartProject, ProjectWorkflowStatusResponse, WorkflowFileStatus } from "../types";
+import type { DockStartProject, ProjectWorkflowStatusResponse, ToolSource, ToolStatus, WorkflowFileStatus } from "../types";
 import type { PageId } from "../navigation/pages";
 import { buildWorkflowSteps } from "../utils/workflowSteps";
 
@@ -30,6 +30,19 @@ type SummaryItem = {
   status: string;
   detail: string;
   tone: "ok" | "warning" | "error" | "muted" | "info";
+};
+
+type FirstRunToolchainStatus = {
+  ok: boolean;
+  vinaStatus: ToolStatus;
+  vinaMessage: string;
+  pythonStatus: ToolStatus;
+  pythonSource: ToolSource;
+  pythonPath: string;
+  rdkitStatus: ToolStatus;
+  meekoStatus: ToolStatus;
+  nextAction: string;
+  rawError: string;
 };
 
 function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse {
@@ -49,6 +62,39 @@ function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse 
     next_recommended_action: parsed.next_recommended_action,
     message: parsed.message,
     error: parsed.error ?? null,
+  };
+}
+
+function parseFirstRunToolchainStatus(rawPayload: string): FirstRunToolchainStatus {
+  const parsed = JSON.parse(rawPayload) as Record<string, any>;
+  const activeVina = parsed.active_vina ?? {};
+  const resolvedPython = parsed.resolved_python ?? {};
+  const rdkit = parsed.rdkit_for_python ?? {};
+  const meeko = parsed.meeko_for_python ?? {};
+  const vinaStatus = (activeVina.status ?? "unknown") as ToolStatus;
+  const pythonStatus = (resolvedPython.status ?? "unknown") as ToolStatus;
+  const rdkitStatus = (rdkit.status ?? "unknown") as ToolStatus;
+  const meekoStatus = (meeko.status ?? "unknown") as ToolStatus;
+  const pythonSource = (parsed.python_source ?? resolvedPython.source ?? "unknown") as ToolSource;
+  let nextAction = String(parsed.first_run_guidance?.recommended_action ?? "工具链状态已读取。可以创建项目，或先检查工具链详情。");
+  if (vinaStatus !== "ok") {
+    nextAction = "先配置 AutoDock Vina。没有 Vina 时无法执行 docking。";
+  } else if (rdkitStatus !== "ok" || meekoStatus !== "ok") {
+    nextAction = "如果要从 raw 文件自动准备 PDBQT，请先配置带 RDKit/Meeko 的 Python 环境。";
+  } else if (pythonSource !== "configured" && pythonSource !== "bundled") {
+    nextAction = "建议配置独立 conda Python 工具链，再创建项目。";
+  }
+  return {
+    ok: Boolean(parsed.ok),
+    vinaStatus,
+    vinaMessage: String(activeVina.message ?? ""),
+    pythonStatus,
+    pythonSource,
+    pythonPath: String(resolvedPython.path ?? ""),
+    rdkitStatus,
+    meekoStatus,
+    nextAction,
+    rawError: String(parsed.error?.raw_error ?? parsed.manifest_error ?? ""),
   };
 }
 
@@ -102,6 +148,42 @@ function runSummary(latestRun: Record<string, unknown> | null | undefined): Summ
   };
 }
 
+function toolStatusTone(status: ToolStatus): SummaryItem["tone"] {
+  if (status === "ok") {
+    return "ok";
+  }
+  if (status === "missing" || status === "unknown") {
+    return "warning";
+  }
+  return "error";
+}
+
+function toolStatusText(status: ToolStatus): string {
+  if (status === "ok") {
+    return "已检测";
+  }
+  if (status === "missing") {
+    return "未检测";
+  }
+  if (status === "error") {
+    return "检测错误";
+  }
+  return "状态未知";
+}
+
+function sourceText(source: ToolSource): string {
+  const labels: Record<ToolSource, string> = {
+    bundled: "内置工具链",
+    configured: "用户配置",
+    auto: "PATH 自动检测",
+    current_environment: "当前环境",
+    frontend_dependency: "前端依赖",
+    missing: "未找到",
+    unknown: "未知来源",
+  };
+  return labels[source] ?? labels.unknown;
+}
+
 export default function ProjectDashboardPage({
   project,
   onNavigate,
@@ -112,6 +194,8 @@ export default function ProjectDashboardPage({
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const [firstRunToolchain, setFirstRunToolchain] = useState<FirstRunToolchainStatus | null>(null);
+  const [firstRunError, setFirstRunError] = useState("");
 
   const loadWorkflow = useCallback(async () => {
     if (!project) {
@@ -147,6 +231,25 @@ export default function ProjectDashboardPage({
   useEffect(() => {
     void loadWorkflow();
   }, [loadWorkflow]);
+
+  useEffect(() => {
+    if (project) {
+      setFirstRunToolchain(null);
+      setFirstRunError("");
+      return;
+    }
+    const loadFirstRunToolchain = async () => {
+      try {
+        const rawPayload = await invoke<string>("get_toolchain_status");
+        setFirstRunToolchain(parseFirstRunToolchainStatus(rawPayload));
+        setFirstRunError("");
+      } catch (error) {
+        setFirstRunToolchain(null);
+        setFirstRunError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    void loadFirstRunToolchain();
+  }, [project]);
 
   const summaryItems = useMemo<SummaryItem[]>(() => {
     if (!workflow) {
@@ -197,6 +300,68 @@ export default function ProjectDashboardPage({
             </>
           }
         />
+        <SectionCard
+          title="首次启动工具链检查"
+          description="这里只读取工具链状态，不安装软件，也不会运行 Vina、RDKit 或 Meeko preparation。"
+        >
+          {firstRunToolchain ? (
+            <>
+              <div className="dashboard-status-grid">
+                <article className="dashboard-status-card">
+                  <div>
+                    <span>AutoDock Vina</span>
+                    <StatusBadge tone={toolStatusTone(firstRunToolchain.vinaStatus)}>
+                      {toolStatusText(firstRunToolchain.vinaStatus)}
+                    </StatusBadge>
+                  </div>
+                  <p>{firstRunToolchain.vinaMessage || "未读取到说明。"}</p>
+                </article>
+                <article className="dashboard-status-card">
+                  <div>
+                    <span>Python 来源</span>
+                    <StatusBadge tone={firstRunToolchain.pythonSource === "configured" ? "ok" : "info"}>
+                      {sourceText(firstRunToolchain.pythonSource)}
+                    </StatusBadge>
+                  </div>
+                  <p>{firstRunToolchain.pythonPath || "未读取到 Python 路径。"}</p>
+                </article>
+                <article className="dashboard-status-card">
+                  <div>
+                    <span>RDKit</span>
+                    <StatusBadge tone={toolStatusTone(firstRunToolchain.rdkitStatus)}>
+                      {toolStatusText(firstRunToolchain.rdkitStatus)}
+                    </StatusBadge>
+                  </div>
+                  <p>自动准备 PDBQT 需要 RDKit 可用；DockStart 不会自动安装。</p>
+                </article>
+                <article className="dashboard-status-card">
+                  <div>
+                    <span>Meeko</span>
+                    <StatusBadge tone={toolStatusTone(firstRunToolchain.meekoStatus)}>
+                      {toolStatusText(firstRunToolchain.meekoStatus)}
+                    </StatusBadge>
+                  </div>
+                  <p>受体/配体 preparation 依赖 Meeko；生成结果仍需人工检查。</p>
+                </article>
+              </div>
+              <div className="next-action-card">
+                <strong>{firstRunToolchain.nextAction}</strong>
+                <p>新手建议先让 Vina 和 Python/RDKit/Meeko 状态清楚，再创建项目。</p>
+              </div>
+              <div className="toolbar">
+                <ActionButton onClick={() => onNavigate("toolchain-status")}>查看工具链状态</ActionButton>
+                <ActionButton onClick={() => onNavigate("settings")}>配置工具路径</ActionButton>
+                <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>创建项目</ActionButton>
+              </div>
+            </>
+          ) : (
+            <div className="warning-note">
+              {firstRunError
+                ? `当前不是 Tauri 桌面环境，或暂时无法读取工具链状态：${firstRunError}`
+                : "正在读取工具链状态..."}
+            </div>
+          )}
+        </SectionCard>
         <SectionCard title="第一次使用可以这样走" description="这是前端引导，不会自动运行任何外部工具。">
           <OnboardingGuide onNavigate={onNavigate} />
         </SectionCard>

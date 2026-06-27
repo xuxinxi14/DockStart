@@ -146,6 +146,7 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
     rdkit_for_python: normalizeTool(parsed.rdkit_for_python, "rdkit"),
     meeko_python_source: parsed.meeko_python_source ?? "unknown",
     rdkit_python_source: parsed.rdkit_python_source ?? "unknown",
+    first_run_guidance: parsed.first_run_guidance,
     licenses: {
       exists: Boolean(parsed.licenses?.exists),
       third_party_notices: parsed.licenses?.third_party_notices ?? "",
@@ -222,6 +223,12 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
     rdkit_for_python: null,
     meeko_python_source: "unknown",
     rdkit_python_source: "unknown",
+    first_run_guidance: {
+      status: "unknown",
+      recommended_action: "请在 Tauri 桌面端打开工具链页后重新检测。",
+      primary_page: "toolchain-status",
+      message: "前端无法读取后端工具链状态。",
+    },
     licenses: {
       exists: false,
       third_party_notices: "",
@@ -275,6 +282,7 @@ function shortHash(value: string): string {
 export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps) {
   const [status, setStatus] = useState<ToolchainStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [copyMessage, setCopyMessage] = useState("");
 
   const loadStatus = useCallback(async () => {
     setIsLoading(true);
@@ -291,6 +299,20 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  const copyPythonPath = async () => {
+    const pythonPath = status?.resolved_python?.path ?? "";
+    if (!pythonPath) {
+      setCopyMessage("当前没有可复制的 Python 路径。");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(pythonPath);
+      setCopyMessage("已复制当前 Python 路径。");
+    } catch (error) {
+      setCopyMessage(`复制失败，请手动选择路径：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   return (
     <section className="toolchain-status-page" aria-labelledby="toolchain-status-title">
@@ -316,6 +338,10 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
       <div className="disclaimer-note">
         本页只负责检测 Meeko / RDKit / Python 工具链是否可用，不会在这里处理分子或生成 PDBQT。
         如果工具链满足条件，PDBQT 自动准备需要用户进入 PreparationPage 后手动点击准备按钮；生成结果仍需人工检查。
+      </div>
+      <div className="disclaimer-note">
+        来源说明：bundled 表示 DockStart 内置资源；configured 表示设置页手动配置；PATH/current_environment 表示使用系统命令或当前运行环境。
+        推荐首次使用时先配置 AutoDock Vina，并为 RDKit/Meeko 准备独立 conda Python。
       </div>
 
       {status ? (
@@ -549,6 +575,12 @@ export default function ToolchainStatusPage({ onBack }: ToolchainStatusPageProps
                   </dd>
                 </div>
               </dl>
+              <div className="toolbar">
+                <button className="secondary-button" type="button" onClick={copyPythonPath}>
+                  复制当前 Python 路径
+                </button>
+              </div>
+              {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
               <p className="placeholder-note">
                 本页面只做 import 和能力检测，不安装 Python 包；真正的 Meeko/RDKit preparation 只在 PreparationPage 中由用户手动触发。
               </p>

@@ -152,6 +152,12 @@ export type ToolchainStatusResponse = {
   rdkit_for_python: ToolCheckResult | null;
   meeko_python_source: ToolSource;
   rdkit_python_source: ToolSource;
+  first_run_guidance?: {
+    status: string;
+    recommended_action: string;
+    primary_page: string;
+    message: string;
+  };
   licenses: {
     exists: boolean;
     third_party_notices: string;

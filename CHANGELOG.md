@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.3
+
+- Added first-run toolchain guidance to backend toolchain status.
+- Added Dashboard first-run checks for AutoDock Vina, Python source, RDKit, and Meeko before a project is created.
+- Added ToolchainStatusPage copy-current-Python-path affordance and clearer source explanations.
+- Added HelpPage first-use guidance for Vina and RDKit/Meeko conda setup.
+- Kept onboarding limited to status and guidance; no tool installation, preparation logic, docking flow, or scientific capability was added.
+
 ## v0.6.2
 
 - Added `scripts/export_toolchain_environment.py` to export configured conda Python metadata into a lightweight RDKit/Meeko environment yml.

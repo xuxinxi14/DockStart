@@ -543,3 +543,15 @@ V0.5.9 进行了一轮真实前端可用性验收和小修：
 - ToolchainStatusPage 的 RDKit/Meeko 文案校准为“本页只检测，PreparationPage 才触发准备”。
 
 本轮仍不新增科学功能，不改变 Vina、RDKit/Meeko preparation、score 解析或报告导出逻辑。
+
+## V0.6.3 首次启动工具链引导
+
+首次打开 DockStart 且尚未创建项目时，项目总览会先提示工具链状态：
+
+- AutoDock Vina 是否可用；
+- 当前 Python 来源是 bundled、configured 还是 current_environment；
+- RDKit 是否可导入；
+- Meeko 是否可导入；
+- 下一步建议是配置 Vina、配置 Python 工具链，还是创建项目。
+
+工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。DockStart 仍不会自动安装 RDKit/Meeko，也不会自动修改系统 PATH。

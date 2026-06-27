@@ -16,6 +16,8 @@
 - 如果你正在准备 V0.6 toolchain-assisted release，可用 `scripts/prepare_bundled_vina.py` 从本地 Vina 文件装配到 `resources/vina/`，DockStart 会优先检测该路径；
 - 保存设置后重新运行工具检测。
 
+V0.6.3 之后，如果你还没有创建项目，Dashboard 会先显示首次启动工具链检查。它会提示是否应先配置 Vina 或 Python/RDKit/Meeko，再创建项目。
+
 ## 2. 为什么 Meeko/RDKit 显示 missing？
 
 V0.1 只检测 Meeko/RDKit 是否存在，不使用它们自动处理分子结构。V0.3.1 之后会检测准备能力，V0.3.2/V0.3.3 可以在工具链可用时尝试生成 ligand/receptor PDBQT。显示 missing 不影响本地 PDBQT docking MVP，只要你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，并且 Vina 可用，就可以继续 V0.1 流程。

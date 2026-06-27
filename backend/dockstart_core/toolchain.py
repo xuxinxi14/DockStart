@@ -237,6 +237,48 @@ def _tool_to_dict(result: ToolCheckResult | None) -> dict[str, Any] | None:
     return result.to_dict() if result else None
 
 
+def build_first_run_toolchain_guidance(
+    active_vina: ToolCheckResult,
+    resolved_python: ToolCheckResult,
+    rdkit_detection: ToolCheckResult,
+    meeko_detection: ToolCheckResult,
+) -> dict[str, Any]:
+    if active_vina.status != "ok":
+        return {
+            "status": "needs_vina",
+            "recommended_action": "先配置 AutoDock Vina。没有 Vina 时无法执行 docking。",
+            "primary_page": "settings",
+            "message": "未检测到可用 Vina，请在设置页配置 vina.exe，或准备 bundled Vina。",
+        }
+    if resolved_python.status != "ok":
+        return {
+            "status": "needs_python",
+            "recommended_action": "先配置可用 Python。没有 Python 时无法检测 RDKit/Meeko。",
+            "primary_page": "settings",
+            "message": "当前 Python 不可用，请在设置页配置 Python 路径。",
+        }
+    if rdkit_detection.status != "ok" or meeko_detection.status != "ok":
+        return {
+            "status": "needs_rdkit_meeko",
+            "recommended_action": "如果要自动准备 PDBQT，请配置带 RDKit/Meeko 的独立 conda Python 环境。",
+            "primary_page": "toolchain-status",
+            "message": "Vina 可用，但 RDKit/Meeko 尚未全部检测通过。手动 PDBQT docking 仍可继续。",
+        }
+    if resolved_python.source != "configured" and resolved_python.source != "bundled":
+        return {
+            "status": "current_environment",
+            "recommended_action": "建议配置独立 conda Python 工具链，提高 RDKit/Meeko preparation 的可复现性。",
+            "primary_page": "settings",
+            "message": "当前使用的是运行环境 Python，而不是用户配置或 bundled Python。",
+        }
+    return {
+        "status": "ready",
+        "recommended_action": "工具链基础状态可用。可以创建项目或打开已有项目。",
+        "primary_page": "project-create",
+        "message": "Vina、Python、RDKit 和 Meeko 均已检测通过。",
+    }
+
+
 def get_toolchain_status() -> dict[str, Any]:
     resource_dir = get_resource_dir()
     resources_dir = get_toolchain_root()
@@ -261,6 +303,12 @@ def get_toolchain_status() -> dict[str, Any]:
     resolved_python = get_resolved_python(settings.tool_paths.python)
     meeko_detection = meeko_adapter.detect(resolved_python.path, resolved_python.source)
     rdkit_detection = rdkit_adapter.detect(resolved_python.path, resolved_python.source)
+    first_run_guidance = build_first_run_toolchain_guidance(
+        active_vina,
+        resolved_python,
+        rdkit_detection,
+        meeko_detection,
+    )
 
     bundled_vina_exists = bundled_vina_path.is_file()
     bundled_vina_detection = active_vina if active_vina.source == "bundled" else None
@@ -334,6 +382,7 @@ def get_toolchain_status() -> dict[str, Any]:
         "rdkit_for_python": rdkit_detection.to_dict(),
         "meeko_python_source": meeko_detection.source,
         "rdkit_python_source": rdkit_detection.source,
+        "first_run_guidance": first_run_guidance,
         "licenses": {
             "exists": licenses_dir.is_dir(),
             "third_party_notices": str(notices_path),
