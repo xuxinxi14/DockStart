@@ -74,6 +74,13 @@ scripts\build_windows_release.ps1 -SkipTauriBuild
 - 大型 raw/downloaded structures
 - 第三方源码 zip
 
+## GitHub Release Materials
+
+- `docs/release/github_release_template.md` 已更新。
+- 安装包 SHA256 可用 `scripts/hash_release_artifacts.py` 生成。
+- Release notes 明确列出 included / not included / known limitations。
+- Checksums 发布前已经替换占位符。
+
 ## Product Boundaries
 
 发布说明必须明确：

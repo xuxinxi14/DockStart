@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.6
+
+- Added `docs/release/github_release_template.md` for GitHub Release notes and installation guidance.
+- Added `scripts/hash_release_artifacts.py` to calculate local SHA256 checksums and print a Markdown table.
+- Updated release checklist and README release-engineering notes for checksum and GitHub Release preparation.
+- Kept release preparation limited to documentation and local hashing; no release upload, scientific workflow change, or bundled runtime files were added.
+
 ## v0.6.5
 
 - Validated a real Windows Tauri release build and recorded the result in `docs/release/v0_6_5_build_report.md`.
