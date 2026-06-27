@@ -485,3 +485,13 @@ V0.5.4 调整了两个核心页面的信息层级：
 - PreparationPage 标题调整为“准备 Vina 输入文件 PDBQT”，按工具链状态、receptor preparation、ligand preparation 展示 raw input、prepared output、Python/RDKit/Meeko 状态、prepare 按钮和日志路径。
 
 这次改动只改善页面结构和中文提示，不改变 RCSB/PubChem 下载逻辑，不改变 RDKit/Meeko preparation 核心逻辑，也不新增 Open Babel、PLIP、MGLTools 或相互作用分析。
+
+## V0.5.5 Viewer 工作区
+
+V0.5.5 将 ViewerPage 整理为三栏工作区：
+
+- 左侧：结构来源、docking pose 读取和 Box 参数控制。
+- 中间：3Dmol.js 画布、重新居中和清空 viewer。
+- 右侧：当前文件状态、可查看文件列表、pose 列表和技术错误详情。
+
+这次改动只调整前端信息架构。ViewerPage 仍然只做 raw/prepared/docking output 的几何查看、Box overlay 和 pose mode 切换，不做 pocket prediction、PLIP/ProLIF、相互作用解释、药效判断或 Vina 算法修改。

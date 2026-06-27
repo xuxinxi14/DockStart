@@ -11,6 +11,12 @@ import type {
   ViewerFileStatusResponse,
   ViewerStructureResult,
 } from "../types";
+import CommandResultPanel from "../components/CommandResultPanel";
+import PageHeader from "../components/PageHeader";
+import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
+import WarningCallout from "../components/WarningCallout";
 
 type ViewerPageProps = {
   project: DockStartProject;
@@ -65,6 +71,19 @@ function displayStatus(result: ViewerStructureResult | undefined): string {
     return "可读取";
   }
   return result.message || result.error?.message || "不可读取";
+}
+
+function viewerStatusTone(result: ViewerStructureResult | undefined): "ok" | "warning" | "error" | "muted" {
+  if (!result) {
+    return "muted";
+  }
+  if (result.ok) {
+    return "ok";
+  }
+  if (result.error) {
+    return "error";
+  }
+  return result.exists ? "warning" : "muted";
 }
 
 function buildLocalBoxVisualization(box: DockStartProject["box"]): BoxVisualizationPayload | null {
@@ -419,19 +438,17 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const selectedOption = fileKindOptions.find((item) => item.value === fileKind);
 
   return (
-    <section className="project-page" aria-labelledby="viewer-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回上一页
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">ViewerPage</p>
-        <h1 id="viewer-title">3D 结构查看</h1>
-        <p>
-          V0.4.1 提供最小 3D 查看入口，用于查看项目内 raw、prepared 和 docking output 结构文件。
-          当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。
-        </p>
-      </div>
+    <section className="project-page viewer-page">
+      <PageHeader
+        eyebrow="ViewerPage"
+        title="3D 结构、Box 与 pose 工作区"
+        description="查看项目内 raw、prepared 和 docking output 结构文件，并把 Box 可视化设置同步回 project.json。当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。"
+        actions={
+          <button className="text-button" type="button" onClick={onBack}>
+            返回上一页
+          </button>
+        }
+      />
 
       <div className="project-summary">
         <span>当前项目</span>
@@ -439,179 +456,224 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         <code>{project.project_dir}</code>
       </div>
 
-      <div className="warning-note">
-        3D 显示只帮助检查文件和空间位置。Docking pose 和 docking score 不能证明真实结合或药效，也不能替代专业分子建模检查。
-      </div>
+      <ScientificDisclaimer kind="viewer" />
 
-      <section className="panel viewer-controls" aria-label="Viewer controls">
-        <label className="viewer-source-row">
-          <span>结构来源</span>
-          <select value={fileKind} onChange={(event) => setFileKind(event.target.value as ViewerFileKind)}>
-            {fileKindOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="placeholder-note">{selectedOption?.description}</p>
-        <div className="toolbar project-toolbar">
-          <button className="primary-button" type="button" disabled={isBusy} onClick={() => void loadStructure()}>
-            加载结构
-          </button>
-          <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void reloadStatus()}>
-            重新读取状态
-          </button>
-          <button className="text-button inline" type="button" onClick={zoomToFit}>
-            重新居中
-          </button>
-          <button className="text-button inline" type="button" onClick={clearViewer}>
-            清空 viewer
-          </button>
-        </div>
-      </section>
-
-      <section className="panel viewer-controls" aria-label="Docking pose controls">
-        <h2>Docking pose 查看</h2>
-        <p className="placeholder-note">
-          选择已有 run_id 后读取 runs/&lt;run_id&gt;/out.pdbqt。Docking pose 和 score 仅供结构查看与趋势参考，不能证明真实结合或药效。
-        </p>
-        <label className="viewer-source-row">
-          <span>run_id</span>
-          <input
-            type="text"
-            value={runId}
-            placeholder="run_001"
-            onChange={(event) => setRunId(event.target.value)}
-          />
-        </label>
-        <div className="toolbar project-toolbar">
-          <button className="secondary-button" type="button" disabled={isBusy || !runId.trim()} onClick={() => void loadPoseList()}>
-            读取 pose 列表
-          </button>
-        </div>
-        {poseList?.warnings?.length ? (
-          <div className="warning-note">
-            {poseList.warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
-            ))}
-          </div>
-        ) : null}
-        {poseList?.poses?.length ? (
-          <div className="scores-table-wrapper">
-            <table className="scores-table">
-              <thead>
-                <tr>
-                  <th>mode</th>
-                  <th>affinity</th>
-                  <th>rmsd_lb</th>
-                  <th>rmsd_ub</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {poseList.poses.map((pose) => (
-                  <tr key={pose.mode}>
-                    <td>{pose.mode}</td>
-                    <td>{pose.affinity_kcal_mol ?? "未解析"}</td>
-                    <td>{pose.rmsd_lb ?? "未解析"}</td>
-                    <td>{pose.rmsd_ub ?? "未解析"}</td>
-                    <td>
-                      <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void loadPose(pose.mode)}>
-                        查看 mode {pose.mode}
-                      </button>
-                    </td>
-                  </tr>
+      <section className="viewer-workspace-grid" aria-label="3D viewer workspace">
+        <aside className="viewer-control-column" aria-label="Viewer controls">
+          <SectionCard title="结构来源" description={selectedOption?.description}>
+            <label className="viewer-source-row">
+              <span>结构来源</span>
+              <select value={fileKind} onChange={(event) => setFileKind(event.target.value as ViewerFileKind)}>
+                {fileKindOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
+              </select>
+            </label>
+            <div className="toolbar project-toolbar">
+              <button className="primary-button" type="button" disabled={isBusy} onClick={() => void loadStructure()}>
+                加载结构
+              </button>
+              <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void reloadStatus()}>
+                重新读取状态
+              </button>
+            </div>
+          </SectionCard>
 
-      <section className="panel viewer-controls" aria-label="Box visualization controls">
-        <h2>Box 可视化设置</h2>
-        <p className="placeholder-note">
-          单位：Å。Box 可视化只是帮助定位搜索空间，不代表自动识别结合口袋。
-        </p>
-        <div className="box-control-grid">
-          {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<keyof DockStartProject["box"]>).map(
-            (key) => (
-              <label key={key} className="box-control">
-                <span>{key}</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={box[key]}
-                  onChange={(event) => updateBoxField(key, Number(event.target.value))}
-                />
-              </label>
-            ),
-          )}
-        </div>
-        <div className="toolbar project-toolbar">
-          <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
-            保存 Box 参数
-          </button>
-          <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadBoxVisualization()}>
-            重新读取 Box
-          </button>
-        </div>
-        {(boxWarnings.length ? boxWarnings : localBoxWarnings(box)).map((warning) => (
-          <div className="warning-note" key={warning}>
-            {warning}
-          </div>
-        ))}
-      </section>
+          <SectionCard
+            title="Docking pose"
+            description="读取 runs/<run_id>/out.pdbqt 中的 mode。score 只用于查看构象列表，不代表真实结合或药效。"
+          >
+            <label className="viewer-source-row">
+              <span>run_id</span>
+              <input
+                type="text"
+                value={runId}
+                placeholder="run_001"
+                onChange={(event) => setRunId(event.target.value)}
+              />
+            </label>
+            <div className="toolbar project-toolbar">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isBusy || !runId.trim()}
+                onClick={() => void loadPoseList()}
+              >
+                读取 pose 列表
+              </button>
+            </div>
+            {poseList?.warnings?.length ? (
+              <WarningCallout title="Pose 读取提示">
+                {poseList.warnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </WarningCallout>
+            ) : null}
+          </SectionCard>
 
-      <section className="viewer-layout">
-        <div className="viewer-canvas" ref={containerRef} aria-label="3D molecular viewer" />
-        <aside className="panel viewer-side-panel">
-          <h2>文件状态</h2>
-          <dl className="tool-meta">
-            <div>
-              <dt>当前选择</dt>
-              <dd>{selectedOption?.label}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              <dd>{displayStatus(selectedStatus)}</dd>
-            </div>
-            <div>
-              <dt>路径</dt>
-              <dd><code>{structure?.relative_path || selectedStatus?.relative_path || "未记录"}</code></dd>
-            </div>
-            <div>
-              <dt>格式</dt>
-              <dd>{structure?.format || selectedStatus?.format || "unknown"}</dd>
-            </div>
-            <div>
-              <dt>大小</dt>
-              <dd>{formatBytes(structure?.size_bytes ?? selectedStatus?.size_bytes ?? 0)}</dd>
-            </div>
-            <div>
-              <dt>当前 pose</dt>
-              <dd>
-                {selectedPose
-                  ? `mode ${selectedPose.mode}, affinity ${selectedPose.affinity_kcal_mol ?? "未解析"}`
-                  : "未选择"}
-              </dd>
-            </div>
-          </dl>
-          {message ? <div className="settings-message">{message}</div> : null}
-          {structure?.warnings?.length ? (
-            <div className="warning-note">
-              {structure.warnings.map((warning) => (
-                <p key={warning}>{warning}</p>
+          <SectionCard
+            title="Box 可视化设置"
+            description="单位：Å。Box 可视化只是帮助定位搜索空间，不代表自动识别结合口袋。"
+          >
+            <div className="box-control-grid">
+              {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<
+                keyof DockStartProject["box"]
+              >).map((key) => (
+                <label key={key} className="box-control">
+                  <span>{key}</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={box[key]}
+                    onChange={(event) => updateBoxField(key, Number(event.target.value))}
+                  />
+                </label>
               ))}
             </div>
-          ) : null}
-          {rawError ? (
-            <details className="raw-error">
-              <summary>查看原始错误</summary>
-              <pre>{rawError}</pre>
-            </details>
-          ) : null}
+            <div className="toolbar project-toolbar">
+              <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
+                保存 Box 参数
+              </button>
+              <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadBoxVisualization()}>
+                重新读取 Box
+              </button>
+            </div>
+            {(boxWarnings.length ? boxWarnings : localBoxWarnings(box)).map((warning) => (
+              <WarningCallout key={warning} title="Box 尺寸提示">
+                <p>{warning}</p>
+              </WarningCallout>
+            ))}
+          </SectionCard>
+        </aside>
+
+        <section className="viewer-stage" aria-label="3D molecular viewer">
+          <div className="viewer-stage-toolbar">
+            <div>
+              <span>当前视图</span>
+              <strong>{selectedPose ? `mode ${selectedPose.mode}` : selectedOption?.label}</strong>
+            </div>
+            <div className="toolbar project-toolbar">
+              <button className="text-button inline" type="button" onClick={zoomToFit}>
+                重新居中
+              </button>
+              <button className="text-button inline" type="button" onClick={clearViewer}>
+                清空 viewer
+              </button>
+            </div>
+          </div>
+          <div className="viewer-canvas" ref={containerRef} aria-label="3D molecular viewer canvas" />
+          <WarningCallout title="Viewer 边界">
+            <p>只显示几何结构、Box 和 pose，不自动解释氢键、疏水、盐桥或药效。</p>
+          </WarningCallout>
+        </section>
+
+        <aside className="viewer-inspector-column" aria-label="Viewer inspector">
+          <SectionCard title="当前文件">
+            <dl className="tool-meta">
+              <div>
+                <dt>当前选择</dt>
+                <dd>{selectedOption?.label}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>
+                  <StatusBadge tone={viewerStatusTone(selectedStatus)}>{displayStatus(selectedStatus)}</StatusBadge>
+                </dd>
+              </div>
+              <div>
+                <dt>路径</dt>
+                <dd>
+                  <code>{structure?.relative_path || selectedStatus?.relative_path || "未记录"}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>格式</dt>
+                <dd>{structure?.format || selectedStatus?.format || "unknown"}</dd>
+              </div>
+              <div>
+                <dt>大小</dt>
+                <dd>{formatBytes(structure?.size_bytes ?? selectedStatus?.size_bytes ?? 0)}</dd>
+              </div>
+            </dl>
+            {structure?.warnings?.length ? (
+              <WarningCallout title="结构文件提示">
+                {structure.warnings.map((warning) => (
+                  <p key={warning}>{warning}</p>
+                ))}
+              </WarningCallout>
+            ) : null}
+          </SectionCard>
+
+          <SectionCard title="可查看文件">
+            <div className="viewer-file-status-list">
+              {fileKindOptions.map((option) => {
+                const item = status?.files?.[option.value];
+                return (
+                  <div key={option.value} className="viewer-file-status-row">
+                    <div>
+                      <strong>{option.label}</strong>
+                      <span>{item?.relative_path || "未记录路径"}</span>
+                    </div>
+                    <StatusBadge tone={viewerStatusTone(item)}>{displayStatus(item)}</StatusBadge>
+                  </div>
+                );
+              })}
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Pose 列表">
+            {poseList?.poses?.length ? (
+              <div className="scores-table-wrap compact-score-table">
+                <table className="scores-table">
+                  <thead>
+                    <tr>
+                      <th>mode</th>
+                      <th>affinity</th>
+                      <th>rmsd_lb</th>
+                      <th>rmsd_ub</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {poseList.poses.map((pose) => (
+                      <tr key={pose.mode}>
+                        <td>{pose.mode}</td>
+                        <td>{pose.affinity_kcal_mol ?? "未解析"}</td>
+                        <td>{pose.rmsd_lb ?? "未解析"}</td>
+                        <td>{pose.rmsd_ub ?? "未解析"}</td>
+                        <td>
+                          <button
+                            className="text-button inline"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => void loadPose(pose.mode)}
+                          >
+                            查看
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="placeholder-note">尚未读取 pose 列表。</p>
+            )}
+            <dl className="tool-meta">
+              <div>
+                <dt>当前 pose</dt>
+                <dd>
+                  {selectedPose
+                    ? `mode ${selectedPose.mode}, affinity ${selectedPose.affinity_kcal_mol ?? "未解析"}`
+                    : "未选择"}
+                </dd>
+              </div>
+            </dl>
+          </SectionCard>
+
+          <CommandResultPanel title="Viewer 结果" message={message} rawError={rawError} />
         </aside>
       </section>
     </section>

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.5
+
+- Reworked ViewerPage into a three-column workspace: left controls, central 3D canvas, and right inspection panel.
+- Grouped structure loading, docking pose list loading, and Box visualization controls without changing viewer backend commands.
+- Added clearer file-status and pose-status presentation, including unified warnings and command-result details.
+- Kept ViewerPage limited to geometry viewing, Box synchronization, and pose display; no PLIP/ProLIF, interaction analysis, pocket prediction, or drug efficacy judgement was added.
+
 ## v0.5.4
 
 - Improved StructureFetchPage information hierarchy around receptor/ligand raw files.

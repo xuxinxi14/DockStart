@@ -642,6 +642,63 @@ button {
   margin-bottom: 18px;
 }
 
+.viewer-page .scientific-disclaimer {
+  margin-bottom: 18px;
+}
+
+.viewer-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(360px, 1fr) minmax(280px, 360px);
+  gap: 16px;
+  align-items: start;
+}
+
+.viewer-control-column,
+.viewer-inspector-column,
+.viewer-stage {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.viewer-control-column .section-card + .section-card,
+.viewer-inspector-column .section-card + .section-card {
+  margin-top: 0;
+}
+
+.viewer-stage {
+  position: sticky;
+  top: 92px;
+}
+
+.viewer-stage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.viewer-stage-toolbar div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.viewer-stage-toolbar span {
+  color: #61758a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.viewer-stage-toolbar strong {
+  color: #243b53;
+  overflow-wrap: anywhere;
+}
+
 .viewer-source-row {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
@@ -706,7 +763,58 @@ button {
   min-width: 0;
 }
 
+.viewer-file-status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.viewer-file-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #edf1f5;
+  padding-bottom: 10px;
+}
+
+.viewer-file-status-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.viewer-file-status-row div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.viewer-file-status-row strong {
+  color: #243b53;
+}
+
+.viewer-file-status-row span {
+  color: #61758a;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.compact-score-table {
+  margin-top: 0;
+}
+
+.compact-score-table .scores-table {
+  min-width: 520px;
+}
+
 @media (max-width: 900px) {
+  .viewer-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-stage {
+    position: static;
+  }
+
   .viewer-layout {
     grid-template-columns: 1fr;
   }
