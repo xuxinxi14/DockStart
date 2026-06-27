@@ -1,4 +1,9 @@
 import { useState } from "react";
+import ActionButton from "./components/ActionButton";
+import PageHeader from "./components/PageHeader";
+import SectionCard from "./components/SectionCard";
+import AppShell from "./layout/AppShell";
+import type { PageId } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
 import PreparationPage from "./pages/PreparationPage";
@@ -15,6 +20,7 @@ import ViewerPage from "./pages/ViewerPage";
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject } from "./types";
+import { getWorkflowSummary } from "./utils/workflowSummary";
 
 const nextPages = [
   "工具检测",
@@ -33,321 +39,295 @@ const nextPages = [
 ];
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<
-    | "home"
-    | "tool-check"
-    | "toolchain-status"
-    | "settings"
-    | "project-create"
-    | "structure-fetch"
-    | "preparation"
-    | "import-pdbqt"
-    | "box-setup"
-    | "vina-param"
-    | "vina-config"
-    | "run-prepare"
-    | "run-execute"
-    | "result"
-    | "viewer"
-    | "report"
-  >("home");
+  const [currentPage, setCurrentPage] = useState<PageId>("home");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
 
-  if (currentPage === "settings") {
+  function navigateTo(page: PageId) {
+    setCurrentPage(page);
+  }
+
+  function renderHome() {
     return (
-      <main className="app-shell">
-        <SettingsPage onBack={() => setCurrentPage("tool-check")} />
-      </main>
+      <>
+        <PageHeader
+          eyebrow="DockStart Workflow"
+          title="项目总览"
+          description="DockStart 是基于 AutoDock Vina 的第三方开源中文分子对接工作台。V0.5 开始把割裂页面整理成更清晰的工作流入口。"
+          actions={
+            <>
+              <ActionButton variant="primary" onClick={() => navigateTo("project-create")}>
+                创建项目
+              </ActionButton>
+              <ActionButton onClick={() => navigateTo("tool-check")}>工具检测</ActionButton>
+              <ActionButton onClick={() => navigateTo("toolchain-status")}>工具链状态</ActionButton>
+            </>
+          }
+        />
+
+        <SectionCard title="当前项目" description="V0.5.1 会把这里升级为完整 Project Dashboard。">
+          {currentProject ? (
+            <div className="project-summary">
+              <span>项目名称</span>
+              <strong>{currentProject.project_name}</strong>
+              <span>项目目录</span>
+              <code>{currentProject.project_dir}</code>
+            </div>
+          ) : (
+            <p className="placeholder-note">尚未加载项目。请先创建项目，或从后续版本的 Dashboard 加载已有项目。</p>
+          )}
+          <div className="hero-actions project-toolbar">
+            <ActionButton disabled={!currentProject} onClick={() => navigateTo("structure-fetch")}>
+              获取结构
+            </ActionButton>
+            <ActionButton disabled={!currentProject} onClick={() => navigateTo("preparation")}>
+              准备 PDBQT
+            </ActionButton>
+            <ActionButton disabled={!currentProject} onClick={() => navigateTo("viewer")}>
+              3D 查看 / Box
+            </ActionButton>
+            <ActionButton disabled={!currentProject} onClick={() => navigateTo("vina-config")}>
+              Vina 运行
+            </ActionButton>
+          </div>
+        </SectionCard>
+
+        <SectionCard title="当前推荐流程">
+          <ol className="step-list">
+            <li>下载 raw 原始结构</li>
+            <li>检查/准备 PDBQT</li>
+            <li>导入或确认 prepared PDBQT</li>
+            <li>设置 Box 和 Vina 参数</li>
+            <li>运行 Vina 并解析报告</li>
+          </ol>
+          <p className="placeholder-note">
+            raw 文件只是 PDB/CIF/SDF 原始结构；prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 才是 Vina 当前可用输入。
+          </p>
+        </SectionCard>
+
+        <SectionCard title="现有页面仍可访问">
+          <ol className="step-list">
+            {nextPages.map((page) => (
+              <li key={page}>{page}</li>
+            ))}
+          </ol>
+        </SectionCard>
+      </>
     );
   }
 
-  if (currentPage === "toolchain-status") {
-    return (
-      <main className="app-shell">
-        <ToolchainStatusPage onBack={() => setCurrentPage("home")} />
-      </main>
-    );
-  }
+  function renderPage() {
+    if (currentPage === "settings") {
+      return <SettingsPage onBack={() => navigateTo("tool-check")} />;
+    }
 
-  if (currentPage === "tool-check") {
-    return (
-      <main className="app-shell">
-        <button className="text-button" type="button" onClick={() => setCurrentPage("home")}>
-          返回首页
-        </button>
-        <ToolCheckPage onOpenSettings={() => setCurrentPage("settings")} />
-      </main>
-    );
-  }
+    if (currentPage === "toolchain-status") {
+      return <ToolchainStatusPage onBack={() => navigateTo("home")} />;
+    }
 
-  if (currentPage === "project-create") {
-    return (
-      <main className="app-shell">
+    if (currentPage === "tool-check") {
+      return <ToolCheckPage onOpenSettings={() => navigateTo("settings")} />;
+    }
+
+    if (currentPage === "project-create") {
+      return (
         <ProjectCreatePage
-          onBack={() => setCurrentPage("home")}
+          onBack={() => navigateTo("home")}
           onCreated={(project, nextPage) => {
             setCurrentProject(project);
-            setCurrentPage(nextPage);
+            navigateTo(nextPage);
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "structure-fetch" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "structure-fetch" && currentProject) {
+      return (
         <StructureFetchPage
           project={currentProject}
-          onBack={() => setCurrentPage("project-create")}
+          onBack={() => navigateTo("project-create")}
           onProjectChange={setCurrentProject}
           onOpenImportPdbqt={(project) => {
             setCurrentProject(project);
-            setCurrentPage("import-pdbqt");
+            navigateTo("import-pdbqt");
           }}
           onOpenPreparation={(project) => {
             setCurrentProject(project);
-            setCurrentPage("preparation");
+            navigateTo("preparation");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "preparation" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "preparation" && currentProject) {
+      return (
         <PreparationPage
           project={currentProject}
-          onBack={() => setCurrentPage("structure-fetch")}
+          onBack={() => navigateTo("structure-fetch")}
           onProjectChange={setCurrentProject}
           onOpenImportPdbqt={(project) => {
             setCurrentProject(project);
-            setCurrentPage("import-pdbqt");
+            navigateTo("import-pdbqt");
           }}
           onOpenViewer={(project) => {
             setCurrentProject(project);
-            setCurrentPage("viewer");
+            navigateTo("viewer");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "import-pdbqt" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "import-pdbqt" && currentProject) {
+      return (
         <ImportPdbqtPage
           project={currentProject}
-          onBack={() => setCurrentPage("project-create")}
+          onBack={() => navigateTo("project-create")}
           onOpenStructureFetch={(project) => {
             setCurrentProject(project);
-            setCurrentPage("structure-fetch");
+            navigateTo("structure-fetch");
           }}
           onOpenBoxSetup={(project) => {
             setCurrentProject(project);
-            setCurrentPage("box-setup");
+            navigateTo("box-setup");
           }}
           onOpenViewer={(project) => {
             setCurrentProject(project);
-            setCurrentPage("viewer");
+            navigateTo("viewer");
           }}
           onProjectChange={setCurrentProject}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "box-setup" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "box-setup" && currentProject) {
+      return (
         <BoxSetupPage
           project={currentProject}
-          onBack={() => setCurrentPage("import-pdbqt")}
+          onBack={() => navigateTo("import-pdbqt")}
           onProjectChange={setCurrentProject}
           onOpenViewer={(project) => {
             setCurrentProject(project);
-            setCurrentPage("viewer");
+            navigateTo("viewer");
           }}
           onOpenVinaParams={(project) => {
             setCurrentProject(project);
-            setCurrentPage("vina-param");
+            navigateTo("vina-param");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "vina-param" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "vina-param" && currentProject) {
+      return (
         <VinaParamPage
           project={currentProject}
-          onBack={() => setCurrentPage("box-setup")}
+          onBack={() => navigateTo("box-setup")}
           onProjectChange={setCurrentProject}
           onOpenVinaConfig={(project) => {
             setCurrentProject(project);
-            setCurrentPage("vina-config");
+            navigateTo("vina-config");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "vina-config" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "vina-config" && currentProject) {
+      return (
         <VinaConfigPage
           project={currentProject}
-          onBack={() => setCurrentPage("vina-param")}
+          onBack={() => navigateTo("vina-param")}
           onProjectChange={setCurrentProject}
           onOpenRunPrepare={(project) => {
             setCurrentProject(project);
-            setCurrentPage("run-prepare");
+            navigateTo("run-prepare");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "run-prepare" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "run-prepare" && currentProject) {
+      return (
         <RunPreparePage
           project={currentProject}
-          onBack={() => setCurrentPage("vina-config")}
+          onBack={() => navigateTo("vina-config")}
           onProjectChange={setCurrentProject}
           onOpenRunExecute={(project, runId) => {
             setCurrentProject(project);
             setCurrentRunId(runId);
-            setCurrentPage("run-execute");
+            navigateTo("run-execute");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "run-execute" && currentProject && currentRunId) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "run-execute" && currentProject && currentRunId) {
+      return (
         <RunExecutePage
           project={currentProject}
           runId={currentRunId}
-          onBack={() => setCurrentPage("run-prepare")}
+          onBack={() => navigateTo("run-prepare")}
           onProjectChange={setCurrentProject}
           onOpenResultPage={(project, runId) => {
             setCurrentProject(project);
             setCurrentRunId(runId);
-            setCurrentPage("result");
+            navigateTo("result");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "result" && currentProject && currentRunId) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "result" && currentProject && currentRunId) {
+      return (
         <ResultPage
           project={currentProject}
           runId={currentRunId}
-          onBack={() => setCurrentPage("run-execute")}
+          onBack={() => navigateTo("run-execute")}
           onProjectChange={setCurrentProject}
           onOpenViewer={(project) => {
             setCurrentProject(project);
-            setCurrentPage("viewer");
+            navigateTo("viewer");
           }}
           onOpenReportPage={(project, runId) => {
             setCurrentProject(project);
             setCurrentRunId(runId);
-            setCurrentPage("report");
+            navigateTo("report");
           }}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "viewer" && currentProject) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "viewer" && currentProject) {
+      return (
         <ViewerPage
           project={currentProject}
-          onBack={() => setCurrentPage("preparation")}
+          onBack={() => navigateTo("preparation")}
           onProjectChange={setCurrentProject}
         />
-      </main>
-    );
-  }
+      );
+    }
 
-  if (currentPage === "report" && currentProject && currentRunId) {
-    return (
-      <main className="app-shell">
+    if (currentPage === "report" && currentProject && currentRunId) {
+      return (
         <ReportPage
           project={currentProject}
           runId={currentRunId}
-          onBack={() => setCurrentPage("result")}
+          onBack={() => navigateTo("result")}
           onProjectChange={setCurrentProject}
         />
-      </main>
-    );
+      );
+    }
+
+    return renderHome();
   }
 
   return (
-    <main className="app-shell">
-      <section className="intro">
-        <p className="eyebrow">DockStart MVP</p>
-        <h1>DockStart</h1>
-        <p>
-          基于 AutoDock Vina 的第三方开源中文分子对接工作台。当前版本围绕
-          最小闭环逐步实现，不修改对接算法，不直接内置复杂第三方工具。
-        </p>
-        <div className="hero-actions">
-          <button className="primary-button" type="button" onClick={() => setCurrentPage("tool-check")}>
-            进入工具检测
-          </button>
-          <button className="secondary-button" type="button" onClick={() => setCurrentPage("settings")}>
-            配置工具路径
-          </button>
-          <button className="secondary-button" type="button" onClick={() => setCurrentPage("toolchain-status")}>
-            内置工具链状态
-          </button>
-          <button className="secondary-button" type="button" onClick={() => setCurrentPage("project-create")}>
-            创建项目
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!currentProject}
-            onClick={() => setCurrentPage("viewer")}
-          >
-            3D 结构查看
-          </button>
-        </div>
-      </section>
-
-      <section className="panel" aria-labelledby="raw-prepared-flow">
-        <h2 id="raw-prepared-flow">当前推荐流程</h2>
-        <ol className="step-list">
-          <li>下载 raw 原始结构</li>
-          <li>检查/准备 PDBQT</li>
-          <li>导入 prepared PDBQT</li>
-          <li>设置 Box 和 Vina 参数</li>
-          <li>运行 Vina 并解析报告</li>
-        </ol>
-        <p className="placeholder-note">
-          raw 文件只是 PDB/CIF/SDF 原始结构；prepared/receptor.pdbqt 和 prepared/ligand.pdbqt 才是 Vina 当前可用输入。
-        </p>
-      </section>
-
-      <section className="panel" aria-labelledby="mvp-pages">
-        <h2 id="mvp-pages">MVP 页面顺序</h2>
-        <ol className="step-list">
-          {nextPages.map((page) => (
-            <li key={page}>{page}</li>
-          ))}
-        </ol>
-      </section>
-    </main>
+    <AppShell
+      currentPage={currentPage}
+      project={currentProject}
+      workflowSummary={getWorkflowSummary(currentProject, currentPage)}
+      onNavigate={navigateTo}
+    >
+      {renderPage()}
+    </AppShell>
   );
 }

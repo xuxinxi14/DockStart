@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.0
+
+- Added the frontend AppShell foundation with a persistent Sidebar, Topbar, shared page content area, and workflow summary.
+- Added reusable UI building blocks: PageHeader, SectionCard, StatusBadge, ActionButton, ErrorPanel, EmptyState, FilePathText, and WorkflowStepper.
+- Added navigation metadata and a small workflow-summary utility so existing pages can be reached through a unified shell.
+- Kept existing backend commands and scientific workflows unchanged.
+- Did not add PLIP/ProLIF, interaction analysis, drug efficacy judgement, Open Babel, MGLTools, external CDN usage, or Vina algorithm changes.
+
 ## v0.4.6
 
 - Performed a V0.4 viewer workflow freeze audit.
