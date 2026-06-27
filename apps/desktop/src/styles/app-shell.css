@@ -303,6 +303,126 @@
   background: #fff4f4;
 }
 
+.dashboard-meta-grid,
+.dashboard-status-grid,
+.action-card-grid,
+.dashboard-risk-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.dashboard-meta-grid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.dashboard-meta-grid div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-meta-grid span,
+.dashboard-status-card span {
+  color: #61758a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dashboard-meta-grid strong {
+  color: #243b53;
+  overflow-wrap: anywhere;
+}
+
+.next-action-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #c9dff3;
+  border-radius: 8px;
+  background: #eef4fa;
+  padding: 16px;
+}
+
+.next-action-card strong {
+  color: #243b53;
+  font-size: 18px;
+}
+
+.next-action-card p {
+  margin-bottom: 0;
+}
+
+.dashboard-status-grid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.dashboard-status-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.dashboard-status-card div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-status-card p {
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.action-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.action-card {
+  display: grid;
+  gap: 8px;
+  min-height: 112px;
+  border: 1px solid #d7e0ea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  color: #243b53;
+  text-align: left;
+  cursor: pointer;
+}
+
+.action-card:hover {
+  border-color: #9fbbd7;
+  background: #f7fbff;
+}
+
+.action-card strong {
+  font-size: 17px;
+}
+
+.action-card span {
+  color: #61758a;
+  line-height: 1.5;
+}
+
+.dashboard-risk-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.dashboard-risk-grid p {
+  margin-bottom: 0;
+  border: 1px solid #f0d28a;
+  border-radius: 8px;
+  background: #fff9e8;
+  padding: 14px;
+  color: #7a4d00;
+  font-weight: 700;
+}
+
 @media (max-width: 980px) {
   .dockstart-shell {
     grid-template-columns: 1fr;

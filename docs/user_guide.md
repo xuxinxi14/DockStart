@@ -444,3 +444,17 @@ V0.4.4 已把 viewer 状态接入项目 workflow status。项目状态会记录 
 6. 运行 Vina 并解析结果后，在 ViewerPage 输入 run_id，读取 pose 列表并选择 mode 查看。
 
 ViewerPage 只做几何查看和流程复核，不做 pocket prediction、PLIP/ProLIF、相互作用解释、分子动力学或药效判断。自动准备和 3D 显示都不能替代用户对质子化、电荷、缺失残基、水、金属、辅因子和 box 合理性的科学检查。
+
+## V0.5.1 项目总览 Dashboard
+
+V0.5.1 开始，用户创建项目后会回到 ProjectDashboardPage，而不是直接散落到某个功能页。Dashboard 会读取现有 `get_project_workflow_status`，展示：
+
+- 项目名称、项目目录、创建时间和更新时间；
+- raw receptor / raw ligand 状态；
+- prepared receptor / prepared ligand 状态；
+- Box 参数、Vina 参数和 config 状态；
+- latest run 状态；
+- report 是否已经具备导出条件；
+- 下一步推荐动作。
+
+Dashboard 中的快捷操作卡片会跳转到结构获取、PDBQT 准备、Box、3D Viewer、config、run、result/report 等现有页面。它只整理入口和状态展示，不新增科学功能，也不会改变 Vina、RDKit、Meeko 或 viewer 的后端行为。

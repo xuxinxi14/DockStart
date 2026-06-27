@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.1
+
+- Added ProjectDashboardPage as the main project entry point after a project is created.
+- Dashboard reads existing `get_project_workflow_status` data to show raw, prepared, Box, Vina, config, latest run, and report readiness.
+- Added next recommended action, shortcut cards, project metadata, and scientific risk reminders.
+- Kept backend scientific workflow unchanged and did not add new docking, preparation, viewer, or analysis capability.
+
 ## v0.5.0
 
 - Added the frontend AppShell foundation with a persistent Sidebar, Topbar, shared page content area, and workflow summary.

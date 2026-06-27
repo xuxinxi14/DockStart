@@ -500,3 +500,69 @@ export type ProjectResponse = {
     suggestion: string;
   };
 };
+
+export type WorkflowFileStatus = {
+  path: string;
+  absolute_path?: string;
+  exists: boolean;
+  non_empty: boolean;
+  size: number;
+  status: "ok" | "missing" | "empty" | "error" | string;
+};
+
+export type ProjectWorkflowStatusResponse = {
+  ok: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  raw?: {
+    receptor?: WorkflowFileStatus;
+    ligand?: WorkflowFileStatus;
+  };
+  prepared?: {
+    receptor?: WorkflowFileStatus;
+    ligand?: WorkflowFileStatus;
+  };
+  preparation?: {
+    receptor?: Record<string, unknown>;
+    ligand?: Record<string, unknown>;
+  };
+  box?: {
+    status: "ok" | "error" | string;
+    warnings?: string[];
+    error?: {
+      code?: string;
+      message?: string;
+      raw_error?: string;
+      suggestion?: string;
+    } | null;
+  };
+  vina?: {
+    status: "ok" | "error" | string;
+    warnings?: string[];
+    error?: {
+      code?: string;
+      message?: string;
+      raw_error?: string;
+      suggestion?: string;
+    } | null;
+  };
+  config?: WorkflowFileStatus;
+  latest_run?: Record<string, unknown> | null;
+  viewer?: {
+    can_view_raw_receptor: boolean;
+    can_view_raw_ligand: boolean;
+    can_view_prepared_receptor: boolean;
+    can_view_prepared_ligand: boolean;
+    can_view_docking_output: boolean;
+    available_runs: Array<Record<string, unknown>>;
+    recommended_viewer_action: string;
+  };
+  next_recommended_action?: string;
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
