@@ -13,7 +13,6 @@ import type {
 } from "../types";
 import CommandResultPanel from "../components/CommandResultPanel";
 import PageHeader from "../components/PageHeader";
-import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
@@ -454,22 +453,13 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       <PageHeader
         eyebrow="3D 工作台"
         title="3D 分子工作台"
-        description="查看项目内原始结构、Vina 输入和对接构象，并把搜索范围可视化设置同步回项目。当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。"
+        description="查看结构、Box 和对接构象。"
         actions={
           <button className="text-button" type="button" onClick={onBack}>
             返回上一页
           </button>
         }
       />
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
-
-      <ScientificDisclaimer kind="viewer" />
-
       <section className="viewer-workspace-grid" aria-label="3D viewer workspace">
         <aside className="viewer-control-column" aria-label="结构 Inspector">
           <SectionCard title="结构来源" description={selectedOption?.description}>
@@ -495,7 +485,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
 
           <SectionCard
             title="对接构象"
-            description="读取对接运行输出中的 mode。对接评分只用于查看构象列表，不代表真实结合或药效。"
+            description="读取 run 输出中的 mode。"
           >
             <label className="viewer-source-row">
               <span>运行记录</span>
@@ -527,7 +517,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
 
           <SectionCard
             title="搜索范围"
-            description="单位：Å。可视化只是帮助定位搜索空间，不代表自动识别结合口袋。"
+            description="单位：Å。"
           >
             <div className="box-control-grid">
               {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<
@@ -576,9 +566,6 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </div>
           </div>
           <div className="viewer-canvas" ref={containerRef} aria-label="3D molecular viewer canvas" />
-          <WarningCallout title="Viewer 边界">
-            <p>只显示几何结构、搜索范围和对接构象，不自动解释氢键、疏水、盐桥或药效。</p>
-          </WarningCallout>
         </section>
 
         <aside className="viewer-inspector-column" aria-label="Properties">
@@ -685,9 +672,12 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </dl>
           </SectionCard>
 
-          <CommandResultPanel title="Viewer 结果" message={message} rawError={rawError} />
+          <CommandResultPanel title="Viewer 状态" message={message} rawError={rawError} />
         </aside>
       </section>
+      <WarningCallout title="Viewer 边界">
+        <p>只做几何查看，不做相互作用分析、pocket prediction 或药效判断。</p>
+      </WarningCallout>
     </section>
   );
 }

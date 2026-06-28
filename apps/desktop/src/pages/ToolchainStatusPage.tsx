@@ -309,34 +309,23 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
   };
 
   return (
-    <section className="toolchain-status-page" aria-labelledby="toolchain-status-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回总览
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">工具链</p>
-        <h1 id="toolchain-status-title">配置工具链</h1>
-        <p>
-          检查 AutoDock Vina、Python、RDKit、Meeko 和内置资源。这里不下载工具、不安装 Python 包，也不会运行对接。
-        </p>
-      </div>
-
-      <div className="toolbar">
-        <button className="primary-button" type="button" onClick={loadStatus} disabled={isLoading}>
-          {isLoading ? "检测中..." : "重新检测"}
-        </button>
-        {onOpenSettings ? (
-          <button className="secondary-button" type="button" onClick={onOpenSettings}>
-            配置路径
+    <section className="workbench-page" aria-labelledby="toolchain-status-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">支持</p>
+          <h1 id="toolchain-status-title">配置工具链</h1>
+          <p>确认 Vina 和 Python 工具链是否可用。</p>
+        </div>
+        <div className="page-hero-actions">
+          <button className="text-button" type="button" onClick={onBack}>返回</button>
+          {onOpenSettings ? (
+            <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
+          ) : null}
+          <button className="primary-button" type="button" onClick={loadStatus} disabled={isLoading}>
+            {isLoading ? "检测中..." : "重新检测"}
           </button>
-        ) : null}
-        {onOpenHelp ? (
-          <button className="secondary-button" type="button" onClick={onOpenHelp}>
-            查看说明
-          </button>
-        ) : null}
-      </div>
+        </div>
+      </header>
 
       {status ? (
         <>
@@ -432,9 +421,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 </button>
               </div>
               {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
-              <p className="placeholder-note">
-                DockStart 只检测和调用已有环境，不会自动安装 RDKit 或 Meeko。自动准备结果仍需人工检查。
-              </p>
+              <p className="placeholder-note">DockStart 只检测和调用已有环境，不自动安装 RDKit 或 Meeko。</p>
             </article>
 
             <article className="tool-card toolchain-wizard-card">
@@ -518,14 +505,15 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           ) : null}
 
           {status.warnings.length ? (
-            <div className="warning-note">
+            <details className="technical-details">
+              <summary>检查提示</summary>
               <strong>工具链检查提示</strong>
               <ul>
                 {status.warnings.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
-            </div>
+            </details>
           ) : null}
         </>
       ) : (

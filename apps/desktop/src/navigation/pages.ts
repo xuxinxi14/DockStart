@@ -26,7 +26,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.7.7";
+export const appVersion = "0.7.8";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -45,48 +45,48 @@ export const navigationItems: NavigationItem[] = [
     id: "toolchain-status",
     group: "Support",
     label: "工具链",
-    description: "配置 Vina、Python、RDKit 和 Meeko",
+    description: "Vina、Python、RDKit、Meeko",
   },
   {
     id: "structure-fetch",
     group: "Workflow",
-    label: "1 获取结构",
-    description: "获取原始结构文件",
+    label: "获取结构",
+    description: "受体与配体 raw 文件",
     requiresProject: true,
   },
   {
     id: "preparation",
     group: "Workflow",
-    label: "2 准备 Vina 输入",
-    description: "生成或确认 Vina 输入文件",
+    label: "准备 Vina 输入",
+    description: "生成或导入 PDBQT",
     requiresProject: true,
   },
   {
     id: "box-setup",
     group: "Workflow",
-    label: "3 设置 Box",
-    description: "设置对接搜索范围",
+    label: "设置搜索范围",
+    description: "Box 中心与尺寸",
     requiresProject: true,
   },
   {
     id: "vina-config",
     group: "Workflow",
-    label: "4 运行 Vina",
-    description: "配置、准备并执行对接运行",
+    label: "运行对接",
+    description: "配置、运行、解析",
     requiresProject: true,
   },
   {
     id: "result",
     group: "Workflow",
-    label: "5 查看结果",
-    description: "解析 scores 并查看对接构象",
+    label: "结果与报告",
+    description: "scores 与实验记录",
     requiresProject: true,
   },
   {
     id: "viewer",
     group: "Workbench",
-    label: "3D 分子工作台",
-    description: "结构、搜索范围和对接构象工作台",
+    label: "3D 查看 / Box",
+    description: "结构、Box、构象",
     requiresProject: true,
   },
   {
@@ -100,7 +100,7 @@ export const navigationItems: NavigationItem[] = [
     id: "help",
     group: "Support",
     label: "文档帮助",
-    description: "查看新手流程、文件说明和科学边界",
+    description: "流程、文件、边界",
   },
 ];
 

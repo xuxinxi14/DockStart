@@ -67,10 +67,10 @@ export default function App() {
       return (
         <ProjectCreatePage
           onBack={() => navigateTo("home")}
-          onCreated={(project) => {
+          onCreated={(project, nextPage = "structure-fetch") => {
             setCurrentProject(project);
             setWorkflowStatus(null);
-            navigateTo("home");
+            navigateTo(nextPage);
           }}
         />
       );
@@ -111,6 +111,10 @@ export default function App() {
           onOpenViewer={(project) => {
             setCurrentProject(project);
             navigateTo("viewer");
+          }}
+          onOpenBoxSetup={(project) => {
+            setCurrentProject(project);
+            navigateTo("box-setup");
           }}
         />
       );

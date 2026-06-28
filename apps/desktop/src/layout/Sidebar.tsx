@@ -1,6 +1,6 @@
 import type { DockStartProject } from "../types";
 import { navigationItems, resolveNavigationTarget, type PageId } from "../navigation/pages";
-import WorkflowStepper, { type WorkflowStep } from "../components/WorkflowStepper";
+import type { WorkflowStep } from "../components/WorkflowStepper";
 
 type SidebarProps = {
   currentPage: PageId;
@@ -83,12 +83,6 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
           </div>
         ))}
       </nav>
-      {hasProject && workflowSteps.length ? (
-        <div className="sidebar-steps">
-          <span>项目进度</span>
-          <WorkflowStepper steps={workflowSteps.slice(0, 6)} compact />
-        </div>
-      ) : null}
     </aside>
   );
 }

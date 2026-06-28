@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
@@ -14,20 +18,34 @@ type RunExecutePageProps = {
 };
 
 const runStatusText: Record<string, string> = {
-  prepared: "已准备",
-  running: "运行中",
+  prepared: "可进行",
+  running: "进行中",
   finished: "已完成",
-  failed: "运行失败",
-  cancelled: "已取消",
-  unknown: "状态未知",
+  failed: "失败",
+  cancelled: "失败",
+  unknown: "需检查",
 };
 
 const fileStatusText: Record<RunFileStatus["status"], string> = {
-  ok: "已生成",
-  missing: "未生成",
-  empty: "空文件",
-  error: "状态错误",
+  ok: "已完成",
+  missing: "缺失",
+  empty: "需检查",
+  error: "失败",
 };
+
+function toneForRun(status: string): "ok" | "warning" | "error" | "muted" | "info" {
+  if (status === "finished" || status === "prepared") return "ok";
+  if (status === "running") return "info";
+  if (status === "failed" || status === "cancelled") return "error";
+  return "muted";
+}
+
+function toneForFile(status: RunFileStatus["status"]): "ok" | "warning" | "error" | "muted" {
+  if (status === "ok") return "ok";
+  if (status === "error") return "error";
+  if (status === "empty") return "warning";
+  return "muted";
+}
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectResponse>;
@@ -83,12 +101,9 @@ export default function RunExecutePage({
   const status = metadataString(metadata, "status") || "unknown";
   const exitCode = metadataNumber(metadata, "exit_code");
   const command = useMemo(() => metadataCommand(metadata), [metadata]);
-  const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "命令记录为空或格式无效。";
+  const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "命令记录为空。";
   const canExecute = status === "prepared" && !isBusy;
-  const disabledReason =
-    status === "prepared"
-      ? ""
-      : `当前运行状态为 ${runStatusText[status] ?? status}，只能执行已准备的对接运行。`;
+  const disabledReason = status === "prepared" ? "" : `当前状态为 ${runStatusText[status] ?? status}。`;
 
   const applyResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string) => {
@@ -112,9 +127,9 @@ export default function RunExecutePage({
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "run 状态已重新加载。");
+      applyResponse(parseProjectResponse(rawPayload), "运行状态已刷新。");
     } catch (error) {
-      setMessage("前端未能读取 run 状态。");
+      setMessage("无法读取运行状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -134,9 +149,9 @@ export default function RunExecutePage({
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "Vina 执行完成。");
+      applyResponse(parseProjectResponse(rawPayload), "对接运行已完成。");
     } catch (error) {
-      setMessage("前端未能调用 Vina 执行命令。");
+      setMessage("无法执行 AutoDock Vina。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -144,41 +159,35 @@ export default function RunExecutePage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="run-execute-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回运行准备页
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">AutoDock Vina</p>
-        <h1 id="run-execute-title">执行 AutoDock Vina</h1>
-        <p>
-          这一步会真实执行已保存的命令数组，并保存 stdout、stderr、log 和 out 文件。
-          这里仅负责运行和记录状态；对接评分表格请在结果页解析。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
+    <section className="workbench-page" aria-labelledby="run-execute-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">运行对接</p>
+          <h1 id="run-execute-title">执行 AutoDock Vina</h1>
+          <p>运行已准备的命令，保存 stdout、stderr、log 和 out 文件。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => void reloadRun()} disabled={isBusy}>刷新状态</ActionButton>
+        </div>
+      </header>
 
       <VinaWorkflowBar current="execute" runId={runId} />
 
-      <div className="summary-grid">
-        <div className="param-summary">
+      <div className="status-strip">
+        <article className="metric-card">
           <span>运行记录</span>
           <strong>{runId}</strong>
-        </div>
-        <div className="param-summary">
+        </article>
+        <article className="metric-card">
           <span>当前状态</span>
           <strong>{runStatusText[status] ?? status}</strong>
-        </div>
-        <div className="param-summary">
-          <span>exit_code</span>
+          <StatusBadge tone={toneForRun(status)}>{runStatusText[status] ?? "需检查"}</StatusBadge>
+        </article>
+        <article className="metric-card">
+          <span>exit code</span>
           <strong>{exitCode === null ? "尚未产生" : exitCode}</strong>
-        </div>
+        </article>
       </div>
 
       {disabledReason ? (
@@ -187,74 +196,45 @@ export default function RunExecutePage({
         </WarningCallout>
       ) : null}
 
-      <div className="config-preview-panel">
-        <div className="tool-card-header">
-          <h2>技术详情：命令数组预览</h2>
-          <span>不会使用 shell 拼接字符串</span>
+      <SectionCard title="执行">
+        <div className="button-row">
+          <ActionButton variant="primary" disabled={!canExecute} onClick={() => void executeRun()}>
+            {isBusy ? "执行中..." : "开始对接"}
+          </ActionButton>
         </div>
-        <pre className="config-preview">{commandPreview}</pre>
-      </div>
-
-      <div className="tool-grid run-check-grid">
-        {files.map((file) => (
-          <article className="tool-card" key={file.key}>
-            <div className="tool-card-header">
-              <h2>{file.name}</h2>
-              <span className={`status-badge status-${file.status === "ok" ? "ok" : file.status === "missing" ? "missing" : "error"}`}>
-                {fileStatusText[file.status]}
-              </span>
-            </div>
-            <dl className="tool-meta">
-              <div>
-                <dt>路径</dt>
-                <dd>{file.path || "未设置"}</dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd>{file.exists ? `${file.size} bytes` : "文件不存在"}</dd>
-              </div>
-              <div>
-                <dt>说明</dt>
-                <dd>{file.message}</dd>
-              </div>
-            </dl>
-          </article>
-        ))}
-      </div>
-
-      <div className="toolbar project-toolbar">
-        <button className="primary-button" type="button" disabled={!canExecute} onClick={() => void executeRun()}>
-          {isBusy ? "执行中..." : "开始对接"}
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRun()}>
-          重新加载运行状态
-        </button>
-      </div>
+        <AdvancedDetails summary="命令与运行文件">
+          <pre>{commandPreview}</pre>
+          <div className="compact-grid">
+            {files.map((file) => (
+              <article className="file-card" key={file.key}>
+                <span>{file.name}</span>
+                <strong>{file.path || "未设置"}</strong>
+                <StatusBadge tone={toneForFile(file.status)}>{fileStatusText[file.status]}</StatusBadge>
+              </article>
+            ))}
+          </div>
+        </AdvancedDetails>
+      </SectionCard>
 
       {status === "finished" ? (
-        <div className="ready-note run-result-note">
-          <span>Vina 执行完成。</span>
-          <div className="run-result-files">
-            <code>{metadataString(metadata, "output_file")}</code>
-            <code>{metadataString(metadata, "log_file")}</code>
+        <div className="next-step-strip">
+          <div>
+            <strong>下一步：解析结果</strong>
+            <p>{metadataString(metadata, "log_file") || "log.txt 已记录。"}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={() => onOpenResultPage(project, runId)}>
+          <ActionButton variant="primary" onClick={() => onOpenResultPage(project, runId)}>
             查看对接结果
-          </button>
+          </ActionButton>
         </div>
       ) : null}
 
       {status === "failed" ? (
         <WarningCallout title="Vina 执行失败">
-          <strong>Vina 执行失败。</strong>
-          <p>{metadataString(metadata, "error_message") || "请查看 stderr.txt 和 log.txt。"}</p>
-          <code>{metadataString(metadata, "stderr_file")}</code>
+          <p>{metadataString(metadata, "error_message") || "请查看 stderr 和 log。"}</p>
         </WarningCallout>
       ) : null}
 
-      <p className="placeholder-note">执行页只负责运行和记录状态；解析对接评分请进入结果页。</p>
-
-      <CommandResultPanel title="Vina 执行结果" message={message} rawError={rawError} />
+      <CommandResultPanel title="执行结果" message={message} rawError={rawError} />
     </section>
   );
 }

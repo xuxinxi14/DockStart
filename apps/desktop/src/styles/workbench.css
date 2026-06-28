@@ -1,6 +1,6 @@
 .viewer-workspace-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(440px, 1fr) minmax(280px, 360px);
+  grid-template-columns: 300px minmax(520px, 1fr) 340px;
   gap: var(--ds-space-4);
   align-items: start;
 }
@@ -49,7 +49,7 @@
 
 .viewer-canvas {
   position: relative;
-  min-height: 620px;
+  min-height: 640px;
   border: 1px solid var(--ds-border-strong);
   border-radius: var(--ds-radius-lg);
   background: var(--ds-bg-panel);

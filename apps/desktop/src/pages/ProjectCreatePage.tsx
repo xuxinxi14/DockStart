@@ -1,6 +1,9 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import PathInput from "../components/PathInput";
+import SectionCard from "../components/SectionCard";
 import type { DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 
 type ProjectCreatePageProps = {
@@ -35,7 +38,6 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
-  const [createdProject, setCreatedProject] = useState<DockStartProject | null>(null);
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -46,7 +48,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
           setBaseDir(response.settings.project.default_project_dir);
         }
       } catch {
-        // Settings are helpful but not required for creating a project.
+        // Default directory is optional.
       }
     }
 
@@ -57,7 +59,6 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
     setIsBusy(true);
     setMessage("");
     setRawError("");
-    setCreatedProject(null);
     try {
       const rawPayload = await invoke<string>("create_project", {
         projectName,
@@ -65,96 +66,82 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       });
       const response = parseProjectResponse(rawPayload);
       if (response.ok && response.project) {
-        setMessage(response.message ?? "项目创建成功。");
-        setCreatedProject(response.project);
+        onCreated(response.project, "structure-fetch");
         return;
       }
       setMessage(response.error?.message ?? "项目创建失败。");
       setRawError(response.error?.raw_error ?? "");
     } catch (error) {
-      setMessage("前端未能调用项目创建命令。请确认当前运行环境是 Tauri 桌面端。");
+      setMessage("无法创建项目。请确认当前运行环境是 DockStart 桌面端。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
-  }, [baseDir, projectName]);
+  }, [baseDir, onCreated, projectName]);
 
   return (
-    <section className="project-page" aria-labelledby="project-create-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">项目</p>
-        <h1 id="project-create-title">创建 DockStart 项目</h1>
-        <p>
-          这一步只创建项目文件夹和 project.json。后续导入的受体 PDBQT 和
-          配体 PDBQT 会复制到项目的 Vina 输入目录中。
-        </p>
-      </div>
-
-      <div className="disclaimer-note">
-        创建项目后有两条入口：可以先获取原始结构，也可以直接导入已经准备好的 PDBQT。
-        原始结构文件不能直接运行 Vina，准备后的 PDBQT 才是当前运行流程的输入。
-      </div>
-
-      <div className="form-panel">
-        <label htmlFor="project-name">项目名称</label>
-        <input
-          id="project-name"
-          type="text"
-          value={projectName}
-          onChange={(event) => setProjectName(event.target.value)}
-          placeholder="例如 demo_project"
-        />
-
-        <label htmlFor="base-dir">项目保存目录</label>
-        <PathInput
-          id="base-dir"
-          value={baseDir}
-          onChange={setBaseDir}
-          mode="directory"
-          title="选择项目保存目录"
-          placeholder="输入项目的父目录；会在其中创建项目名文件夹"
-        />
-
-        <div className="form-actions">
-          <button className="primary-button" type="button" disabled={isBusy} onClick={createProject}>
-            {isBusy ? "创建中..." : "创建项目"}
-          </button>
+    <section className="workbench-page" aria-labelledby="project-create-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">项目</p>
+          <h1 id="project-create-title">创建项目</h1>
+          <p>创建标准项目目录和 project.json，随后进入结构获取步骤。</p>
         </div>
-      </div>
-
-      {message ? <p className="settings-message">{message}</p> : null}
-      {createdProject ? (
-        <div className="ready-note">
-          <span>
-            项目已创建。若还没有 PDBQT，可以先获取原始结构；若已经准备好 PDBQT，可以直接导入 Vina 输入文件。
-          </span>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => onCreated(createdProject, "structure-fetch")}
-          >
-            下载原始结构文件
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => onCreated(createdProject, "import-pdbqt")}
-          >
-            直接导入 PDBQT
-          </button>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
         </div>
-      ) : null}
-      {rawError ? (
-        <details className="raw-error">
-          <summary>错误详情</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
+      </header>
+
+      <div className="task-layout">
+        <main className="task-main">
+          <SectionCard title="项目信息">
+            <div className="form-panel">
+              <label htmlFor="project-name">项目名称</label>
+              <input
+                id="project-name"
+                type="text"
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="例如 demo_project"
+              />
+
+              <label htmlFor="base-dir">保存目录</label>
+              <PathInput
+                id="base-dir"
+                value={baseDir}
+                onChange={setBaseDir}
+                mode="directory"
+                title="选择项目保存目录"
+                placeholder="选择项目的父目录"
+              />
+
+              <div className="button-row end">
+                <ActionButton variant="primary" disabled={isBusy} onClick={() => void createProject()}>
+                  {isBusy ? "创建中..." : "创建项目"}
+                </ActionButton>
+              </div>
+            </div>
+          </SectionCard>
+
+          {message ? <p className="message-line">{message}</p> : null}
+          {rawError ? (
+            <AdvancedDetails>
+              <pre>{rawError}</pre>
+            </AdvancedDetails>
+          ) : null}
+        </main>
+
+        <aside className="task-context">
+          <SectionCard title="下一步">
+            <div className="next-step-strip">
+              <div>
+                <strong>获取结构</strong>
+                <p>也可以稍后手动导入已经准备好的 PDBQT。</p>
+              </div>
+            </div>
+          </SectionCard>
+        </aside>
+      </div>
     </section>
   );
 }
-

@@ -1,6 +1,11 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import PathInput from "../components/PathInput";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectFileRef, ProjectResponse } from "../types";
 
 type ImportPdbqtPageProps = {
@@ -23,8 +28,8 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
   };
 }
 
-function fileStatus(fileRef: ProjectFileRef): string {
-  return fileRef.file ? `已导入：${fileRef.file}` : "未导入";
+function fileText(fileRef: ProjectFileRef): string {
+  return fileRef.file || "未导入";
 }
 
 export default function ImportPdbqtPage({
@@ -54,7 +59,7 @@ export default function ImportPdbqtPage({
       setRawError("");
       return;
     }
-    setMessage(response.error?.message ?? "项目操作失败。");
+    setMessage(response.error?.message ?? "导入失败。");
     setRawError(response.error?.raw_error ?? "");
   };
 
@@ -64,9 +69,9 @@ export default function ImportPdbqtPage({
       const rawPayload = await invoke<string>("load_project", {
         projectDir: project.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "项目已重新加载。");
+      applyProjectResponse(parseProjectResponse(rawPayload), "项目已刷新。");
     } catch (error) {
-      setMessage("前端未能调用项目读取命令。");
+      setMessage("无法读取项目。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -78,19 +83,13 @@ export default function ImportPdbqtPage({
     setMessage("");
     setRawError("");
     try {
-      const rawPayload = await invoke<string>(
-        role === "receptor" ? "import_receptor_pdbqt" : "import_ligand_pdbqt",
-        {
-          projectDir: project.project_dir,
-          sourcePath: role === "receptor" ? receptorPath : ligandPath,
-        },
-      );
-      applyProjectResponse(
-        parseProjectResponse(rawPayload),
-        role === "receptor" ? "受体 PDBQT 已导入。" : "配体 PDBQT 已导入。",
-      );
+      const rawPayload = await invoke<string>(role === "receptor" ? "import_receptor_pdbqt" : "import_ligand_pdbqt", {
+        projectDir: project.project_dir,
+        sourcePath: role === "receptor" ? receptorPath : ligandPath,
+      });
+      applyProjectResponse(parseProjectResponse(rawPayload), role === "receptor" ? "受体 PDBQT 已导入。" : "配体 PDBQT 已导入。");
     } catch (error) {
-      setMessage(role === "receptor" ? "前端未能调用受体导入命令。" : "前端未能调用配体导入命令。");
+      setMessage(role === "receptor" ? "无法导入受体 PDBQT。" : "无法导入配体 PDBQT。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -99,121 +98,80 @@ export default function ImportPdbqtPage({
 
   const readyForBox = Boolean(project.receptor.file && project.ligand.file);
 
-  return (
-    <section className="project-page" aria-labelledby="import-pdbqt-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回创建项目
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">Vina 输入</p>
-        <h1 id="import-pdbqt-title">导入 Vina 输入文件</h1>
-        <p>
-          第一版只接受已经准备好的 .pdbqt 文件。导入时会复制到项目 prepared
-          目录，并更新 project.json。
-          如果你还没有 PDBQT，可以先下载 PDB / PubChem 原始结构文件；但原始结构文件不能直接运行 Vina，后续仍需准备成 PDBQT。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
-
-      <div className="disclaimer-note">
-        原始结构文件通常是 PDB、CIF 或 SDF；Vina 输入文件是经过外部工具准备后的 PDBQT。
-        DockStart 当前不会自动把 raw 转成 PDBQT，请在外部完成准备后再导入。
-      </div>
-
-      <div className="import-grid">
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>受体 receptor.pdbqt</h2>
-            <span className={`status-badge ${project.receptor.file ? "status-ok" : "status-missing"}`}>
-              {project.receptor.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{fileStatus(project.receptor)}</p>
-          <PathInput
-            value={receptorPath}
-            onChange={setReceptorPath}
-            mode="file"
-            title="选择受体 PDBQT 文件"
-            placeholder="输入 receptor.pdbqt 源文件路径"
-            ariaLabel="受体 PDBQT 源文件路径"
-            filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
-          />
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={isBusy}
-            onClick={() => void importFile("receptor")}
-          >
-            导入受体
-          </button>
-        </article>
-
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>配体 ligand.pdbqt</h2>
-            <span className={`status-badge ${project.ligand.file ? "status-ok" : "status-missing"}`}>
-              {project.ligand.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{fileStatus(project.ligand)}</p>
-          <PathInput
-            value={ligandPath}
-            onChange={setLigandPath}
-            mode="file"
-            title="选择配体 PDBQT 文件"
-            placeholder="输入 ligand.pdbqt 源文件路径"
-            ariaLabel="配体 PDBQT 源文件路径"
-            filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
-          />
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={isBusy}
-            onClick={() => void importFile("ligand")}
-          >
-            导入配体
-          </button>
-        </article>
-      </div>
-
-      <div className="toolbar project-toolbar">
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadProject()}>
-          重新加载项目
-        </button>
-        <button className="secondary-button" type="button" onClick={() => onOpenStructureFetch(project)}>
-          先下载原始结构文件
-        </button>
-      </div>
-
-      {readyForBox ? (
-        <div className="ready-note">
-          <span>受体和配体都已导入，可以进入 Box 设置。</span>
-          <button className="secondary-button" type="button" onClick={() => onOpenBoxSetup(project)}>
-            进入 Box 设置
-          </button>
+  const renderImportCard = (role: "receptor" | "ligand") => {
+    const isReceptor = role === "receptor";
+    const fileRef = isReceptor ? project.receptor : project.ligand;
+    const sourcePath = isReceptor ? receptorPath : ligandPath;
+    const setSourcePath = isReceptor ? setReceptorPath : setLigandPath;
+    return (
+      <article className="task-card">
+        <div className="section-card-header">
+          <h2>{isReceptor ? "受体 PDBQT" : "配体 PDBQT"}</h2>
+          <StatusBadge tone={fileRef.file ? "ok" : "warning"}>{fileRef.file ? "已完成" : "缺失"}</StatusBadge>
         </div>
-      ) : null}
+        <p className="muted-path">{fileText(fileRef)}</p>
+        <PathInput
+          value={sourcePath}
+          onChange={setSourcePath}
+          mode="file"
+          title={isReceptor ? "选择受体 PDBQT 文件" : "选择配体 PDBQT 文件"}
+          placeholder={isReceptor ? "选择 receptor.pdbqt" : "选择 ligand.pdbqt"}
+          ariaLabel={isReceptor ? "受体 PDBQT 源文件路径" : "配体 PDBQT 源文件路径"}
+          filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
+        />
+        <ActionButton variant="primary" disabled={isBusy || !sourcePath.trim()} onClick={() => void importFile(role)}>
+          {isReceptor ? "导入受体" : "导入配体"}
+        </ActionButton>
+      </article>
+    );
+  };
 
-      <div className="toolbar project-toolbar">
-        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
-          查看 prepared 文件
-        </button>
+  return (
+    <section className="workbench-page" aria-labelledby="import-pdbqt-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">Vina 输入</p>
+          <h1 id="import-pdbqt-title">导入 PDBQT</h1>
+          <p>选择已经准备好的受体和配体 PDBQT 文件。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => void reloadProject()} disabled={isBusy}>刷新项目</ActionButton>
+        </div>
+      </header>
+
+      <WarningCallout title="PDBQT 是 Vina 输入">
+        <p>raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。</p>
+      </WarningCallout>
+
+      <div className="two-column-grid">
+        {renderImportCard("receptor")}
+        {renderImportCard("ligand")}
       </div>
 
-      {message ? <p className="settings-message">{message}</p> : null}
+      <div className="next-step-strip">
+        <div>
+          <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体"}</strong>
+          <p>也可以回到结构获取页下载 raw 文件。</p>
+        </div>
+        <div className="button-row end">
+          <ActionButton onClick={() => onOpenStructureFetch(project)}>获取结构</ActionButton>
+          <ActionButton onClick={() => onOpenViewer(project)}>3D 查看</ActionButton>
+          <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
+            设置搜索范围
+          </ActionButton>
+        </div>
+      </div>
+
+      {message ? <p className="message-line">{message}</p> : null}
       {rawError ? (
-        <details className="raw-error">
-          <summary>错误详情</summary>
+        <AdvancedDetails>
           <pre>{rawError}</pre>
-        </details>
+        </AdvancedDetails>
       ) : null}
+      <SectionCard title="技术说明">
+        <p>导入时文件会复制到项目 prepared 目录，并更新 project.json。</p>
+      </SectionCard>
     </section>
   );
 }
-

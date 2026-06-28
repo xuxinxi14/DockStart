@@ -1,6 +1,10 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunCheckResult, ToolStatus } from "../types";
@@ -13,11 +17,18 @@ type RunPreparePageProps = {
 };
 
 const statusText: Record<ToolStatus, string> = {
-  ok: "已通过",
+  ok: "已完成",
   missing: "缺失",
-  error: "检查错误",
-  unknown: "状态未知",
+  error: "失败",
+  unknown: "需检查",
 };
+
+function statusTone(status: ToolStatus): "ok" | "warning" | "error" | "muted" {
+  if (status === "ok") return "ok";
+  if (status === "error") return "error";
+  if (status === "missing") return "warning";
+  return "muted";
+}
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectResponse>;
@@ -42,10 +53,6 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
 
 function checkByKey(checks: RunCheckResult[], key: string): RunCheckResult | undefined {
   return checks.find((check) => check.key === key);
-}
-
-function fileStatus(project: DockStartProject, key: "receptor" | "ligand"): string {
-  return project[key].file || "尚未导入";
 }
 
 export default function RunPreparePage({
@@ -94,7 +101,7 @@ export default function RunPreparePage({
       setCommandPreview("");
       setNextRunId("");
       setWarnings([]);
-      setMessage("前端未能调用运行前检查命令。");
+      setMessage("无法完成运行前检查。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -113,143 +120,83 @@ export default function RunPreparePage({
         projectDir: project.project_dir,
       });
       const response = parseProjectResponse(rawPayload);
-      const ok = applyResponse(response, "运行记录已准备完成。");
+      const ok = applyResponse(response, "对接运行记录已创建。");
       setPrepared(ok ? response : null);
     } catch (error) {
-      setMessage("前端未能调用准备运行记录命令。");
+      setMessage("无法创建对接运行记录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
   };
 
-  const receptorCheck = checkByKey(checks, "receptor");
-  const ligandCheck = checkByKey(checks, "ligand");
-  const configCheck = checkByKey(checks, "vina_config");
-  const vinaCheck = checkByKey(checks, "vina");
-  const boxCheck = checkByKey(checks, "box");
-  const vinaParamsCheck = checkByKey(checks, "vina_params");
-  const summaryChecks = [receptorCheck, ligandCheck, configCheck, vinaCheck, boxCheck, vinaParamsCheck].filter(
-    Boolean,
-  ) as RunCheckResult[];
+  const summaryChecks = [
+    checkByKey(checks, "receptor"),
+    checkByKey(checks, "ligand"),
+    checkByKey(checks, "vina_config"),
+    checkByKey(checks, "vina"),
+    checkByKey(checks, "box"),
+    checkByKey(checks, "vina_params"),
+  ].filter(Boolean) as RunCheckResult[];
 
   return (
-    <section className="project-page" aria-labelledby="run-prepare-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回配置文件页面
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">对接运行</p>
-        <h1 id="run-prepare-title">准备对接运行</h1>
-        <p>
-          本页面只创建对接运行记录，不执行 AutoDock Vina。这里会检查输入文件、配置文件、参数和 Vina
-          可用性，然后保存命令预览和配置快照；下一页再开始对接。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
+    <section className="workbench-page" aria-labelledby="run-prepare-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">运行对接</p>
+          <h1 id="run-prepare-title">准备对接运行</h1>
+          <p>创建 run 记录，保存配置快照和命令预览。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+        </div>
+      </header>
 
       <VinaWorkflowBar current="prepare" runId={nextRunId || prepared?.run_id} />
 
-      <div className="summary-grid">
-        <div className="param-summary">
-          <span>受体 Vina 输入</span>
-          <strong>{fileStatus(project, "receptor")}</strong>
+      <SectionCard title="运行前状态">
+        <div className="status-strip">
+          {summaryChecks.length > 0 ? (
+            summaryChecks.map((check) => (
+              <article className="metric-card" key={check.key}>
+                <span>{check.name}</span>
+                <strong>{check.message || check.path || check.version || "已检查"}</strong>
+                <StatusBadge tone={statusTone(check.status)}>{statusText[check.status]}</StatusBadge>
+              </article>
+            ))
+          ) : (
+            <p className="message-line">尚未获得检查结果。</p>
+          )}
         </div>
-        <div className="param-summary">
-          <span>配体 Vina 输入</span>
-          <strong>{fileStatus(project, "ligand")}</strong>
+        <AdvancedDetails summary="命令预览">
+          <pre>{commandPreview || "运行前检查通过后会显示命令数组预览。"}</pre>
+        </AdvancedDetails>
+        <div className="button-row end">
+          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadChecks()}>重新检查</ActionButton>
+          <ActionButton variant="primary" disabled={isBusy} onClick={() => void prepareRun()}>
+            {isBusy ? "准备中..." : "创建运行记录"}
+          </ActionButton>
         </div>
-        <div className="param-summary">
-          <span>配置文件</span>
-          <strong>{project.config.vina_config_file || "尚未生成 vina_config.txt"}</strong>
-        </div>
-      </div>
+      </SectionCard>
 
-      <div className="tool-grid run-check-grid">
-        {summaryChecks.length > 0 ? (
-          summaryChecks.map((check) => (
-            <article className="tool-card" key={check.key}>
-              <div className="tool-card-header">
-                <h2>{check.name}</h2>
-                <span className={`status-badge status-${check.status}`}>{statusText[check.status]}</span>
-              </div>
-              <dl className="tool-meta">
-                <div>
-                  <dt>说明</dt>
-                  <dd>{check.message || "暂无说明"}</dd>
-                </div>
-                <div>
-                  <dt>路径 / 版本</dt>
-                  <dd>{check.path || check.version || "未提供"}</dd>
-                </div>
-              </dl>
-              {check.raw_error ? (
-                <details className="raw-error">
-                  <summary>错误详情</summary>
-                  <pre>{check.raw_error}</pre>
-                </details>
-              ) : null}
-            </article>
-          ))
-        ) : (
-          <p className="placeholder-note">尚未获得检查结果，请点击“重新检查”。</p>
-        )}
-      </div>
-
-      <div className="config-preview-panel">
-        <div className="tool-card-header">
-          <h2>技术详情：命令预览</h2>
-          <span>{nextRunId ? `下一条运行记录：${nextRunId}` : "尚未生成运行编号"}</span>
-        </div>
-        <pre className="config-preview">
-          {commandPreview || "运行前检查通过后，这里会显示将来执行 Vina 时使用的命令数组预览。"}
-        </pre>
-      </div>
-
-      <p className="placeholder-note">创建运行记录时不会生成 out.pdbqt 或 log.txt；执行页会真实运行 Vina，结果解析在下一步完成。</p>
-
-      <div className="toolbar project-toolbar">
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadChecks()}>
-          重新检查
-        </button>
-        <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareRun()}>
-          {isBusy ? "准备中..." : "创建对接运行记录"}
-        </button>
-      </div>
-
-      {prepared?.ok ? (
-        <div className="ready-note run-result-note">
-          <span>运行记录已准备：{prepared.run_id}</span>
-          <div className="run-result-files">
-            <code>{prepared.metadata_file}</code>
-            <code>{prepared.command_preview_file}</code>
-            <code>{prepared.config_snapshot_file}</code>
+      {prepared?.ok && prepared.project && prepared.run_id ? (
+        <div className="next-step-strip">
+          <div>
+            <strong>下一步：开始对接</strong>
+            <p>运行记录 {prepared.run_id} 已创建。</p>
           </div>
-          {prepared.project && prepared.run_id ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => onOpenRunExecute(prepared.project!, prepared.run_id!)}
-            >
-              执行 AutoDock Vina
-            </button>
-          ) : null}
+          <ActionButton variant="primary" onClick={() => onOpenRunExecute(prepared.project!, prepared.run_id!)}>
+            开始对接
+          </ActionButton>
         </div>
       ) : null}
 
       {warnings.map((warning) => (
-        <WarningCallout key={warning} title="运行前检查提示">
+        <WarningCallout key={warning} title="运行前提示">
           <p>{warning}</p>
         </WarningCallout>
       ))}
-      <CommandResultPanel title="运行准备命令结果" message={message} rawError={rawError} />
+      <CommandResultPanel title="运行准备结果" message={message} rawError={rawError} />
     </section>
   );
 }
-

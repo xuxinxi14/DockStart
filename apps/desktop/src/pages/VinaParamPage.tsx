@@ -1,5 +1,10 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse } from "../types";
 
 type VinaParamPageProps = {
@@ -11,42 +16,12 @@ type VinaParamPageProps = {
 
 type VinaFormState = Record<keyof DockStartProject["vina"], string>;
 
-const vinaFields: Array<{
-  key: keyof DockStartProject["vina"];
-  label: string;
-  help: string;
-  inputMode: "numeric" | "decimal";
-}> = [
-  {
-    key: "exhaustiveness",
-    label: "搜索彻底程度",
-    help: "搜索彻底程度，越高越慢，新手建议 8。",
-    inputMode: "numeric",
-  },
-  {
-    key: "num_modes",
-    label: "输出构象数量",
-    help: "输出构象数量，新手建议 9。",
-    inputMode: "numeric",
-  },
-  {
-    key: "energy_range",
-    label: "能量范围",
-    help: "保留能量范围，单位 kcal/mol，新手建议 3 或 4。",
-    inputMode: "decimal",
-  },
-  {
-    key: "cpu",
-    label: "CPU 核心数",
-    help: "使用 CPU 核心数，0 表示自动。",
-    inputMode: "numeric",
-  },
-  {
-    key: "seed",
-    label: "随机种子",
-    help: "随机种子，留空表示随机；填写整数可提高复现性。",
-    inputMode: "numeric",
-  },
+const vinaFields: Array<{ key: keyof DockStartProject["vina"]; label: string; hint: string; inputMode: "numeric" | "decimal" }> = [
+  { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议 8", inputMode: "numeric" },
+  { key: "num_modes", label: "输出构象数量", hint: "建议 9", inputMode: "numeric" },
+  { key: "energy_range", label: "能量范围", hint: "kcal/mol", inputMode: "decimal" },
+  { key: "cpu", label: "CPU 核心数", hint: "0 表示自动", inputMode: "numeric" },
+  { key: "seed", label: "随机种子", hint: "可留空", inputMode: "numeric" },
 ];
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -72,20 +47,8 @@ function vinaToForm(project: DockStartProject): VinaFormState {
   };
 }
 
-function hasImportedFiles(project: DockStartProject): boolean {
+function hasPreparedFiles(project: DockStartProject): boolean {
   return Boolean(project.receptor.file && project.ligand.file);
-}
-
-function isDefaultBox(project: DockStartProject): boolean {
-  const box = project.box;
-  return (
-    box.center_x === 0 &&
-    box.center_y === 0 &&
-    box.center_z === 0 &&
-    box.size_x === 20 &&
-    box.size_y === 20 &&
-    box.size_z === 20
-  );
 }
 
 export default function VinaParamPage({
@@ -114,7 +77,7 @@ export default function VinaParamPage({
         setCanOpenConfig(showNextAction);
         return;
       }
-      setMessage(response.error?.message ?? "Vina 参数操作失败。");
+      setMessage(response.error?.message ?? "Vina 参数保存失败。");
       setWarnings([]);
       setRawError(response.error?.raw_error ?? "");
       setCanOpenConfig(false);
@@ -128,9 +91,9 @@ export default function VinaParamPage({
       const rawPayload = await invoke<string>("get_vina_params", {
         projectDir: initialProject.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已重新加载。");
+      applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已刷新。");
     } catch (error) {
-      setMessage("前端未能调用 Vina 参数读取命令。");
+      setMessage("无法读取 Vina 参数。");
       setWarnings([]);
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -144,10 +107,7 @@ export default function VinaParamPage({
 
   const updateField = (key: keyof DockStartProject["vina"], value: string) => {
     setCanOpenConfig(false);
-    setVinaForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
+    setVinaForm((current) => ({ ...current, [key]: value }));
   };
 
   const saveVina = async () => {
@@ -162,7 +122,7 @@ export default function VinaParamPage({
       });
       applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已保存。", true);
     } catch (error) {
-      setMessage("前端未能调用 Vina 参数保存命令。");
+      setMessage("无法保存 Vina 参数。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -170,113 +130,89 @@ export default function VinaParamPage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="vina-param-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回 Box 设置
-      </button>
+    <section className="workbench-page" aria-labelledby="vina-param-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">运行对接</p>
+          <h1 id="vina-param-title">设置 Vina 参数</h1>
+          <p>保存本次对接使用的 Vina 参数。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+        </div>
+      </header>
 
-      <div className="page-heading">
-        <p className="eyebrow">运行参数</p>
-        <h1 id="vina-param-title">设置 Vina 参数</h1>
-        <p>
-          这里只保存运行参数到 project.json，不生成 vina_config.txt，也不调用 AutoDock Vina。
-          参数会在后续生成配置和运行步骤中复用。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
-
-      <div className="import-grid">
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>受体 receptor.pdbqt</h2>
-            <span className={`status-badge ${project.receptor.file ? "status-ok" : "status-missing"}`}>
-              {project.receptor.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.receptor.file || "运行 Vina 前需要导入受体 PDBQT。"}</p>
+      <div className="status-strip">
+        <article className="metric-card">
+          <span>受体 PDBQT</span>
+          <strong>{project.receptor.file || "未导入"}</strong>
+          <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
         </article>
-
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>配体 ligand.pdbqt</h2>
-            <span className={`status-badge ${project.ligand.file ? "status-ok" : "status-missing"}`}>
-              {project.ligand.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.ligand.file || "运行 Vina 前需要导入配体 PDBQT。"}</p>
+        <article className="metric-card">
+          <span>配体 PDBQT</span>
+          <strong>{project.ligand.file || "未导入"}</strong>
+          <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
+        </article>
+        <article className="metric-card">
+          <span>Box</span>
+          <strong>
+            {project.box.center_x}, {project.box.center_y}, {project.box.center_z} / {project.box.size_x}, {project.box.size_y}, {project.box.size_z}
+          </strong>
+          <StatusBadge tone="ok">已记录</StatusBadge>
         </article>
       </div>
 
-      {!hasImportedFiles(project) ? (
-        <p className="warning-note">可以先编辑 Vina 参数，但运行 Vina 前需要补全受体和配体输入文件。</p>
+      {!hasPreparedFiles(project) ? (
+        <WarningCallout title="输入文件缺失">
+          <p>可以先保存参数，但生成配置前需要补全受体和配体 PDBQT。</p>
+        </WarningCallout>
       ) : null}
 
-      {isDefaultBox(project) ? (
-        <p className="warning-note">当前 Box 参数仍为默认值，请确认它覆盖了合理结合区域；这里不会阻止保存 Vina 参数。</p>
-      ) : null}
+      <SectionCard title="Vina 参数">
+        <div className="param-form">
+          {vinaFields.map((field) => (
+            <label className="param-field" key={field.key}>
+              <span>{field.label}</span>
+              <input
+                type="text"
+                value={vinaForm[field.key]}
+                onChange={(event) => updateField(field.key, event.target.value)}
+                inputMode={field.inputMode}
+              />
+              <small>{field.hint}</small>
+            </label>
+          ))}
+        </div>
+        <div className="button-row end">
+          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadVina()}>重新加载</ActionButton>
+          <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveVina()}>
+            {isBusy ? "保存中..." : "保存 Vina 参数"}
+          </ActionButton>
+        </div>
+      </SectionCard>
 
-      <div className="param-summary">
-        <span>当前 Box 摘要</span>
-        <strong>
-          中心：{project.box.center_x}, {project.box.center_y}, {project.box.center_z} Å
-        </strong>
-        <strong>
-          尺寸：{project.box.size_x}, {project.box.size_y}, {project.box.size_z} Å
-        </strong>
-      </div>
-
-      <div className="param-form">
-        {vinaFields.map((field) => (
-          <label className="param-field" key={field.key}>
-            <span>{field.label}</span>
-            <input
-              type="text"
-              value={vinaForm[field.key]}
-              onChange={(event) => updateField(field.key, event.target.value)}
-              inputMode={field.inputMode}
-            />
-            <small>{field.help}</small>
-          </label>
-        ))}
-      </div>
-
-      <div className="toolbar project-toolbar">
-        <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveVina()}>
-          {isBusy ? "保存中..." : "保存 Vina 参数"}
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadVina()}>
-          重新加载项目
-        </button>
+      <div className="next-step-strip">
+        <div>
+          <strong>{canOpenConfig ? "下一步：生成运行配置" : "保存参数后生成配置"}</strong>
+          <p>生成配置只写入 vina_config.txt，不执行对接。</p>
+        </div>
+        <ActionButton variant="primary" disabled={!canOpenConfig} onClick={() => onOpenVinaConfig(project)}>
+          生成运行配置
+        </ActionButton>
       </div>
 
       {warnings.map((warning) => (
-        <p className="warning-note" key={warning}>
-          {warning}
-        </p>
+        <WarningCallout key={warning} title="参数提示">
+          <p>{warning}</p>
+        </WarningCallout>
       ))}
 
-      {canOpenConfig ? (
-        <div className="ready-note">
-          <span>Vina 参数已保存，可以进入配置文件生成。</span>
-          <button className="secondary-button" type="button" onClick={() => onOpenVinaConfig(project)}>
-            进入配置文件生成
-          </button>
-        </div>
-      ) : null}
-
-      {message ? <p className="settings-message">{message}</p> : null}
+      {message ? <p className="message-line">{message}</p> : null}
       {rawError ? (
-        <details className="raw-error">
-          <summary>错误详情</summary>
+        <AdvancedDetails>
           <pre>{rawError}</pre>
-        </details>
+        </AdvancedDetails>
       ) : null}
     </section>
   );
 }
-

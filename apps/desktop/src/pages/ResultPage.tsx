@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
@@ -16,12 +20,12 @@ type ResultPageProps = {
 };
 
 const runStatusText: Record<string, string> = {
-  prepared: "已准备",
-  running: "运行中",
+  prepared: "可进行",
+  running: "进行中",
   finished: "已完成",
-  failed: "运行失败",
-  cancelled: "已取消",
-  unknown: "状态未知",
+  failed: "失败",
+  cancelled: "失败",
+  unknown: "需检查",
 };
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -93,15 +97,11 @@ export default function ResultPage({
         setProject(response.project);
         onProjectChange(response.project);
       }
-      if (response.metadata !== undefined) {
-        setMetadata(response.metadata ?? null);
-      }
+      if (response.metadata !== undefined) setMetadata(response.metadata ?? null);
       if (response.log_file !== undefined || response.metadata !== undefined) {
         setLogFile(response.log_file ?? metadataString(response.metadata ?? null, "log_file"));
       }
-      if (response.scores !== undefined) {
-        setScores(response.scores);
-      }
+      if (response.scores !== undefined) setScores(response.scores);
       if (response.scores_file !== undefined || response.metadata !== undefined) {
         setScoresFile(response.scores_file ?? metadataString(response.metadata ?? null, "scores_file"));
       }
@@ -128,9 +128,9 @@ export default function ResultPage({
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "运行记录已重新加载。");
+      applyResponse(parseProjectResponse(rawPayload), "运行记录已刷新。");
     } catch (error) {
-      setMessage("前端未能读取运行记录。");
+      setMessage("无法读取运行记录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -150,9 +150,9 @@ export default function ResultPage({
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "Vina 结果已解析。");
+      applyResponse(parseProjectResponse(rawPayload), "结果已解析。");
     } catch (error) {
-      setMessage("前端未能调用 Vina 结果解析命令。");
+      setMessage("无法解析 Vina 结果。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -168,9 +168,9 @@ export default function ResultPage({
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "scores.csv 已重新加载。");
+      applyResponse(parseProjectResponse(rawPayload), "scores.csv 已加载。");
     } catch (error) {
-      setMessage("前端未能读取 scores.csv。");
+      setMessage("无法读取 scores.csv。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -178,120 +178,108 @@ export default function ResultPage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="result-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回执行页
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">对接结果</p>
-        <h1 id="result-title">查看对接结果</h1>
-        <p>
-          本页只解析已完成对接运行的 log.txt 对接评分表格，导出 scores.csv，并显示构象、对接评分和 RMSD。
-          不做药效判断。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
+    <section className="workbench-page" aria-labelledby="result-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">结果与报告</p>
+          <h1 id="result-title">查看对接结果</h1>
+          <p>解析 log.txt，生成 scores.csv，并查看对接评分表。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => void reloadRunMetadata()} disabled={isBusy}>刷新运行记录</ActionButton>
+        </div>
+      </header>
 
       <VinaWorkflowBar current="result" runId={runId} />
 
-      <div className="summary-grid">
-        <div className="param-summary">
+      <div className="status-strip">
+        <article className="metric-card">
           <span>运行记录</span>
           <strong>{runId}</strong>
-        </div>
-        <div className="param-summary">
+        </article>
+        <article className="metric-card">
           <span>运行状态</span>
           <strong>{runStatusText[status] ?? status}</strong>
-        </div>
-        <div className="param-summary">
-          <span>log.txt</span>
-          <strong>{logPath}</strong>
-        </div>
+          <StatusBadge tone={status === "finished" ? "ok" : status === "failed" ? "error" : "warning"}>
+            {runStatusText[status] ?? "需检查"}
+          </StatusBadge>
+        </article>
+        <article className="metric-card">
+          <span>最佳对接评分</span>
+          <strong>{displayedBestAffinity === null ? "尚未解析" : `${displayedBestAffinity} kcal/mol`}</strong>
+        </article>
       </div>
 
       {status !== "finished" ? (
         <WarningCallout title="结果暂不可解析">
-          <p>需要先成功运行 Vina，run.status 为 finished 后才能解析结果。</p>
+          <p>需要先完成 Vina 运行。</p>
         </WarningCallout>
       ) : null}
 
-      <ScientificDisclaimer kind="score" />
-
-      <div className="toolbar project-toolbar">
-        <button className="primary-button" type="button" disabled={!canAnalyze} onClick={() => void analyzeResults()}>
-          {isBusy ? "处理中..." : "解析并查看 scores"}
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadScores()}>
-          重新加载 scores.csv
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadRunMetadata()}>
-          重新加载运行记录
-        </button>
-        <button className="secondary-button" type="button" disabled={status !== "finished"} onClick={() => onOpenViewer(project)}>
-          查看对接构象
-        </button>
-        {scores.length > 0 || displayedScoresFile ? (
-          <button className="secondary-button" type="button" disabled={isBusy} onClick={() => onOpenReportPage(project, runId)}>
+      <SectionCard title="scores.csv">
+        <div className="button-row">
+          <ActionButton variant="primary" disabled={!canAnalyze} onClick={() => void analyzeResults()}>
+            {isBusy ? "处理中..." : "解析 scores"}
+          </ActionButton>
+          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
+          <ActionButton disabled={status !== "finished"} onClick={() => onOpenViewer(project)}>查看构象</ActionButton>
+          <ActionButton disabled={!(scores.length > 0 || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
             导出实验记录
-          </button>
-        ) : null}
-      </div>
-
-      {displayedBestAffinity !== null ? (
-        <div className="summary-grid">
-          <div className="param-summary">
-            <span>最佳对接评分</span>
-            <strong>{displayedBestAffinity} kcal/mol</strong>
-          </div>
-          <div className="param-summary">
-            <span>本次 scores.csv</span>
-            <strong>{displayedScoresFile || "尚未生成"}</strong>
-          </div>
-          <div className="param-summary">
-            <span>项目 scores.csv</span>
-            <strong>{displayedProjectScoresFile || "尚未生成"}</strong>
-          </div>
-          <div className="param-summary">
-            <span>解析时间</span>
-            <strong>{displayedAnalyzedAt || "尚未分析"}</strong>
-          </div>
+          </ActionButton>
         </div>
-      ) : null}
 
-      {scores.length > 0 ? (
-        <div className="scores-table-wrap">
-          <table className="scores-table">
-            <thead>
-              <tr>
-                <th>构象</th>
-                <th>对接评分 kcal/mol</th>
-                <th>RMSD l.b.</th>
-                <th>RMSD u.b.</th>
-              </tr>
-            </thead>
-            <tbody>
-              {scores.map((score) => (
-                <tr key={score.mode}>
-                  <td>{score.mode}</td>
-                  <td>{formatScoreValue(score.affinity_kcal_mol)}</td>
-                  <td>{formatScoreValue(score.rmsd_lb)}</td>
-                  <td>{formatScoreValue(score.rmsd_ub)}</td>
+        {scores.length > 0 ? (
+          <div className="scores-table-wrap">
+            <table className="scores-table">
+              <thead>
+                <tr>
+                  <th>构象</th>
+                  <th>对接评分 kcal/mol</th>
+                  <th>RMSD l.b.</th>
+                  <th>RMSD u.b.</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="placeholder-note">尚未加载 scores.csv。解析成功后这里会显示结果表格。</p>
-      )}
+              </thead>
+              <tbody>
+                {scores.map((score) => (
+                  <tr key={score.mode}>
+                    <td>{score.mode}</td>
+                    <td>{formatScoreValue(score.affinity_kcal_mol)}</td>
+                    <td>{formatScoreValue(score.rmsd_lb)}</td>
+                    <td>{formatScoreValue(score.rmsd_ub)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="message-line">尚未加载 scores.csv。</p>
+        )}
+      </SectionCard>
 
-      <CommandResultPanel title="结果解析命令结果" message={message} rawError={rawError} />
+      <AdvancedDetails>
+        <dl className="meta-list">
+          <div>
+            <dt>log.txt</dt>
+            <dd><code>{logPath}</code></dd>
+          </div>
+          <div>
+            <dt>本次 scores</dt>
+            <dd><code>{displayedScoresFile || "尚未生成"}</code></dd>
+          </div>
+          <div>
+            <dt>项目 scores</dt>
+            <dd><code>{displayedProjectScoresFile || "尚未生成"}</code></dd>
+          </div>
+          <div>
+            <dt>解析时间</dt>
+            <dd>{displayedAnalyzedAt || "未记录"}</dd>
+          </div>
+        </dl>
+      </AdvancedDetails>
+
+      <ScientificDisclaimer kind="score" />
+      <CommandResultPanel title="结果解析" message={message} rawError={rawError} />
     </section>
   );
 }

@@ -1,5 +1,10 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
+import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse } from "../types";
 
 type BoxSetupPageProps = {
@@ -12,17 +17,13 @@ type BoxSetupPageProps = {
 
 type BoxFormState = Record<keyof DockStartProject["box"], string>;
 
-const boxFields: Array<{
-  key: keyof DockStartProject["box"];
-  label: string;
-  help: string;
-}> = [
-  { key: "center_x", label: "中心 X", help: "对接箱体中心 X 坐标，可为负数。" },
-  { key: "center_y", label: "中心 Y", help: "对接箱体中心 Y 坐标，可为负数。" },
-  { key: "center_z", label: "中心 Z", help: "对接箱体中心 Z 坐标，可为负数。" },
-  { key: "size_x", label: "尺寸 X", help: "对接箱体 X 方向尺寸，必须大于 0。" },
-  { key: "size_y", label: "尺寸 Y", help: "对接箱体 Y 方向尺寸，必须大于 0。" },
-  { key: "size_z", label: "尺寸 Z", help: "对接箱体 Z 方向尺寸，必须大于 0。" },
+const boxFields: Array<{ key: keyof DockStartProject["box"]; label: string }> = [
+  { key: "center_x", label: "中心 X" },
+  { key: "center_y", label: "中心 Y" },
+  { key: "center_z", label: "中心 Z" },
+  { key: "size_x", label: "尺寸 X" },
+  { key: "size_y", label: "尺寸 Y" },
+  { key: "size_z", label: "尺寸 Z" },
 ];
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -49,7 +50,7 @@ function boxToForm(project: DockStartProject): BoxFormState {
   };
 }
 
-function hasImportedFiles(project: DockStartProject): boolean {
+function hasPreparedFiles(project: DockStartProject): boolean {
   return Boolean(project.receptor.file && project.ligand.file);
 }
 
@@ -80,7 +81,7 @@ export default function BoxSetupPage({
         setCanOpenVinaParams(showNextAction);
         return;
       }
-      setMessage(response.error?.message ?? "Box 参数操作失败。");
+      setMessage(response.error?.message ?? "Box 参数保存失败。");
       setWarnings([]);
       setRawError(response.error?.raw_error ?? "");
       setCanOpenVinaParams(false);
@@ -94,9 +95,9 @@ export default function BoxSetupPage({
       const rawPayload = await invoke<string>("get_box_params", {
         projectDir: initialProject.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "Box 参数已重新加载。");
+      applyProjectResponse(parseProjectResponse(rawPayload), "Box 参数已刷新。");
     } catch (error) {
-      setMessage("前端未能调用 Box 参数读取命令。");
+      setMessage("无法读取 Box 参数。");
       setWarnings([]);
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -110,10 +111,7 @@ export default function BoxSetupPage({
 
   const updateField = (key: keyof DockStartProject["box"], value: string) => {
     setCanOpenVinaParams(false);
-    setBoxForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
+    setBoxForm((current) => ({ ...current, [key]: value }));
   };
 
   const saveBox = async () => {
@@ -126,9 +124,9 @@ export default function BoxSetupPage({
         projectDir: project.project_dir,
         boxJson: JSON.stringify(boxForm),
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "Box 参数已保存。", true);
+      applyProjectResponse(parseProjectResponse(rawPayload), "搜索范围已保存。", true);
     } catch (error) {
-      setMessage("前端未能调用 Box 参数保存命令。");
+      setMessage("无法保存搜索范围。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -136,105 +134,82 @@ export default function BoxSetupPage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="box-setup-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回 PDBQT 导入页
-      </button>
+    <section className="workbench-page" aria-labelledby="box-setup-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">工作流 3</p>
+          <h1 id="box-setup-title">设置搜索范围</h1>
+          <p>编辑 docking box 的中心和尺寸，单位为 Å。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => onOpenViewer(project)}>在 3D 中查看</ActionButton>
+        </div>
+      </header>
 
-      <div className="page-heading">
-        <p className="eyebrow">搜索范围</p>
-        <h1 id="box-setup-title">设置对接箱体</h1>
-        <p>
-          这里只编辑手动 Box 参数，不生成 Vina 配置，也不做 3D 可视化选框。
-          单位统一为 Å。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
-
-      <div className="import-grid">
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>受体 receptor.pdbqt</h2>
-            <span className={`status-badge ${project.receptor.file ? "status-ok" : "status-missing"}`}>
-              {project.receptor.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.receptor.file || "运行 Vina 前需要导入受体 PDBQT。"}</p>
+      <div className="status-strip">
+        <article className="metric-card">
+          <span>受体 PDBQT</span>
+          <strong>{project.receptor.file || "未导入"}</strong>
+          <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
         </article>
-
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>配体 ligand.pdbqt</h2>
-            <span className={`status-badge ${project.ligand.file ? "status-ok" : "status-missing"}`}>
-              {project.ligand.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.ligand.file || "运行 Vina 前需要导入配体 PDBQT。"}</p>
+        <article className="metric-card">
+          <span>配体 PDBQT</span>
+          <strong>{project.ligand.file || "未导入"}</strong>
+          <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
         </article>
       </div>
 
-      {!hasImportedFiles(project) ? (
-        <p className="warning-note">可以先编辑 Box 参数，但运行 Vina 前需要补全受体和配体输入文件。</p>
+      {!hasPreparedFiles(project) ? (
+        <WarningCallout title="输入文件缺失">
+          <p>可以先保存搜索范围，但运行对接前需要补全受体和配体 PDBQT。</p>
+        </WarningCallout>
       ) : null}
 
-      <div className="box-form">
-        {boxFields.map((field) => (
-          <label className="box-field" key={field.key}>
-            <span>{field.label}</span>
-            <input
-              type="text"
-              value={boxForm[field.key]}
-              onChange={(event) => updateField(field.key, event.target.value)}
-              inputMode="decimal"
-            />
-            <small>{field.help} 单位：Å</small>
-          </label>
-        ))}
-      </div>
+      <SectionCard title="Box 参数">
+        <div className="box-form">
+          {boxFields.map((field) => (
+            <label className="box-field" key={field.key}>
+              <span>{field.label}</span>
+              <input
+                type="text"
+                value={boxForm[field.key]}
+                onChange={(event) => updateField(field.key, event.target.value)}
+                inputMode="decimal"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="button-row end">
+          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadBox()}>重新加载</ActionButton>
+          <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveBox()}>
+            {isBusy ? "保存中..." : "保存搜索范围"}
+          </ActionButton>
+        </div>
+      </SectionCard>
 
-      <div className="toolbar project-toolbar">
-        <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
-          {isBusy ? "保存中..." : "保存搜索范围"}
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadBox()}>
-          重新加载项目
-        </button>
-      </div>
-
-      <div className="toolbar project-toolbar">
-        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
-          在 3D 中查看搜索范围
-        </button>
+      <div className="next-step-strip">
+        <div>
+          <strong>{canOpenVinaParams ? "下一步：设置 Vina 参数" : "保存后继续设置 Vina 参数"}</strong>
+          <p>Box 是搜索空间，不等于真实结合位点。</p>
+        </div>
+        <ActionButton variant="primary" disabled={!canOpenVinaParams} onClick={() => onOpenVinaParams(project)}>
+          进入 Vina 参数
+        </ActionButton>
       </div>
 
       {warnings.map((warning) => (
-        <p className="warning-note" key={warning}>
-          {warning}
-        </p>
+        <WarningCallout key={warning} title="搜索范围提示">
+          <p>{warning}</p>
+        </WarningCallout>
       ))}
 
-      {canOpenVinaParams ? (
-        <div className="ready-note">
-          <span>Box 参数已保存，可以进入 Vina 参数设置。</span>
-          <button className="secondary-button" type="button" onClick={() => onOpenVinaParams(project)}>
-            进入 Vina 参数设置
-          </button>
-        </div>
-      ) : null}
-
-      {message ? <p className="settings-message">{message}</p> : null}
+      {message ? <p className="message-line">{message}</p> : null}
       {rawError ? (
-        <details className="raw-error">
-          <summary>错误详情</summary>
+        <AdvancedDetails>
           <pre>{rawError}</pre>
-        </details>
+        </AdvancedDetails>
       ) : null}
     </section>
   );
 }
-

@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import ReportStatusCard from "../components/ReportStatusCard";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
@@ -15,10 +19,10 @@ type ReportPageProps = {
 };
 
 const fileStatusText: Record<RunFileStatus["status"], string> = {
-  ok: "已生成",
-  missing: "未生成",
-  empty: "空文件",
-  error: "状态错误",
+  ok: "已完成",
+  missing: "缺失",
+  empty: "需检查",
+  error: "失败",
 };
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -46,22 +50,7 @@ function metadataString(metadata: Record<string, unknown> | null, key: string): 
   return typeof value === "string" ? value : "";
 }
 
-function statusClass(status: RunFileStatus["status"]): string {
-  if (status === "ok") {
-    return "status-ok";
-  }
-  if (status === "missing") {
-    return "status-missing";
-  }
-  return "status-error";
-}
-
-export default function ReportPage({
-  project: initialProject,
-  runId,
-  onBack,
-  onProjectChange,
-}: ReportPageProps) {
+export default function ReportPage({ project: initialProject, runId, onBack, onProjectChange }: ReportPageProps) {
   const [project, setProject] = useState(initialProject);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [files, setFiles] = useState<RunFileStatus[]>([]);
@@ -89,9 +78,7 @@ export default function ReportPage({
         setProject(response.project);
         onProjectChange(response.project);
       }
-      if (response.metadata !== undefined) {
-        setMetadata(response.metadata ?? null);
-      }
+      if (response.metadata !== undefined) setMetadata(response.metadata ?? null);
       setFiles(response.files ?? []);
       setReportFile(response.report_file ?? metadataString(response.metadata ?? null, "report_file"));
       setProjectReportFile(response.project_report_file ?? metadataString(response.metadata ?? null, "project_report_file"));
@@ -112,9 +99,9 @@ export default function ReportPage({
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "报告状态已重新检查。");
+      applyResponse(parseProjectResponse(rawPayload), "报告状态已刷新。");
     } catch (error) {
-      setMessage("前端未能读取报告状态。");
+      setMessage("无法读取报告状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -134,9 +121,9 @@ export default function ReportPage({
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "Markdown 报告已导出。");
+      applyResponse(parseProjectResponse(rawPayload), "Markdown 实验记录已导出。");
     } catch (error) {
-      setMessage("前端未能调用 Markdown 报告导出命令。");
+      setMessage("无法导出 Markdown 实验记录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -144,98 +131,85 @@ export default function ReportPage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="report-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回结果页
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">实验记录</p>
-        <h1 id="report-title">导出实验记录</h1>
-        <p>
-          本页只基于已完成的对接运行和已解析的 scores.csv 导出可复现 Markdown 实验记录。不生成 PDF，不做 AI 总结，
-          不包含相互作用分析，也不做药效判断。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
+    <section className="workbench-page" aria-labelledby="report-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">结果与报告</p>
+          <h1 id="report-title">导出实验记录</h1>
+          <p>导出 Markdown 记录，便于复现和排查。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => void reloadReportStatus()} disabled={isBusy}>刷新状态</ActionButton>
+        </div>
+      </header>
 
       <VinaWorkflowBar current="report" runId={runId} />
 
-      <div className="summary-grid">
-        <div className="param-summary">
+      <div className="status-strip">
+        <article className="metric-card">
           <span>运行记录</span>
           <strong>{runId}</strong>
-        </div>
-        <div className="param-summary">
-          <span>scores.csv 状态</span>
+        </article>
+        <article className="metric-card">
+          <span>scores.csv</span>
           <strong>{scoresStatus ? fileStatusText[scoresStatus.status] : "未检查"}</strong>
-        </div>
-        <div className="param-summary">
-          <span>报告状态</span>
+          <StatusBadge tone={hasScores ? "ok" : "warning"}>{hasScores ? "已完成" : "缺失"}</StatusBadge>
+        </article>
+        <article className="metric-card">
+          <span>报告</span>
           <strong>{reportStatus === "exported" ? "已导出" : "未导出"}</strong>
-        </div>
+          <StatusBadge tone={reportStatus === "exported" ? "ok" : "muted"}>
+            {reportStatus === "exported" ? "已完成" : "未开始"}
+          </StatusBadge>
+        </article>
       </div>
 
       {!hasScores ? (
         <WarningCallout title="报告暂不可导出">
-          <p>未找到 scores.csv，请先回到结果页解析结果。</p>
+          <p>请先回到结果页解析 scores.csv。</p>
         </WarningCallout>
       ) : null}
 
-      <ScientificDisclaimer kind="score" />
-      <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
+      <SectionCard title="导出">
+        <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
+        <div className="button-row">
+          <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
+            {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
+          </ActionButton>
+        </div>
+      </SectionCard>
 
-      <div className="toolbar project-toolbar">
-        <button className="primary-button" type="button" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-          {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
-        </button>
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadReportStatus()}>
-          重新检查报告状态
-        </button>
-      </div>
-
-      <div className="tool-grid run-check-grid">
-        {[scoresStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
-          <article className="tool-card" key={file!.key}>
-            <div className="tool-card-header">
-              <h2>{file!.name}</h2>
-              <span className={`status-badge ${statusClass(file!.status)}`}>{fileStatusText[file!.status]}</span>
-            </div>
-            <dl className="tool-meta">
-              <div>
-                <dt>路径</dt>
-                <dd>{file!.path}</dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd>{file!.exists ? `${file!.size} bytes` : "文件不存在"}</dd>
-              </div>
-              <div>
-                <dt>说明</dt>
-                <dd>{file!.message}</dd>
-              </div>
-            </dl>
-          </article>
-        ))}
-      </div>
-
-      {reportStatus === "exported" || displayedReportedAt ? (
-        <div className="ready-note run-result-note">
-          <span>Markdown 实验记录已导出。</span>
-          <div className="run-result-files">
-            <code>{displayedProjectReportFile}</code>
-            <code>{displayedReportFile}</code>
-            <code>{displayedReportedAt || "reported_at 未记录"}</code>
+      {(reportStatus === "exported" || displayedReportedAt) ? (
+        <div className="next-step-strip">
+          <div>
+            <strong>实验记录已导出</strong>
+            <p>{displayedProjectReportFile}</p>
           </div>
         </div>
       ) : null}
 
-      <CommandResultPanel title="报告命令结果" message={message} rawError={rawError} />
+      <AdvancedDetails>
+        <dl className="meta-list">
+          {[scoresStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
+            <div key={file!.key}>
+              <dt>{file!.name}</dt>
+              <dd><code>{file!.path}</code> · {fileStatusText[file!.status]}</dd>
+            </div>
+          ))}
+          <div>
+            <dt>运行内报告</dt>
+            <dd><code>{displayedReportFile}</code></dd>
+          </div>
+          <div>
+            <dt>导出时间</dt>
+            <dd>{displayedReportedAt || "未记录"}</dd>
+          </div>
+        </dl>
+      </AdvancedDetails>
+
+      <ScientificDisclaimer kind="score" />
+      <CommandResultPanel title="报告导出" message={message} rawError={rawError} />
     </section>
   );
 }

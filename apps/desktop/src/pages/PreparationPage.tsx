@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
-import WarningCallout from "../components/WarningCallout";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import type {
   DockStartProject,
-  PreparationToolCapabilityResult,
-  PreparationToolStatusResponse,
   PreparationResult,
   PreparationStatusResponse,
   PreparationTarget,
+  PreparationToolCapabilityResult,
+  PreparationToolStatusResponse,
   RunFileStatus,
   ToolCheckResult,
 } from "../types";
@@ -19,6 +22,7 @@ type PreparationPageProps = {
   onBack: () => void;
   onOpenImportPdbqt: (project: DockStartProject) => void;
   onOpenViewer: (project: DockStartProject) => void;
+  onOpenBoxSetup: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
 
@@ -43,56 +47,44 @@ function parsePreparationToolStatusResponse(rawPayload: string): PreparationTool
   return JSON.parse(rawPayload) as PreparationToolStatusResponse;
 }
 
-function statusText(status: string | undefined): string {
+function statusLabel(status: string | undefined): string {
   const labels: Record<string, string> = {
     ok: "可用",
     missing: "缺失",
-    error: "错误",
-    unknown: "未知",
+    error: "失败",
+    unknown: "需检查",
     not_started: "未开始",
-    checking: "检查中",
-    ready: "可准备",
-    running: "准备中",
+    checking: "进行中",
+    ready: "可进行",
+    running: "进行中",
     finished: "已完成",
     failed: "失败",
-    empty: "空文件",
+    empty: "需检查",
   };
-  return labels[status ?? ""] ?? "未知";
+  return labels[status ?? ""] ?? "需检查";
 }
 
-function statusClass(status: string | undefined): string {
-  if (status === "ok" || status === "ready" || status === "finished") {
-    return "status-ok";
-  }
-  if (status === "missing" || status === "not_started" || status === "unknown") {
-    return "status-missing";
-  }
-  return "status-error";
+function statusTone(status: string | undefined): "ok" | "warning" | "error" | "muted" | "info" {
+  if (status === "ok" || status === "ready" || status === "finished") return "ok";
+  if (status === "running" || status === "checking") return "info";
+  if (status === "failed" || status === "error") return "error";
+  if (status === "missing" || status === "empty") return "warning";
+  return "muted";
 }
 
 function fileLine(file: RunFileStatus | undefined, fallback: string): string {
-  if (!file) {
-    return fallback || "未记录";
-  }
-  return `${file.path || fallback || "未记录"} · ${statusText(file.status)}`;
+  if (!file) return fallback || "未记录";
+  return file.path || fallback || "未记录";
 }
 
-function toolLine(tool: ToolCheckResult | PreparationToolCapabilityResult | undefined): string {
-  if (!tool) {
-    return "未检测";
-  }
-  return `${statusText(tool.status)} · ${tool.version || "无版本"} · ${tool.source || "unknown"}`;
+function toolVersion(tool: ToolCheckResult | PreparationToolCapabilityResult | undefined): string {
+  return tool?.version || "未获取版本";
 }
 
-function capabilityLine(
-  tool: PreparationToolCapabilityResult | undefined,
-  capabilityKey: string,
-): string {
+function capabilityLine(tool: PreparationToolCapabilityResult | undefined, capabilityKey: string): string {
   const capability = tool?.capabilities?.[capabilityKey];
-  if (!capability) {
-    return "未检测";
-  }
-  return `${statusText(capability.status)} · ${capability.message}`;
+  if (!capability) return "未检测";
+  return `${statusLabel(capability.status)} · ${capability.message}`;
 }
 
 export default function PreparationPage({
@@ -100,13 +92,13 @@ export default function PreparationPage({
   onBack,
   onOpenImportPdbqt,
   onOpenViewer,
+  onOpenBoxSetup,
   onProjectChange,
 }: PreparationPageProps) {
   const [project, setProject] = useState(initialProject);
   const [response, setResponse] = useState<PreparationStatusResponse | null>(null);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
-  const [nextAction, setNextAction] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
@@ -142,20 +134,11 @@ export default function PreparationPage({
         const toolStatus = parsePreparationToolStatusResponse(rawToolPayload);
         parsed.tools = toolStatus.tools ?? parsed.tools;
       } catch {
-        // Preparation status already contains best-effort tool results; keep the page usable.
-      }
-      try {
-        const rawWorkflowPayload = await invoke<string>("get_project_workflow_status", {
-          projectDir: project.project_dir,
-        });
-        const workflowStatus = JSON.parse(rawWorkflowPayload) as { next_recommended_action?: string };
-        setNextAction(workflowStatus.next_recommended_action ?? "");
-      } catch {
-        setNextAction("");
+        // Keep best-effort preparation status.
       }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
-      setMessage("前端未能调用准备状态命令。");
+      setMessage("无法读取准备状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -173,9 +156,9 @@ export default function PreparationPage({
         projectDir: project.project_dir,
         target,
       });
-      applyResponse(parsePreparationResponse(rawPayload), `${target} 准备前置检查完成。`);
+      applyResponse(parsePreparationResponse(rawPayload), "准备条件已检查。");
     } catch (error) {
-      setMessage("前端未能调用准备前置检查命令。");
+      setMessage("无法检查准备条件。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -184,9 +167,7 @@ export default function PreparationPage({
 
   const resetTarget = async (target: PreparationTarget) => {
     const label = target === "receptor" ? "受体" : "配体";
-    if (!window.confirm(`确定重置${label}准备状态吗？已有 Vina 输入文件不会被删除。`)) {
-      return;
-    }
+    if (!window.confirm(`确定重置${label}准备状态吗？已有 Vina 输入文件不会被删除。`)) return;
     setIsBusy(true);
     try {
       const rawPayload = await invoke<string>("reset_preparation_status", {
@@ -195,73 +176,48 @@ export default function PreparationPage({
       });
       applyResponse(parsePreparationResponse(rawPayload), `${label}准备状态已重置。`);
     } catch (error) {
-      setMessage("前端未能调用准备状态重置命令。");
+      setMessage("无法重置准备状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
   };
 
-  const prepareLigand = async () => {
+  const prepareTarget = async (target: PreparationTarget) => {
     setIsBusy(true);
+    setRawError("");
     try {
-      const rawPayload = await invoke<string>("prepare_ligand_pdbqt", {
+      const rawPayload = await invoke<string>(target === "receptor" ? "prepare_receptor_pdbqt" : "prepare_ligand_pdbqt", {
         projectDir: project.project_dir,
-        overwrite: overwriteLigand,
+        overwrite: target === "receptor" ? overwriteReceptor : overwriteLigand,
       });
-      applyResponse(parsePreparationResponse(rawPayload), "ligand PDBQT 自动准备已完成。");
+      applyResponse(parsePreparationResponse(rawPayload), target === "receptor" ? "受体输入已准备。" : "配体输入已准备。");
     } catch (error) {
-      setMessage("前端未能调用 ligand PDBQT 自动准备命令。");
+      setMessage(target === "receptor" ? "无法准备受体输入。" : "无法准备配体输入。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
   };
 
-  const prepareReceptor = async () => {
+  const loadLog = async (target: PreparationTarget) => {
     setIsBusy(true);
     try {
-      const rawPayload = await invoke<string>("prepare_receptor_pdbqt", {
-        projectDir: project.project_dir,
-        overwrite: overwriteReceptor,
-      });
-      applyResponse(parsePreparationResponse(rawPayload), "receptor PDBQT 自动准备已完成。");
-    } catch (error) {
-      setMessage("前端未能调用 receptor PDBQT 自动准备命令。");
-      setRawError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const loadReceptorLog = async () => {
-    setIsBusy(true);
-    try {
-      const rawPayload = await invoke<string>("load_receptor_preparation_log", {
-        projectDir: project.project_dir,
-      });
-      const parsed = JSON.parse(rawPayload) as { ok: boolean; message?: string; stderr?: string; stdout?: string; log?: string; error?: { message: string; raw_error: string } };
-      setMessage(parsed.message ?? parsed.error?.message ?? "receptor preparation 日志已读取。");
+      const rawPayload = await invoke<string>(
+        target === "receptor" ? "load_receptor_preparation_log" : "load_ligand_preparation_log",
+        { projectDir: project.project_dir },
+      );
+      const parsed = JSON.parse(rawPayload) as {
+        message?: string;
+        stderr?: string;
+        stdout?: string;
+        log?: string;
+        error?: { message: string; raw_error: string };
+      };
+      setMessage(parsed.message ?? parsed.error?.message ?? "准备日志已读取。");
       setRawError([parsed.stderr, parsed.stdout, parsed.log, parsed.error?.raw_error].filter(Boolean).join("\n\n"));
     } catch (error) {
-      setMessage("前端未能读取 receptor preparation 日志。");
-      setRawError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const loadLigandLog = async () => {
-    setIsBusy(true);
-    try {
-      const rawPayload = await invoke<string>("load_ligand_preparation_log", {
-        projectDir: project.project_dir,
-      });
-      const parsed = JSON.parse(rawPayload) as { ok: boolean; message?: string; stderr?: string; stdout?: string; log?: string; error?: { message: string; raw_error: string } };
-      setMessage(parsed.message ?? parsed.error?.message ?? "ligand preparation 日志已读取。");
-      setRawError([parsed.stderr, parsed.stdout, parsed.log, parsed.error?.raw_error].filter(Boolean).join("\n\n"));
-    } catch (error) {
-      setMessage("前端未能读取 ligand preparation 日志。");
+      setMessage("无法读取准备日志。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -273,200 +229,136 @@ export default function PreparationPage({
   const ligandPrep: PreparationResult | undefined = preparation?.ligand;
   const files = response?.files;
   const tools = response?.tools;
+  const readyForBox = Boolean(project.receptor.file && project.ligand.file);
+
+  const renderPrepCard = (target: PreparationTarget, prep: PreparationResult | undefined) => {
+    const isReceptor = target === "receptor";
+    const rawFile = isReceptor ? files?.receptor_raw : files?.ligand_raw;
+    const preparedFile = isReceptor ? files?.receptor_prepared : files?.ligand_prepared;
+    return (
+      <article className="task-card">
+        <div className="section-card-header">
+          <h2>{isReceptor ? "受体准备" : "配体准备"}</h2>
+          <StatusBadge tone={statusTone(prep?.status)}>{statusLabel(prep?.status)}</StatusBadge>
+        </div>
+        <dl className="meta-list">
+          <div>
+            <dt>输入文件</dt>
+            <dd><code>{fileLine(rawFile, isReceptor ? project.receptor.raw_file : project.ligand.raw_file)}</code></dd>
+          </div>
+          <div>
+            <dt>输出文件</dt>
+            <dd><code>{fileLine(preparedFile, isReceptor ? project.receptor.file : project.ligand.file)}</code></dd>
+          </div>
+        </dl>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={isReceptor ? overwriteReceptor : overwriteLigand}
+            onChange={(event) => (isReceptor ? setOverwriteReceptor(event.target.checked) : setOverwriteLigand(event.target.checked))}
+          />
+          覆盖已有 PDBQT
+        </label>
+        <div className="button-row">
+          <ActionButton variant="primary" disabled={isBusy} onClick={() => void prepareTarget(target)}>
+            {isReceptor ? "准备受体输入" : "准备配体输入"}
+          </ActionButton>
+          <ActionButton onClick={() => void validateTarget(target)} disabled={isBusy}>检查条件</ActionButton>
+          <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={isBusy}>查看日志</ActionButton>
+        </div>
+        <AdvancedDetails>
+          <dl className="meta-list">
+            <div>
+              <dt>方法</dt>
+              <dd>{prep?.method ?? "未记录"}</dd>
+            </div>
+            <div>
+              <dt>stdout</dt>
+              <dd><code>{prep?.stdout_file || "未生成"}</code></dd>
+            </div>
+            <div>
+              <dt>stderr</dt>
+              <dd><code>{prep?.stderr_file || "未生成"}</code></dd>
+            </div>
+            <div>
+              <dt>log</dt>
+              <dd><code>{prep?.log_file || "未生成"}</code></dd>
+            </div>
+          </dl>
+          <ActionButton variant="text" onClick={() => void resetTarget(target)} disabled={isBusy}>重置状态</ActionButton>
+        </AdvancedDetails>
+      </article>
+    );
+  };
 
   return (
-    <section className="project-page" aria-labelledby="preparation-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回原始结构页
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">Vina 输入</p>
-        <h1 id="preparation-title">准备 Vina 输入文件</h1>
-        <p>
-          Vina 输入文件是准备后的 PDBQT。本页显示原始结构、输出文件、工具链状态、准备按钮和可折叠日志。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
-
-      <ScientificDisclaimer kind="preparation" />
-
-      {nextAction ? (
-        <div className="settings-message">
-          下一步建议：{nextAction}
+    <section className="workbench-page" aria-labelledby="preparation-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">工作流 2</p>
+          <h1 id="preparation-title">准备 Vina 输入</h1>
+          <p>把 raw 结构准备为 PDBQT，或确认已经导入的 Vina 输入文件。</p>
         </div>
-      ) : null}
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>刷新状态</ActionButton>
+        </div>
+      </header>
 
-      <div className="import-grid">
-        <article className="import-card">
-          <h2>工具链状态</h2>
-          <dl className="tool-meta">
-            <div>
-              <dt>Python</dt>
-              <dd>{toolLine(tools?.python)}</dd>
-            </div>
-            <div>
-              <dt>RDKit</dt>
-              <dd>{toolLine(tools?.rdkit)}</dd>
-            </div>
+      <SectionCard title="工具链状态">
+        <div className="status-strip">
+          <article className="metric-card">
+            <span>Python</span>
+            <strong>{statusLabel(tools?.python?.status)} · {toolVersion(tools?.python)}</strong>
+          </article>
+          <article className="metric-card">
+            <span>RDKit</span>
+            <strong>{statusLabel(tools?.rdkit?.status)} · {toolVersion(tools?.rdkit)}</strong>
+          </article>
+          <article className="metric-card">
+            <span>Meeko</span>
+            <strong>{statusLabel(tools?.meeko?.status)} · {toolVersion(tools?.meeko)}</strong>
+          </article>
+        </div>
+        <AdvancedDetails>
+          <dl className="meta-list">
             <div>
               <dt>RDKit SDF 读取</dt>
               <dd>{capabilityLine(tools?.rdkit, "sdf_inline_read")}</dd>
             </div>
             <div>
-              <dt>Meeko</dt>
-              <dd>{toolLine(tools?.meeko)}</dd>
-            </div>
-            <div>
-              <dt>Meeko 配体准备能力</dt>
+              <dt>Meeko 配体准备</dt>
               <dd>{capabilityLine(tools?.meeko, "ligand_preparation")}</dd>
             </div>
             <div>
-              <dt>Meeko 受体准备能力</dt>
+              <dt>Meeko 受体准备</dt>
               <dd>{capabilityLine(tools?.meeko, "receptor_preparation")}</dd>
             </div>
           </dl>
-        </article>
+        </AdvancedDetails>
+      </SectionCard>
 
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>受体输入文件</h2>
-            <span className={`status-badge ${statusClass(receptorPrep?.status)}`}>{statusText(receptorPrep?.status)}</span>
-          </div>
-          <dl className="tool-meta">
-            <div>
-              <dt>受体原始结构</dt>
-              <dd><code>{fileLine(files?.receptor_raw, project.receptor.raw_file)}</code></dd>
-            </div>
-            <div>
-              <dt>受体 Vina 输入</dt>
-              <dd><code>{fileLine(files?.receptor_prepared, project.receptor.file)}</code></dd>
-            </div>
-            <div>
-              <dt>方法</dt>
-              <dd>{receptorPrep?.method ?? "未记录"}</dd>
-            </div>
-            <div>
-              <dt>stdout</dt>
-              <dd><code>{receptorPrep?.stdout_file || "未生成"}</code></dd>
-            </div>
-            <div>
-              <dt>stderr</dt>
-              <dd><code>{receptorPrep?.stderr_file || "未生成"}</code></dd>
-            </div>
-            <div>
-              <dt>log</dt>
-              <dd><code>{receptorPrep?.log_file || "未生成"}</code></dd>
-            </div>
-          </dl>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={overwriteReceptor}
-              onChange={(event) => setOverwriteReceptor(event.target.checked)}
-            />
-            覆盖已有 prepared/receptor.pdbqt
-          </label>
-          <div className="toolbar project-toolbar">
-            <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareReceptor()}>
-              准备受体输入
-            </button>
-            <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void validateTarget("receptor")}>
-              检查受体准备条件
-            </button>
-            <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void loadReceptorLog()}>
-              读取受体准备日志
-            </button>
-            <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void resetTarget("receptor")}>
-              重置受体准备状态
-            </button>
-          </div>
-        </article>
-
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>配体输入文件</h2>
-            <span className={`status-badge ${statusClass(ligandPrep?.status)}`}>{statusText(ligandPrep?.status)}</span>
-          </div>
-          <dl className="tool-meta">
-            <div>
-              <dt>配体原始结构</dt>
-              <dd><code>{fileLine(files?.ligand_raw, project.ligand.raw_file)}</code></dd>
-            </div>
-            <div>
-              <dt>配体 Vina 输入</dt>
-              <dd><code>{fileLine(files?.ligand_prepared, project.ligand.file)}</code></dd>
-            </div>
-            <div>
-              <dt>方法</dt>
-              <dd>{ligandPrep?.method ?? "未记录"}</dd>
-            </div>
-            <div>
-              <dt>stdout</dt>
-              <dd><code>{ligandPrep?.stdout_file || "未生成"}</code></dd>
-            </div>
-            <div>
-              <dt>stderr</dt>
-              <dd><code>{ligandPrep?.stderr_file || "未生成"}</code></dd>
-            </div>
-            <div>
-              <dt>log</dt>
-              <dd><code>{ligandPrep?.log_file || "未生成"}</code></dd>
-            </div>
-          </dl>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={overwriteLigand}
-              onChange={(event) => setOverwriteLigand(event.target.checked)}
-            />
-            覆盖已有 prepared/ligand.pdbqt
-          </label>
-          <div className="toolbar project-toolbar">
-            <button className="primary-button" type="button" disabled={isBusy} onClick={() => void prepareLigand()}>
-              准备配体输入
-            </button>
-            <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void validateTarget("ligand")}>
-              检查配体准备条件
-            </button>
-            <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void loadLigandLog()}>
-              读取配体准备日志
-            </button>
-            <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void resetTarget("ligand")}>
-              重置配体准备状态
-            </button>
-          </div>
-        </article>
+      <div className="two-column-grid">
+        {renderPrepCard("receptor", receptorPrep)}
+        {renderPrepCard("ligand", ligandPrep)}
       </div>
 
-      <div className="toolbar project-toolbar">
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadStatus()}>
-          重新读取准备状态
-        </button>
-        <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
-          导入 Vina 输入
-        </button>
+      <div className="next-step-strip">
+        <div>
+          <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体 PDBQT"}</strong>
+          <p>自动准备结果仍需人工检查；也可以手动导入 PDBQT。</p>
+        </div>
+        <div className="button-row end">
+          <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
+          <ActionButton onClick={() => onOpenViewer(project)}>打开 3D 查看</ActionButton>
+          <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
+            进入设置搜索范围
+          </ActionButton>
+        </div>
       </div>
 
-      <div className="toolbar project-toolbar">
-        <button className="secondary-button" type="button" onClick={() => onOpenViewer(project)}>
-          打开 3D 查看
-        </button>
-      </div>
-
-      <WarningCallout title="科学检查仍然必要">
-        <p>
-          自动准备只能帮助生成 PDBQT，不保证质子化、电荷、缺失残基、水、金属、辅因子或构象选择完全合理。
-          运行 Vina 前请结合研究目标自行检查。
-        </p>
-      </WarningCallout>
-
-      <CommandResultPanel title="PDBQT 准备结果" message={message} rawError={rawError} />
+      <ScientificDisclaimer kind="preparation" />
+      <CommandResultPanel title="准备结果" message={message} rawError={rawError} />
     </section>
   );
 }

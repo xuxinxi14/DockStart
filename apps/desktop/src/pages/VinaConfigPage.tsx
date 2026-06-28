@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse } from "../types";
@@ -54,7 +58,7 @@ export default function VinaConfigPage({
         setCanOpenRunPrepare(showRunPrepare || Boolean(response.project.config.vina_config_file));
         return;
       }
-      setMessage(response.error?.message ?? "Vina 配置操作失败。");
+      setMessage(response.error?.message ?? "运行配置生成失败。");
       setConfigText("");
       setWarnings([]);
       setRawError(response.error?.raw_error ?? "");
@@ -69,9 +73,9 @@ export default function VinaConfigPage({
       const rawPayload = await invoke<string>("get_vina_config_preview", {
         projectDir: initialProject.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "Vina 配置预览已重新生成。");
+      applyProjectResponse(parseProjectResponse(rawPayload), "配置预览已刷新。");
     } catch (error) {
-      setMessage("前端未能调用 Vina 配置预览命令。");
+      setMessage("无法生成配置预览。");
       setConfigText("");
       setWarnings([]);
       setRawError(error instanceof Error ? error.message : String(error));
@@ -93,9 +97,9 @@ export default function VinaConfigPage({
       const rawPayload = await invoke<string>("generate_vina_config", {
         projectDir: project.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "vina_config.txt 已生成。", true);
+      applyProjectResponse(parseProjectResponse(rawPayload), "运行配置已生成。", true);
     } catch (error) {
-      setMessage("前端未能调用 Vina 配置生成命令。");
+      setMessage("无法生成运行配置。");
       setConfigText("");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -104,105 +108,70 @@ export default function VinaConfigPage({
   };
 
   return (
-    <section className="project-page" aria-labelledby="vina-config-title">
-      <button className="text-button" type="button" onClick={onBack}>
-        返回 Vina 参数设置
-      </button>
-
-      <div className="page-heading">
-        <p className="eyebrow">运行配置</p>
-        <h1 id="vina-config-title">生成运行配置</h1>
-        <p>
-          根据项目内的 Vina 输入文件、对接箱体和 Vina 参数生成 configs/vina_config.txt。
-          这里只生成配置文件，不运行 AutoDock Vina。
-        </p>
-      </div>
-
-      <div className="project-summary">
-        <span>项目</span>
-        <strong>{project.project_name}</strong>
-        <code>{project.project_dir}</code>
-      </div>
+    <section className="workbench-page" aria-labelledby="vina-config-title">
+      <header className="page-hero">
+        <div className="page-hero-main">
+          <p className="eyebrow">运行对接</p>
+          <h1 id="vina-config-title">生成运行配置</h1>
+          <p>根据 PDBQT、Box 和 Vina 参数生成 vina_config.txt。</p>
+        </div>
+        <div className="page-hero-actions">
+          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+        </div>
+      </header>
 
       <VinaWorkflowBar current="config" />
 
-      <div className="import-grid">
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>受体 Vina 输入</h2>
-            <span className={`status-badge ${project.receptor.file ? "status-ok" : "status-missing"}`}>
-              {project.receptor.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.receptor.file || "生成配置前需要导入受体 PDBQT。"}</p>
+      <div className="status-strip">
+        <article className="metric-card">
+          <span>受体 PDBQT</span>
+          <strong>{project.receptor.file || "未导入"}</strong>
+          <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
         </article>
-
-        <article className="import-card">
-          <div className="tool-card-header">
-            <h2>配体 Vina 输入</h2>
-            <span className={`status-badge ${project.ligand.file ? "status-ok" : "status-missing"}`}>
-              {project.ligand.file ? "已导入" : "未导入"}
-            </span>
-          </div>
-          <p>{project.ligand.file || "生成配置前需要导入配体 PDBQT。"}</p>
+        <article className="metric-card">
+          <span>配体 PDBQT</span>
+          <strong>{project.ligand.file || "未导入"}</strong>
+          <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
+        </article>
+        <article className="metric-card">
+          <span>运行配置</span>
+          <strong>{configFile || "尚未生成"}</strong>
+          <StatusBadge tone={configFile ? "ok" : "muted"}>{configFile ? "已完成" : "未开始"}</StatusBadge>
         </article>
       </div>
 
-      <div className="summary-grid">
-        <div className="param-summary">
-          <span>Box 参数摘要</span>
-          <strong>
-            中心：{project.box.center_x}, {project.box.center_y}, {project.box.center_z} Å
-          </strong>
-          <strong>
-            尺寸：{project.box.size_x}, {project.box.size_y}, {project.box.size_z} Å
-          </strong>
+      <SectionCard title="配置预览">
+        <pre className="config-preview">{configText || "补全 PDBQT、Box 和 Vina 参数后会显示配置预览。"}</pre>
+        <div className="button-row end">
+          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadPreview()}>刷新预览</ActionButton>
+          <ActionButton variant="primary" disabled={isBusy} onClick={() => void generateConfig()}>
+            {isBusy ? "生成中..." : "生成运行配置"}
+          </ActionButton>
         </div>
-        <div className="param-summary">
-          <span>Vina 参数摘要</span>
-          <strong>exhaustiveness：{project.vina.exhaustiveness}</strong>
-          <strong>num_modes：{project.vina.num_modes}</strong>
-          <strong>energy_range：{project.vina.energy_range} kcal/mol</strong>
-          <strong>cpu：{project.vina.cpu}</strong>
-          <strong>seed：{project.vina.seed ?? "随机"}</strong>
+      </SectionCard>
+
+      <div className="next-step-strip">
+        <div>
+          <strong>{canOpenRunPrepare ? "下一步：准备对接运行" : "先生成 vina_config.txt"}</strong>
+          <p>准备运行会保存运行编号、命令预览和配置快照。</p>
         </div>
+        <ActionButton variant="primary" disabled={!canOpenRunPrepare} onClick={() => onOpenRunPrepare(project)}>
+          准备对接运行
+        </ActionButton>
       </div>
 
-      <div className="config-preview-panel">
-        <div className="tool-card-header">
-          <h2>配置预览</h2>
-          <span>{configFile || "尚未生成文件"}</span>
-        </div>
-        <pre className="config-preview">{configText || "暂无可预览内容。请先补全 PDBQT、Box 和 Vina 参数。"}</pre>
-      </div>
-
-      <div className="toolbar project-toolbar">
-        <button className="text-button inline" type="button" disabled={isBusy} onClick={() => void reloadPreview()}>
-          重新生成预览
-        </button>
-        <button className="primary-button" type="button" disabled={isBusy} onClick={() => void generateConfig()}>
-          {isBusy ? "生成中..." : "生成运行配置"}
-        </button>
-      </div>
-
-      <p className="placeholder-note">下一步先进入运行前检查并创建对接运行记录，然后可以执行 AutoDock Vina。</p>
-
-      {canOpenRunPrepare ? (
-        <div className="ready-note">
-          <span>运行配置已生成，可以进入运行前检查。</span>
-          <button className="secondary-button" type="button" onClick={() => onOpenRunPrepare(project)}>
-            进入运行前检查
-          </button>
-        </div>
-      ) : null}
-
-      {configFile ? <p className="settings-message">配置文件路径：{configFile}</p> : null}
       {warnings.map((warning) => (
-        <WarningCallout key={warning} title="配置生成提示">
+        <WarningCallout key={warning} title="配置提示">
           <p>{warning}</p>
         </WarningCallout>
       ))}
-      <CommandResultPanel title="配置文件命令结果" message={message} rawError={rawError} />
+
+      <CommandResultPanel title="配置结果" message={message} rawError={rawError} />
+      {configFile ? (
+        <AdvancedDetails summary="配置文件路径">
+          <code>{configFile}</code>
+        </AdvancedDetails>
+      ) : null}
     </section>
   );
 }
