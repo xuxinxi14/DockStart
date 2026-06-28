@@ -8,9 +8,7 @@ body {
   display: grid;
   grid-template-columns: var(--ds-sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 280px),
-    var(--ds-background);
+  background: var(--ds-bg-app);
 }
 
 .dockstart-workspace {
@@ -22,8 +20,8 @@ body {
   top: 0;
   height: 100vh;
   overflow-y: auto;
-  border-right: 1px solid var(--ds-border);
-  background: var(--ds-surface-elevated);
+  border-right: 1px solid var(--ds-border-default);
+  background: var(--ds-bg-elevated);
   padding: var(--ds-space-6) var(--ds-space-4);
 }
 
@@ -32,7 +30,7 @@ body {
   gap: var(--ds-space-1);
   margin-bottom: var(--ds-space-6);
   padding: 0 var(--ds-space-2) var(--ds-space-4);
-  border-bottom: 1px solid var(--ds-border);
+  border-bottom: 1px solid var(--ds-border-subtle);
 }
 
 .sidebar-brand strong {
@@ -83,7 +81,7 @@ body {
 
 .sidebar-nav-item:hover:not(:disabled),
 .sidebar-nav-item.active {
-  border-color: var(--ds-border-strong);
+  border-color: var(--ds-accent-border);
   background: var(--ds-accent-soft);
 }
 
@@ -102,7 +100,7 @@ body {
 
 .sidebar-nav-item.active .sidebar-nav-dot {
   background: var(--ds-accent);
-  box-shadow: 0 0 0 3px rgba(18, 103, 163, 0.14);
+  box-shadow: 0 0 0 3px var(--ds-focus-ring);
 }
 
 .sidebar-nav-item.ready .sidebar-nav-dot {
@@ -154,10 +152,10 @@ body {
   align-items: center;
   gap: var(--ds-space-4);
   min-height: var(--ds-topbar-height);
-  border-bottom: 1px solid var(--ds-border);
-  background: rgba(246, 250, 253, 0.94);
+  border-bottom: 1px solid var(--ds-border-default);
+  background: var(--ds-bg-elevated);
   padding: var(--ds-space-2) var(--ds-space-8);
-  backdrop-filter: blur(10px);
+  box-shadow: var(--ds-shadow-soft);
 }
 
 .topbar-main,
@@ -201,9 +199,9 @@ body {
 }
 
 .version-pill {
-  border: 1px solid var(--ds-border);
+  border: 1px solid var(--ds-border-default);
   border-radius: 999px;
-  background: var(--ds-surface);
+  background: var(--ds-bg-panel);
   color: var(--ds-text-secondary);
   padding: 4px 9px;
   font-size: 12px;

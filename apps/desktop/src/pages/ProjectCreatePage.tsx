@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import PathInput from "../components/PathInput";
 import type { DockStartProject, ProjectResponse, SettingsResponse } from "../types";
@@ -150,10 +150,11 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       ) : null}
       {rawError ? (
         <details className="raw-error">
-          <summary>查看 raw_error</summary>
+          <summary>错误详情</summary>
           <pre>{rawError}</pre>
         </details>
       ) : null}
     </section>
   );
 }
+

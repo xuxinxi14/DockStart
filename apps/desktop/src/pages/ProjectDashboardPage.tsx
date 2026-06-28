@@ -414,7 +414,7 @@ export default function ProjectDashboardPage({
         </div>
       </SectionCard>
 
-      <SectionCard title="Workflow Timeline" description="项目、原始结构、Vina 输入、Box、对接运行、结果报告的状态。">
+      <SectionCard title="流程时间线" description="项目、原始结构、Vina 输入、Box、对接运行、结果报告的状态。">
         <WorkflowStepper
           steps={workflowSteps}
           onAction={(step) => {
@@ -500,7 +500,7 @@ export default function ProjectDashboardPage({
       <ErrorPanel error={workflow?.error ?? null} message={errorMessage} />
       {rawError ? (
         <details className="raw-error">
-          <summary>查看 raw_error</summary>
+          <summary>错误详情</summary>
           <pre>{rawError}</pre>
         </details>
       ) : null}

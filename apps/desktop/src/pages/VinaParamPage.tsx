@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DockStartProject, ProjectResponse } from "../types";
 
@@ -272,10 +272,11 @@ export default function VinaParamPage({
       {message ? <p className="settings-message">{message}</p> : null}
       {rawError ? (
         <details className="raw-error">
-          <summary>查看 raw_error</summary>
+          <summary>错误详情</summary>
           <pre>{rawError}</pre>
         </details>
       ) : null}
     </section>
   );
 }
+

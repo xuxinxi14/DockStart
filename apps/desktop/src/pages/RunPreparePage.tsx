@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import CommandResultPanel from "../components/CommandResultPanel";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
@@ -191,7 +191,7 @@ export default function RunPreparePage({
               </dl>
               {check.raw_error ? (
                 <details className="raw-error">
-                  <summary>查看 raw_error</summary>
+                  <summary>错误详情</summary>
                   <pre>{check.raw_error}</pre>
                 </details>
               ) : null}
@@ -252,3 +252,4 @@ export default function RunPreparePage({
     </section>
   );
 }
+

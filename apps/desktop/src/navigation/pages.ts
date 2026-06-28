@@ -26,7 +26,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.7.2";
+export const appVersion = "0.7.3";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -39,7 +39,7 @@ export const navigationItems: NavigationItem[] = [
     id: "project-create",
     group: "Project",
     label: "创建 / 打开项目",
-    description: "建立项目文件夹和 project.json",
+    description: "建立或加载项目工作目录",
   },
   {
     id: "toolchain-status",
@@ -57,7 +57,7 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "preparation",
     group: "Workflow",
-    label: "2 准备 PDBQT",
+    label: "2 准备 Vina 输入",
     description: "生成或确认 Vina 输入文件",
     requiresProject: true,
   },
@@ -92,7 +92,7 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "report",
     group: "Workbench",
-    label: "报告",
+    label: "实验记录",
     description: "导出 Markdown 实验记录",
     requiresProject: true,
   },

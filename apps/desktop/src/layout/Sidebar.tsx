@@ -13,11 +13,21 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
   const hasProject = Boolean(project);
   const groups: Array<"Project" | "Workflow" | "Workbench" | "Support"> = ["Project", "Workflow", "Workbench", "Support"];
   const groupLabels: Record<(typeof groups)[number], string> = {
-    Project: "Project",
-    Workflow: "Workflow",
-    Workbench: "Workbench",
-    Support: "Support",
+    Project: "项目",
+    Workflow: "工作流",
+    Workbench: "工作台",
+    Support: "支持",
   };
+
+  function isActive(itemId: PageId): boolean {
+    if (currentPage === itemId) {
+      return true;
+    }
+    if (itemId === "vina-config") {
+      return currentPage === "vina-config" || currentPage === "run-prepare" || currentPage === "run-execute";
+    }
+    return false;
+  }
 
   function itemState(itemId: PageId, requiresProject?: boolean): "ready" | "blocked" | "idle" {
     if (requiresProject && !hasProject) {
@@ -40,7 +50,7 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
     <aside className="app-sidebar" aria-label="DockStart 主导航">
       <div className="sidebar-brand">
         <strong>DockStart</strong>
-        <span>中文分子对接工作台</span>
+        <span>Molecular Workbench / 分子工作台</span>
       </div>
       <nav className="sidebar-nav">
         {groups.map((group) => (
@@ -50,7 +60,7 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
               .filter((item) => item.group === group)
               .map((item) => {
                 const target = resolveNavigationTarget(item, hasProject);
-                const active = currentPage === item.id;
+                const active = isActive(item.id);
                 const disabled = item.disabled;
                 const state = itemState(item.id, item.requiresProject);
                 return (
@@ -75,7 +85,7 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
       </nav>
       {hasProject && workflowSteps.length ? (
         <div className="sidebar-steps">
-          <span>流程状态</span>
+          <span>项目进度</span>
           <WorkflowStepper steps={workflowSteps.slice(0, 6)} compact />
         </div>
       ) : null}

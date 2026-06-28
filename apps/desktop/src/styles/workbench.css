@@ -52,11 +52,7 @@
   min-height: 620px;
   border: 1px solid var(--ds-border-strong);
   border-radius: var(--ds-radius-lg);
-  background:
-    linear-gradient(90deg, rgba(18, 103, 163, 0.06) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(18, 103, 163, 0.06) 1px, transparent 1px),
-    #ffffff;
-  background-size: 24px 24px;
+  background: var(--ds-bg-panel);
   overflow: hidden;
   box-shadow: var(--ds-shadow-panel);
 }

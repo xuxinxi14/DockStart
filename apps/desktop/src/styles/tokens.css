@@ -28,12 +28,17 @@
 
   --ds-success: #2E9D64;
   --ds-success-soft: #E7F6EE;
+  --ds-success-border: rgba(46, 157, 100, 0.24);
   --ds-warning: #D9902F;
   --ds-warning-soft: #FFF4DC;
+  --ds-warning-border: rgba(217, 144, 47, 0.28);
   --ds-danger: #D64545;
   --ds-danger-soft: #FDECEC;
+  --ds-danger-border: rgba(214, 69, 69, 0.24);
   --ds-info: #2B6CB0;
   --ds-info-soft: #EAF3FF;
+  --ds-info-border: rgba(43, 108, 176, 0.22);
+  --ds-molecule-border: rgba(43, 179, 177, 0.24);
 
   --ds-code-bg: #102033;
   --ds-code-text: #F4F7FA;
