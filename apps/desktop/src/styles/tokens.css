@@ -1,48 +1,90 @@
 :root {
-  --ds-background: #eef3f8;
-  --ds-background-subtle: #f6f8fb;
-  --ds-surface: #ffffff;
-  --ds-surface-elevated: #fbfdff;
-  --ds-surface-inset: #f1f5f9;
-  --ds-border: #d8e2ec;
-  --ds-border-strong: #9cb5cc;
-  --ds-text-primary: #172331;
-  --ds-text-secondary: #4f6479;
-  --ds-text-muted: #74879a;
-  --ds-accent: #1267a3;
-  --ds-accent-hover: #0b527f;
-  --ds-accent-soft: #e5f2fb;
-  --ds-success: #1f8a4c;
-  --ds-success-soft: #e7f6ed;
-  --ds-warning: #9a6700;
-  --ds-warning-soft: #fff4d7;
-  --ds-danger: #c43838;
-  --ds-danger-soft: #fdecec;
-  --ds-info: #2673b8;
-  --ds-info-soft: #e8f1fb;
-  --ds-molecule: #0f9f9a;
-  --ds-molecule-soft: #e2f7f6;
-  --ds-vina: #3758a8;
-  --ds-vina-soft: #ebeffb;
+  --ds-bg-app: #F4F7FA;
+  --ds-bg-subtle: #EEF3F7;
+  --ds-bg-panel: #FFFFFF;
+  --ds-bg-panel-soft: #FAFCFE;
+  --ds-bg-elevated: #FFFFFF;
+
+  --ds-border-subtle: #D9E2EC;
+  --ds-border-default: #C8D4E0;
+  --ds-border-strong: #AAB8C5;
+
+  --ds-text-primary: #102033;
+  --ds-text-secondary: #41546A;
+  --ds-text-muted: #6E7F91;
+  --ds-text-faint: #94A3B3;
+  --ds-text-inverse: #FFFFFF;
+
+  --ds-accent: #245C9E;
+  --ds-accent-hover: #1E4E8C;
+  --ds-accent-soft: #E6F0FA;
+  --ds-accent-border: #B9D3EF;
+
+  --ds-molecule: #2BB3B1;
+  --ds-molecule-soft: #E4F7F6;
+
+  --ds-vina: #6C63FF;
+  --ds-vina-soft: #EEECFF;
+
+  --ds-success: #2E9D64;
+  --ds-success-soft: #E7F6EE;
+  --ds-warning: #D9902F;
+  --ds-warning-soft: #FFF4DC;
+  --ds-danger: #D64545;
+  --ds-danger-soft: #FDECEC;
+  --ds-info: #2B6CB0;
+  --ds-info-soft: #EAF3FF;
+
+  --ds-code-bg: #102033;
+  --ds-code-text: #F4F7FA;
+  --ds-focus-ring: rgba(36, 92, 158, 0.16);
 
   --ds-font-ui: Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
   --ds-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --ds-text-xs: 12px;
+  --ds-text-sm: 13px;
+  --ds-text-md: 14px;
+  --ds-text-lg: 16px;
+  --ds-title-sm: 18px;
+  --ds-title-md: 24px;
+  --ds-title-lg: 32px;
+
+  --ds-leading-tight: 1.25;
+  --ds-leading-normal: 1.5;
+  --ds-leading-relaxed: 1.7;
 
   --ds-space-1: 4px;
   --ds-space-2: 8px;
   --ds-space-3: 12px;
   --ds-space-4: 16px;
-  --ds-space-5: 20px;
-  --ds-space-6: 24px;
-  --ds-space-8: 32px;
-  --ds-space-12: 48px;
+  --ds-space-5: 24px;
+  --ds-space-6: 32px;
+  --ds-space-7: 48px;
 
-  --ds-radius-sm: 4px;
-  --ds-radius-md: 6px;
-  --ds-radius-lg: 8px;
-  --ds-shadow-border: 0 0 0 1px rgba(23, 35, 49, 0.06);
-  --ds-shadow-panel: 0 8px 24px rgba(20, 45, 70, 0.06);
-  --ds-topbar-height: 64px;
-  --ds-sidebar-width: 292px;
-  --ds-content-max: 1240px;
+  --ds-radius-sm: 6px;
+  --ds-radius-md: 10px;
+  --ds-radius-lg: 14px;
+  --ds-radius-xl: 20px;
+
+  --ds-shadow-none: none;
+  --ds-shadow-soft: 0 1px 2px rgba(16, 32, 51, 0.05);
+  --ds-shadow-panel: 0 10px 28px rgba(16, 32, 51, 0.08);
+
+  --ds-sidebar-width: 260px;
+  --ds-topbar-height: 56px;
+  --ds-context-width: 320px;
+  --ds-content-max: 1180px;
+  --ds-content-wide: 1440px;
+
+  /* Backward-compatible aliases for the existing V0.7 UI classes. */
+  --ds-background: var(--ds-bg-app);
+  --ds-background-subtle: var(--ds-bg-subtle);
+  --ds-surface: var(--ds-bg-panel);
+  --ds-surface-elevated: var(--ds-bg-elevated);
+  --ds-surface-inset: var(--ds-bg-panel-soft);
+  --ds-border: var(--ds-border-default);
+  --ds-shadow-border: var(--ds-shadow-soft);
+  --ds-space-8: var(--ds-space-6);
+  --ds-space-12: var(--ds-space-7);
 }
