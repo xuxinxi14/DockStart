@@ -453,7 +453,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     <section className="project-page viewer-page">
       <PageHeader
         eyebrow="3D 工作台"
-        title="3D 查看工作台"
+        title="3D 分子工作台"
         description="查看项目内原始结构、Vina 输入和对接构象，并把搜索范围可视化设置同步回项目。当前只做几何查看，不做相互作用分析、pocket prediction 或药效判断。"
         actions={
           <button className="text-button" type="button" onClick={onBack}>
@@ -498,7 +498,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             description="读取对接运行输出中的 mode。对接评分只用于查看构象列表，不代表真实结合或药效。"
           >
             <label className="viewer-source-row">
-                <span>运行记录</span>
+              <span>运行记录</span>
               <input
                 type="text"
                 value={runId}

@@ -215,7 +215,7 @@ body {
 }
 
 .viewer-page {
-  width: min(1500px, calc(100vw - var(--ds-sidebar-width) - 56px));
+  width: min(var(--ds-content-wide), calc(100vw - var(--ds-sidebar-width) - 56px));
   margin: 0 auto;
 }
 

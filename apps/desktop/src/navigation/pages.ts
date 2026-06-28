@@ -26,7 +26,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.7.3";
+export const appVersion = "0.7.4";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -85,7 +85,7 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "viewer",
     group: "Workbench",
-    label: "3D 查看",
+    label: "3D 分子工作台",
     description: "结构、搜索范围和对接构象工作台",
     requiresProject: true,
   },
@@ -119,7 +119,7 @@ export const pageTitles: Record<PageId, string> = {
   "run-prepare": "准备对接运行",
   "run-execute": "执行 AutoDock Vina",
   result: "查看对接结果",
-  viewer: "3D 查看",
+  viewer: "3D 分子工作台",
   report: "导出实验记录",
   help: "文档帮助",
 };
