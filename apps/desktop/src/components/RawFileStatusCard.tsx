@@ -14,7 +14,7 @@ export default function RawFileStatusCard({ title, file }: RawFileStatusCardProp
         <strong>{title}</strong>
         <StatusBadge tone={status === "ok" ? "ok" : "warning"}>{status === "ok" ? "已下载" : "未就绪"}</StatusBadge>
       </div>
-      <p>{file?.path || "未记录 raw 文件。"}</p>
+      <p>{file?.path || "未记录原始结构文件。"}</p>
       <code>{file?.size ? `${file.size} bytes` : "size: 0"}</code>
     </article>
   );

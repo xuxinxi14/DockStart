@@ -111,7 +111,7 @@ export default function ImportPdbqtPage({
         <p>
           第一版只接受已经准备好的 .pdbqt 文件。导入时会复制到项目 prepared
           目录，并更新 project.json。
-          如果你还没有 PDBQT，可以先下载 PDB / PubChem 原始结构文件；但 raw 文件不能直接运行 Vina，后续仍需准备成 PDBQT。
+          如果你还没有 PDBQT，可以先下载 PDB / PubChem 原始结构文件；但原始结构文件不能直接运行 Vina，后续仍需准备成 PDBQT。
         </p>
       </div>
 
@@ -122,7 +122,7 @@ export default function ImportPdbqtPage({
       </div>
 
       <div className="disclaimer-note">
-        raw 文件通常是 PDB、CIF 或 SDF；prepared PDBQT 是经过外部工具准备后的 Vina 输入。
+        原始结构文件通常是 PDB、CIF 或 SDF；Vina 输入文件是经过外部工具准备后的 PDBQT。
         DockStart 当前不会自动把 raw 转成 PDBQT，请在外部完成准备后再导入。
       </div>
 

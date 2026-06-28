@@ -132,9 +132,9 @@ export default function StructureFetchPage({
       const rawPayload = await invoke<string>("get_raw_files_status", {
         projectDir: project.project_dir,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "raw 文件状态已重新读取。");
+      applyProjectResponse(parseProjectResponse(rawPayload), "原始结构文件状态已重新读取。");
     } catch (error) {
-      setMessage("前端未能调用 raw 文件状态命令。");
+      setMessage("前端未能调用原始结构文件状态命令。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -199,8 +199,8 @@ export default function StructureFetchPage({
     const deleteFile = role === "receptor" ? deleteReceptorRawFile : deleteLigandRawFile;
     const confirmed = window.confirm(
       deleteFile
-        ? `确定清除${label} raw 记录，并删除项目 raw/ 目录内对应 raw 文件吗？prepared PDBQT 不会被删除。`
-        : `确定清除${label} raw 记录吗？raw 文件和 prepared PDBQT 都会保留。`,
+        ? `确定清除${label}原始结构记录，并删除项目 raw/ 目录内对应文件吗？已有 Vina 输入文件不会被删除。`
+        : `确定清除${label}原始结构记录吗？原始结构文件和 Vina 输入文件都会保留。`,
     );
     if (!confirmed) {
       return;
@@ -282,7 +282,7 @@ export default function StructureFetchPage({
         <p className="eyebrow">原始结构</p>
         <h1 id="structure-fetch-title">获取原始结构文件</h1>
         <p>
-          raw 文件来自结构数据库，不能直接运行 Vina。本页只获取和管理原始结构，不会自动生成 PDBQT。运行 Vina 仍需
+          原始结构文件来自结构数据库，不能直接运行 Vina。本页只获取和管理原始结构，不会自动生成 PDBQT。运行 Vina 仍需
           prepared/receptor.pdbqt 和 prepared/ligand.pdbqt。
         </p>
       </div>
@@ -295,7 +295,7 @@ export default function StructureFetchPage({
 
       <WarningCallout title="raw 不等于 Vina 输入">
         <p>
-          raw 文件是从 RCSB/PubChem 下载的原始结构；prepared PDBQT 才是 AutoDock Vina 可以读取的对接输入。
+          原始结构文件是从 RCSB/PubChem 下载的结构来源；Vina 输入文件才是 AutoDock Vina 可以读取的 PDBQT。
           下载 raw 后仍需要进入“准备 PDBQT”或手动导入 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。
         </p>
       </WarningCallout>
@@ -330,7 +330,7 @@ export default function StructureFetchPage({
             />
             覆盖已有 raw 受体文件
           </label>
-          {overwritePdb ? <div className="warning-note inline-note">已开启覆盖：重新下载会替换同名 raw 文件。</div> : null}
+          {overwritePdb ? <div className="warning-note inline-note">已开启覆盖：重新下载会替换同名原始结构文件。</div> : null}
           <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void fetchPdb()}>
             下载 RCSB PDB
           </button>
@@ -340,7 +340,7 @@ export default function StructureFetchPage({
               checked={deleteReceptorRawFile}
               onChange={(event) => setDeleteReceptorRawFile(event.target.checked)}
             />
-            清除记录时同时删除 raw 文件
+            清除记录时同时删除原始结构文件
           </label>
           <button
             className="text-button inline"
@@ -393,7 +393,7 @@ export default function StructureFetchPage({
             />
             覆盖已有 raw 配体文件
           </label>
-          {overwritePubchem ? <div className="warning-note inline-note">已开启覆盖：重新下载会替换同名 raw 文件。</div> : null}
+          {overwritePubchem ? <div className="warning-note inline-note">已开启覆盖：重新下载会替换同名原始结构文件。</div> : null}
           <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void fetchPubchem()}>
             下载 PubChem SDF
           </button>
@@ -403,7 +403,7 @@ export default function StructureFetchPage({
               checked={deleteLigandRawFile}
               onChange={(event) => setDeleteLigandRawFile(event.target.checked)}
             />
-            清除记录时同时删除 raw 文件
+            清除记录时同时删除原始结构文件
           </label>
           <button
             className="text-button inline"
@@ -429,9 +429,9 @@ export default function StructureFetchPage({
       </div>
 
       <div className="ready-note">
-        <span>下载 raw 文件后，下一步仍是手动准备 PDBQT，并在导入页选择 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。</span>
+        <span>下载原始结构文件后，下一步仍是准备 Vina 输入文件，并在导入页选择 prepared/receptor.pdbqt 与 prepared/ligand.pdbqt。</span>
         <button className="secondary-button" type="button" onClick={() => onOpenImportPdbqt(project)}>
-          去导入 prepared PDBQT
+          去导入 Vina 输入文件
         </button>
         <button className="secondary-button" type="button" onClick={() => onOpenPreparation(project)}>
           查看自动准备入口

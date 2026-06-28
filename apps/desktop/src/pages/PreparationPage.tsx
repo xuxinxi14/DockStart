@@ -184,7 +184,7 @@ export default function PreparationPage({
 
   const resetTarget = async (target: PreparationTarget) => {
     const label = target === "receptor" ? "受体" : "配体";
-    if (!window.confirm(`确定重置${label}准备状态吗？prepared PDBQT 文件不会被删除。`)) {
+    if (!window.confirm(`确定重置${label}准备状态吗？已有 Vina 输入文件不会被删除。`)) {
       return;
     }
     setIsBusy(true);

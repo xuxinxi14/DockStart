@@ -14,7 +14,7 @@ export default function PreparedFileStatusCard({ title, file }: PreparedFileStat
         <strong>{title}</strong>
         <StatusBadge tone={status === "ok" ? "ok" : "warning"}>{status === "ok" ? "Vina 可用" : "未就绪"}</StatusBadge>
       </div>
-      <p>{file?.path || "未记录 prepared PDBQT。"}</p>
+      <p>{file?.path || "未记录 Vina 输入文件。"}</p>
       <code>{file?.size ? `${file.size} bytes` : "size: 0"}</code>
     </article>
   );

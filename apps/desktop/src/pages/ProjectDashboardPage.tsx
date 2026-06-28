@@ -80,7 +80,7 @@ function parseFirstRunToolchainStatus(rawPayload: string): FirstRunToolchainStat
   if (vinaStatus !== "ok") {
     nextAction = "先配置 AutoDock Vina。没有 Vina 时无法执行 docking。";
   } else if (rdkitStatus !== "ok" || meekoStatus !== "ok") {
-    nextAction = "如果要从 raw 文件自动准备 PDBQT，请先配置带 RDKit/Meeko 的 Python 环境。";
+    nextAction = "如果要从原始结构文件自动准备 PDBQT，请先配置带 RDKit/Meeko 的 Python 环境。";
   } else if (pythonSource !== "configured" && pythonSource !== "bundled") {
     nextAction = "建议配置独立 conda Python 工具链，再创建项目。";
   }

@@ -62,7 +62,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
           </article>
           <article>
             <strong>configs/vina_config.txt</strong>
-            <p>由项目内 prepared 文件、Box 参数和 Vina 参数生成。生成 config 不会执行 Vina。</p>
+            <p>由项目内 Vina 输入文件、Box 参数和 Vina 参数生成。生成运行配置不会执行 Vina。</p>
           </article>
           <article>
             <strong>对接运行记录</strong>

@@ -13,7 +13,7 @@ type RunRequiredPageProps = {
 const pageText: Record<RunRequiredPageProps["requestedPage"], { title: string; description: string }> = {
   "run-execute": {
     title: "还没有可执行的 run",
-    description: "需要先生成 vina_config.txt，并在运行前检查页创建运行记录，才能进入执行页。",
+    description: "需要先生成运行配置，并在运行前检查页创建运行记录，才能进入执行页。",
   },
   result: {
     title: "还没有可解析的 run",
@@ -37,7 +37,7 @@ export default function RunRequiredPage({ project, requestedPage, onNavigate }: 
         action={
           <>
             <ActionButton variant="primary" onClick={() => onNavigate("vina-config")}>
-              从生成 config 开始
+              从生成运行配置开始
             </ActionButton>
             <ActionButton onClick={() => onNavigate("run-prepare")}>进入运行前检查</ActionButton>
             <ActionButton onClick={() => onNavigate("home")}>回到项目总览</ActionButton>
