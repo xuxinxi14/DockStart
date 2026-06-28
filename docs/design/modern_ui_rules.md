@@ -2,7 +2,7 @@
 
 ## 目标
 
-DockStart 的 UI 目标是 Clean Scientific Workbench：帮助初学者完成一次可复现 AutoDock Vina 对接，而不是展示炫技界面或继续堆功能。
+DockStart 的 UI 目标是 Molecular Workbench：帮助初学者完成一次可复现 AutoDock Vina 对接，而不是展示炫技界面或继续堆功能。
 
 本轮 UI redesign 不新增科学能力，不改变 Vina 算法，不接入 PLIP / ProLIF / Open Babel / MGLTools，不做相互作用分析或药效判断。
 

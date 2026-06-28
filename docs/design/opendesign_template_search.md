@@ -2,14 +2,14 @@
 
 ## 连接状态
 
-- 检查日期：2026-06-27
-- OpenDesign MCP：已连接，可用工具命名空间为 `mcp__open_design`
-- 已执行检查：`list_projects`、`get_active_context`、`list_skills`、`list_plugins`、OpenDesign design-system resource 读取
-- 当前限制：OpenDesign 没有激活项目，但可通过显式资源和插件目录完成筛选；本轮没有假装存在一个已打开模板项目。
+- 检查日期：2026-06-28
+- MCP 工具发现：Codex 能发现 `mcp__open_design` 工具命名空间。
+- daemon 状态：不可达。`list_projects`、`get_active_context`、`list_skills`、`list_plugins` 均返回 `cannot reach the Open Design daemon at http://127.0.0.1:1141`。
+- 结论：本轮不能声称已经通过 OpenDesign 实时搜索模板或读取模板项目。后续设计整理基于本地 DockStart 设计规范、已有 V0.7 文档、现代软件 UI 规范和用户指定的方案 A：Molecular Workbench。
 
-## 搜索关键词
+## 原计划搜索关键词
 
-本轮按 DockStart 要求筛选以下方向：
+如果 OpenDesign daemon 可用，应优先搜索：
 
 - Enterprise
 - Professional
@@ -18,186 +18,147 @@
 - Material
 - GitHub
 - Linear
-- SaaS dashboard
-- Developer tool
-- Workspace
 - Workbench
-- Data dashboard
+- Developer tool
 - Scientific dashboard
 - Laboratory dashboard
-- Bioinformatics dashboard
 - Research workflow
 - Admin console
-- Command center
 
-同时对 Cosmic、Glassmorphism、Luxury、Neon、Trading Terminal、Mission Control 等效果型或强主题方向做了排除性检查。
+同时应避免或只做排除性检查：
 
-## 候选资源
+- Cosmic
+- Glassmorphism
+- Luxury
+- Creative
+- Doodle
+- Neon
+- Cyberpunk
+- Game dashboard
 
-### Professional
+## 本轮候选设计系统判断
 
-优点：
-- 目标明确：可信、商务化、结构化。
-- 适合作为 DockStart 的主气质：专业、克制、低噪声。
--  spacing scale 使用 4/8/12/16/24/32，和 DockStart 需要的 8px 节奏兼容。
+由于 OpenDesign daemon 未连接，以下候选不是实时搜索结果，而是用于 DockStart 的本地设计参考判断。
 
-问题：
-- 默认黄色主色不适合科学软件，容易显得像商业后台或告警界面。
-- 组件细节较泛，需要结合 GitHub/Ant/Material 补充文件、日志、状态和表单规则。
+### Professional / Enterprise
 
-结论：保留为 Primary 气质参考，不直接采用黄色品牌色。
+适合 DockStart：
+- 强调可信、结构化、低噪声，适合科研工作台。
+- 适合表达工具链状态、流程阻塞、项目 readiness。
+- 视觉层级可以通过边框、标题、状态 pill 和稳定 grid 建立。
 
-### Ant
+不适合之处：
+- 若照搬企业后台，会变成普通 admin console。
+- 需要避免商业 SaaS 式大卡片和营销式 hero。
 
-优点：
-- 企业应用、数据密集、表单和状态体系清晰。
-- 适合工具链状态、运行前检查、文件状态卡、结果表格。
-- 组件语义接近 DockStart 的真实任务：表单、校验、状态、表格。
-
-问题：
-- 容易变成普通 admin console。
-- 如果照搬会显得过于后台模板化，需要更强工作流叙事。
-
-结论：作为主组件结构参考。
-
-### Material
-
-优点：
-- 表单、错误、状态、层级和响应式规范成熟。
-- 适合新手引导、错误恢复、唯一主操作按钮。
-- 可补足 DockStart 的可用性和 accessibility 基础。
-
-问题：
-- 默认紫色不适合 DockStart。
-- 若使用过多 elevation 和大卡片，会继续保留 AI 生成感。
-
-结论：作为 Secondary 交互和状态参考，颜色重做。
+采用方式：
+- 作为主气质参考：专业、冷静、可信。
 
 ### Minimal
 
-优点：
-- 降低视觉噪声，适合科学工具的可信感。
-- 有利于减少“卡片堆叠”和营销式空白。
+适合 DockStart：
+- 降低视觉噪声，避免 AI 生成感的卡片堆叠。
+- 有利于突出唯一主任务和下一步。
 
-问题：
-- 过度 minimal 会让 workflow 引导不足。
+不适合之处：
+- 过度极简会削弱工作流引导。
 - DockStart 需要状态密度，不能只靠留白。
 
-结论：作为版式克制原则，不作为唯一系统。
+采用方式：
+- 用作留白、边框、阴影克制原则，而不是把界面做空。
+
+### Material
+
+适合 DockStart：
+- 表单、错误、状态、disabled、loading 的交互规则成熟。
+- 适合新手向工具链配置和任务页恢复建议。
+
+不适合之处：
+- 默认色彩和 elevation 不适合科学工作台。
+- 过多浮起卡片会继续产生“卡片墙”问题。
+
+采用方式：
+- 借用状态语义、表单校验和错误恢复模式，不照搬 Material 视觉。
 
 ### GitHub
 
-优点：
-- 文件、日志、状态、路径、版本、结果表格都很适配 DockStart。
-- 14px 信息密度、hairline border、status pill 很适合桌面科学工具。
-- 对“技术详情默认折叠”的处理有参考价值。
+适合 DockStart：
+- 文件、路径、日志、状态、版本、diff-like 技术详情处理非常契合 DockStart。
+- 14px 信息密度、细边框、低阴影适合桌面科研工具。
 
-问题：
-- 不能完全做成开发者平台，DockStart 用户包含新手学生。
-- 默认白底/密度若直接照搬会过于工具化。
+不适合之处：
+- 过于开发者化会让初学者觉得生硬。
+- 不能把 DockStart 做成代码托管工具。
 
-结论：用于文件路径、日志、状态、表格、技术详情。
+采用方式：
+- 用于 FileChip、PathDisplay、LogDrawer、MetadataTable、状态摘要和技术详情折叠。
 
 ### Linear
 
-优点：
-- 精确、安静、workflow 感强。
-- Sidebar / issue workflow / active state 的层级值得参考。
+适合 DockStart：
+- workflow 层级清楚，active state 精确。
+- Sidebar 和任务流有很强的方向感。
 
-问题：
-- dark-mode-native 与 DockStart 当前目标不完全一致。
-- 紫色/黑色氛围容易压过科学工具本身。
+不适合之处：
+- 暗色、紫色和任务管理语境不应成为 DockStart 主视觉。
 
-结论：只借 workflow 精确感、状态层级和信息收束，不采用暗色主视觉。
+采用方式：
+- 借用导航层级、当前任务聚焦和状态收束。
 
-### IBM / Carbon
+### Scientific / Laboratory dashboard
 
-优点：
-- 企业级严谨、强 token 化、表单和状态语义明确。
-- 适合“规则集中定义”与“不要随意 margin/padding”。
+适合 DockStart：
+- 能表达实验步骤、结构数据、运行结果和限制条件。
+- 适合把 Dashboard 定义为“项目驾驶舱”。
 
-问题：
-- 0 radius 和强企业蓝过于硬，中文新手工作台会显得冷。
+不适合之处：
+- 很容易滑向监控大屏、炫酷可视化或科研海报。
+- DockStart 不应把 docking score 包装成结论性科研发现。
 
-结论：借 token 化和表单纪律，不照搬视觉。
+采用方式：
+- 用于 readiness、artifacts、timeline 和科学免责声明，而不是大面积图表装饰。
 
-### Mission Control / Trading Terminal
+## 为什么不选择花哨风格
 
-优点：
-- 状态明确、数据密集、运行/日志/工具链状态非常清晰。
-- 命令中心式布局可启发 Viewer/Run 页面。
+- Cosmic / Galaxy：会让 DockStart 像科幻演示，不像可信科研软件。
+- Glassmorphism：透明、模糊和叠层会降低路径、日志、表格可读性。
+- Luxury：高级品牌感和大标题会抢走工具任务本身。
+- Neon / Cyberpunk：高饱和发光会削弱教学和科研可信度。
+- Game dashboard / HUD：容易误导用户认为 Viewer 或 score 有更强解释能力。
+- Creative / Doodle：轻松插画感不适合 AutoDock Vina 的严肃参数和文件工作流。
 
-问题：
-- 暗色、警戒色、终端密度过强，容易像监控大屏或金融终端。
-- 会抢走 DockStart 作为科学教学工作台的可信度。
-
-结论：只参考 operational clarity，不采用主风格。
-
-### Warp / Vercel / Shadcn
-
-优点：
-- 开发者工具感强，技术细节处理克制。
-- Shadcn/Vercel 的 6-8px radius、细边界、低阴影适合组件细节。
-
-问题：
-- Vercel/Shadcn 过于黑白极简，会削弱 DockStart 的工作流引导。
-- Warp 暖黑和生活化影像不适合科学软件。
-
-结论：少量借用按钮、边界、技术信息处理。
-
-## 未选择花哨风格的原因
-
-- Cosmic：科幻字体和未来感会让 DockStart 像演示玩具，不像可信科学工具。
-- Glassmorphism：半透明和 blur 对路径、日志、表格可读性不利。
-- Luxury：暗色大标题和高级品牌感会抢走工作台任务本身。
-- Neon：高饱和主色和强效果会降低教学/科研软件的严肃度。
-- Cyberpunk/Game dashboard：会误导用户认为 Viewer 或 docking score 有更强科学解释能力。
-
-## 最终参考组合
+## 最终采用参考
 
 Primary：
-- Professional
-- Ant
+- Professional / Enterprise
+- Scientific workbench
 
 Secondary：
-- Material
 - Minimal
+- Material
 
-Reference details：
-- GitHub：文件、日志、状态、路径、表格、技术详情。
-- Linear：workflow 层级、sidebar active state、状态收束。
-- IBM/Carbon：token 化、表单纪律、状态语义。
+Detail references：
+- GitHub：文件、日志、路径、表格、技术详情。
+- Linear：工作流导航、active state、任务聚焦。
+- Material：表单、错误恢复、disabled 和 loading 状态。
 
-## 最终设计方向
+## 最终方向：Molecular Workbench
 
-DockStart V0.7 UI redesign 采用：
+DockStart 采用 **DockStart Molecular Workbench / 分子工作台**。
 
-**Clean Scientific Workbench**
+理由：
+- DockStart 的核心不是展示功能，而是帮助用户完成“结构获取 → Vina 输入准备 → Box → Vina 运行 → 结果 → 实验记录”的流程。
+- 分子工作台能同时承载 3D Viewer、文件状态、工具链状态、日志和科学边界。
+- 视觉应专业、冷静、可信、低噪声，强调状态判断和下一步，而不是装饰。
 
-关键词：
-- 专业
-- 克制
-- 清晰
-- 现代
-- 科学工具
-- 低噪声
-- 强引导
-- 状态明确
-- 工作流驱动
-
-不是：
-- 营销页
-- 普通后台模板
-- AI 生成卡片堆叠
-- 指挥中心大屏
-- 终端或游戏界面
-
-视觉落地：
-- 浅蓝灰背景
-- 白色和轻微 elevated surface
-- 深蓝灰正文
-- 克制 cyan/blue accent
-- 6-8px 圆角
-- 1px hairline border
-- 技术信息默认折叠
-- 普通页面 max-width，Viewer 使用全宽 split workbench
+落地关键词：
+- Clean
+- Scientific
+- Molecular
+- Workbench
+- Trustworthy
+- Precise
+- Calm
+- Guided
+- Low-noise
+- Research-grade
