@@ -16,6 +16,7 @@ from typing import Any
 
 from adapters import vina_adapter
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
+from dockstart_core.process_utils import hidden_subprocess_kwargs
 from dockstart_core.settings import load_settings
 
 PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation")
@@ -2728,6 +2729,7 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             cwd=str(project_path),
             capture_output=True,
             text=True,
+            **hidden_subprocess_kwargs(),
         )
         exit_code = completed.returncode
         stdout_text = completed.stdout or ""

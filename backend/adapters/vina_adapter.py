@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 from dockstart_core.models import ToolCheckResult
+from dockstart_core.process_utils import hidden_subprocess_kwargs
 from dockstart_core.toolchain_paths import get_existing_bundled_vina_path
 
 _VINA_CANDIDATES = ("vina", "vina.exe")
@@ -37,6 +38,7 @@ def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCh
             text=True,
             timeout=10,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except FileNotFoundError as exc:
         return ToolCheckResult(

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from dockstart_core.models import ToolCheckResult
+from dockstart_core.process_utils import hidden_subprocess_kwargs
 
 SUBPROCESS_TEXT_KWARGS = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
@@ -38,6 +39,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             **SUBPROCESS_TEXT_KWARGS,
             timeout=10,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except Exception as exc:  # noqa: BLE001 - convert detector failures to structured results.
         return ToolCheckResult(
@@ -158,6 +160,7 @@ print(json.dumps(payload, ensure_ascii=False))
             **SUBPROCESS_TEXT_KWARGS,
             timeout=10,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except Exception as exc:  # noqa: BLE001 - detector errors are returned as structured status.
         return {

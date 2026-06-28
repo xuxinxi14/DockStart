@@ -1,16 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
-    env,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[cfg(not(debug_assertions))]
 use tauri::Manager;
 
-#[cfg(not(debug_assertions))]
 const RESOURCE_DIR_ENV_VAR: &str = "DOCKSTART_RESOURCE_DIR";
+const SETTINGS_ENV_VAR: &str = "DOCKSTART_SETTINGS_PATH";
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[tauri::command]
 fn check_tools() -> String {
@@ -565,7 +571,11 @@ fn get_box_visualization(project_dir: String) -> String {
 fn update_box_from_visualization(project_dir: String, box_json: String) -> String {
     match run_backend_module(
         "dockstart_core.viewer",
-        vec!["update-box-visualization".to_string(), project_dir, box_json],
+        vec![
+            "update-box-visualization".to_string(),
+            project_dir,
+            box_json,
+        ],
     ) {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法保存 Box 可视化参数。", &error),
@@ -573,12 +583,13 @@ fn update_box_from_visualization(project_dir: String, box_json: String) -> Strin
 }
 
 fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String> {
-    let backend_dir = find_backend_dir()
-        .ok_or_else(|| "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string())?;
+    let backend_dir = find_backend_dir().ok_or_else(|| {
+        "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string()
+    })?;
 
     let mut errors = Vec::new();
-    for python in ["python", "python3"] {
-        match run_python_module(&backend_dir, python, module, &args) {
+    for python in python_candidates(&backend_dir) {
+        match run_python_module(&backend_dir, &python, module, &args) {
             Ok(payload) => return Ok(payload),
             Err(error) => errors.push(format!("{python}: {error}")),
         }
@@ -593,14 +604,18 @@ fn run_python_module(
     module: &str,
     args: &[String],
 ) -> Result<String, String> {
-    let output = Command::new(python)
+    let mut command = Command::new(python);
+    command
         .arg("-m")
         .arg(module)
         .args(args)
         .current_dir(backend_dir)
-        .env("PYTHONIOENCODING", "utf-8")
-        .output()
-        .map_err(|error| error.to_string())?;
+        .env("PYTHONIOENCODING", "utf-8");
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| error.to_string())?;
 
     if output.status.success() {
         return String::from_utf8(output.stdout).map_err(|error| error.to_string());
@@ -611,8 +626,119 @@ fn run_python_module(
     Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
 }
 
+fn python_candidates(backend_dir: &Path) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    for candidate in bundled_python_candidates(backend_dir) {
+        push_python_candidate(&mut candidates, candidate);
+    }
+
+    if let Some(configured_python) = configured_python_from_settings() {
+        push_python_candidate(&mut candidates, PathBuf::from(configured_python));
+    }
+
+    candidates.push("python".to_string());
+    candidates.push("python3".to_string());
+    candidates
+}
+
+fn bundled_python_candidates(backend_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(resource_dir) = env::var(RESOURCE_DIR_ENV_VAR) {
+        let resource_dir = PathBuf::from(resource_dir);
+        candidates.push(
+            resource_dir
+                .join("resources")
+                .join("python")
+                .join("python.exe"),
+        );
+        candidates.push(resource_dir.join("python").join("python.exe"));
+    }
+
+    if let Some(root) = backend_dir.parent() {
+        candidates.push(root.join("resources").join("python").join("python.exe"));
+    }
+
+    candidates
+}
+
+fn push_python_candidate(candidates: &mut Vec<String>, candidate: PathBuf) {
+    if !candidate.is_file() {
+        return;
+    }
+
+    let text = candidate.to_string_lossy().to_string();
+    if !candidates.iter().any(|existing| existing == &text) {
+        candidates.push(text);
+    }
+}
+
+fn configured_python_from_settings() -> Option<String> {
+    let settings_path = env::var(SETTINGS_ENV_VAR)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)?;
+    let content = fs::read_to_string(settings_path).ok()?;
+    let value = json_string_value(&content, "python")?;
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn json_string_value(content: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let key_index = content.find(&needle)?;
+    let after_key = &content[key_index + needle.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+    let mut chars = after_colon.chars();
+    if chars.next()? != '"' {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut escaped = false;
+    for character in chars {
+        if escaped {
+            match character {
+                '"' => value.push('"'),
+                '\\' => value.push('\\'),
+                '/' => value.push('/'),
+                'b' => value.push('\u{0008}'),
+                'f' => value.push('\u{000c}'),
+                'n' => value.push('\n'),
+                'r' => value.push('\r'),
+                't' => value.push('\t'),
+                other => value.push(other),
+            }
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if character == '"' {
+            return Some(value);
+        }
+
+        value.push(character);
+    }
+
+    None
+}
+
 fn find_backend_dir() -> Option<PathBuf> {
     let mut starts = Vec::new();
+
+    if let Ok(resource_dir) = env::var(RESOURCE_DIR_ENV_VAR) {
+        starts.push(PathBuf::from(resource_dir));
+    }
 
     if let Ok(current_dir) = env::current_dir() {
         starts.push(current_dir);
@@ -627,14 +753,18 @@ fn find_backend_dir() -> Option<PathBuf> {
     for start in starts {
         for ancestor in start.ancestors() {
             let backend_dir = ancestor.join("backend");
-            let tool_check = backend_dir.join("dockstart_core").join("tool_check.py");
-            if tool_check.exists() {
+            if is_backend_dir(&backend_dir) {
                 return Some(backend_dir);
             }
         }
     }
 
     None
+}
+
+fn is_backend_dir(path: &Path) -> bool {
+    path.join("dockstart_core").join("tool_check.py").exists()
+        && path.join("adapters").join("__init__.py").exists()
 }
 
 fn fallback_check_error_json(message: &str, raw_error: &str) -> String {
@@ -692,6 +822,10 @@ fn configure_resource_dir_env(app: &tauri::App) {
     {
         if let Ok(resource_dir) = app.path().resource_dir() {
             env::set_var(RESOURCE_DIR_ENV_VAR, resource_dir);
+        }
+        if let Ok(config_dir) = app.path().app_config_dir() {
+            let _ = fs::create_dir_all(&config_dir);
+            env::set_var(SETTINGS_ENV_VAR, config_dir.join("dockstart_settings.json"));
         }
     }
 

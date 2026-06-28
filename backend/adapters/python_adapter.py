@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from dockstart_core.models import ToolCheckResult
+from dockstart_core.process_utils import hidden_subprocess_kwargs
 from dockstart_core.toolchain_paths import get_bundled_python_path
 
 
@@ -24,6 +25,7 @@ def _run_version_check(path: Path, source: str, bundled_path: str = "") -> ToolC
             text=True,
             timeout=10,
             check=False,
+            **hidden_subprocess_kwargs(),
         )
     except Exception as exc:  # noqa: BLE001 - convert detector failures to structured results.
         return ToolCheckResult(
