@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import BasicModeGuide from "../components/BasicModeGuide";
 import PathInput from "../components/PathInput";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -143,6 +144,8 @@ export default function ImportPdbqtPage({
       <WarningCallout title="PDBQT 是 Vina 输入">
         <p>raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。</p>
       </WarningCallout>
+
+      <BasicModeGuide compact primaryLabel="导入 PDBQT 后设置搜索范围" />
 
       <div className="two-column-grid">
         {renderImportCard("receptor")}

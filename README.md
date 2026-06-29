@@ -291,6 +291,12 @@ V0.8 的方向是降低首次使用门槛，而不是增加新的科学判断能
 
 Dashboard 会在无项目时展示三种模式的状态。RDKit/Meeko 缺失只会影响 Assisted Mode，不会阻止已有 PDBQT 的 Basic Mode。
 
+V0.8.1 进一步把 Basic Mode 作为最低依赖主路径呈现：
+
+- Dashboard 和导入页显示“已有 PDBQT → 设置 Box → 运行 Vina → 查看结果”；
+- workflow stepper 增加“导入 PDBQT”步骤，raw 下载和自动准备不再被表现成 Basic Mode 的硬前置条件；
+- 工具链页区分 Vina 缺失与 RDKit/Meeko 缺失对不同模式的影响。
+
 ## 当前暂不支持
 
 当前仍不支持：

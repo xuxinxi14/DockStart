@@ -20,6 +20,8 @@ V0.8 开始把“开箱即用”拆成三种可解释的使用模式：
 - Assisted Mode：从 raw 结构自动准备 PDBQT，需要 Python + RDKit + Meeko；
 - Demo Mode：用小型示例体验流程，示例不用于科研结论。
 
+V0.8.1 强化 Basic Mode，确保 raw 下载和自动准备不会阻塞已有 PDBQT 用户完成最低依赖 docking。
+
 ## V0.1: 本地 PDBQT Docking Lite MVP
 
 目标：跑通最小闭环，证明项目、运行、解析和报告链路可用。

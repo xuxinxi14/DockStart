@@ -497,6 +497,34 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
             </article>
           </div>
 
+          <section className="mode-panel" aria-label="工具链对使用模式的影响">
+            <div className="mode-panel-header">
+              <div>
+                <span className="eyebrow">模式影响</span>
+                <strong>缺什么，只影响对应路径</strong>
+              </div>
+              <span className={`status-badge ${statusClass(status.active_vina?.status)}`}>
+                {status.active_vina?.status === "ok" ? "Basic Mode 可用" : "Basic Mode 需 Vina"}
+              </span>
+            </div>
+            <div className="compact-grid">
+              <article className="metric-card">
+                <span>Basic Mode</span>
+                <strong>{status.active_vina?.status === "ok" ? "可继续已有 PDBQT docking" : "需要先配置 Vina"}</strong>
+                <p>只依赖 AutoDock Vina 和用户已有 receptor/ligand PDBQT。</p>
+              </article>
+              <article className="metric-card">
+                <span>Assisted Mode</span>
+                <strong>
+                  {status.rdkit_for_python?.status === "ok" && status.meeko_for_python?.status === "ok"
+                    ? "可尝试 raw → PDBQT"
+                    : "需要补齐 RDKit / Meeko"}
+                </strong>
+                <p>用于自动准备 PDBQT；缺失时不影响 Basic Mode。</p>
+              </article>
+            </div>
+          </section>
+
           {status.error ? (
             <div className="warning-note">
               {status.error.message}

@@ -40,6 +40,8 @@ V0.6.2 提供 `scripts/export_toolchain_environment.py`，用于把当前 config
 
 Dashboard 会给出当前可用模式、阻塞项和下一步建议。Vina 缺失会阻塞 Basic Mode；RDKit/Meeko 缺失只会阻塞 Assisted Mode。
 
+V0.8.1 之后，工作流步骤里会直接显示“导入 PDBQT”。如果你选择 Basic Mode，可以跳过 raw 下载和自动准备；只要导入受体/配体 PDBQT 并配置好 Vina，就可以继续 Box 和 Vina 运行流程。
+
 ## 3. 为什么现在只支持 PDBQT？
 
 AutoDock Vina 的核心输入是 PDBQT。V0.1 的目标是先跑通最小闭环，所以只接受用户已经准备好的 `receptor.pdbqt` 和 `ligand.pdbqt`。

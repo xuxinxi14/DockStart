@@ -11,10 +11,6 @@ function fileOk(status?: string): boolean {
   return status === "ok";
 }
 
-function fileMissing(status?: string): boolean {
-  return !status || status === "missing";
-}
-
 function failedPreparation(workflow: ProjectWorkflowStatusResponse | null): boolean {
   return (
     workflow?.preparation?.receptor?.status === "failed" ||
@@ -57,6 +53,12 @@ export function buildWorkflowSteps(
       : receptorRaw || ligandRaw
         ? "warning"
         : "available";
+
+  const importStatus: WorkflowStepState = !hasProject
+    ? "blocked"
+    : receptorPrepared && ligandPrepared
+      ? "done"
+      : "available";
 
   const preparedStatus: WorkflowStepState = !hasProject
     ? "blocked"
@@ -112,8 +114,9 @@ export function buildWorkflowSteps(
       hasProject ? "查看项目" : "创建项目",
       "project-create",
     ),
-    step("获取原始结构", "下载或管理受体 / 配体原始结构。", rawStatus, "获取结构", "structure-fetch"),
-    step("准备 Vina 输入", "把原始结构准备为 Vina 可用的 PDBQT。", preparedStatus, "准备 Vina 输入", "preparation"),
+    step("获取原始结构", "可选：下载或管理受体 / 配体 raw 文件。Basic Mode 可以跳过。", rawStatus, "获取结构", "structure-fetch"),
+    step("导入 PDBQT", "Basic Mode：直接导入已有 receptor.pdbqt 和 ligand.pdbqt。", importStatus, "导入 PDBQT", "import-pdbqt"),
+    step("自动准备 PDBQT", "Assisted Mode：把 raw 文件准备为 Vina 可用的 PDBQT。", preparedStatus, "准备 Vina 输入", "preparation"),
     step(
       "设置搜索范围",
       "设置对接箱体中心与尺寸。",

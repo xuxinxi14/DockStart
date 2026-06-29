@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
+import BasicModeGuide from "../components/BasicModeGuide";
 import EmptyState from "../components/EmptyState";
 import ErrorPanel from "../components/ErrorPanel";
 import FilePathText from "../components/FilePathText";
@@ -312,6 +313,11 @@ export default function ProjectDashboardPage({
               <ActionButton onClick={() => onNavigate("help")}>查看流程</ActionButton>
             </>
           }
+        />
+
+        <BasicModeGuide
+          onPrimaryAction={() => onNavigate("project-create")}
+          primaryLabel="创建项目并导入 PDBQT"
         />
 
         <SectionCard title="新手流程">

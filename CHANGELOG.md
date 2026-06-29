@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.1
+
+- Strengthened Basic Mode as the minimal dependency path for users who already have receptor/ligand PDBQT files.
+- Added a BasicModeGuide component and surfaced it on Dashboard and PDBQT import.
+- Updated workflow steps so raw structure download and automatic preparation are optional for Basic Mode rather than hard blockers.
+- Clarified ToolchainStatusPage mode impact: Vina controls Basic Mode, RDKit/Meeko controls Assisted Mode.
+- Kept changes focused on guidance and UI flow; no scientific capability, docking logic, or Vina behavior changed.
+
 ## v0.8.0
 
 - Added an app capability profile for Basic / Assisted / Demo usage modes.

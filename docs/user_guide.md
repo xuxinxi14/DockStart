@@ -12,6 +12,8 @@ DockStart V0.8 开始把入口分成三种模式：
 
 如果 RDKit/Meeko 缺失，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
 
+V0.8.1 之后，侧边工作流会把“导入 PDBQT”作为独立步骤显示。你可以跳过 raw 下载和自动准备，直接从 Basic Mode 进入 Box、Vina 参数、配置和运行流程。
+
 ## 前置条件
 
 你需要先准备好：
