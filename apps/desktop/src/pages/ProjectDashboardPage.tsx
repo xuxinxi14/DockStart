@@ -9,6 +9,7 @@ import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import type { PageId } from "../navigation/pages";
 import type {
+  AppCapabilityProfile,
   DockStartProject,
   ProjectWorkflowStatusResponse,
   ToolSource,
@@ -30,6 +31,8 @@ type FirstRunToolchainStatus = {
   rdkitStatus: ToolStatus;
   meekoStatus: ToolStatus;
 };
+
+type ModeTone = "ok" | "warning" | "error" | "muted" | "info";
 
 type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "缺失" | "失败" | "需检查";
 
@@ -61,6 +64,28 @@ function parseFirstRunToolchainStatus(rawPayload: string): FirstRunToolchainStat
     pythonSource: (parsed.python_source ?? parsed.resolved_python?.source ?? "unknown") as ToolSource,
     rdkitStatus: (parsed.rdkit_for_python?.status ?? "unknown") as ToolStatus,
     meekoStatus: (parsed.meeko_for_python?.status ?? "unknown") as ToolStatus,
+  };
+}
+
+function parseCapabilityProfile(rawPayload: string): AppCapabilityProfile {
+  const parsed = JSON.parse(rawPayload) as Partial<AppCapabilityProfile>;
+  return {
+    ok: Boolean(parsed.ok),
+    app_version: parsed.app_version ?? "",
+    vina_status: parsed.vina_status ?? null,
+    python_status: parsed.python_status ?? null,
+    rdkit_status: parsed.rdkit_status ?? null,
+    meeko_status: parsed.meeko_status ?? null,
+    viewer_status: parsed.viewer_status ?? null,
+    basic_mode_available: Boolean(parsed.basic_mode_available),
+    assisted_mode_available: Boolean(parsed.assisted_mode_available),
+    demo_mode_available: Boolean(parsed.demo_mode_available),
+    recommended_mode: parsed.recommended_mode ?? "setup",
+    blocking_items: parsed.blocking_items ?? [],
+    next_action: parsed.next_action ?? "请先检查工具链状态。",
+    demo_projects: parsed.demo_projects ?? [],
+    message: parsed.message ?? "",
+    error: parsed.error ?? null,
   };
 }
 
@@ -97,6 +122,19 @@ function sourceText(source: ToolSource): string {
   if (source === "auto") return "PATH";
   if (source === "current_environment") return "当前环境";
   return "未确认";
+}
+
+function modeText(mode: string): string {
+  if (mode === "basic") return "Basic Mode";
+  if (mode === "assisted") return "Assisted Mode";
+  if (mode === "demo") return "Demo Mode";
+  return "先完成配置";
+}
+
+function modeTone(available: boolean, recommended: boolean): ModeTone {
+  if (recommended && available) return "ok";
+  if (available) return "info";
+  return "muted";
 }
 
 function fileState(file?: WorkflowFileStatus): UiState {
@@ -179,6 +217,7 @@ export default function ProjectDashboardPage({
   const [errorMessage, setErrorMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [toolchain, setToolchain] = useState<FirstRunToolchainStatus | null>(null);
+  const [capabilityProfile, setCapabilityProfile] = useState<AppCapabilityProfile | null>(null);
 
   const loadWorkflow = useCallback(async () => {
     if (!project) {
@@ -220,10 +259,15 @@ export default function ProjectDashboardPage({
     }
     const loadToolchain = async () => {
       try {
-        const rawPayload = await invoke<string>("get_toolchain_status");
-        setToolchain(parseFirstRunToolchainStatus(rawPayload));
+        const [toolchainPayload, profilePayload] = await Promise.all([
+          invoke<string>("get_toolchain_status"),
+          invoke<string>("get_app_capability_profile"),
+        ]);
+        setToolchain(parseFirstRunToolchainStatus(toolchainPayload));
+        setCapabilityProfile(parseCapabilityProfile(profilePayload));
       } catch {
         setToolchain(null);
+        setCapabilityProfile(null);
       }
     };
     void loadToolchain();
@@ -282,6 +326,49 @@ export default function ProjectDashboardPage({
         </SectionCard>
 
         <SectionCard title="工具链简况">
+          {capabilityProfile ? (
+            <div className="mode-panel">
+              <div className="mode-panel-header">
+                <div>
+                  <span className="eyebrow">当前推荐</span>
+                  <strong>{modeText(capabilityProfile.recommended_mode)}</strong>
+                </div>
+                <StatusBadge tone={capabilityProfile.basic_mode_available ? "ok" : "warning"}>
+                  {capabilityProfile.basic_mode_available ? "最低依赖可用" : "需要配置 Vina"}
+                </StatusBadge>
+              </div>
+              <p>{capabilityProfile.next_action}</p>
+              <div className="compact-grid">
+                <article className="metric-card">
+                  <span>Basic Mode</span>
+                  <strong>已有 PDBQT</strong>
+                  <StatusBadge
+                    tone={modeTone(capabilityProfile.basic_mode_available, capabilityProfile.recommended_mode === "basic")}
+                  >
+                    {capabilityProfile.basic_mode_available ? "可用" : "缺 Vina"}
+                  </StatusBadge>
+                </article>
+                <article className="metric-card">
+                  <span>Assisted Mode</span>
+                  <strong>raw → PDBQT</strong>
+                  <StatusBadge
+                    tone={modeTone(capabilityProfile.assisted_mode_available, capabilityProfile.recommended_mode === "assisted")}
+                  >
+                    {capabilityProfile.assisted_mode_available ? "可用" : "需 Python/RDKit/Meeko"}
+                  </StatusBadge>
+                </article>
+                <article className="metric-card">
+                  <span>Demo Mode</span>
+                  <strong>示例流程</strong>
+                  <StatusBadge
+                    tone={modeTone(capabilityProfile.demo_mode_available, capabilityProfile.recommended_mode === "demo")}
+                  >
+                    {capabilityProfile.demo_mode_available ? "可用" : "暂无示例"}
+                  </StatusBadge>
+                </article>
+              </div>
+            </div>
+          ) : null}
           {toolchain ? (
             <div className="status-strip">
               <article className="metric-card">

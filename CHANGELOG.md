@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.0
+
+- Added an app capability profile for Basic / Assisted / Demo usage modes.
+- Added project-level mode recommendation and minimum requirements status helpers.
+- Exposed the new capability profile through Tauri commands and surfaced the mode summary on the Dashboard.
+- Clarified that RDKit/Meeko missing blocks Assisted Mode only; Basic Mode remains available when Vina and prepared PDBQT files are ready.
+- Kept V0.8.0 focused on guidance and capability grading; no scientific workflow, Vina algorithm, PLIP/ProLIF, Open Babel, MGLTools, or drug-efficacy functionality was added.
+
 ## v0.6.7
 
 - Performed the V0.6 release packaging freeze audit and unified version numbers to `0.6.7`.

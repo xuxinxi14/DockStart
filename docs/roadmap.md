@@ -14,6 +14,12 @@ DockStart Full 的最终目标：
 
 当前 V0.1 是 Lite MVP，主要价值是跑通本地 PDBQT docking 闭环。它依赖用户已经准备好的 PDBQT 文件和本机 AutoDock Vina，是阶段性实现，不是最终产品形态。
 
+V0.8 开始把“开箱即用”拆成三种可解释的使用模式：
+
+- Basic Mode：已有 PDBQT，只需要 AutoDock Vina；
+- Assisted Mode：从 raw 结构自动准备 PDBQT，需要 Python + RDKit + Meeko；
+- Demo Mode：用小型示例体验流程，示例不用于科研结论。
+
 ## V0.1: 本地 PDBQT Docking Lite MVP
 
 目标：跑通最小闭环，证明项目、运行、解析和报告链路可用。

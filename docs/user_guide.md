@@ -2,6 +2,16 @@
 
 本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2 raw workflow 与 V0.3 preparation 入口。
 
+## 选择使用模式
+
+DockStart V0.8 开始把入口分成三种模式：
+
+- **Basic Mode：已有 PDBQT**。你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径。
+- **Assisted Mode：从 raw 文件准备 PDBQT**。你只有 PDB/CIF/SDF/MOL 等原始结构文件，需要配置 Python + RDKit + Meeko，DockStart 才能尝试自动准备 PDBQT。
+- **Demo Mode：先看示例流程**。用于第一次体验软件流程。示例只用于流程演示，不用于科研结论。
+
+如果 RDKit/Meeko 缺失，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
+
 ## 前置条件
 
 你需要先准备好：

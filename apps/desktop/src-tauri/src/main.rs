@@ -35,6 +35,36 @@ fn get_toolchain_status() -> String {
 }
 
 #[tauri::command]
+fn get_app_capability_profile() -> String {
+    match run_backend_module("dockstart_core.capabilities", vec!["profile".to_string()]) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 DockStart 运行模式能力。", &error),
+    }
+}
+
+#[tauri::command]
+fn get_project_mode_recommendation(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.capabilities",
+        vec!["project-recommendation".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成项目运行模式建议。", &error),
+    }
+}
+
+#[tauri::command]
+fn get_minimum_requirements_status(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.capabilities",
+        vec!["minimum-requirements".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取项目最低依赖状态。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_settings() -> String {
     match run_backend_module("dockstart_core.settings", vec!["get".to_string()]) {
         Ok(payload) => payload,
@@ -845,6 +875,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             check_tools,
             get_toolchain_status,
+            get_app_capability_profile,
+            get_project_mode_recommendation,
+            get_minimum_requirements_status,
             get_settings,
             save_settings,
             update_tool_path,

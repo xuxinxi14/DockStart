@@ -179,6 +179,90 @@ export type ToolchainStatusResponse = {
   };
 };
 
+export type UsageMode = "basic" | "assisted" | "demo" | "setup";
+
+export type CapabilityBlockingItem = {
+  mode: UsageMode | string;
+  item: string;
+  message: string;
+};
+
+export type AppCapabilityProfile = {
+  ok: boolean;
+  app_version: string;
+  vina_status: ToolCheckResult | null;
+  python_status: ToolCheckResult | null;
+  rdkit_status: ToolCheckResult | null;
+  meeko_status: ToolCheckResult | null;
+  viewer_status: ToolCheckResult | null;
+  basic_mode_available: boolean;
+  assisted_mode_available: boolean;
+  demo_mode_available: boolean;
+  recommended_mode: UsageMode | string;
+  blocking_items: CapabilityBlockingItem[];
+  next_action: string;
+  demo_projects: Array<{
+    name: string;
+    project_dir: string;
+    project_json: string;
+    exists: boolean;
+  }>;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type MinimumRequirementsStatus = {
+  ok: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  basic_mode: {
+    available: boolean;
+    files_ready: boolean;
+    ready: boolean;
+  };
+  assisted_mode: {
+    available: boolean;
+    raw_inputs_ready: boolean;
+    ready: boolean;
+  };
+  demo_mode: {
+    available: boolean;
+    projects: AppCapabilityProfile["demo_projects"];
+  };
+  missing_items: CapabilityBlockingItem[];
+  next_action: string;
+  workflow?: ProjectWorkflowStatusResponse;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type ProjectModeRecommendation = {
+  ok: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  recommended_mode: UsageMode | string;
+  reason: string;
+  next_action: string;
+  minimum_requirements: MinimumRequirementsStatus;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type RunCheckResult = {
   key: string;
   name: string;
