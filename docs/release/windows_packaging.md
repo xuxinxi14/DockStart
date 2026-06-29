@@ -114,3 +114,19 @@ V0.6.5 的本地构建验收记录见：
 ```text
 docs/release/v0_6_5_build_report.md
 ```
+
+## Post-install Diagnostics
+
+V0.8.5 新增安装后自检，用于安装包或开发环境启动后的本地排查。自检会读取：
+
+- DockStart 版本；
+- Windows / OS 概要；
+- AutoDock Vina 状态；
+- Python / RDKit / Meeko 状态；
+- Viewer 状态；
+- resource_dir / toolchain_root；
+- settings 路径；
+- 示例项目状态；
+- Basic / Assisted / Demo Mode 是否可用。
+
+工具链页可以导出 Markdown 诊断报告。报告只写入本地，不上传网络；它可能包含用户本机工具路径，发布 issue 或发给开发者前应自行检查和脱敏。

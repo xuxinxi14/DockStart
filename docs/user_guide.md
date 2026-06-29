@@ -31,6 +31,8 @@ V0.8.3 之后，首次启动向导会先问你想怎么开始：
 
 V0.8.4 之后，如果工具链缺失，可以在工具链页查看“修复建议”。这些建议会区分 Vina、Python/RDKit/Meeko 和 Microsoft Store Python 等问题，并提供手动步骤；DockStart 不会自动安装工具或修改系统 PATH。详细说明见 [toolchain_repair_guide.md](toolchain_repair_guide.md)。
 
+V0.8.5 之后，工具链页可以运行“安装后自检”，并导出本地 Markdown 诊断报告。报告用于排查环境问题，不会上传网络；其中可能包含本机工具路径，分享前请自行检查。
+
 ## 前置条件
 
 你需要先准备好：

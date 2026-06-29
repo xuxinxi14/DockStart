@@ -43,6 +43,25 @@ fn get_toolchain_repair_suggestions() -> String {
 }
 
 #[tauri::command]
+fn run_post_install_check() -> String {
+    match run_backend_module("dockstart_core.diagnostics", vec!["check".to_string()]) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法运行安装后自检。", &error),
+    }
+}
+
+#[tauri::command]
+fn export_diagnostic_report(output_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.diagnostics",
+        vec!["export".to_string(), output_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导出诊断报告。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_app_capability_profile() -> String {
     match run_backend_module("dockstart_core.capabilities", vec!["profile".to_string()]) {
         Ok(payload) => payload,
@@ -914,6 +933,8 @@ fn main() {
             check_tools,
             get_toolchain_status,
             get_toolchain_repair_suggestions,
+            run_post_install_check,
+            export_diagnostic_report,
             get_app_capability_profile,
             get_project_mode_recommendation,
             get_minimum_requirements_status,

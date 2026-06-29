@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.5
+
+- Added a post-install diagnostic check for app version, OS, Vina, Python, RDKit, Meeko, viewer, resource paths, settings path, demo projects, and Basic/Assisted/Demo availability.
+- Added local Markdown diagnostic report export for troubleshooting without network upload.
+- Surfaced the diagnostic check and report export on ToolchainStatusPage.
+- Documented that diagnostic reports may contain local tool paths and should be reviewed before sharing.
+- Kept the feature limited to local inspection; no automatic installation, upload, scientific workflow change, or Vina behavior change was added.
+
 ## v0.8.4
 
 - Added structured toolchain repair suggestions for missing Vina, incomplete Python/RDKit/Meeko environments, and Microsoft Store Python warnings.

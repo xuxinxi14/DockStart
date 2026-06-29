@@ -1,6 +1,6 @@
 [package]
 name = "dockstart-desktop"
-version = "0.8.4"
+version = "0.8.5"
 description = "DockStart desktop shell"
 authors = ["DockStart contributors"]
 edition = "2021"

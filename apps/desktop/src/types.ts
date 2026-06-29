@@ -286,6 +286,68 @@ export type ToolchainRepairSuggestionsResponse = {
   } | null;
 };
 
+export type PostInstallCheckResponse = {
+  ok: boolean;
+  generated_at: string;
+  app_version: string;
+  os: {
+    system: string;
+    release: string;
+    version: string;
+    machine: string;
+  };
+  runtime_mode: string;
+  release_build_mode: string;
+  paths: {
+    settings_path: string;
+    resource_dir: string;
+    toolchain_root: string;
+  };
+  tools: Record<string, {
+    status: ToolStatus | string;
+    source: ToolSource | string;
+    version: string;
+    path: string;
+    message: string;
+  }>;
+  demo_projects: {
+    ok: boolean;
+    available: boolean;
+    count: number;
+    demos: Array<Record<string, unknown>>;
+  };
+  modes: {
+    basic_mode_available: boolean;
+    assisted_mode_available: boolean;
+    demo_mode_available: boolean;
+    recommended_mode: UsageMode | string;
+    next_action: string;
+  };
+  issues: string[];
+  privacy_note: string;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type DiagnosticReportResponse = {
+  ok: boolean;
+  report_file: string;
+  generated_at: string;
+  check: PostInstallCheckResponse;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type DemoProjectSummary = {
   demo_type: "basic_pdbqt" | "assisted_raw" | "viewer_only" | string;
   title: string;

@@ -48,6 +48,8 @@ V0.8.3 之后，Dashboard 和帮助页会显示首次启动向导。向导会先
 
 V0.8.4 之后，工具链页会显示“修复建议”。Vina 缺失会指向 Basic Mode / Assisted Mode 的共同阻塞；RDKit/Meeko 缺失只标记 Assisted Mode；检测到 Microsoft Store Python 时会建议改用独立 conda/mamba 环境。详见 [toolchain_repair_guide.md](toolchain_repair_guide.md)。
 
+V0.8.5 之后，工具链页还可以运行“安装后自检”。自检会读取 DockStart 版本、系统、工具链状态、资源路径、设置路径和示例项目状态，并判断 Basic / Assisted / Demo Mode 是否可用。导出的 Markdown 诊断报告只保存在本地，不会上传网络；报告可能包含本机路径，分享前请自行确认是否需要脱敏。
+
 ## 3. 为什么现在只支持 PDBQT？
 
 AutoDock Vina 的核心输入是 PDBQT。V0.1 的目标是先跑通最小闭环，所以只接受用户已经准备好的 `receptor.pdbqt` 和 `ligand.pdbqt`。

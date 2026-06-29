@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DiagnosticReportResponse,
+  PostInstallCheckResponse,
   ToolCheckResult,
   ToolSource,
   ToolStatus,
@@ -186,6 +188,58 @@ function normalizeRepairResponse(rawPayload: string): ToolchainRepairSuggestions
   };
 }
 
+function normalizePostInstallCheck(rawPayload: string): PostInstallCheckResponse {
+  const parsed = JSON.parse(rawPayload) as Partial<PostInstallCheckResponse>;
+  return {
+    ok: Boolean(parsed.ok),
+    generated_at: parsed.generated_at ?? "",
+    app_version: parsed.app_version ?? "",
+    os: {
+      system: parsed.os?.system ?? "",
+      release: parsed.os?.release ?? "",
+      version: parsed.os?.version ?? "",
+      machine: parsed.os?.machine ?? "",
+    },
+    runtime_mode: parsed.runtime_mode ?? "unknown",
+    release_build_mode: parsed.release_build_mode ?? "unknown",
+    paths: {
+      settings_path: parsed.paths?.settings_path ?? "",
+      resource_dir: parsed.paths?.resource_dir ?? "",
+      toolchain_root: parsed.paths?.toolchain_root ?? "",
+    },
+    tools: parsed.tools ?? {},
+    demo_projects: {
+      ok: Boolean(parsed.demo_projects?.ok),
+      available: Boolean(parsed.demo_projects?.available),
+      count: parsed.demo_projects?.count ?? 0,
+      demos: parsed.demo_projects?.demos ?? [],
+    },
+    modes: {
+      basic_mode_available: Boolean(parsed.modes?.basic_mode_available),
+      assisted_mode_available: Boolean(parsed.modes?.assisted_mode_available),
+      demo_mode_available: Boolean(parsed.modes?.demo_mode_available),
+      recommended_mode: parsed.modes?.recommended_mode ?? "setup",
+      next_action: parsed.modes?.next_action ?? "",
+    },
+    issues: parsed.issues ?? [],
+    privacy_note: parsed.privacy_note ?? "",
+    message: parsed.message ?? "",
+    error: parsed.error ?? null,
+  };
+}
+
+function normalizeDiagnosticReport(rawPayload: string): DiagnosticReportResponse {
+  const parsed = JSON.parse(rawPayload) as Partial<DiagnosticReportResponse>;
+  return {
+    ok: Boolean(parsed.ok),
+    report_file: parsed.report_file ?? "",
+    generated_at: parsed.generated_at ?? "",
+    check: parsed.check ? normalizePostInstallCheck(JSON.stringify(parsed.check)) : normalizePostInstallCheck("{}"),
+    message: parsed.message ?? "",
+    error: parsed.error ?? null,
+  };
+}
+
 function buildFrontendRepairError(error: unknown): ToolchainRepairSuggestionsResponse {
   const rawError = error instanceof Error ? error.message : String(error);
   return {
@@ -326,10 +380,17 @@ function severityClass(severity: string): string {
   return "status-ok";
 }
 
+function modeAvailabilityText(value: boolean): string {
+  return value ? "可用" : "不可用";
+}
+
 export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings }: ToolchainStatusPageProps) {
   const [status, setStatus] = useState<ToolchainStatusResponse | null>(null);
   const [repair, setRepair] = useState<ToolchainRepairSuggestionsResponse | null>(null);
+  const [diagnostic, setDiagnostic] = useState<PostInstallCheckResponse | null>(null);
+  const [diagnosticReport, setDiagnosticReport] = useState<DiagnosticReportResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDiagnosticLoading, setIsDiagnosticLoading] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
 
   const loadStatus = useCallback(async () => {
@@ -373,6 +434,56 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
       setCopyMessage("已复制命令。请在你信任的终端中手动执行。");
     } catch (error) {
       setCopyMessage(`复制失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const runDiagnostic = async () => {
+    setIsDiagnosticLoading(true);
+    try {
+      const rawPayload = await invoke<string>("run_post_install_check");
+      setDiagnostic(normalizePostInstallCheck(rawPayload));
+    } catch (error) {
+      setDiagnostic({
+        ok: false,
+        generated_at: "",
+        app_version: "",
+        os: { system: "", release: "", version: "", machine: "" },
+        runtime_mode: "unknown",
+        release_build_mode: "unknown",
+        paths: { settings_path: "", resource_dir: "", toolchain_root: "" },
+        tools: {},
+        demo_projects: { ok: false, available: false, count: 0, demos: [] },
+        modes: {
+          basic_mode_available: false,
+          assisted_mode_available: false,
+          demo_mode_available: false,
+          recommended_mode: "setup",
+          next_action: "安装后自检失败，请检查 Python 后端。",
+        },
+        issues: ["安装后自检失败。"],
+        privacy_note: "",
+        message: "安装后自检失败。",
+        error: {
+          code: "FRONTEND_DIAGNOSTIC_ERROR",
+          message: "无法运行安装后自检。",
+          raw_error: error instanceof Error ? error.message : String(error),
+          suggestion: "请确认当前运行环境是 Tauri 桌面端。",
+        },
+      });
+    } finally {
+      setIsDiagnosticLoading(false);
+    }
+  };
+
+  const exportDiagnostic = async () => {
+    setIsDiagnosticLoading(true);
+    try {
+      const rawPayload = await invoke<string>("export_diagnostic_report", { outputDir: "" });
+      setDiagnosticReport(normalizeDiagnosticReport(rawPayload));
+    } catch (error) {
+      setCopyMessage(`诊断报告导出失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsDiagnosticLoading(false);
     }
   };
 
@@ -647,6 +758,86 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               <p className="placeholder-note">{repair?.message || "暂无需要修复的关键工具链问题。"}</p>
             )}
             <p className="placeholder-note">这些建议不会自动安装工具，也不会修改系统 PATH。请确认命令含义后手动执行。</p>
+          </section>
+
+          <section className="mode-panel" aria-label="安装后自检">
+            <div className="mode-panel-header">
+              <div>
+                <span className="eyebrow">安装后自检</span>
+                <strong>一键确认当前安装能完成哪条路径</strong>
+              </div>
+              <div className="toolbar">
+                <button className="secondary-button" type="button" onClick={() => void runDiagnostic()} disabled={isDiagnosticLoading}>
+                  {isDiagnosticLoading ? "检查中..." : "运行自检"}
+                </button>
+                <button className="text-button inline" type="button" onClick={() => void exportDiagnostic()} disabled={isDiagnosticLoading}>
+                  导出诊断报告
+                </button>
+              </div>
+            </div>
+            {diagnostic ? (
+              <>
+                <div className="compact-grid">
+                  <article className="metric-card">
+                    <span>Basic Mode</span>
+                    <strong>{modeAvailabilityText(diagnostic.modes.basic_mode_available)}</strong>
+                    <p>已有 PDBQT 的最低依赖路径。</p>
+                  </article>
+                  <article className="metric-card">
+                    <span>Assisted Mode</span>
+                    <strong>{modeAvailabilityText(diagnostic.modes.assisted_mode_available)}</strong>
+                    <p>raw 文件自动准备 PDBQT。</p>
+                  </article>
+                  <article className="metric-card">
+                    <span>Demo Mode</span>
+                    <strong>{modeAvailabilityText(diagnostic.modes.demo_mode_available)}</strong>
+                    <p>示例项目数量：{diagnostic.demo_projects.count}</p>
+                  </article>
+                  <article className="metric-card">
+                    <span>推荐下一步</span>
+                    <strong>{diagnostic.modes.recommended_mode}</strong>
+                    <p>{diagnostic.modes.next_action}</p>
+                  </article>
+                </div>
+                {diagnostic.issues.length ? (
+                  <details className="technical-details">
+                    <summary>需要关注的问题</summary>
+                    <ul>
+                      {diagnostic.issues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+                <details className="technical-details">
+                  <summary>诊断技术详情</summary>
+                  <dl className="tool-meta">
+                    <div>
+                      <dt>版本</dt>
+                      <dd>{diagnostic.app_version}</dd>
+                    </div>
+                    <div>
+                      <dt>系统</dt>
+                      <dd>{diagnostic.os.system} {diagnostic.os.release} {diagnostic.os.machine}</dd>
+                    </div>
+                    <div>
+                      <dt>settings</dt>
+                      <dd>{diagnostic.paths.settings_path}</dd>
+                    </div>
+                    <div>
+                      <dt>resource_dir</dt>
+                      <dd>{diagnostic.paths.resource_dir || "未设置"}</dd>
+                    </div>
+                  </dl>
+                  <p className="placeholder-note">{diagnostic.privacy_note}</p>
+                </details>
+              </>
+            ) : (
+              <p className="placeholder-note">点击“运行自检”后，会显示当前安装是否满足 Basic / Assisted / Demo Mode。</p>
+            )}
+            {diagnosticReport?.report_file ? (
+              <p className="message-line">诊断报告已导出：{diagnosticReport.report_file}</p>
+            ) : null}
           </section>
 
           {status.error ? (

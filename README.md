@@ -317,6 +317,13 @@ V0.8.4 新增工具链修复建议：
 - 检测到 Microsoft Store Python 时提示不建议作为 RDKit/Meeko 环境；
 - 修复建议只提供手动步骤和可复制命令，不自动安装、不联网下载、不修改系统 PATH。
 
+V0.8.5 新增安装后自检：
+
+- 一键检查 DockStart 版本、系统、Vina、Python/RDKit/Meeko、Viewer、资源路径、设置路径和示例项目；
+- 显示 Basic / Assisted / Demo Mode 当前是否可用；
+- 可以导出本地 Markdown 诊断报告，用于用户截图或复制给开发者排查；
+- 诊断报告不会上传网络，分享前应检查其中的本机工具路径。
+
 ## 当前暂不支持
 
 当前仍不支持：
