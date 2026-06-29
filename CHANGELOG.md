@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.6
+
+- Added `docs/release/release_artifact_profile.md` to describe what a release artifact includes and which usage modes it can support.
+- Updated the Windows build script to print a release artifact capability profile during release checks.
+- Updated GitHub Release materials to clarify Basic / Assisted / Demo Mode requirements and avoid overclaiming out-of-box capability.
+- Enhanced the checksum script with an optional release profile note.
+- Kept the change limited to release documentation and scripts; no installer, build output, runtime, or scientific functionality was added.
+
 ## v0.8.5
 
 - Added a post-install diagnostic check for app version, OS, Vina, Python, RDKit, Meeko, viewer, resource paths, settings path, demo projects, and Basic/Assisted/Demo availability.

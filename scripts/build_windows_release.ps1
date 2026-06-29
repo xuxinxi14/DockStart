@@ -95,6 +95,29 @@ if (@($uniqueVersions).Count -ne 1) {
 }
 Write-Host "Version: $($uniqueVersions[0])"
 
+Write-Step "Release artifact capability profile"
+$resourcesDir = Join-Path $repoRoot "resources"
+$profile = [ordered]@{
+    "app_version" = $uniqueVersions[0]
+    "build_type" = "lightweight_or_toolchain_assisted"
+    "includes_bundled_vina" = (Test-Path -LiteralPath (Join-Path $resourcesDir "vina\vina.exe"))
+    "includes_bundled_python" = (Test-Path -LiteralPath (Join-Path $resourcesDir "python\python.exe"))
+    "includes_conda_env" = $false
+    "includes_demo_projects" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_basic_project")) -and (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_assisted_project"))
+    "includes_examples" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples"))
+    "basic_mode_expected" = "Requires AutoDock Vina plus user-provided receptor/ligand PDBQT."
+    "assisted_mode_expected" = "Requires AutoDock Vina and a configured Python environment with RDKit/Meeko."
+    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda env in lightweight release")
+}
+$profile.GetEnumerator() | ForEach-Object {
+    if ($_.Value -is [array]) {
+        Write-Host "$($_.Key): $($_.Value -join '; ')"
+    }
+    else {
+        Write-Host "$($_.Key): $($_.Value)"
+    }
+}
+
 Invoke-Checked "Python unittest" "python" @("-m", "unittest", "discover", "-s", "backend/tests") $repoRoot
 Invoke-Checked "npm run build" "npm.cmd" @("run", "build") $desktopDir
 Invoke-Checked "cargo check" "cargo" @("check", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml") $repoRoot

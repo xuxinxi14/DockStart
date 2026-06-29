@@ -78,8 +78,11 @@ scripts\build_windows_release.ps1 -SkipTauriBuild
 ## GitHub Release Materials
 
 - `docs/release/github_release_template.md` 已更新。
+- `docs/release/release_artifact_profile.md` 已更新。
 - 安装包 SHA256 可用 `scripts/hash_release_artifacts.py` 生成。
 - Release notes 明确列出 included / not included / known limitations。
+- Release notes 明确 Basic Mode / Assisted Mode / Demo Mode 的可用条件。
+- Release notes 不得暗示无需任何外部条件即可自动准备所有分子。
 - Checksums 发布前已经替换占位符。
 
 ## Product Boundaries

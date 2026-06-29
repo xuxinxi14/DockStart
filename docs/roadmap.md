@@ -30,6 +30,8 @@ V0.8.4 新增工具链修复建议，把 Vina、Python/RDKit/Meeko 和 Microsoft
 
 V0.8.5 新增安装后自检和本地 Markdown 诊断报告导出，帮助用户判断当前安装能完成 Basic / Assisted / Demo 哪些路径。该版本不上传诊断数据、不自动安装工具，也不改变科学流程。
 
+V0.8.6 补充 release artifact capability profile，明确安装包包含什么、不包含什么，以及 Basic / Assisted / Demo Mode 的预期条件。该版本只整理发布材料和脚本，不生成或提交安装包。
+
 ## V0.1: 本地 PDBQT Docking Lite MVP
 
 目标：跑通最小闭环，证明项目、运行、解析和报告链路可用。

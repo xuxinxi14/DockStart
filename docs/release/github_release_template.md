@@ -1,4 +1,4 @@
-# DockStart v0.6.7 Preview
+# DockStart v0.8.6 Preview
 
 DockStart is a Windows molecular docking workbench based on AutoDock Vina. It provides a Chinese-first desktop workflow for raw structure acquisition, RDKit/Meeko-assisted PDBQT preparation, Vina execution, 3D viewing, score parsing, and Markdown report export.
 
@@ -11,6 +11,17 @@ DockStart is a Windows molecular docking workbench based on AutoDock Vina. It pr
 - AutoDock Vina config, run preparation, execution, score parsing, and report export.
 - 3D structure viewer, docking box visualization, and docking pose viewing.
 - First-run toolchain guidance.
+- Basic / Assisted / Demo Mode guidance.
+- Demo project templates for software-flow learning.
+- Post-install diagnostic check and local Markdown diagnostic report export.
+
+## Capability Profile
+
+- **Basic Mode**: available when AutoDock Vina is configured and users provide receptor/ligand PDBQT files.
+- **Assisted Mode**: available when AutoDock Vina and a configured Python environment with RDKit/Meeko are available.
+- **Demo Mode**: available when bundled demo project templates are present. Demo data is for software workflow demonstration only.
+
+The lightweight release does not imply that all scientific preparation steps work without external configuration.
 
 ## Not Included
 
@@ -22,6 +33,8 @@ DockStart is a Windows molecular docking workbench based on AutoDock Vina. It pr
 - No automatic scientific validation.
 - No AutoDock Vina algorithm or scoring-function modifications.
 - No bundled conda environment, RDKit/Meeko site-packages, or Python runtime in the lightweight release.
+- No automatic installation of RDKit/Meeko.
+- No Open Babel or MGLTools integration.
 
 ## Installation Notes
 
@@ -30,7 +43,8 @@ DockStart is a Windows molecular docking workbench based on AutoDock Vina. It pr
 3. Open the toolchain or first-run guide.
 4. Configure AutoDock Vina if bundled Vina is not included.
 5. Configure a Python environment with RDKit and Meeko if you want automatic PDBQT preparation.
-6. Create or open a DockStart project.
+6. Use the post-install diagnostic check to confirm Basic / Assisted / Demo availability.
+7. Create or open a DockStart project.
 
 Recommended Python toolchain:
 
@@ -55,8 +69,8 @@ Replace the placeholders below before publishing the release:
 
 | File | Size | SHA256 |
 | --- | ---: | --- |
-| `DockStart_0.6.7_x64_en-US.msi` | TBD | TBD |
-| `DockStart_0.6.7_x64-setup.exe` | TBD | TBD |
+| `DockStart_0.8.6_x64_en-US.msi` | TBD | TBD |
+| `DockStart_0.8.6_x64-setup.exe` | TBD | TBD |
 
 You can generate this table with:
 
