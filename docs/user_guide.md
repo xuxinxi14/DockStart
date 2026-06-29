@@ -29,6 +29,8 @@ V0.8.3 之后，首次启动向导会先问你想怎么开始：
 
 向导会列出当前缺什么和下一步建议，但不会自动安装 Vina、RDKit 或 Meeko。
 
+V0.8.4 之后，如果工具链缺失，可以在工具链页查看“修复建议”。这些建议会区分 Vina、Python/RDKit/Meeko 和 Microsoft Store Python 等问题，并提供手动步骤；DockStart 不会自动安装工具或修改系统 PATH。详细说明见 [toolchain_repair_guide.md](toolchain_repair_guide.md)。
+
 ## 前置条件
 
 你需要先准备好：

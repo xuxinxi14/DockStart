@@ -330,6 +330,29 @@ textarea {
   font-size: var(--ds-text-sm);
 }
 
+.command-list {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+
+.command-row code {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-bg-subtle);
+  padding: var(--ds-space-2);
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-xs);
+}
+
 .inline-flow-list {
   display: flex;
   flex-wrap: wrap;
@@ -1019,6 +1042,10 @@ pre,
 
   .first-run-header {
     display: grid;
+  }
+
+  .command-row {
+    grid-template-columns: 1fr;
   }
 }
 

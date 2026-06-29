@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.4
+
+- Added structured toolchain repair suggestions for missing Vina, incomplete Python/RDKit/Meeko environments, and Microsoft Store Python warnings.
+- Exposed the repair guidance through a Tauri command and surfaced it on ToolchainStatusPage with manual steps and copyable commands.
+- Added `docs/toolchain_repair_guide.md` and HelpPage guidance for Basic Mode vs Assisted Mode repair paths.
+- Kept the feature offline and advisory only: no automatic installation, PATH mutation, downloads, docking changes, or scientific capability was added.
+
 ## v0.8.3
 
 - Improved the first-run guide so new users can choose between existing PDBQT files, raw structure preparation, or demo projects.

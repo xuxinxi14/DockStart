@@ -310,6 +310,13 @@ V0.8.3 升级首次启动向导：
 - 向导会显示当前缺少 Vina、Python/RDKit/Meeko 还是示例资源；
 - 向导只给出配置和下一步建议，不自动安装工具，也不改变 docking 或 preparation 逻辑。
 
+V0.8.4 新增工具链修复建议：
+
+- Vina 缺失时提示如何配置 `vina.exe`；
+- RDKit/Meeko 缺失时提示如何准备独立 conda/mamba Python 工具链；
+- 检测到 Microsoft Store Python 时提示不建议作为 RDKit/Meeko 环境；
+- 修复建议只提供手动步骤和可复制命令，不自动安装、不联网下载、不修改系统 PATH。
+
 ## 当前暂不支持
 
 当前仍不支持：

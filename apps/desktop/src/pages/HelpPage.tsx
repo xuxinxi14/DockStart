@@ -93,6 +93,27 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
         </div>
       </SectionCard>
 
+      <SectionCard title="工具链怎么修">
+        <div className="help-grid">
+          <article>
+            <strong>Vina 缺失</strong>
+            <p>Basic Mode 和真实 docking 都需要 AutoDock Vina。先确认 vina --version 可运行，再到设置页填写 vina.exe。</p>
+          </article>
+          <article>
+            <strong>自动准备缺依赖</strong>
+            <p>RDKit/Meeko 缺失只影响 Assisted Mode。推荐用独立 conda 环境，不要污染系统 Python。</p>
+          </article>
+          <article>
+            <strong>Microsoft Store Python</strong>
+            <p>不建议作为 RDKit/Meeko 工具链。请创建 dockstart-rdkit-meeko 环境后配置该环境的 python.exe。</p>
+          </article>
+          <article>
+            <strong>不会自动安装</strong>
+            <p>DockStart 只给出修复建议和可复制命令，是否执行由用户自己确认。</p>
+          </article>
+        </div>
+      </SectionCard>
+
       <WarningCallout title="科学边界">
         <p>DockStart 记录 docking 过程和对接评分，不判断药效或真实结合。</p>
       </WarningCallout>

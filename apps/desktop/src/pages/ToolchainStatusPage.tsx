@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ToolCheckResult, ToolSource, ToolStatus, ToolchainStatusResponse } from "../types";
+import type {
+  ToolCheckResult,
+  ToolSource,
+  ToolStatus,
+  ToolchainRepairSuggestion,
+  ToolchainRepairSuggestionsResponse,
+  ToolchainStatusResponse,
+} from "../types";
 
 type ToolchainStatusPageProps = {
   onBack: () => void;
@@ -29,6 +36,12 @@ const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_pyt
   ready: "可用",
   incomplete: "待补全",
   missing: "未发现",
+};
+
+const severityText: Record<string, string> = {
+  error: "需要处理",
+  warning: "建议处理",
+  info: "提示",
 };
 
 function normalizeTool(item: Partial<ToolCheckResult> | null | undefined, fallbackKey = "tool"): ToolCheckResult | null {
@@ -154,6 +167,40 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
   };
 }
 
+function normalizeRepairResponse(rawPayload: string): ToolchainRepairSuggestionsResponse {
+  const parsed = JSON.parse(rawPayload) as Partial<ToolchainRepairSuggestionsResponse>;
+  return {
+    ok: Boolean(parsed.ok),
+    suggestions: (parsed.suggestions ?? []).map((item) => ({
+      issue: item.issue ?? "unknown",
+      severity: item.severity ?? "info",
+      affected_mode: item.affected_mode ?? "未知模式",
+      explanation: item.explanation ?? "",
+      recommended_fix: item.recommended_fix ?? "",
+      documentation_link: item.documentation_link ?? "docs/toolchain_repair_guide.md",
+      copyable_commands: item.copyable_commands ?? [],
+      manual_steps: item.manual_steps ?? [],
+    })),
+    message: parsed.message ?? "",
+    error: parsed.error ?? null,
+  };
+}
+
+function buildFrontendRepairError(error: unknown): ToolchainRepairSuggestionsResponse {
+  const rawError = error instanceof Error ? error.message : String(error);
+  return {
+    ok: false,
+    suggestions: [],
+    message: "前端未能读取工具链修复建议。",
+    error: {
+      code: "FRONTEND_TOOLCHAIN_REPAIR_ERROR",
+      message: "无法读取工具链修复建议。",
+      raw_error: rawError,
+      suggestion: "请确认当前运行环境是 Tauri 桌面端，并重新打开工具链页。",
+    },
+  };
+}
+
 function buildFrontendError(error: unknown): ToolchainStatusResponse {
   const rawError = error instanceof Error ? error.message : String(error);
   const frontendTool: ToolCheckResult = {
@@ -273,18 +320,30 @@ function pathOrEmpty(path: string | undefined): string {
   return path && path.trim() ? path : "未获取";
 }
 
+function severityClass(severity: string): string {
+  if (severity === "error") return "status-error";
+  if (severity === "warning") return "status-missing";
+  return "status-ok";
+}
+
 export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings }: ToolchainStatusPageProps) {
   const [status, setStatus] = useState<ToolchainStatusResponse | null>(null);
+  const [repair, setRepair] = useState<ToolchainRepairSuggestionsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
 
   const loadStatus = useCallback(async () => {
     setIsLoading(true);
     try {
-      const rawPayload = await invoke<string>("get_toolchain_status");
+      const [rawPayload, repairPayload] = await Promise.all([
+        invoke<string>("get_toolchain_status"),
+        invoke<string>("get_toolchain_repair_suggestions"),
+      ]);
       setStatus(normalizeResponse(rawPayload));
+      setRepair(normalizeRepairResponse(repairPayload));
     } catch (error) {
       setStatus(buildFrontendError(error));
+      setRepair(buildFrontendRepairError(error));
     } finally {
       setIsLoading(false);
     }
@@ -305,6 +364,15 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
       setCopyMessage("已复制当前 Python 路径。");
     } catch (error) {
       setCopyMessage(`复制失败，请手动选择路径：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  const copyCommand = async (command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopyMessage("已复制命令。请在你信任的终端中手动执行。");
+    } catch (error) {
+      setCopyMessage(`复制失败：${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -523,6 +591,62 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <p>用于自动准备 PDBQT；缺失时不影响 Basic Mode。</p>
               </article>
             </div>
+          </section>
+
+          <section className="mode-panel" aria-label="工具链修复建议">
+            <div className="mode-panel-header">
+              <div>
+                <span className="eyebrow">修复建议</span>
+                <strong>缺什么，就先修对应路径</strong>
+              </div>
+              {onOpenHelp ? (
+                <button className="text-button inline" type="button" onClick={onOpenHelp}>
+                  查看详细教程
+                </button>
+              ) : null}
+            </div>
+            {repair?.suggestions.length ? (
+              <div className="compact-grid">
+                {repair.suggestions.map((suggestion: ToolchainRepairSuggestion) => (
+                  <article className="metric-card" key={suggestion.issue}>
+                    <span>{suggestion.affected_mode}</span>
+                    <strong>{suggestion.recommended_fix}</strong>
+                    <p>{suggestion.explanation}</p>
+                    <span className={`status-badge ${severityClass(suggestion.severity)}`}>
+                      {severityText[suggestion.severity] ?? "提示"}
+                    </span>
+                    {suggestion.manual_steps.length ? (
+                      <details className="technical-details">
+                        <summary>手动步骤</summary>
+                        <ol>
+                          {suggestion.manual_steps.map((step) => (
+                            <li key={step}>{step}</li>
+                          ))}
+                        </ol>
+                      </details>
+                    ) : null}
+                    {suggestion.copyable_commands.length ? (
+                      <details className="technical-details">
+                        <summary>可复制命令</summary>
+                        <div className="command-list">
+                          {suggestion.copyable_commands.map((command) => (
+                            <div className="command-row" key={command}>
+                              <code>{command}</code>
+                              <button className="text-button inline" type="button" onClick={() => void copyCommand(command)}>
+                                复制命令
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="placeholder-note">{repair?.message || "暂无需要修复的关键工具链问题。"}</p>
+            )}
+            <p className="placeholder-note">这些建议不会自动安装工具，也不会修改系统 PATH。请确认命令含义后手动执行。</p>
           </section>
 
           {status.error ? (

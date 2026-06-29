@@ -263,6 +263,29 @@ export type ProjectModeRecommendation = {
   } | null;
 };
 
+export type ToolchainRepairSuggestion = {
+  issue: string;
+  severity: "info" | "warning" | "error" | string;
+  affected_mode: string;
+  explanation: string;
+  recommended_fix: string;
+  documentation_link: string;
+  copyable_commands: string[];
+  manual_steps: string[];
+};
+
+export type ToolchainRepairSuggestionsResponse = {
+  ok: boolean;
+  suggestions: ToolchainRepairSuggestion[];
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type DemoProjectSummary = {
   demo_type: "basic_pdbqt" | "assisted_raw" | "viewer_only" | string;
   title: string;

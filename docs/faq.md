@@ -46,6 +46,8 @@ V0.8.2 之后，DockStart 提供小型示例项目。示例项目可以帮助你
 
 V0.8.3 之后，Dashboard 和帮助页会显示首次启动向导。向导会先问你想从已有 PDBQT、raw PDB/SDF 还是示例项目开始，并把缺失项拆成 Vina、Python/RDKit/Meeko 或示例资源。它只做引导，不会自动安装工具或修改系统环境。
 
+V0.8.4 之后，工具链页会显示“修复建议”。Vina 缺失会指向 Basic Mode / Assisted Mode 的共同阻塞；RDKit/Meeko 缺失只标记 Assisted Mode；检测到 Microsoft Store Python 时会建议改用独立 conda/mamba 环境。详见 [toolchain_repair_guide.md](toolchain_repair_guide.md)。
+
 ## 3. 为什么现在只支持 PDBQT？
 
 AutoDock Vina 的核心输入是 PDBQT。V0.1 的目标是先跑通最小闭环，所以只接受用户已经准备好的 `receptor.pdbqt` 和 `ligand.pdbqt`。

@@ -35,6 +35,14 @@ fn get_toolchain_status() -> String {
 }
 
 #[tauri::command]
+fn get_toolchain_repair_suggestions() -> String {
+    match run_backend_module("dockstart_core.toolchain_repair", Vec::new()) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成工具链修复建议。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_app_capability_profile() -> String {
     match run_backend_module("dockstart_core.capabilities", vec!["profile".to_string()]) {
         Ok(payload) => payload,
@@ -905,6 +913,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             check_tools,
             get_toolchain_status,
+            get_toolchain_repair_suggestions,
             get_app_capability_profile,
             get_project_mode_recommendation,
             get_minimum_requirements_status,
