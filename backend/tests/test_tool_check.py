@@ -156,6 +156,28 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.path, str(configured_path))
         self.assertEqual(run_mock.call_args[0][0][0], str(configured_path))
 
+    def test_prefer_configured_python_falls_back_to_bundled_when_configured_missing(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="Python 3.11.15\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "python" / "python.exe"
+            configured_path = Path(temp_dir) / "configured" / "missing-python.exe"
+            bundled_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled python", encoding="utf-8")
+
+            with patch.object(python_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = python_adapter.detect(
+                    str(configured_path),
+                    bundled_path=str(bundled_path),
+                    prefer_configured=True,
+                )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "bundled")
+        self.assertTrue(result.is_bundled)
+        self.assertEqual(result.path, str(bundled_path.resolve()))
+        self.assertEqual(run_mock.call_args[0][0][0], str(bundled_path.resolve()))
+
     def test_meeko_and_rdkit_use_resolved_bundled_python(self) -> None:
         python_completed = SimpleNamespace(returncode=0, stdout="Python 3.11.8\n", stderr="")
         import_completed = SimpleNamespace(returncode=0, stdout="1.0.0\n", stderr="")

@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from dockstart_core.preparation import (  # noqa: E402
     LIGAND_PREPARATION_OUTPUT,
+    _ligand_preparation_script_text,
     load_ligand_preparation_log,
     prepare_ligand_pdbqt,
     validate_ligand_preparation_input,
@@ -71,6 +72,13 @@ def _tool_status(rdkit: str = "ok", meeko: str = "ok", ligand_capability: str = 
 
 
 class LigandPreparationTests(unittest.TestCase):
+    def test_ligand_helper_adds_explicit_hydrogens_before_meeko(self) -> None:
+        script = _ligand_preparation_script_text()
+
+        self.assertIn("Chem.AddHs", script)
+        self.assertIn("prepare_ligand_for_meeko", script)
+        self.assertIn("preparator.prepare(molecule)", script)
+
     def _create_project(self, temp_dir: str) -> Path:
         created = create_project("ligand_prep", temp_dir)
         self.assertTrue(created["ok"], created)

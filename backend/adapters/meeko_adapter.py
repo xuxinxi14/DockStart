@@ -123,8 +123,8 @@ RECEPTOR_API_CANDIDATES = [
     "Polymer",
     "ResidueChemTemplates",
 ]
-LIGAND_CLI_CANDIDATES = ["mk_prepare_ligand.py", "mk_prepare_ligand"]
-RECEPTOR_CLI_CANDIDATES = ["mk_prepare_receptor.py", "mk_prepare_receptor"]
+LIGAND_CLI_CANDIDATES = ["mk_prepare_ligand.py", "mk_prepare_ligand", "mk_prepare_ligand.exe"]
+RECEPTOR_CLI_CANDIDATES = ["mk_prepare_receptor.py", "mk_prepare_receptor", "mk_prepare_receptor.exe"]
 
 
 def find_cli(candidates):

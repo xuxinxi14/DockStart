@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.9.3
+
+- Enabled the local Full toolchain profile to use bundled Python with RDKit, Meeko, NumPy, SciPy, Pillow, and Gemmi for Assisted Mode preparation.
+- Fixed ligand PDBQT preparation by adding explicit hydrogens before handing RDKit molecules to Meeko.
+- Changed receptor PDB preparation to use Meeko `--read_pdb` for PDB inputs, avoiding unnecessary ProDy dependence for standard PDB receptors.
+- Updated Vina execution for AutoDock Vina 1.2.7 by removing the unsupported `--log` argument and writing captured stdout to `runs/<run_id>/log.txt` for result parsing and reports.
+- Replaced the assisted demo receptor with a standard tiny ALA PDB so the bundled preparation/config/run/analyze/report smoke flow can complete.
+- Updated toolchain manifest and third-party notices for the local Full bundled Python package set.
+- Kept the work limited to toolchain integration and workflow execution; no PLIP/ProLIF/Open Babel/MGLTools integration, interaction analysis, pocket prediction, drug-efficacy judgment, or Vina algorithm change was added.
+
 ## v0.9.2
 
 - Relaxed the 3D workbench side-panel layout so Box controls, helper buttons, file status rows, and right-column cards no longer crowd or force vertical text.

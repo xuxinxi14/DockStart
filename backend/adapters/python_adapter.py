@@ -94,13 +94,17 @@ def detect(configured_path: str = "", bundled_path: str = "", prefer_configured:
     resolved_bundled_path = Path(bundled_path).expanduser().resolve() if bundled_path.strip() else get_bundled_python_path()
     bundled_path_text = str(resolved_bundled_path)
 
+    configured_result: ToolCheckResult | None = None
     if prefer_configured:
         configured_result = _detect_configured(configured_path, bundled_path_text)
-        if configured_result is not None:
+        if configured_result is not None and configured_result.status == "ok":
             return configured_result
 
     if resolved_bundled_path.is_file():
         return _run_version_check(resolved_bundled_path, "bundled", bundled_path_text)
+
+    if configured_result is not None:
+        return configured_result
 
     configured_result = _detect_configured(configured_path, bundled_path_text)
     if configured_result is not None:

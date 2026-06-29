@@ -105,10 +105,6 @@ class ProjectTests(unittest.TestCase):
                     "def arg_value(flag):",
                     "    return args[args.index(flag) + 1] if flag in args and args.index(flag) + 1 < len(args) else ''",
                     "out_file = arg_value('--out')",
-                    "log_file = arg_value('--log')",
-                    "if log_file:",
-                    "    pathlib.Path(log_file).parent.mkdir(parents=True, exist_ok=True)",
-                    "    pathlib.Path(log_file).write_text('fake vina log\\n', encoding='utf-8')",
                     "if out_file and " + ("True" if create_output else "False") + ":",
                     "    pathlib.Path(out_file).parent.mkdir(parents=True, exist_ok=True)",
                     "    pathlib.Path(out_file).write_text('MODEL 1\\nENDMDL\\n', encoding='utf-8')",
@@ -134,8 +130,6 @@ class ProjectTests(unittest.TestCase):
             "configs/vina_config.txt",
             "--out",
             f"runs/{run_id}/out.pdbqt",
-            "--log",
-            f"runs/{run_id}/log.txt",
         ]
 
     def test_create_project_generates_full_structure_and_project_json(self) -> None:
@@ -156,6 +150,35 @@ class ProjectTests(unittest.TestCase):
             self.assertIsNone(project["vina"]["seed"])
             self.assertEqual(project["config"]["vina_config_file"], "")
             self.assertEqual(project["config"]["generated_at"], "")
+
+    def test_load_project_uses_selected_directory_when_project_json_has_relative_project_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "portable_project"
+            project_dir.mkdir()
+            for directory in PROJECT_DIRS:
+                (project_dir / directory).mkdir()
+            (project_dir / "project.json").write_text(
+                json.dumps(
+                    {
+                        "project_name": "portable_project",
+                        "created_at": "2026-06-29T00:00:00+00:00",
+                        "updated_at": "2026-06-29T00:00:00+00:00",
+                        "project_dir": "examples/portable_project",
+                        "receptor": {"raw_file": "raw/receptor_demo.pdb", "file": ""},
+                        "ligand": {"raw_file": "raw/ligand_demo.sdf", "file": ""},
+                        "runs": [],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            response = load_project(str(project_dir))
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["project"]["project_dir"], str(project_dir))
 
     def test_existing_project_directory_is_not_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1060,6 +1083,7 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(metadata["run_id"], "run_001")
             self.assertIsInstance(metadata["command"], list)
             self.assertIn("--config", metadata["command"])
+            self.assertNotIn("--log", metadata["command"])
             self.assertEqual(metadata["config_file"], "configs/vina_config.txt")
             self.assertEqual(metadata["output_file"], "runs/run_001/out.pdbqt")
             self.assertEqual(metadata["log_file"], "runs/run_001/log.txt")
@@ -1197,6 +1221,7 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue((project_dir / "runs" / run_id / "out.pdbqt").is_file())
             self.assertTrue((project_dir / "runs" / run_id / "log.txt").is_file())
             self.assertIn("fake vina stdout", (project_dir / "runs" / run_id / "stdout.txt").read_text(encoding="utf-8"))
+            self.assertIn("fake vina stdout", (project_dir / "runs" / run_id / "log.txt").read_text(encoding="utf-8"))
             self.assertIn("fake vina stderr", (project_dir / "runs" / run_id / "stderr.txt").read_text(encoding="utf-8"))
 
             metadata = json.loads((project_dir / "runs" / run_id / "metadata.json").read_text(encoding="utf-8"))

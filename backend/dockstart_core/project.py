@@ -145,12 +145,17 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
     preparation = data.get("preparation") if isinstance(data.get("preparation"), dict) else {}
     latest_preparation = data.get("latest_preparation") if isinstance(data.get("latest_preparation"), dict) else {}
     runs = data.get("runs") if isinstance(data.get("runs"), list) else []
+    stored_project_dir = str(data.get("project_dir", "") or "").strip()
+    if stored_project_dir and Path(stored_project_dir).expanduser().is_absolute():
+        project_dir = stored_project_dir
+    else:
+        project_dir = str(fallback_dir)
 
     return DockStartProject(
         project_name=str(data.get("project_name", fallback_dir.name) or fallback_dir.name),
         created_at=str(data.get("created_at", "") or _now_iso()),
         updated_at=str(data.get("updated_at", "") or _now_iso()),
-        project_dir=str(data.get("project_dir", str(fallback_dir)) or fallback_dir),
+        project_dir=project_dir,
         receptor=ProjectFileRef(
             source=str(receptor.get("source", "") or ""),
             source_id=str(receptor.get("source_id", "") or ""),
@@ -1063,8 +1068,6 @@ def _build_vina_command(
         Path(config_file).as_posix(),
         "--out",
         Path("runs", run_id, "out.pdbqt").as_posix(),
-        "--log",
-        Path("runs", run_id, "log.txt").as_posix(),
     ]
 
 
@@ -2688,6 +2691,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     stderr_file = Path("runs", run_id, "stderr.txt").as_posix()
     stdout_path = project_path / stdout_file
     stderr_path = project_path / stderr_file
+    log_file = str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())
+    log_path = project_path / log_file
     output_path = Path(prerequisites["output_path"])
     command = [str(item) for item in prerequisites["command"]]
 
@@ -2742,6 +2747,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_path.write_text(stdout_text, encoding="utf-8")
     stderr_path.write_text(stderr_text, encoding="utf-8")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(stdout_text, encoding="utf-8")
 
     finished_at = _now_iso()
     output_ok = output_path.exists() and output_path.is_file() and output_path.stat().st_size > 0

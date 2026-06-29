@@ -80,8 +80,6 @@ class MarkdownReportTests(unittest.TestCase):
                 "configs/vina_config.txt",
                 "--out",
                 f"runs/{run_id}/out.pdbqt",
-                "--log",
-                f"runs/{run_id}/log.txt",
             ],
             "config_file": "configs/vina_config.txt",
             "output_file": f"runs/{run_id}/out.pdbqt",

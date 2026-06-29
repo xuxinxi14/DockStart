@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from dockstart_core.preparation import (  # noqa: E402
     RECEPTOR_PREPARATION_OUTPUT,
+    build_receptor_preparation_command_or_script,
     load_receptor_preparation_log,
     prepare_receptor_pdbqt,
     validate_receptor_preparation_input,
@@ -90,6 +91,17 @@ class ReceptorPreparationTests(unittest.TestCase):
         data["receptor"]["raw_file"] = relative_path
         project_json.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         return raw_path
+
+    def test_build_receptor_command_uses_read_pdb_without_prody_for_pdb_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(project_dir, "raw/receptor.pdb")
+            with patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()):
+                result = build_receptor_preparation_command_or_script(str(project_dir), overwrite=False)
+
+        self.assertTrue(result["ok"], result)
+        self.assertIn("--read_pdb", result["command"])
+        self.assertNotIn("-i", result["command"])
 
     def test_validate_receptor_preparation_input_missing_raw_record_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

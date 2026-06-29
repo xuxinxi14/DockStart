@@ -413,13 +413,22 @@ def read_ligand(path: Path):
         molecules = [mol for mol in supplier if mol is not None]
         if not molecules:
             raise RuntimeError("RDKit 未能从 SDF 中读取到有效分子。")
-        return molecules[0]
+        return prepare_ligand_for_meeko(molecules[0])
     if suffix == ".mol":
         molecule = Chem.MolFromMolFile(str(path), sanitize=True, removeHs=False)
         if molecule is None:
             raise RuntimeError("RDKit 未能从 MOL 文件中读取到有效分子。")
-        return molecule
+        return prepare_ligand_for_meeko(molecule)
     raise RuntimeError(f"暂不支持的配体输入格式：{suffix}")
+
+
+def prepare_ligand_for_meeko(molecule):
+    try:
+        molecule = Chem.AddHs(molecule, addCoords=True)
+        Chem.SanitizeMol(molecule)
+    except Exception as exc:
+        raise RuntimeError("RDKit failed to add explicit hydrogens before Meeko ligand preparation.") from exc
+    return molecule
 
 
 def normalize_writer_result(result):
@@ -906,10 +915,11 @@ def build_receptor_preparation_command_or_script(
     cli_path = str(validation["receptor_cli"])
     output_stem = str((project_path / RECEPTOR_PREPARATION_OUTPUT).with_suffix(""))
     python_path = validation["tools"]["python"]["path"]
+    input_flag = "--read_pdb" if str(validation.get("format") or "").lower() == ".pdb" else "-i"
     if Path(cli_path).suffix.lower() == ".py":
-        command = [python_path, cli_path, "-i", validation["input_path"], "-o", output_stem, "-p"]
+        command = [python_path, cli_path, input_flag, validation["input_path"], "-o", output_stem, "-p"]
     else:
-        command = [cli_path, "-i", validation["input_path"], "-o", output_stem, "-p"]
+        command = [cli_path, input_flag, validation["input_path"], "-o", output_stem, "-p"]
 
     return {
         **validation,

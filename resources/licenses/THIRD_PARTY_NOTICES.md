@@ -25,3 +25,33 @@ required upstream license files together with the packaged application.
 
 If a release package includes a Python runtime, keep the Python license file and
 runtime source/version metadata with the packaged application.
+
+## Bundled Python Packages
+
+When DockStart Full packages include `resources/python/`, the runtime may also
+include Python packages used for local PDBQT preparation:
+
+- RDKit 2026.3.3
+  - Purpose: ligand structure reading and preparation support.
+  - License: BSD-3-Clause.
+- Meeko 0.7.1
+  - Purpose: receptor and ligand PDBQT preparation for AutoDock Vina workflows.
+  - License: LGPL-2.1 or later.
+- NumPy 2.4.6
+  - Purpose: numeric dependency used by scientific Python packages.
+  - License expression from wheel metadata: BSD-3-Clause AND 0BSD AND MIT AND
+    Zlib AND CC0-1.0.
+- SciPy 1.17.1
+  - Purpose: Meeko dependency.
+  - License: BSD-3-Clause, with additional notices for bundled numerical
+    runtime libraries in the wheel metadata.
+- Pillow 12.2.0
+  - Purpose: RDKit wheel dependency.
+  - License expression from wheel metadata: MIT-CMU.
+- Gemmi 0.7.5
+  - Purpose: Meeko dependency.
+  - License: MPL-2.0.
+
+These packages are not committed to Git by default. Release builders that bundle
+`resources/python/` must keep package metadata, license files, and this notice
+with the packaged application.

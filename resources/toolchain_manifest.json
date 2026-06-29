@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolchain_name": "DockStart Full",
-  "status": "partial",
+  "status": "ready",
   "description": "DockStart 内置工具链目录规范。当前提交建立 Vina 与 Python runtime 的内置路径识别，不随仓库强制提交二进制运行时。",
   "vina": {
     "exists": true,
@@ -30,7 +30,39 @@
     "source": "local CPython 3.11.15 runtime release candidate",
     "bundled": true,
     "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
-    "prepared_at": "2026-06-29T10:19:08.155892+00:00"
+    "prepared_at": "2026-06-29T10:19:08.155892+00:00",
+    "packages": {
+      "rdkit": {
+        "version": "2026.3.3",
+        "license": "BSD-3-Clause",
+        "purpose": "ligand structure reading and preparation support"
+      },
+      "meeko": {
+        "version": "0.7.1",
+        "license": "LGPL-2.1-or-later",
+        "purpose": "PDBQT preparation"
+      },
+      "numpy": {
+        "version": "2.4.6",
+        "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+        "purpose": "numeric dependency for RDKit/Meeko/SciPy"
+      },
+      "scipy": {
+        "version": "1.17.1",
+        "license": "BSD-3-Clause plus bundled runtime notices in wheel metadata",
+        "purpose": "Meeko dependency"
+      },
+      "pillow": {
+        "version": "12.2.0",
+        "license": "MIT-CMU",
+        "purpose": "RDKit wheel dependency"
+      },
+      "gemmi": {
+        "version": "0.7.5",
+        "license": "MPL-2.0",
+        "purpose": "Meeko dependency"
+      }
+    }
   },
   "tools": {
     "vina": {
