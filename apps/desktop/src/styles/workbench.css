@@ -35,6 +35,18 @@
   min-width: 0;
 }
 
+.viewer-stage-title {
+  min-width: 0;
+}
+
+.viewer-stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+
 .viewer-stage-toolbar span {
   color: var(--ds-text-muted);
   font-size: 11px;
@@ -73,6 +85,82 @@
   grid-template-columns: 92px minmax(0, 1fr);
   align-items: center;
   gap: var(--ds-space-3);
+}
+
+.viewer-quick-actions,
+.viewer-box-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-space-2);
+}
+
+.viewer-layer-list {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.viewer-layer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: 36px;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-inset);
+  padding: var(--ds-space-2) var(--ds-space-3);
+}
+
+.viewer-layer-row.visible {
+  border-color: var(--ds-molecule-border);
+  background: var(--ds-molecule-soft);
+}
+
+.viewer-layer-row label,
+.viewer-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-sm);
+  font-weight: 650;
+}
+
+.viewer-layer-row input,
+.viewer-toggle-row input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.viewer-layer-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer-layer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+}
+
+.viewer-control-column .box-control-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.viewer-control-column .box-control {
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-3);
+}
+
+.viewer-geometry-note {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: var(--ds-text-xs);
+  line-height: var(--ds-leading-normal);
 }
 
 .viewer-file-status-list {
@@ -131,5 +219,23 @@
 
   .viewer-canvas {
     min-height: 440px;
+  }
+}
+
+@media (max-width: 720px) {
+  .viewer-quick-actions,
+  .viewer-box-tools,
+  .viewer-control-column .box-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-stage-toolbar,
+  .viewer-layer-row {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-stage-actions,
+  .viewer-layer-actions {
+    justify-content: flex-start;
   }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.1
+
+- Reworked the 3D workbench scene model so receptor, ligand, docking output, and selected pose layers can be displayed together.
+- Made the Vina search Box a visible overlay with a center marker, show/hide control, compact parameters, and live redraw while editing.
+- Added geometry-only Box helpers to center on a loaded ligand/pose or fit around the loaded ligand coordinates without doing pocket prediction.
+- Kept the change limited to Viewer/Box usability; no docking algorithm, score semantics, interaction analysis, PLIP/ProLIF/Open Babel/MGLTools, or drug-efficacy functionality was added.
+
 ## v0.9.0
 
 - Prepared the Basic distributable package path with bundled AutoDock Vina and a bundled lightweight Python backend runtime.
