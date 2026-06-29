@@ -71,6 +71,11 @@ const layerLabels: Record<ViewerLayerKey, string> = {
 const viewerFormats = new Set(["pdb", "pdbqt", "cif", "sdf", "mol", "mol2"]);
 const fitMarginAngstrom = 8;
 const minBoxDimension = 8;
+const boxStepOptions = [
+  { label: "细调", value: 0.1 },
+  { label: "常规", value: 1 },
+  { label: "快速", value: 5 },
+];
 
 function parseViewerStatus(rawPayload: string): ViewerFileStatusResponse {
   return JSON.parse(rawPayload) as ViewerFileStatusResponse;
@@ -108,7 +113,16 @@ function displayStatus(result: ViewerStructureResult | undefined): string {
   if (result.ok) {
     return "可读取";
   }
-  return result.message || result.error?.message || "不可读取";
+  if (!result.relative_path) {
+    return "未记录";
+  }
+  if (!result.exists) {
+    return "缺失";
+  }
+  if (result.error) {
+    return "需处理";
+  }
+  return "不可读取";
 }
 
 function viewerStatusTone(result: ViewerStructureResult | undefined): "ok" | "warning" | "error" | "muted" {
@@ -430,6 +444,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     buildLocalBoxVisualization(project.box),
   );
   const [showBox, setShowBox] = useState(true);
+  const [boxStep, setBoxStep] = useState(0.1);
   const [boxWarnings, setBoxWarnings] = useState<string[]>([]);
   const [runId, setRunId] = useState(() => latestRunId(project));
   const [poseList, setPoseList] = useState<DockingPoseListResponse | null>(null);
@@ -959,10 +974,27 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           </SectionCard>
 
           <SectionCard title="搜索范围" description="单位：Å。Box 会随输入实时更新。">
-            <label className="viewer-toggle-row">
-              <input type="checkbox" checked={showBox} onChange={(event) => setShowBox(event.target.checked)} />
-              <span>显示搜索范围</span>
-            </label>
+            <div className="viewer-box-options">
+              <label className="viewer-toggle-row">
+                <input type="checkbox" checked={showBox} onChange={(event) => setShowBox(event.target.checked)} />
+                <span>显示搜索范围</span>
+              </label>
+              <div className="viewer-step-control" aria-label="Box 参数步进速度">
+                <span>步进</span>
+                <div>
+                  {boxStepOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      className={option.value === boxStep ? "is-active" : ""}
+                      type="button"
+                      onClick={() => setBoxStep(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="box-control-grid">
               {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<
                 keyof DockStartProject["box"]
@@ -971,7 +1003,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                   <span>{boxFieldLabel(key)}</span>
                   <input
                     type="number"
-                    step="0.1"
+                    step={boxStep}
                     value={box[key]}
                     onChange={(event) => updateBoxField(key, Number(event.target.value))}
                   />
@@ -1195,9 +1227,6 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           <CommandResultPanel title="Viewer 状态" message={message} rawError={rawError} />
         </aside>
       </section>
-      <WarningCallout title="Viewer 边界">
-        <p>3D 工作台只做几何查看和搜索范围复核，不做相互作用分析、pocket prediction 或药效判断。</p>
-      </WarningCallout>
     </section>
   );
 }

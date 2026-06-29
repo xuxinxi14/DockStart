@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.2
+
+- Relaxed the 3D workbench side-panel layout so Box controls, helper buttons, file status rows, and right-column cards no longer crowd or force vertical text.
+- Added Box parameter step controls for fine, normal, and fast number-input increments.
+- Removed the bottom Viewer boundary callout from ViewerPage while keeping scientific boundaries in existing docs and reports.
+- Kept the change limited to frontend Viewer usability; no docking algorithm, score semantics, pocket prediction, interaction analysis, or external tool integration was added.
+
 ## v0.9.1
 
 - Reworked the 3D workbench scene model so receptor, ligand, docking output, and selected pose layers can be displayed together.
