@@ -1,12 +1,12 @@
 # Release Artifact Capability Profile
 
-DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
+DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。V0.8.7 冻结审计继续沿用这份能力档案。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
 
-## 当前 V0.8.6 轻量/工具链辅助发布档案
+## 当前 V0.8.7 轻量/工具链辅助发布档案
 
 ```json
 {
-  "app_version": "0.8.6",
+  "app_version": "0.8.7",
   "build_type": "lightweight_or_toolchain_assisted",
   "includes_bundled_vina": false,
   "includes_bundled_python": false,

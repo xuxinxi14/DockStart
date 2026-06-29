@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.7
+
+- Performed the V0.8 out-of-box workflow freeze audit.
+- Unified version numbers to `0.8.7`.
+- Updated release artifact profile and GitHub Release template to the V0.8.7 preview version.
+- Rechecked repository hygiene for installers, build outputs, Python runtime files, conda environments, real docking outputs, and large raw structures.
+- Reconfirmed Basic / Assisted / Demo Mode wording does not overclaim out-of-box scientific capability.
+- Kept the audit limited to versioning and documentation; no scientific feature, tool installation, PLIP/ProLIF/Open Babel/MGLTools integration, Vina algorithm change, or external CDN usage was added.
+
 ## v0.8.6
 
 - Added `docs/release/release_artifact_profile.md` to describe what a release artifact includes and which usage modes it can support.

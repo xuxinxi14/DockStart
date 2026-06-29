@@ -330,6 +330,13 @@ V0.8.6 补充发布产物能力档案：
 - 发布说明会分别写清 Basic / Assisted / Demo Mode 的可用条件；
 - 轻量安装包不会被描述成“无需任何外部条件即可自动准备所有分子”。
 
+V0.8.7 是开箱即用工作流冻结审计：
+
+- 统一版本号到 `0.8.7`；
+- 复查 Basic / Assisted / Demo Mode 表述；
+- 复查发布文档和仓库卫生；
+- 确认未提交 installer、dist、target、Python runtime、conda env、真实 docking 输出或大型结构文件。
+
 ## 当前暂不支持
 
 当前仍不支持：

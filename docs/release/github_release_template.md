@@ -1,4 +1,4 @@
-# DockStart v0.8.6 Preview
+# DockStart v0.8.7 Preview
 
 DockStart is a Windows molecular docking workbench based on AutoDock Vina. It provides a Chinese-first desktop workflow for raw structure acquisition, RDKit/Meeko-assisted PDBQT preparation, Vina execution, 3D viewing, score parsing, and Markdown report export.
 
@@ -69,8 +69,8 @@ Replace the placeholders below before publishing the release:
 
 | File | Size | SHA256 |
 | --- | ---: | --- |
-| `DockStart_0.8.6_x64_en-US.msi` | TBD | TBD |
-| `DockStart_0.8.6_x64-setup.exe` | TBD | TBD |
+| `DockStart_0.8.7_x64_en-US.msi` | TBD | TBD |
+| `DockStart_0.8.7_x64-setup.exe` | TBD | TBD |
 
 You can generate this table with:
 
