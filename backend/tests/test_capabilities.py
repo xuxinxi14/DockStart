@@ -92,6 +92,23 @@ class CapabilityProfileTests(unittest.TestCase):
         self.assertTrue(profile["assisted_mode_available"])
         self.assertEqual(profile["recommended_mode"], "assisted")
 
+    def test_profile_recommends_demo_when_vina_missing_but_demo_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._create_demo_resource(root)
+            with (
+                patch.dict(os.environ, {TOOLCHAIN_ROOT_ENV_VAR: str(root)}, clear=False),
+                patch.object(capabilities, "get_toolchain_status", return_value=toolchain_payload(vina="missing")),
+                patch.object(capabilities.viewer_adapter, "detect", return_value=ToolCheckResult("viewer", "3Dmol.js", "ok")),
+            ):
+                profile = capabilities.get_app_capability_profile()
+
+        self.assertFalse(profile["basic_mode_available"])
+        self.assertFalse(profile["assisted_mode_available"])
+        self.assertTrue(profile["demo_mode_available"])
+        self.assertEqual(profile["recommended_mode"], "demo")
+        self.assertIn("示例项目", profile["next_action"])
+
     def test_minimum_requirements_allow_basic_mode_without_rdkit_meeko(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project_with_pdbqt(temp_dir)

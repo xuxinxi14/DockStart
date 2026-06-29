@@ -26,8 +26,29 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
         }
       />
 
-      <SectionCard title="5 分钟流程">
+      <SectionCard title="首次使用 DockStart">
         <OnboardingGuide onNavigate={onNavigate} />
+      </SectionCard>
+
+      <SectionCard title="三种开始方式">
+        <div className="help-grid">
+          <article>
+            <strong>已有 PDBQT</strong>
+            <p>这是最低依赖路径。只要 Vina 可用，就能导入受体和配体 PDBQT，继续 Box、配置、运行和结果流程。</p>
+          </article>
+          <article>
+            <strong>只有 PDB / SDF</strong>
+            <p>需要配置带 RDKit 和 Meeko 的 Python 环境。缺少这些工具时，只有自动准备会不可用。</p>
+          </article>
+          <article>
+            <strong>先看示例</strong>
+            <p>示例项目用于理解软件步骤和页面关系。示例结构不能用于科研结论，也不能证明真实结合。</p>
+          </article>
+          <article>
+            <strong>当前缺什么</strong>
+            <p>回到总览或工具链页查看可用模式。Vina 缺失会阻塞 Basic Mode；RDKit/Meeko 缺失只影响 Assisted Mode。</p>
+          </article>
+        </div>
       </SectionCard>
 
       <SectionCard title="文件怎么分">

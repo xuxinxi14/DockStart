@@ -5,6 +5,7 @@ import BasicModeGuide from "../components/BasicModeGuide";
 import EmptyState from "../components/EmptyState";
 import ErrorPanel from "../components/ErrorPanel";
 import FilePathText from "../components/FilePathText";
+import OnboardingGuide from "../components/OnboardingGuide";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -323,15 +324,8 @@ export default function ProjectDashboardPage({
           primaryLabel="创建项目并导入 PDBQT"
         />
 
-        <SectionCard title="新手流程">
-          <div className="compact-grid">
-            {["配置工具链", "创建项目", "获取结构 / 导入 PDBQT", "运行并查看结果"].map((title, index) => (
-              <article className="metric-card" key={title}>
-                <span>步骤 {index + 1}</span>
-                <strong>{title}</strong>
-              </article>
-            ))}
-          </div>
+        <SectionCard title="首次使用向导">
+          <OnboardingGuide profile={capabilityProfile} onNavigate={onNavigate} />
         </SectionCard>
 
         <SectionCard title="工具链简况">

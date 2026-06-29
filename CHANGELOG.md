@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.3
+
+- Improved the first-run guide so new users can choose between existing PDBQT files, raw structure preparation, or demo projects.
+- Surfaced current blocking items and next recommended action directly in Dashboard and HelpPage.
+- Clarified that missing RDKit/Meeko only blocks Assisted Mode, while Basic Mode remains the lowest-dependency path when Vina and PDBQT inputs are available.
+- Kept the change limited to guidance and copy; no automatic installation, docking behavior, or scientific capability was added.
+
 ## v0.8.2
 
 - Added small bundled demo project templates for Basic Mode and Assisted Mode.
