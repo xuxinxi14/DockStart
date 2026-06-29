@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.8.2
+
+- Added small bundled demo project templates for Basic Mode and Assisted Mode.
+- Added backend helpers to list, create, and validate demo projects without network access.
+- Added Tauri commands and a ProjectCreatePage demo-copy entry.
+- Added `docs/demo_projects.md` to explain demo scope, limitations, and why demo files are not scientific evidence.
+- Kept demo data tiny and explicitly marked as software-flow examples only; no real docking output or large structures were added.
+
 ## v0.8.1
 
 - Strengthened Basic Mode as the minimal dependency path for users who already have receptor/ligand PDBQT files.

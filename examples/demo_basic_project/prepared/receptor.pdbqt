@@ -1,0 +1,6 @@
+REMARK DockStart toy receptor PDBQT for software demo only.
+REMARK Not suitable for scientific docking conclusions.
+ATOM      1  C   DEM A   1       0.000   0.000   0.000  0.00  0.00    +0.000 C
+ATOM      2  N   DEM A   1       1.500   0.000   0.000  0.00  0.00    -0.100 N
+ATOM      3  O   DEM A   1       0.000   1.500   0.000  0.00  0.00    -0.200 OA
+END

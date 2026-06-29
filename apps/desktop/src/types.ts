@@ -263,6 +263,31 @@ export type ProjectModeRecommendation = {
   } | null;
 };
 
+export type DemoProjectSummary = {
+  demo_type: "basic_pdbqt" | "assisted_raw" | "viewer_only" | string;
+  title: string;
+  description: string;
+  template_dir: string;
+  project_json: string;
+  exists: boolean;
+  size_bytes: number;
+  readme: string;
+  disclaimer: string;
+};
+
+export type DemoProjectsResponse = {
+  ok: boolean;
+  examples_root: string;
+  demos: DemoProjectSummary[];
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type RunCheckResult = {
   key: string;
   name: string;
@@ -578,6 +603,8 @@ export type ProjectResponse = {
   report_status?: string;
   scores_status?: RunFileStatus | null;
   can_export?: boolean;
+  demo_type?: string;
+  disclaimer?: string;
   files?: RunFileStatus[];
   command?: string[];
   command_preview?: string;

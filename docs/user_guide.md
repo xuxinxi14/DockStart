@@ -14,6 +14,13 @@ DockStart V0.8 开始把入口分成三种模式：
 
 V0.8.1 之后，侧边工作流会把“导入 PDBQT”作为独立步骤显示。你可以跳过 raw 下载和自动准备，直接从 Basic Mode 进入 Box、Vina 参数、配置和运行流程。
 
+V0.8.2 之后，可以在创建项目页复制示例项目：
+
+- Basic 示例：内含玩具 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
+- Assisted 示例：内含玩具 `raw/receptor_demo.pdb` 和 `raw/ligand_demo.sdf`。
+
+示例只用于熟悉软件流程，不用于真实 docking 结论。详细说明见 [demo_projects.md](demo_projects.md)。
+
 ## 前置条件
 
 你需要先准备好：

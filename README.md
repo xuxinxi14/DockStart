@@ -297,6 +297,13 @@ V0.8.1 进一步把 Basic Mode 作为最低依赖主路径呈现：
 - workflow stepper 增加“导入 PDBQT”步骤，raw 下载和自动准备不再被表现成 Basic Mode 的硬前置条件；
 - 工具链页区分 Vina 缺失与 RDKit/Meeko 缺失对不同模式的影响。
 
+V0.8.2 新增 Demo Mode 示例项目：
+
+- `examples/demo_basic_project/`：小型玩具 PDBQT 示例，用于体验 Basic Mode；
+- `examples/demo_assisted_project/`：小型 raw PDB/SDF 示例，用于体验 Assisted Mode 状态；
+- 示例项目可以从创建项目页复制到用户选择的目录；
+- 示例只用于软件流程演示，不用于科研结论。
+
 ## 当前暂不支持
 
 当前仍不支持：
@@ -350,6 +357,7 @@ DockStart/
 │  └─ tests/                # 后端单元测试
 ├─ docs/
 │  ├─ license_notes.md
+│  ├─ demo_projects.md
 │  ├─ toolchain_design.md
 │  ├─ toolchain_runtime.md
 │  ├─ user_guide.md

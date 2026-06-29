@@ -1,0 +1,94 @@
+{
+  "project_name": "demo_basic_project",
+  "created_at": "2026-06-29T00:00:00+00:00",
+  "updated_at": "2026-06-29T00:00:00+00:00",
+  "project_dir": "examples/demo_basic_project",
+  "demo": {
+    "type": "basic_pdbqt",
+    "description": "仅用于软件流程演示，不用于科研结论。"
+  },
+  "receptor": {
+    "source": "demo",
+    "source_id": "toy_receptor",
+    "query_type": "demo",
+    "downloaded_at": "",
+    "raw_file": "",
+    "file": "prepared/receptor.pdbqt"
+  },
+  "ligand": {
+    "source": "demo",
+    "source_id": "toy_ligand",
+    "query_type": "demo",
+    "downloaded_at": "",
+    "raw_file": "",
+    "file": "prepared/ligand.pdbqt"
+  },
+  "box": {
+    "center_x": 0,
+    "center_y": 0,
+    "center_z": 0,
+    "size_x": 12,
+    "size_y": 12,
+    "size_z": 12
+  },
+  "vina": {
+    "exhaustiveness": 8,
+    "num_modes": 9,
+    "energy_range": 4,
+    "cpu": 0,
+    "seed": null
+  },
+  "config": {
+    "vina_config_file": "",
+    "generated_at": ""
+  },
+  "preparation": {
+    "receptor": {
+      "target": "receptor",
+      "status": "finished",
+      "method": "external_manual",
+      "input_file": null,
+      "output_file": "prepared/receptor.pdbqt",
+      "started_at": null,
+      "finished_at": "2026-06-29T00:00:00+00:00",
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": [
+        "示例文件仅用于软件流程演示，不用于科研结论。"
+      ]
+    },
+    "ligand": {
+      "target": "ligand",
+      "status": "finished",
+      "method": "external_manual",
+      "input_file": null,
+      "output_file": "prepared/ligand.pdbqt",
+      "started_at": null,
+      "finished_at": "2026-06-29T00:00:00+00:00",
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": [
+        "示例文件仅用于软件流程演示，不用于科研结论。"
+      ]
+    }
+  },
+  "latest_preparation": {
+    "receptor": "",
+    "ligand": ""
+  },
+  "runs": []
+}

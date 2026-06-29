@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from adapters import viewer_adapter
 from dockstart_core import __version__
+from dockstart_core.demo_projects import list_available_demo_projects
 from dockstart_core.project import get_project_workflow_status
 from dockstart_core.toolchain import get_toolchain_status
-from dockstart_core.toolchain_paths import get_project_root
 
 ModeName = str
 
@@ -20,30 +19,10 @@ def _ok_tool(tool: dict[str, Any] | None) -> bool:
     return bool(tool and tool.get("status") == "ok")
 
 
-def _tool_status(tool: dict[str, Any] | None) -> str:
-    return str((tool or {}).get("status") or "unknown")
-
-
-def _examples_root() -> Path:
-    return get_project_root() / "examples"
-
-
 def _demo_project_candidates() -> list[dict[str, Any]]:
-    examples_root = _examples_root()
-    if not examples_root.is_dir():
-        return []
-    candidates: list[dict[str, Any]] = []
-    for project_json in sorted(examples_root.glob("*/project.json")):
-        project_dir = project_json.parent
-        candidates.append(
-            {
-                "name": project_dir.name,
-                "project_dir": str(project_dir),
-                "project_json": str(project_json),
-                "exists": project_json.is_file(),
-            }
-        )
-    return candidates
+    response = list_available_demo_projects()
+    demos = response.get("demos") if isinstance(response.get("demos"), list) else []
+    return [demo for demo in demos if isinstance(demo, dict) and demo.get("exists")]
 
 
 def _demo_available() -> bool:

@@ -4,11 +4,13 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import PathInput from "../components/PathInput";
 import SectionCard from "../components/SectionCard";
-import type { DockStartProject, ProjectResponse, SettingsResponse } from "../types";
+import StatusBadge from "../components/StatusBadge";
+import type { PageId } from "../navigation/pages";
+import type { DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 
 type ProjectCreatePageProps = {
   onBack: () => void;
-  onCreated: (project: DockStartProject, nextPage: "structure-fetch" | "import-pdbqt") => void;
+  onCreated: (project: DockStartProject, nextPage: PageId) => void;
 };
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -32,12 +34,29 @@ function parseSettingsResponse(rawPayload: string): SettingsResponse {
   };
 }
 
+function parseDemoProjectsResponse(rawPayload: string): DemoProjectsResponse {
+  const parsed = JSON.parse(rawPayload) as Partial<DemoProjectsResponse>;
+  return {
+    ok: Boolean(parsed.ok),
+    examples_root: parsed.examples_root ?? "",
+    demos: parsed.demos ?? [],
+    message: parsed.message ?? "",
+    error: parsed.error ?? null,
+  };
+}
+
+function nextPageForDemo(demoType: string): PageId {
+  if (demoType === "basic_pdbqt" || demoType === "viewer_only") return "import-pdbqt";
+  return "structure-fetch";
+}
+
 export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePageProps) {
   const [projectName, setProjectName] = useState("demo_project");
   const [baseDir, setBaseDir] = useState("");
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [demos, setDemos] = useState<DemoProjectsResponse["demos"]>([]);
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -53,6 +72,22 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
     }
 
     void loadDefaultProjectDir();
+  }, []);
+
+  useEffect(() => {
+    async function loadDemos() {
+      try {
+        const rawPayload = await invoke<string>("list_available_demo_projects");
+        const response = parseDemoProjectsResponse(rawPayload);
+        if (response.ok) {
+          setDemos(response.demos.filter((demo) => demo.exists));
+        }
+      } catch {
+        setDemos([]);
+      }
+    }
+
+    void loadDemos();
   }, []);
 
   const createProject = useCallback(async () => {
@@ -78,6 +113,33 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
       setIsBusy(false);
     }
   }, [baseDir, onCreated, projectName]);
+
+  const createDemo = useCallback(
+    async (demoType: string) => {
+      setIsBusy(true);
+      setMessage("");
+      setRawError("");
+      try {
+        const rawPayload = await invoke<string>("create_demo_project", {
+          destinationDir: baseDir,
+          demoType,
+        });
+        const response = parseProjectResponse(rawPayload);
+        if (response.ok && response.project) {
+          onCreated(response.project, nextPageForDemo(demoType));
+          return;
+        }
+        setMessage(response.error?.message ?? "示例项目创建失败。");
+        setRawError(response.error?.raw_error ?? "");
+      } catch (error) {
+        setMessage("无法创建示例项目。请确认当前运行环境是 DockStart 桌面端。");
+        setRawError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [baseDir, onCreated],
+  );
 
   return (
     <section className="workbench-page" aria-labelledby="project-create-title">
@@ -123,6 +185,26 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
             </div>
           </SectionCard>
 
+          <SectionCard title="示例项目">
+            <p className="placeholder-note">
+              示例只用于软件流程演示，不用于科研结论。请选择保存目录后复制一份示例到你的工作区。
+            </p>
+            <div className="compact-grid">
+              {demos.map((demo) => (
+                <article className="metric-card" key={demo.demo_type}>
+                  <span>{demo.demo_type}</span>
+                  <strong>{demo.title}</strong>
+                  <p>{demo.description}</p>
+                  <StatusBadge tone="warning">仅演示流程</StatusBadge>
+                  <ActionButton disabled={isBusy || !baseDir.trim()} onClick={() => void createDemo(demo.demo_type)}>
+                    复制示例项目
+                  </ActionButton>
+                </article>
+              ))}
+              {!demos.length ? <p className="placeholder-note">没有检测到可用示例项目资源。</p> : null}
+            </div>
+          </SectionCard>
+
           {message ? <p className="message-line">{message}</p> : null}
           {rawError ? (
             <AdvancedDetails>
@@ -135,8 +217,8 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
           <SectionCard title="下一步">
             <div className="next-step-strip">
               <div>
-                <strong>获取结构</strong>
-                <p>也可以稍后手动导入已经准备好的 PDBQT。</p>
+                <strong>选择路径</strong>
+                <p>Basic Mode 可直接导入 PDBQT；Assisted Mode 可从 raw 文件开始；Demo Mode 可先复制示例。</p>
               </div>
             </div>
           </SectionCard>

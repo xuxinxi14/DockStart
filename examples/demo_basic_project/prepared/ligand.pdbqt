@@ -1,0 +1,8 @@
+REMARK DockStart toy ligand PDBQT for software demo only.
+REMARK Not suitable for scientific docking conclusions.
+ROOT
+ATOM      1  C   LIG L   1       0.500   0.500   0.500  0.00  0.00    +0.000 C
+ATOM      2  O   LIG L   1       1.600   0.500   0.500  0.00  0.00    -0.200 OA
+ENDROOT
+TORSDOF 0
+END

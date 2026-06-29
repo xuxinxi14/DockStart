@@ -310,6 +310,9 @@ export default function ProjectDashboardPage({
               <ActionButton disabled title="当前版本尚未提供打开已有项目入口">
                 打开已有项目
               </ActionButton>
+              <ActionButton onClick={() => onNavigate("project-create")}>打开示例项目</ActionButton>
+              <ActionButton onClick={() => onNavigate("project-create")}>体验 Basic Mode</ActionButton>
+              <ActionButton onClick={() => onNavigate("project-create")}>查看 3D Viewer 示例</ActionButton>
               <ActionButton onClick={() => onNavigate("help")}>查看流程</ActionButton>
             </>
           }

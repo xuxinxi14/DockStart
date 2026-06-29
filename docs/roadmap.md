@@ -22,6 +22,8 @@ V0.8 开始把“开箱即用”拆成三种可解释的使用模式：
 
 V0.8.1 强化 Basic Mode，确保 raw 下载和自动准备不会阻塞已有 PDBQT 用户完成最低依赖 docking。
 
+V0.8.2 新增 Demo Mode 示例项目，提供小型 Basic / Assisted 玩具数据，用于软件流程演示，不用于科研结论。
+
 ## V0.1: 本地 PDBQT Docking Lite MVP
 
 目标：跑通最小闭环，证明项目、运行、解析和报告链路可用。

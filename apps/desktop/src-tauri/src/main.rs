@@ -65,6 +65,36 @@ fn get_minimum_requirements_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn list_available_demo_projects() -> String {
+    match run_backend_module("dockstart_core.demo_projects", vec!["list".to_string()]) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取示例项目列表。", &error),
+    }
+}
+
+#[tauri::command]
+fn create_demo_project(destination_dir: String, demo_type: String) -> String {
+    match run_backend_module(
+        "dockstart_core.demo_projects",
+        vec!["create".to_string(), destination_dir, demo_type],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法创建示例项目。", &error),
+    }
+}
+
+#[tauri::command]
+fn validate_demo_project(project_dir: String) -> String {
+    match run_backend_module(
+        "dockstart_core.demo_projects",
+        vec!["validate".to_string(), project_dir],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法校验示例项目。", &error),
+    }
+}
+
+#[tauri::command]
 fn get_settings() -> String {
     match run_backend_module("dockstart_core.settings", vec!["get".to_string()]) {
         Ok(payload) => payload,
@@ -878,6 +908,9 @@ fn main() {
             get_app_capability_profile,
             get_project_mode_recommendation,
             get_minimum_requirements_status,
+            list_available_demo_projects,
+            create_demo_project,
+            validate_demo_project,
             get_settings,
             save_settings,
             update_tool_path,
