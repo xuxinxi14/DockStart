@@ -43,9 +43,9 @@
         "purpose": "PDBQT preparation"
       },
       "numpy": {
-        "version": "2.4.6",
-        "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
-        "purpose": "numeric dependency for RDKit/Meeko/SciPy"
+        "version": "1.26.4",
+        "license": "BSD-3-Clause",
+        "purpose": "numeric dependency compatible with RDKit/Meeko/SciPy/ProDy"
       },
       "scipy": {
         "version": "1.17.1",
@@ -61,6 +61,21 @@
         "version": "0.7.5",
         "license": "MPL-2.0",
         "purpose": "Meeko dependency"
+      },
+      "prody": {
+        "version": "2.4.1",
+        "license": "MIT",
+        "purpose": "Meeko ProDy reader support for receptor preparation"
+      },
+      "biopython": {
+        "version": "1.87",
+        "license": "LicenseRef-Biopython-License-Agreement",
+        "purpose": "ProDy dependency"
+      },
+      "pyparsing": {
+        "version": "3.3.2",
+        "license": "MIT",
+        "purpose": "ProDy dependency"
       }
     }
   },

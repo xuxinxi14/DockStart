@@ -37,10 +37,9 @@ include Python packages used for local PDBQT preparation:
 - Meeko 0.7.1
   - Purpose: receptor and ligand PDBQT preparation for AutoDock Vina workflows.
   - License: LGPL-2.1 or later.
-- NumPy 2.4.6
+- NumPy 1.26.4
   - Purpose: numeric dependency used by scientific Python packages.
-  - License expression from wheel metadata: BSD-3-Clause AND 0BSD AND MIT AND
-    Zlib AND CC0-1.0.
+  - License: BSD-3-Clause.
 - SciPy 1.17.1
   - Purpose: Meeko dependency.
   - License: BSD-3-Clause, with additional notices for bundled numerical
@@ -51,6 +50,16 @@ include Python packages used for local PDBQT preparation:
 - Gemmi 0.7.5
   - Purpose: Meeko dependency.
   - License: MPL-2.0.
+- ProDy 2.4.1
+  - Purpose: Meeko ProDy reader support for receptor preparation.
+  - License: MIT.
+- Biopython 1.87
+  - Purpose: ProDy dependency.
+  - License expression from wheel metadata:
+    LicenseRef-Biopython-License-Agreement.
+- pyparsing 3.3.2
+  - Purpose: ProDy dependency.
+  - License: MIT.
 
 These packages are not committed to Git by default. Release builders that bundle
 `resources/python/` must keep package metadata, license files, and this notice

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.4
+
+- Added ProDy, Biopython, and pyparsing to the local Full bundled Python runtime so Meeko's ProDy reader path can be invoked from DockStart.
+- Adjusted bundled NumPy to 1.26.4 for compatibility across RDKit, Meeko, SciPy, Gemmi, and ProDy in the local Full package.
+- Revalidated the bundled Assisted Mode smoke flow through ligand/receptor preparation, Vina config, Vina execution, score parsing, and Markdown report export.
+- Updated package metadata, license notes, and third-party notices for the expanded bundled Python package set.
+- Kept the work limited to toolchain/runtime integration; no PLIP/ProLIF/Open Babel/MGLTools integration, interaction analysis, pocket prediction, drug-efficacy judgment, or Vina algorithm change was added.
+
 ## v0.9.3
 
 - Enabled the local Full toolchain profile to use bundled Python with RDKit, Meeko, NumPy, SciPy, Pillow, and Gemmi for Assisted Mode preparation.
