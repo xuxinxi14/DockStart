@@ -76,13 +76,14 @@ AutoDock Vina、Meeko、RDKit 可作为核心优先支持对象，但当前 Meek
 
 Open Babel、PLIP、MGLTools 等工具许可证或依赖更复杂，暂不进入核心内置包，只能作为外部可选集成继续评估。
 
-Python runtime 当前解析优先级为：
+Python runtime 当前分为后端运行和 preparation 工具链两类解析：
 
 ```text
-bundled > configured > current_environment
+backend runtime: bundled > configured > current_environment
+preparation toolchain: configured > bundled > current_environment
 ```
 
-其中 bundled Python 只表示 `resources/python/python.exe` 存在且可检测。当前仓库只提交 `resources/python/README.md`，真实 runtime 文件被 `.gitignore` 忽略。
+其中 bundled Python 只表示 `resources/python/python.exe` 存在且可检测。当前仓库只提交 `resources/python/README.md`，真实 runtime 文件被 `.gitignore` 忽略。轻量 bundled Python 可用于运行 DockStart 后端，但 Assisted Mode 仍推荐用户配置带 RDKit/Meeko 的独立 conda Python。
 
 ### 2.5 中文新手友好
 

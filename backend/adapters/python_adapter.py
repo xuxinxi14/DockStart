@@ -69,28 +69,42 @@ def _run_version_check(path: Path, source: str, bundled_path: str = "") -> ToolC
     )
 
 
-def detect(configured_path: str = "", bundled_path: str = "") -> ToolCheckResult:
+def _detect_configured(configured_path: str, bundled_path_text: str) -> ToolCheckResult | None:
+    configured_path = configured_path.strip()
+    if not configured_path:
+        return None
+
+    path = Path(configured_path)
+    if not path.exists():
+        return ToolCheckResult(
+            key="python",
+            name="Python",
+            status="missing",
+            path=configured_path,
+            message="用户配置的 python.exe 路径不存在，请检查设置页中的 Python 路径。",
+            source="configured",
+            bundled_path=bundled_path_text,
+        )
+
+    return _run_version_check(path, "configured", bundled_path_text)
+
+
+def detect(configured_path: str = "", bundled_path: str = "", prefer_configured: bool = False) -> ToolCheckResult:
     configured_path = configured_path.strip()
     resolved_bundled_path = Path(bundled_path).expanduser().resolve() if bundled_path.strip() else get_bundled_python_path()
     bundled_path_text = str(resolved_bundled_path)
 
+    if prefer_configured:
+        configured_result = _detect_configured(configured_path, bundled_path_text)
+        if configured_result is not None:
+            return configured_result
+
     if resolved_bundled_path.is_file():
         return _run_version_check(resolved_bundled_path, "bundled", bundled_path_text)
 
-    if configured_path:
-        path = Path(configured_path)
-        if not path.exists():
-            return ToolCheckResult(
-                key="python",
-                name="Python",
-                status="missing",
-                path=configured_path,
-                message="用户配置的 python.exe 路径不存在，请检查设置页中的 Python 路径。",
-                source="configured",
-                bundled_path=bundled_path_text,
-            )
-
-        return _run_version_check(path, "configured", bundled_path_text)
+    configured_result = _detect_configured(configured_path, bundled_path_text)
+    if configured_result is not None:
+        return configured_result
 
     return ToolCheckResult(
         key="python",

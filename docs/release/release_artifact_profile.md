@@ -1,25 +1,25 @@
 # Release Artifact Capability Profile
 
-DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。V0.8.7 冻结审计继续沿用这份能力档案。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
+DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。V0.9.0 开始准备 Basic 可分发包：随安装包提供 AutoDock Vina、轻量 Python backend runtime 和小型示例项目。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
 
-## 当前 V0.8.7 轻量/工具链辅助发布档案
+## 当前 V0.9.0 Basic 可分发发布档案
 
 ```json
 {
-  "app_version": "0.8.7",
-  "build_type": "lightweight_or_toolchain_assisted",
-  "includes_bundled_vina": false,
-  "includes_bundled_python": false,
+  "app_version": "0.9.0",
+  "build_type": "basic_distributable",
+  "includes_bundled_vina": true,
+  "includes_bundled_python": true,
   "includes_conda_env": false,
   "includes_demo_projects": true,
   "includes_examples": true,
-  "basic_mode_expected": "需要 AutoDock Vina，以及用户已有 receptor/ligand PDBQT。",
-  "assisted_mode_expected": "需要 AutoDock Vina，以及用户配置的 Python + RDKit + Meeko 环境。",
+  "basic_mode_expected": "安装包内置 AutoDock Vina；用户需要已有 receptor/ligand PDBQT。",
+  "assisted_mode_expected": "安装包不内置 RDKit/Meeko；需要用户配置 Python + RDKit + Meeko 环境。",
   "known_requirements": [
     "不包含 PLIP/ProLIF",
     "不包含 Open Babel/MGLTools",
     "不做药效判断",
-    "轻量发布不包含 conda env"
+    "Basic 分发包不包含 conda env 或 RDKit/Meeko site-packages"
   ]
 }
 ```
@@ -29,7 +29,7 @@ DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、
 Basic Mode 是最低依赖路径：
 
 - DockStart 桌面应用；
-- AutoDock Vina 可用；
+- AutoDock Vina 可用。V0.9.0 Basic 分发包内置 Vina，仍允许用户改用外部配置路径；
 - 用户已有 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
 RDKit/Meeko 缺失不应阻止 Basic Mode。
@@ -40,11 +40,11 @@ Assisted Mode 用于从 raw PDB/CIF/SDF/MOL 尝试生成 PDBQT：
 
 - DockStart 桌面应用；
 - AutoDock Vina 可用；
-- Python 可用；
+- Python 可用。V0.9.0 Basic 分发包内置的轻量 Python 主要用于运行 DockStart 后端；
 - RDKit 可 import；
 - Meeko 可 import 且准备能力可检测。
 
-DockStart 当前不会自动安装 RDKit/Meeko，不提交 conda env，也不保证自动准备结果科学正确。
+DockStart 当前不会自动安装 RDKit/Meeko，不提交 conda env，也不保证自动准备结果科学正确。Assisted Mode 仍推荐配置独立 conda 环境。
 
 ## Demo Mode 条件
 
@@ -64,4 +64,4 @@ Demo Mode 依赖仓库内的小型示例项目：
 - DockStart 会自动安装 RDKit/Meeko；
 - 生成 PDBQT 等于科学正确；
 - docking score 能证明真实结合；
-- 轻量安装包包含 conda env、完整 Python runtime 或 site-packages。
+- Basic 安装包包含 RDKit/Meeko conda env 或 site-packages。

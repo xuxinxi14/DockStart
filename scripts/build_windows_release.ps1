@@ -97,17 +97,20 @@ Write-Host "Version: $($uniqueVersions[0])"
 
 Write-Step "Release artifact capability profile"
 $resourcesDir = Join-Path $repoRoot "resources"
+$includesBundledVina = (Test-Path -LiteralPath (Join-Path $resourcesDir "vina\vina.exe"))
+$includesBundledPython = (Test-Path -LiteralPath (Join-Path $resourcesDir "python\python.exe"))
+$buildType = if ($includesBundledVina -and $includesBundledPython) { "basic_distributable" } else { "lightweight_or_toolchain_assisted" }
 $profile = [ordered]@{
     "app_version" = $uniqueVersions[0]
-    "build_type" = "lightweight_or_toolchain_assisted"
-    "includes_bundled_vina" = (Test-Path -LiteralPath (Join-Path $resourcesDir "vina\vina.exe"))
-    "includes_bundled_python" = (Test-Path -LiteralPath (Join-Path $resourcesDir "python\python.exe"))
+    "build_type" = $buildType
+    "includes_bundled_vina" = $includesBundledVina
+    "includes_bundled_python" = $includesBundledPython
     "includes_conda_env" = $false
     "includes_demo_projects" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_basic_project")) -and (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_assisted_project"))
     "includes_examples" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples"))
-    "basic_mode_expected" = "Requires AutoDock Vina plus user-provided receptor/ligand PDBQT."
-    "assisted_mode_expected" = "Requires AutoDock Vina and a configured Python environment with RDKit/Meeko."
-    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda env in lightweight release")
+    "basic_mode_expected" = "Bundled Vina can run Basic Mode when the user provides receptor/ligand PDBQT."
+    "assisted_mode_expected" = "Requires a configured Python environment with RDKit/Meeko; the bundled backend runtime does not include those packages."
+    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda env or RDKit/Meeko site-packages")
 }
 $profile.GetEnumerator() | ForEach-Object {
     if ($_.Value -is [array]) {

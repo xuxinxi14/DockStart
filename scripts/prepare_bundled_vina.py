@@ -133,6 +133,7 @@ def prepare_bundled_vina(
     license_path: str | Path | None = None,
     source_label: str = "",
     dry_run: bool = False,
+    copy_dlls: bool = False,
 ) -> dict[str, Any]:
     root = get_repo_root(repo_root)
     source_path = Path(source).expanduser().resolve()
@@ -141,10 +142,11 @@ def prepare_bundled_vina(
     copied_binary = False if dry_run else _copy_file(vina_binary, target_binary)
 
     copied_dlls: list[str] = []
-    for dll in find_dlls(vina_binary):
-        target_dll = target_binary.parent / dll.name
-        if not dry_run and _copy_file(dll, target_dll):
-            copied_dlls.append(str(target_dll))
+    if copy_dlls:
+        for dll in find_dlls(vina_binary):
+            target_dll = target_binary.parent / dll.name
+            if not dry_run and _copy_file(dll, target_dll):
+                copied_dlls.append(str(target_dll))
 
     selected_license = find_license_file(source_path, license_path)
     license_target = root / LICENSE_TARGET_RELATIVE
@@ -201,6 +203,7 @@ def prepare_bundled_vina(
         "target_binary": str(target_binary),
         "copied_binary": copied_binary,
         "copied_dlls": copied_dlls,
+        "copy_dlls": copy_dlls,
         "license_source": str(selected_license) if selected_license else "",
         "license_target": str(license_target),
         "license_copied": license_copied,
@@ -224,6 +227,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--license-path", default="", help="Optional explicit AutoDock Vina license file path.")
     parser.add_argument("--source-label", default="", help="Optional source label recorded in the manifest.")
     parser.add_argument("--dry-run", action="store_true", help="Only update manifest metadata without copying vina.exe.")
+    parser.add_argument(
+        "--copy-dlls",
+        action="store_true",
+        help="Copy DLL files next to vina.exe. Use only for clean Vina release directories with required DLLs.",
+    )
     return parser.parse_args(argv)
 
 
@@ -237,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             license_path=args.license_path or None,
             source_label=args.source_label,
             dry_run=args.dry_run,
+            copy_dlls=args.copy_dlls,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0

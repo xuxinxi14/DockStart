@@ -115,7 +115,13 @@ class ToolchainIntegrityTests(unittest.TestCase):
             (source_dir / "support.dll").write_bytes(b"fake dll")
             (source_dir / "LICENSE.txt").write_text("Apache License 2.0\n", encoding="utf-8")
 
-            response = prepare_bundled_vina(source_dir, repo_root=root, version="1.2.7", source_label="unit-test")
+            response = prepare_bundled_vina(
+                source_dir,
+                repo_root=root,
+                version="1.2.7",
+                source_label="unit-test",
+                copy_dlls=True,
+            )
 
             target_binary = root / "resources" / "vina" / "vina.exe"
             target_dll = root / "resources" / "vina" / "support.dll"

@@ -215,7 +215,11 @@ def validate_bundled_python_package() -> dict[str, Any]:
 def get_resolved_python(configured_python_path: str | None = None) -> ToolCheckResult:
     settings = load_settings()
     configured_path = settings.tool_paths.python if configured_python_path is None else configured_python_path
-    return python_adapter.detect(configured_path, bundled_path=str(get_bundled_python_path()))
+    return python_adapter.detect(
+        configured_path,
+        bundled_path=str(get_bundled_python_path()),
+        prefer_configured=bool(configured_path.strip()),
+    )
 
 
 def _full_status(resources_dir: Path, bundled_ok: bool, notices_exists: bool, manifest_exists: bool, license_exists: bool) -> str:

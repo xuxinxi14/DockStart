@@ -84,7 +84,9 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(resolved_path, settings_path)
 
     def test_python_detection_returns_structured_result(self) -> None:
-        result = detect_python()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing_bundled = Path(temp_dir) / "resources" / "python" / "python.exe"
+            result = detect_python(bundled_path=str(missing_bundled))
 
         self.assertEqual(result.key, "python")
         self.assertEqual(result.status, "ok")
@@ -130,6 +132,30 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.path, str(configured_path))
         self.assertEqual(run_mock.call_args[0][0][0], str(configured_path))
 
+    def test_configured_python_can_be_preferred_over_bundled_for_preparation_tools(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="Python 3.11.15\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundled_path = Path(temp_dir) / "resources" / "python" / "python.exe"
+            configured_path = Path(temp_dir) / "configured" / "python.exe"
+            bundled_path.parent.mkdir(parents=True)
+            configured_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled python", encoding="utf-8")
+            configured_path.write_text("fake configured python", encoding="utf-8")
+
+            with patch.object(python_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = python_adapter.detect(
+                    str(configured_path),
+                    bundled_path=str(bundled_path),
+                    prefer_configured=True,
+                )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.source, "configured")
+        self.assertFalse(result.is_bundled)
+        self.assertEqual(result.path, str(configured_path))
+        self.assertEqual(run_mock.call_args[0][0][0], str(configured_path))
+
     def test_meeko_and_rdkit_use_resolved_bundled_python(self) -> None:
         python_completed = SimpleNamespace(returncode=0, stdout="Python 3.11.8\n", stderr="")
         import_completed = SimpleNamespace(returncode=0, stdout="1.0.0\n", stderr="")
@@ -164,6 +190,57 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(rdkit_result.source, "bundled")
         self.assertEqual(meeko_run.call_args[0][0][0], str(bundled_path.resolve()))
         self.assertEqual(rdkit_run.call_args[0][0][0], str(bundled_path.resolve()))
+
+    def test_meeko_and_rdkit_use_configured_python_when_user_sets_one(self) -> None:
+        python_completed = SimpleNamespace(returncode=0, stdout="Python 3.11.15\n", stderr="")
+        import_completed = SimpleNamespace(returncode=0, stdout="1.0.0\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bundled_path = root / "resources" / "python" / "python.exe"
+            configured_path = root / "configured" / "python.exe"
+            bundled_path.parent.mkdir(parents=True)
+            configured_path.parent.mkdir(parents=True)
+            bundled_path.write_text("fake bundled python", encoding="utf-8")
+            configured_path.write_text("fake configured python", encoding="utf-8")
+            settings_path = root / "settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "tool_paths": {
+                            "vina": "",
+                            "python": str(configured_path),
+                        },
+                        "project": {"default_project_dir": ""},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        TOOLCHAIN_ROOT_ENV_VAR: str(root),
+                        SETTINGS_ENV_VAR: str(settings_path),
+                    },
+                ),
+                patch.object(python_adapter.subprocess, "run", return_value=python_completed),
+            ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                resolved = get_resolved_python()
+
+            with patch.object(meeko_adapter.subprocess, "run", return_value=import_completed) as meeko_run:
+                meeko_result = meeko_adapter.detect(resolved.path, resolved.source)
+            with patch.object(rdkit_adapter.subprocess, "run", return_value=import_completed) as rdkit_run:
+                rdkit_result = rdkit_adapter.detect(resolved.path, resolved.source)
+
+        self.assertEqual(resolved.source, "configured")
+        self.assertEqual(meeko_result.source, "configured")
+        self.assertEqual(rdkit_result.source, "configured")
+        self.assertEqual(meeko_run.call_args[0][0][0], str(configured_path))
+        self.assertEqual(rdkit_run.call_args[0][0][0], str(configured_path))
 
     def test_vina_missing_returns_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

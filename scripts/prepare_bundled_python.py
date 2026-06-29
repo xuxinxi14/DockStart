@@ -19,8 +19,10 @@ REPO_ROOT_ENV_VAR = "DOCKSTART_REPO_ROOT"
 PYTHON_BINARY_RELATIVE = Path("resources", "python", "python.exe")
 MANIFEST_RELATIVE = Path("resources", "toolchain_manifest.json")
 RUNTIME_DIR_RELATIVE = Path("resources", "python")
+LICENSE_TARGET_RELATIVE = Path("resources", "licenses", "Python_LICENSE.txt")
 RUNTIME_DIR_NAMES = {"DLLs", "Lib", "Scripts"}
 TOP_LEVEL_FILE_PATTERNS = ("python*.dll", "*.pyd", "*.zip", "python*._pth", "pyvenv.cfg")
+LICENSE_CANDIDATE_NAMES = ("LICENSE.txt", "LICENSE", "LICENSE.md", "COPYING", "COPYING.txt")
 
 
 def get_repo_root(repo_root: str | Path | None = None) -> Path:
@@ -135,6 +137,14 @@ def _iter_top_level_files(runtime_root: Path) -> Iterable[Path]:
                 yield candidate
 
 
+def _find_license_file(runtime_root: Path) -> Path | None:
+    for name in LICENSE_CANDIDATE_NAMES:
+        candidate = runtime_root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def prepare_bundled_python(
     source: str | Path,
     repo_root: str | Path | None = None,
@@ -162,6 +172,12 @@ def prepare_bundled_python(
         if _copy_tree(source_dir, target_runtime_dir):
             copied_dirs.append(str(target_runtime_dir))
 
+    license_source = _find_license_file(runtime_root)
+    license_target = root / LICENSE_TARGET_RELATIVE
+    license_copied = False
+    if license_source:
+        license_copied = _copy_file(license_source, license_target)
+
     sha256 = calculate_file_sha256(target_binary)
     prepared_at = datetime.now(UTC).isoformat()
     resolved_version = version.strip() or detect_python_version(target_binary)
@@ -187,9 +203,10 @@ def prepare_bundled_python(
         "required_for_mvp_run": False,
         "bundled_by_default": False,
         "license": "Python Software Foundation License",
-        "resolution_priority": ["bundled", "configured", "current_environment"],
+        "backend_resolution_priority": ["bundled", "configured", "current_environment"],
+        "preparation_resolution_priority": ["configured", "bundled", "current_environment"],
     }
-    manifest["licenses"]["python"] = ""
+    manifest["licenses"]["python"] = LICENSE_TARGET_RELATIVE.as_posix() if license_source else ""
     manifest["licenses"].setdefault(
         "third_party_notices",
         Path("resources", "licenses", "THIRD_PARTY_NOTICES.md").as_posix(),
@@ -204,6 +221,9 @@ def prepare_bundled_python(
         "copied_binary": copied_binary,
         "copied_files": copied_files,
         "copied_dirs": copied_dirs,
+        "license_source": str(license_source) if license_source else "",
+        "license_target": str(license_target),
+        "license_copied": license_copied,
         "version": resolved_version,
         "sha256": sha256,
         "prepared_at": prepared_at,

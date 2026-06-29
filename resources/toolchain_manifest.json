@@ -4,33 +4,33 @@
   "status": "partial",
   "description": "DockStart 内置工具链目录规范。当前提交建立 Vina 与 Python runtime 的内置路径识别，不随仓库强制提交二进制运行时。",
   "vina": {
-    "exists": false,
+    "exists": true,
     "path": "resources/vina/vina.exe",
-    "version": "",
-    "sha256": "",
-    "source_label": "",
-    "prepared_at": "",
+    "version": "1.2.7",
+    "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
+    "source_label": "local AutoDock Vina 1.2.7 release candidate",
+    "prepared_at": "2026-06-29T10:15:56.721579+00:00",
     "dry_run": false
   },
   "bundled_vina": {
     "name": "AutoDock Vina",
-    "version": "",
+    "version": "1.2.7",
     "binary_path": "resources/vina/vina.exe",
     "license": "Apache-2.0",
-    "source": "",
-    "bundled": false,
-    "sha256": "",
-    "prepared_at": ""
+    "source": "local AutoDock Vina 1.2.7 release candidate",
+    "bundled": true,
+    "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
+    "prepared_at": "2026-06-29T10:15:56.721579+00:00"
   },
   "bundled_python": {
     "name": "Python",
-    "version": "",
+    "version": "3.11.15",
     "binary_path": "resources/python/python.exe",
     "license": "Python Software Foundation License",
-    "source": "",
-    "bundled": false,
-    "sha256": "",
-    "prepared_at": ""
+    "source": "local CPython 3.11.15 runtime release candidate",
+    "bundled": true,
+    "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
+    "prepared_at": "2026-06-29T10:19:08.155892+00:00"
   },
   "tools": {
     "vina": {
@@ -53,16 +53,21 @@
       "required_for_mvp_run": false,
       "bundled_by_default": false,
       "license": "Python Software Foundation License",
-      "resolution_priority": [
+      "backend_resolution_priority": [
         "bundled",
         "configured",
+        "current_environment"
+      ],
+      "preparation_resolution_priority": [
+        "configured",
+        "bundled",
         "current_environment"
       ]
     }
   },
   "licenses": {
     "autodock_vina": "resources/licenses/AutoDock-Vina_LICENSE.txt",
-    "python": "",
+    "python": "resources/licenses/Python_LICENSE.txt",
     "third_party_notices": "resources/licenses/THIRD_PARTY_NOTICES.md"
   }
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.0
+
+- Prepared the Basic distributable package path with bundled AutoDock Vina and a bundled lightweight Python backend runtime.
+- Added `examples/` to Tauri packaged resources so Demo Mode templates are available after installation.
+- Updated bundled Python handling so the desktop backend can use bundled Python while RDKit/Meeko preparation prefers a user-configured Python environment.
+- Added packaged license files for AutoDock Vina and Python runtime distribution.
+- Tightened `prepare_bundled_vina.py` so adjacent DLL files are copied only with explicit `--copy-dlls`, avoiding accidental inclusion of unrelated MGLTools/OpenBabel/Python 2 components from mixed tool directories.
+- Kept RDKit/Meeko conda environments, `python.exe`, `Lib/`, `DLLs/`, `site-packages`, installers, and build outputs out of Git.
+
 ## v0.8.7
 
 - Performed the V0.8 out-of-box workflow freeze audit.

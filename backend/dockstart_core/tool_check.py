@@ -32,7 +32,7 @@ def check_all_tools() -> list[ToolCheckResult]:
     python_result = _safe_detect(
         "python",
         "Python",
-        lambda: python_adapter.detect(configured_python),
+        lambda: python_adapter.detect(configured_python, prefer_configured=bool(configured_python)),
     )
     selected_python = python_result.path or configured_python
     python_source = python_result.source

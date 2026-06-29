@@ -41,11 +41,19 @@ resources/python/
 Large runtime files are ignored by Git. Keep this README and
 `resources/toolchain_manifest.json` tracked.
 
-Python resolution priority in DockStart is:
+DockStart uses bundled Python first for the desktop app's backend runtime:
 
 ```text
 bundled > configured > current_environment
 ```
 
-Meeko and RDKit are currently import checks only. DockStart does not yet use
-them for receptor preparation, ligand processing, or PDBQT generation.
+RDKit/Meeko preparation uses the user-configured Python first:
+
+```text
+configured > bundled > current_environment
+```
+
+The lightweight runtime prepared here is intended to run DockStart's backend.
+It does not install RDKit or Meeko. Assisted Mode still expects a separate
+configured Python environment with RDKit/Meeko when automatic PDBQT preparation
+is required.

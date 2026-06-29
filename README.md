@@ -52,7 +52,7 @@ V0.2.3 已支持工具链基础能力：
 - 识别可选的 bundled Python runtime 路径：`resources/python/python.exe`；
 - 通过 `resources/toolchain_manifest.json` 检查 bundled Python 的版本、来源和 `sha256`；
 - 在 `ToolchainStatusPage` 中展示 bundled Python 是否存在、解析路径、版本、`sha256` 和当前 Python 来源；
-- Python 解析优先级为 `bundled` → `configured` → `current_environment`；
+- 桌面端后端运行优先使用 bundled Python；RDKit/Meeko preparation 工具链优先使用用户配置的 Python；
 - Meeko / RDKit 当前只使用解析后的 Python 做 `import` 检测。
 
 V0.2.5 已支持原始结构下载基础层：
