@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import BasicModeGuide from "../components/BasicModeGuide";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import PathInput from "../components/PathInput";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -105,7 +106,7 @@ export default function ImportPdbqtPage({
     const sourcePath = isReceptor ? receptorPath : ligandPath;
     const setSourcePath = isReceptor ? setReceptorPath : setLigandPath;
     return (
-      <article className="task-card">
+      <article className="task-card" data-layout="task-card">
         <div className="section-card-header">
           <h2>{isReceptor ? "受体 PDBQT" : "配体 PDBQT"}</h2>
           <StatusBadge tone={fileRef.file ? "ok" : "warning"}>{fileRef.file ? "已完成" : "缺失"}</StatusBadge>
@@ -128,53 +129,79 @@ export default function ImportPdbqtPage({
   };
 
   return (
-    <section className="workbench-page" aria-labelledby="import-pdbqt-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">Vina 输入</p>
-          <h1 id="import-pdbqt-title">导入 PDBQT</h1>
-          <p>选择已经准备好的受体和配体 PDBQT 文件。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="import-pdbqt-title">
+      <PageHero
+        eyebrow="Vina 输入"
+        title="导入 PDBQT"
+        titleId="import-pdbqt-title"
+        description="选择已经准备好的受体和配体 PDBQT 文件。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
           <ActionButton onClick={() => void reloadProject()} disabled={isBusy}>刷新项目</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <WarningCallout title="PDBQT 是 Vina 输入">
-        <p>raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。</p>
-      </WarningCallout>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <WarningCallout title="PDBQT 是 Vina 输入">
+              <p>raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。</p>
+            </WarningCallout>
 
-      <BasicModeGuide compact primaryLabel="导入 PDBQT 后设置搜索范围" />
+            <BasicModeGuide compact primaryLabel="导入 PDBQT 后设置搜索范围" />
 
-      <div className="two-column-grid">
-        {renderImportCard("receptor")}
-        {renderImportCard("ligand")}
-      </div>
+            <div className="two-column-grid">
+              {renderImportCard("receptor")}
+              {renderImportCard("ligand")}
+            </div>
 
-      <div className="next-step-strip">
-        <div>
-          <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体"}</strong>
-          <p>也可以回到结构获取页下载 raw 文件。</p>
-        </div>
-        <div className="button-row end">
-          <ActionButton onClick={() => onOpenStructureFetch(project)}>获取结构</ActionButton>
-          <ActionButton onClick={() => onOpenViewer(project)}>3D 查看</ActionButton>
-          <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
-            设置搜索范围
-          </ActionButton>
-        </div>
-      </div>
+            <div className="next-step-strip">
+              <div>
+                <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体"}</strong>
+                <p>也可以回到结构获取页下载 raw 文件。</p>
+              </div>
+              <div className="button-row end">
+                <ActionButton onClick={() => onOpenStructureFetch(project)}>获取结构</ActionButton>
+                <ActionButton onClick={() => onOpenViewer(project)}>3D 查看</ActionButton>
+                <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
+                  设置搜索范围
+                </ActionButton>
+              </div>
+            </div>
 
-      {message ? <p className="message-line">{message}</p> : null}
-      {rawError ? (
-        <AdvancedDetails>
-          <pre>{rawError}</pre>
-        </AdvancedDetails>
-      ) : null}
-      <SectionCard title="技术说明">
-        <p>导入时文件会复制到项目 prepared 目录，并更新 project.json。</p>
-      </SectionCard>
-    </section>
+            {message ? <p className="message-line">{message}</p> : null}
+            {rawError ? (
+              <AdvancedDetails>
+                <pre>{rawError}</pre>
+              </AdvancedDetails>
+            ) : null}
+            <SectionCard title="技术说明">
+              <p>导入时文件会复制到项目 prepared 目录，并更新 project.json。</p>
+            </SectionCard>
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="输入状态">
+            <dl className="mode-context-list">
+              <div>
+                <dt>受体</dt>
+                <dd>{project.receptor.file ? "已导入" : "缺失"}</dd>
+              </div>
+              <div>
+                <dt>配体</dt>
+                <dd>{project.ligand.file ? "已导入" : "缺失"}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="下一步">
+            <p>{readyForBox ? "进入搜索范围设置。" : "先补全受体和配体 PDBQT。"}</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

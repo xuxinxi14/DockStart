@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
-import SectionCard from "../components/SectionCard";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RawStructureStatus, RunFileStatus } from "../types";
@@ -237,119 +237,145 @@ export default function StructureFetchPage({
   );
 
   return (
-    <section className="workbench-page" aria-labelledby="structure-fetch-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">工作流 1</p>
-          <h1 id="structure-fetch-title">获取结构</h1>
-          <p>下载受体和配体原始结构文件。raw 文件用于后续准备，不能直接运行 Vina。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="structure-fetch-title">
+      <PageHero
+        eyebrow="工作流 1"
+        title="获取结构"
+        titleId="structure-fetch-title"
+        description="下载受体和配体原始结构文件。raw 文件用于后续准备，不能直接运行 Vina。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
           <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>刷新状态</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <WarningCallout title="raw 不等于 Vina 输入">
-        <p>下载完成后，还需要准备或导入 PDBQT。</p>
-      </WarningCallout>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <WarningCallout title="raw 不等于 Vina 输入">
+              <p>下载完成后，还需要准备或导入 PDBQT。</p>
+            </WarningCallout>
 
-      <div className="two-column-grid">
-        <article className="task-card">
-          <div className="section-card-header">
-            <h2>受体</h2>
-            <StatusBadge tone={statusTone(receptorStatus?.status)}>{statusLabel(receptorStatus?.status)}</StatusBadge>
-          </div>
-          <p className="muted-path">{receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}</p>
-          <div className="field-stack">
-            <label htmlFor="pdb-id">RCSB PDB ID</label>
-            <input id="pdb-id" value={pdbId} onChange={(event) => setPdbId(event.target.value)} placeholder="例如 1HSG" />
-          </div>
-          <div className="field-stack">
-            <label htmlFor="pdb-format">格式</label>
-            <select id="pdb-format" value={pdbFormat} onChange={(event) => setPdbFormat(event.target.value)}>
-              <option value="pdb">pdb</option>
-              <option value="cif">cif</option>
-            </select>
-          </div>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={overwritePdb} onChange={(event) => setOverwritePdb(event.target.checked)} />
-            覆盖已有 raw 文件
-          </label>
-          <div className="button-row">
-            <ActionButton variant="primary" disabled={isBusy || !pdbId.trim()} onClick={() => void fetchPdb()}>
-              下载受体
-            </ActionButton>
-            <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
-              清除记录
-            </ActionButton>
-          </div>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={deleteReceptorRawFile} onChange={(event) => setDeleteReceptorRawFile(event.target.checked)} />
-            清除时删除 raw 文件
-          </label>
-          {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
-        </article>
+            <div className="two-column-grid">
+              <article className="task-card" data-layout="task-card">
+                <div className="section-card-header">
+                  <h2>受体</h2>
+                  <StatusBadge tone={statusTone(receptorStatus?.status)}>{statusLabel(receptorStatus?.status)}</StatusBadge>
+                </div>
+                <p className="muted-path">{receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}</p>
+                <div className="field-stack">
+                  <label htmlFor="pdb-id">RCSB PDB ID</label>
+                  <input id="pdb-id" value={pdbId} onChange={(event) => setPdbId(event.target.value)} placeholder="例如 1HSG" />
+                </div>
+                <div className="field-stack">
+                  <label htmlFor="pdb-format">格式</label>
+                  <select id="pdb-format" value={pdbFormat} onChange={(event) => setPdbFormat(event.target.value)}>
+                    <option value="pdb">pdb</option>
+                    <option value="cif">cif</option>
+                  </select>
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={overwritePdb} onChange={(event) => setOverwritePdb(event.target.checked)} />
+                  覆盖已有 raw 文件
+                </label>
+                <div className="button-row">
+                  <ActionButton variant="primary" disabled={isBusy || !pdbId.trim()} onClick={() => void fetchPdb()}>
+                    下载受体
+                  </ActionButton>
+                  <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
+                    清除记录
+                  </ActionButton>
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={deleteReceptorRawFile} onChange={(event) => setDeleteReceptorRawFile(event.target.checked)} />
+                  清除时删除 raw 文件
+                </label>
+                {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
+              </article>
 
-        <article className="task-card">
-          <div className="section-card-header">
-            <h2>配体</h2>
-            <StatusBadge tone={statusTone(ligandStatus?.status)}>{statusLabel(ligandStatus?.status)}</StatusBadge>
-          </div>
-          <p className="muted-path">{ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}</p>
-          <div className="field-stack">
-            <label htmlFor="pubchem-query-type">查询方式</label>
-            <select
-              id="pubchem-query-type"
-              value={pubchemQueryType}
-              onChange={(event) => setPubchemQueryType(event.target.value as "cid" | "name" | "smiles")}
-            >
-              <option value="cid">CID</option>
-              <option value="name">名称</option>
-              <option value="smiles">SMILES（暂未支持）</option>
-            </select>
-          </div>
-          <div className="field-stack">
-            <label htmlFor="pubchem-query">PubChem 查询</label>
-            <input
-              id="pubchem-query"
-              value={pubchemQuery}
-              onChange={(event) => setPubchemQuery(event.target.value)}
-              placeholder={pubchemQueryType === "cid" ? "例如 2244" : pubchemQueryType === "name" ? "例如 aspirin" : "SMILES 当前仅返回提示"}
-            />
-          </div>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={overwritePubchem} onChange={(event) => setOverwritePubchem(event.target.checked)} />
-            覆盖已有 raw 文件
-          </label>
-          <div className="button-row">
-            <ActionButton variant="primary" disabled={isBusy || !pubchemQuery.trim()} onClick={() => void fetchPubchem()}>
-              下载配体
-            </ActionButton>
-            <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
-              清除记录
-            </ActionButton>
-          </div>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={deleteLigandRawFile} onChange={(event) => setDeleteLigandRawFile(event.target.checked)} />
-            清除时删除 raw 文件
-          </label>
-          {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
-        </article>
-      </div>
+              <article className="task-card" data-layout="task-card">
+                <div className="section-card-header">
+                  <h2>配体</h2>
+                  <StatusBadge tone={statusTone(ligandStatus?.status)}>{statusLabel(ligandStatus?.status)}</StatusBadge>
+                </div>
+                <p className="muted-path">{ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}</p>
+                <div className="field-stack">
+                  <label htmlFor="pubchem-query-type">查询方式</label>
+                  <select
+                    id="pubchem-query-type"
+                    value={pubchemQueryType}
+                    onChange={(event) => setPubchemQueryType(event.target.value as "cid" | "name" | "smiles")}
+                  >
+                    <option value="cid">CID</option>
+                    <option value="name">名称</option>
+                    <option value="smiles">SMILES（暂未支持）</option>
+                  </select>
+                </div>
+                <div className="field-stack">
+                  <label htmlFor="pubchem-query">PubChem 查询</label>
+                  <input
+                    id="pubchem-query"
+                    value={pubchemQuery}
+                    onChange={(event) => setPubchemQuery(event.target.value)}
+                    placeholder={pubchemQueryType === "cid" ? "例如 2244" : pubchemQueryType === "name" ? "例如 aspirin" : "SMILES 当前仅返回提示"}
+                  />
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={overwritePubchem} onChange={(event) => setOverwritePubchem(event.target.checked)} />
+                  覆盖已有 raw 文件
+                </label>
+                <div className="button-row">
+                  <ActionButton variant="primary" disabled={isBusy || !pubchemQuery.trim()} onClick={() => void fetchPubchem()}>
+                    下载配体
+                  </ActionButton>
+                  <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
+                    清除记录
+                  </ActionButton>
+                </div>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={deleteLigandRawFile} onChange={(event) => setDeleteLigandRawFile(event.target.checked)} />
+                  清除时删除 raw 文件
+                </label>
+                {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
+              </article>
+            </div>
 
-      <div className="next-step-strip">
-        <div>
-          <strong>下一步：准备 Vina 输入</strong>
-          <p>将 raw 文件准备成 PDBQT，或手动导入已经准备好的 PDBQT。</p>
-        </div>
-        <div className="button-row end">
-          <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
-          <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>进入准备 Vina 输入</ActionButton>
-        </div>
-      </div>
+            <div className="next-step-strip">
+              <div>
+                <strong>下一步：准备 Vina 输入</strong>
+                <p>将 raw 文件准备成 PDBQT，或手动导入已经准备好的 PDBQT。</p>
+              </div>
+              <div className="button-row end">
+                <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
+                <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>进入准备 Vina 输入</ActionButton>
+              </div>
+            </div>
 
-      <CommandResultPanel title="结构获取结果" message={message} rawError={rawError} />
-    </section>
+            <CommandResultPanel title="结构获取结果" message={message} rawError={rawError} />
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="raw 状态">
+            <dl className="mode-context-list">
+              <div>
+                <dt>受体</dt>
+                <dd>{statusLabel(receptorStatus?.status)}</dd>
+              </div>
+              <div>
+                <dt>配体</dt>
+                <dd>{statusLabel(ligandStatus?.status)}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="下一步">
+            <p>raw 文件需要准备或导入为 PDBQT 后，才能设置搜索范围和运行 Vina。</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

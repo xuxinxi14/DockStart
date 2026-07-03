@@ -1,80 +1,64 @@
 # DockStart Demo Projects
 
-DockStart V0.8.2 开始提供小型示例项目，用于第一次打开软件时理解流程。
+DockStart V0.9.4 的示例流程由 `resources/examples/` 提供。示例项目只用于学习 DockStart 操作流程，不用于药效判断、真实 docking 解释、课程或论文中的科学证据。
 
-示例项目只用于软件流程演示，不用于科研结论、真实 docking 解释、药效判断、课程或论文中的科学证据。
+每个示例目录必须包含 `manifest.json`。前端示例卡片从 manifest 读取标题、说明、标签、所需工具、入口步骤和按钮文案，不在前端代码里硬编码示例信息。
 
 ## 示例类型
 
-### Basic Mode 示例
+### 基础对接示例
 
 目录：
 
 ```text
-examples/demo_basic_project/
+resources/examples/basic_pdbqt/
 ```
-
-包含：
-
-- `prepared/receptor.pdbqt`
-- `prepared/ligand.pdbqt`
-- `project.json`
 
 用途：
 
-- 演示已有 PDBQT 的最低依赖路径；
-- 帮助用户理解导入 PDBQT、设置 Box、生成配置、准备运行记录的流程；
-- 不需要 RDKit / Meeko。
+- 演示已有 `receptor.pdbqt` 和 `ligand.pdbqt` 的最低依赖路径；
+- 复制后进入准备结构页；
+- 只需要 AutoDock Vina 才能继续真实运行对接。
 
-限制：
-
-- PDBQT 是玩具文件；
-- 不代表真实受体或配体；
-- 不用于真实 docking 结论。
-
-### Assisted Mode 示例
+### 从原始结构开始示例
 
 目录：
 
 ```text
-examples/demo_assisted_project/
+resources/examples/assisted_raw/
 ```
-
-包含：
-
-- `raw/receptor_demo.pdb`
-- `raw/ligand_demo.sdf`
-- `project.json`
 
 用途：
 
-- 演示 raw 文件存在但 prepared PDBQT 尚未生成时的状态；
-- 帮助用户理解 RDKit / Meeko 工具链为什么只影响 Assisted Mode；
-- 可用于测试 PreparationPage 的入口和错误提示。
+- 演示从 `raw/receptor.pdb` 和 `raw/ligand.sdf` 进入结构准备；
+- 复制后进入结构准备页；
+- `prepared/` 下包含参考 PDBQT 文件，便于 RDKit / Meeko 不可用时继续体验后续流程。
 
-限制：
+### 结果查看示例
 
-- raw 文件是玩具数据；
-- 自动准备是否能成功取决于本机 RDKit / Meeko 能力；
-- 即使生成 PDBQT，也不代表科学正确。
+目录：
 
-## 如何使用
+```text
+resources/examples/viewer_result/
+```
 
-1. 打开 DockStart。
-2. 进入“创建 / 打开项目”。
-3. 选择一个保存目录。
-4. 在“示例项目”区域复制 Basic 或 Assisted 示例。
-5. 按页面提示继续导入、准备、设置 Box 或查看 3D。
+用途：
 
-DockStart 会把示例复制到你的保存目录，不会直接修改仓库内的 `examples/` 模板。
+- 演示已完成 run 的结果页、分数表、日志、报告和构象查看入口；
+- 复制后直接进入结果页；
+- 不重新运行 AutoDock Vina。
 
-## 为什么不提供真实大型示例
+## 复制规则
 
-当前目标是降低使用门槛，而不是提供科研数据集。真实受体、配体、docking 输出和大型结构文件会带来：
+用户在示例流程页点击复制时，DockStart 会把示例复制到用户选择的工作区父目录。如果同名目录已存在，会自动生成不冲突名称，例如：
 
-- 许可证和来源确认成本；
-- 文件体积增加；
-- 用户误把演示结果当科研结论的风险；
-- Git 仓库膨胀。
+```text
+basic_demo_001
+basic_demo_002
+```
 
-因此 V0.8.2 只提交小型玩具示例，并明确标注演示边界。
+复制后的 `project.json` 会更新项目名、项目路径和示例元信息。仓库内的 `resources/examples/` 模板不会被修改。
+
+## 科学边界
+
+当前示例文件是小型玩具数据，用于验证软件流程和界面跳转。Docking score 仅供结构结合趋势参考，不能替代实验验证。

@@ -1,22 +1,29 @@
 import type { DockStartProject } from "../types";
-import { navigationItems, resolveNavigationTarget, type PageId } from "../navigation/pages";
+import { navigationItems, resolveNavigationTarget, type NavigateHandler, type PageId } from "../navigation/pages";
 import type { WorkflowStep } from "../components/WorkflowStepper";
 
 type SidebarProps = {
   currentPage: PageId;
   project: DockStartProject | null;
   workflowSteps?: WorkflowStep[];
-  onNavigate: (page: PageId) => void;
+  onNavigate: NavigateHandler;
 };
 
 export default function Sidebar({ currentPage, project, workflowSteps = [], onNavigate }: SidebarProps) {
   const hasProject = Boolean(project);
   const groups: Array<"Project" | "Workflow" | "Workbench" | "Support"> = ["Project", "Workflow", "Workbench", "Support"];
+  const visibleGroups = hasProject ? groups : groups.filter((group) => group !== "Workbench");
   const groupLabels: Record<(typeof groups)[number], string> = {
     Project: "项目",
-    Workflow: "工作流",
+    Workflow: "对接流程",
     Workbench: "工作台",
     Support: "支持",
+  };
+  const noProjectWorkflowLabels: Partial<Record<PageId, string>> = {
+    "structure-fetch": "1 准备结构",
+    "box-setup": "2 设置搜索范围",
+    "vina-config": "3 运行对接",
+    result: "4 查看结果",
   };
 
   function isActive(itemId: PageId): boolean {
@@ -53,29 +60,34 @@ export default function Sidebar({ currentPage, project, workflowSteps = [], onNa
         <span>Molecular Workbench / 分子工作台</span>
       </div>
       <nav className="sidebar-nav">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div className="sidebar-group" key={group}>
             <span className="sidebar-group-title">{groupLabels[group]}</span>
+            {!hasProject && group === "Workflow" ? <span className="sidebar-group-note">创建项目后启用</span> : null}
             {navigationItems
               .filter((item) => item.group === group)
+              .filter((item) => hasProject || item.id !== "preparation")
               .map((item) => {
                 const target = resolveNavigationTarget(item, hasProject);
                 const active = isActive(item.id);
-                const disabled = item.disabled;
+                const requiresProjectBlocked = Boolean(item.requiresProject && !hasProject);
+                const disabled = Boolean(item.disabled || requiresProjectBlocked);
                 const state = itemState(item.id, item.requiresProject);
+                const itemLabel = !hasProject ? noProjectWorkflowLabels[item.id] ?? item.label : item.label;
                 return (
                   <button
-                    className={`sidebar-nav-item ${active ? "active" : ""} ${state}`.trim()}
+                    className={`sidebar-nav-item ${active ? "active" : ""} ${state} ${
+                      requiresProjectBlocked ? "project-required" : ""
+                    } ${requiresProjectBlocked ? "compact-disabled" : ""} descriptionless`.trim()}
                     disabled={disabled}
                     key={item.id}
                     onClick={() => onNavigate(target)}
-                    title={item.requiresProject && !hasProject ? "需要先创建或打开项目" : item.description}
+                    title={requiresProjectBlocked ? "创建项目后启用" : item.description}
                     type="button"
                   >
                     <span className="sidebar-nav-dot" aria-hidden="true" />
                     <span>
-                      <strong>{item.label}</strong>
-                      <small>{item.requiresProject && !hasProject ? "需先创建或打开项目" : item.description}</small>
+                      <strong>{itemLabel}</strong>
                     </span>
                   </button>
                 );

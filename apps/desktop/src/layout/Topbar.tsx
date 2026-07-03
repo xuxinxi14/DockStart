@@ -9,20 +9,21 @@ type TopbarProps = {
 };
 
 export default function Topbar({ currentPage, project, workflowSummary }: TopbarProps) {
+  const hasProject = Boolean(project);
   return (
     <header className="app-topbar">
       <div className="topbar-project">
         <span className="topbar-label">项目</span>
         <strong>{project?.project_name || "未加载项目"}</strong>
-        <small>{project?.project_dir || "先创建或打开一个 DockStart 项目"}</small>
+        {project?.project_dir ? <small>{project.project_dir}</small> : null}
       </div>
       <div className="topbar-main">
         <span className="topbar-label">当前阶段</span>
         <strong>{pageTitles[currentPage]}</strong>
-        <small>{workflowSummary}</small>
+        {hasProject ? <small>{workflowSummary}</small> : null}
       </div>
       <div className="topbar-status">
-        <StatusBadge tone={project ? "ok" : "warning"}>{project ? "已加载" : "未加载"}</StatusBadge>
+        {hasProject ? <StatusBadge tone="ok">已加载</StatusBadge> : null}
         <StatusBadge tone="muted">工具链</StatusBadge>
         <span className="version-pill">v{appVersion}</span>
       </div>

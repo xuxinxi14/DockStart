@@ -18,6 +18,8 @@ from dockstart_core.structure_fetch import (  # noqa: E402
     fetch_pdb_structure,
     fetch_pubchem_ligand,
     get_raw_files_status,
+    import_ligand_raw_file,
+    import_receptor_raw_file,
     validate_pdb_id,
     validate_pubchem_cid,
     validate_pubchem_name,
@@ -201,6 +203,51 @@ class StructureFetchTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "PUBCHEM_SMILES_UNSUPPORTED")
+
+    def test_import_receptor_raw_file_copies_local_pdb(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "my receptor.pdb"
+            source.write_text("HEADER LOCAL\n", encoding="utf-8")
+
+            result = import_receptor_raw_file(str(project_dir), str(source))
+            loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["source"], "local_file")
+            self.assertEqual(result["raw_file"], "raw/receptor_my_receptor.pdb")
+            self.assertEqual(loaded["receptor"]["source"], "local_file")
+            self.assertEqual(loaded["receptor"]["source_id"], "my receptor.pdb")
+            self.assertEqual(loaded["receptor"]["query_type"], "local_file")
+            self.assertEqual(loaded["receptor"]["raw_file"], "raw/receptor_my_receptor.pdb")
+            self.assertTrue((project_dir / "raw" / "receptor_my_receptor.pdb").is_file())
+
+    def test_import_ligand_raw_file_copies_local_sdf(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "aspirin.sdf"
+            source.write_text("ligand sdf\n", encoding="utf-8")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+            loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["raw_file"], "raw/ligand_aspirin.sdf")
+            self.assertEqual(loaded["ligand"]["source"], "local_file")
+            self.assertEqual(loaded["ligand"]["source_id"], "aspirin.sdf")
+            self.assertEqual(loaded["ligand"]["raw_file"], "raw/ligand_aspirin.sdf")
+            self.assertTrue((project_dir / "raw" / "ligand_aspirin.sdf").is_file())
+
+    def test_import_ligand_raw_file_rejects_unsupported_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "ligand.txt"
+            source.write_text("not supported\n", encoding="utf-8")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "LOCAL_RAW_FORMAT_UNSUPPORTED")
 
     def test_pubchem_download_failure_returns_structured_error(self) -> None:
         def failing_fetcher(_url: str, _timeout: int) -> bytes:

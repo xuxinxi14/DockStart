@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -236,7 +237,7 @@ export default function PreparationPage({
     const rawFile = isReceptor ? files?.receptor_raw : files?.ligand_raw;
     const preparedFile = isReceptor ? files?.receptor_prepared : files?.ligand_prepared;
     return (
-      <article className="task-card">
+      <article className="task-card" data-layout="task-card">
         <div className="section-card-header">
           <h2>{isReceptor ? "受体准备" : "配体准备"}</h2>
           <StatusBadge tone={statusTone(prep?.status)}>{statusLabel(prep?.status)}</StatusBadge>
@@ -292,73 +293,116 @@ export default function PreparationPage({
   };
 
   return (
-    <section className="workbench-page" aria-labelledby="preparation-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">工作流 2</p>
-          <h1 id="preparation-title">准备 Vina 输入</h1>
-          <p>把 raw 结构准备为 PDBQT，或确认已经导入的 Vina 输入文件。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="preparation-title">
+      <PageHero
+        eyebrow="工作流 2"
+        title="准备 Vina 输入"
+        titleId="preparation-title"
+        description="把 raw 结构准备为 PDBQT，或确认已经导入的 Vina 输入文件。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
           <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>刷新状态</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <SectionCard title="工具链状态">
-        <div className="status-strip">
-          <article className="metric-card">
-            <span>Python</span>
-            <strong>{statusLabel(tools?.python?.status)} · {toolVersion(tools?.python)}</strong>
-          </article>
-          <article className="metric-card">
-            <span>RDKit</span>
-            <strong>{statusLabel(tools?.rdkit?.status)} · {toolVersion(tools?.rdkit)}</strong>
-          </article>
-          <article className="metric-card">
-            <span>Meeko</span>
-            <strong>{statusLabel(tools?.meeko?.status)} · {toolVersion(tools?.meeko)}</strong>
-          </article>
-        </div>
-        <AdvancedDetails>
-          <dl className="meta-list">
-            <div>
-              <dt>RDKit SDF 读取</dt>
-              <dd>{capabilityLine(tools?.rdkit, "sdf_inline_read")}</dd>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <SectionCard title="工具链状态">
+              <div className="status-strip">
+                <article className="metric-card">
+                  <span>Python</span>
+                  <strong>{statusLabel(tools?.python?.status)} · {toolVersion(tools?.python)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>RDKit</span>
+                  <strong>{statusLabel(tools?.rdkit?.status)} · {toolVersion(tools?.rdkit)}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Meeko</span>
+                  <strong>{statusLabel(tools?.meeko?.status)} · {toolVersion(tools?.meeko)}</strong>
+                </article>
+              </div>
+              <AdvancedDetails>
+                <dl className="meta-list">
+                  <div>
+                    <dt>RDKit SDF 读取</dt>
+                    <dd>{capabilityLine(tools?.rdkit, "sdf_inline_read")}</dd>
+                  </div>
+                  <div>
+                    <dt>Meeko 配体准备</dt>
+                    <dd>{capabilityLine(tools?.meeko, "ligand_preparation")}</dd>
+                  </div>
+                  <div>
+                    <dt>Meeko 受体准备</dt>
+                    <dd>{capabilityLine(tools?.meeko, "receptor_preparation")}</dd>
+                  </div>
+                </dl>
+              </AdvancedDetails>
+            </SectionCard>
+
+            <div className="two-column-grid">
+              {renderPrepCard("receptor", receptorPrep)}
+              {renderPrepCard("ligand", ligandPrep)}
             </div>
-            <div>
-              <dt>Meeko 配体准备</dt>
-              <dd>{capabilityLine(tools?.meeko, "ligand_preparation")}</dd>
+
+            <div className="next-step-strip">
+              <div>
+                <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体 PDBQT"}</strong>
+                <p>自动准备结果仍需人工检查；也可以手动导入 PDBQT。</p>
+              </div>
+              <div className="button-row end">
+                <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
+                <ActionButton onClick={() => onOpenViewer(project)}>打开 3D 查看</ActionButton>
+                <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
+                  进入设置搜索范围
+                </ActionButton>
+              </div>
             </div>
-            <div>
-              <dt>Meeko 受体准备</dt>
-              <dd>{capabilityLine(tools?.meeko, "receptor_preparation")}</dd>
-            </div>
-          </dl>
-        </AdvancedDetails>
-      </SectionCard>
 
-      <div className="two-column-grid">
-        {renderPrepCard("receptor", receptorPrep)}
-        {renderPrepCard("ligand", ligandPrep)}
-      </div>
+            <ScientificDisclaimer kind="preparation" />
+            <CommandResultPanel title="准备结果" message={message} rawError={rawError} />
+          </div>
+        </MainPanel>
 
-      <div className="next-step-strip">
-        <div>
-          <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体 PDBQT"}</strong>
-          <p>自动准备结果仍需人工检查；也可以手动导入 PDBQT。</p>
-        </div>
-        <div className="button-row end">
-          <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
-          <ActionButton onClick={() => onOpenViewer(project)}>打开 3D 查看</ActionButton>
-          <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
-            进入设置搜索范围
-          </ActionButton>
-        </div>
-      </div>
+        <RightRail>
+          <RightRailSection title="当前输入">
+            <dl className="mode-context-list">
+              <div>
+                <dt>受体</dt>
+                <dd>{statusLabel(receptorPrep?.status)}</dd>
+              </div>
+              <div>
+                <dt>配体</dt>
+                <dd>{statusLabel(ligandPrep?.status)}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
 
-      <ScientificDisclaimer kind="preparation" />
-      <CommandResultPanel title="准备结果" message={message} rawError={rawError} />
-    </section>
+          <RightRailSection title="需要工具">
+            <dl className="mode-context-list">
+              <div>
+                <dt>Python</dt>
+                <dd>{statusLabel(tools?.python?.status)}</dd>
+              </div>
+              <div>
+                <dt>RDKit</dt>
+                <dd>{statusLabel(tools?.rdkit?.status)}</dd>
+              </div>
+              <div>
+                <dt>Meeko</dt>
+                <dd>{statusLabel(tools?.meeko?.status)}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="下一步">
+            <p>{readyForBox ? "进入搜索范围设置。" : "先获得受体和配体 PDBQT 文件。"}</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

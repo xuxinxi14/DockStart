@@ -63,24 +63,33 @@
   --ds-space-2: 8px;
   --ds-space-3: 12px;
   --ds-space-4: 16px;
-  --ds-space-5: 24px;
-  --ds-space-6: 32px;
-  --ds-space-7: 48px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-7: 40px;
 
   --ds-radius-sm: 6px;
-  --ds-radius-md: 10px;
-  --ds-radius-lg: 14px;
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 8px;
   --ds-radius-xl: 20px;
+  --ds-radius-card: 8px;
 
   --ds-shadow-none: none;
   --ds-shadow-soft: 0 1px 2px rgba(16, 32, 51, 0.05);
   --ds-shadow-panel: 0 10px 28px rgba(16, 32, 51, 0.08);
 
-  --ds-sidebar-width: 260px;
-  --ds-topbar-height: 56px;
-  --ds-context-width: 320px;
-  --ds-content-max: 1180px;
+  --ds-sidebar-width: 220px;
+  --ds-topbar-height: 44px;
+  --ds-context-width: 260px;
+  --ds-content-max: 980px;
   --ds-content-wide: 1440px;
+  --ds-page-max: 980px;
+  --ds-main-width: 680px;
+  --ds-rail-width: 260px;
+  --ds-body-gap: 20px;
+  --ds-workbench-width: calc(var(--ds-main-width) + var(--ds-rail-width) + var(--ds-body-gap));
+  --ds-panel-min-height: 420px;
+  --ds-button-width: 160px;
+  --ds-border-line: 1px solid var(--ds-border-strong);
 
   /* Backward-compatible aliases for the existing V0.7 UI classes. */
   --ds-background: var(--ds-bg-app);

@@ -253,6 +253,28 @@ fn get_raw_files_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn import_receptor_raw_file(project_dir: String, source_path: String) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec!["import-receptor-raw".to_string(), project_dir, source_path],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导入受体原始结构文件。", &error),
+    }
+}
+
+#[tauri::command]
+fn import_ligand_raw_file(project_dir: String, source_path: String) -> String {
+    match run_backend_module(
+        "dockstart_core.structure_fetch",
+        vec!["import-ligand-raw".to_string(), project_dir, source_path],
+    ) {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导入配体原始结构文件。", &error),
+    }
+}
+
+#[tauri::command]
 fn clear_receptor_raw_record(project_dir: String, delete_file: bool) -> String {
     match run_backend_module(
         "dockstart_core.structure_fetch",
@@ -951,6 +973,8 @@ fn main() {
             fetch_pdb_structure,
             fetch_pubchem_ligand,
             get_raw_files_status,
+            import_receptor_raw_file,
+            import_ligand_raw_file,
             clear_receptor_raw_record,
             clear_ligand_raw_record,
             get_preparation_status,

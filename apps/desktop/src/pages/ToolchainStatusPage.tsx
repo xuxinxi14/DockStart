@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import type {
   DiagnosticReportResponse,
   PostInstallCheckResponse,
@@ -488,14 +489,14 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
   };
 
   return (
-    <section className="workbench-page" aria-labelledby="toolchain-status-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">支持</p>
-          <h1 id="toolchain-status-title">配置工具链</h1>
-          <p>确认 Vina 和 Python 工具链是否可用。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="toolchain-status-title">
+      <PageHero
+        eyebrow="支持"
+        title="配置工具链"
+        titleId="toolchain-status-title"
+        description="确认 Vina 和 Python 工具链是否可用。"
+        actions={
+          <>
           <button className="text-button" type="button" onClick={onBack}>返回</button>
           {onOpenSettings ? (
             <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
@@ -503,11 +504,15 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           <button className="primary-button" type="button" onClick={loadStatus} disabled={isLoading}>
             {isLoading ? "检测中..." : "重新检测"}
           </button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      {status ? (
-        <>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            {status ? (
+              <>
           <div className="toolchain-wizard-grid">
             <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
@@ -858,10 +863,51 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               </ul>
             </details>
           ) : null}
-        </>
-      ) : (
-        <p className="placeholder-note">正在读取工具链状态...</p>
-      )}
-    </section>
+              </>
+            ) : (
+              <p className="placeholder-note">正在读取工具链状态...</p>
+            )}
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="当前可用性">
+            <dl className="mode-context-list">
+              <div>
+                <dt>Vina</dt>
+                <dd>{statusText[status?.active_vina?.status ?? "unknown"]}</dd>
+              </div>
+              <div>
+                <dt>Python</dt>
+                <dd>{statusText[status?.resolved_python?.status ?? "unknown"]}</dd>
+              </div>
+              <div>
+                <dt>RDKit</dt>
+                <dd>{statusText[status?.rdkit_for_python?.status ?? "unknown"]}</dd>
+              </div>
+              <div>
+                <dt>Meeko</dt>
+                <dd>{statusText[status?.meeko_for_python?.status ?? "unknown"]}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="路径影响">
+            <p>基础模式主要依赖 Vina；从 PDB / SDF 准备输入时还需要 Python、RDKit 和 Meeko。</p>
+          </RightRailSection>
+
+          <RightRailSection title="操作">
+            <div className="button-row">
+              {onOpenSettings ? (
+                <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
+              ) : null}
+              {onOpenHelp ? (
+                <button className="text-button inline" type="button" onClick={onOpenHelp}>查看帮助</button>
+              ) : null}
+            </div>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

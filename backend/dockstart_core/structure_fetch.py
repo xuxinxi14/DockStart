@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -18,6 +19,8 @@ from dockstart_core.project import _error, _now_iso, _project_from_dict, _succes
 PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
 SUPPORTED_PDB_FORMATS = {"pdb", "cif"}
 SUPPORTED_PUBCHEM_FORMATS = {"sdf"}
+SUPPORTED_LOCAL_RECEPTOR_FORMATS = {"pdb", "pdbqt"}
+SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol2", "pdb"}
 DEFAULT_TIMEOUT_SECONDS = 30
 
 Fetcher = Callable[[str, int], bytes]
@@ -151,6 +154,117 @@ def _write_raw_file(target_path: Path, data: bytes, overwrite: bool) -> dict[str
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_bytes(data)
     return {"ok": True, "path": str(target_path), "error": None}
+
+
+def _validate_local_raw_file(source_path: str, supported_formats: set[str], label: str) -> dict[str, Any]:
+    file_path = Path(source_path).expanduser()
+    if not source_path.strip():
+        return _error(
+            "LOCAL_RAW_PATH_REQUIRED",
+            f"{label}文件不能为空。",
+            suggestion="请选择一个本地结构文件。",
+        )
+    if not file_path.exists():
+        return _error(
+            "LOCAL_RAW_FILE_NOT_FOUND",
+            f"没有找到{label}文件。",
+            raw_error=str(file_path),
+            suggestion="请确认文件路径正确，或重新选择文件。",
+        )
+    if not file_path.is_file():
+        return _error(
+            "LOCAL_RAW_PATH_NOT_FILE",
+            f"{label}路径不是一个文件。",
+            raw_error=str(file_path),
+            suggestion="请选择具体的结构文件，而不是文件夹。",
+        )
+    file_format = file_path.suffix.lower().lstrip(".")
+    if file_format not in supported_formats:
+        return _error(
+            "LOCAL_RAW_FORMAT_UNSUPPORTED",
+            f"{label}格式暂不支持。",
+            raw_error=file_path.suffix,
+            suggestion=f"当前支持：{', '.join(sorted(supported_formats))}。",
+        )
+    if file_path.stat().st_size == 0:
+        return _error(
+            "LOCAL_RAW_FILE_EMPTY",
+            f"{label}文件为空。",
+            raw_error=str(file_path),
+            suggestion="请确认该文件是有效的结构文件。",
+        )
+    return {"ok": True, "path": str(file_path), "format": file_format, "error": None}
+
+
+def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dict[str, Any]:
+    if role not in {"receptor", "ligand"}:
+        return _error("LOCAL_RAW_ROLE_INVALID", "原始结构导入类型无效。")
+
+    is_receptor = role == "receptor"
+    label = "受体结构" if is_receptor else "配体结构"
+    supported_formats = SUPPORTED_LOCAL_RECEPTOR_FORMATS if is_receptor else SUPPORTED_LOCAL_LIGAND_FORMATS
+    validation = _validate_local_raw_file(source_path, supported_formats, label)
+    if not validation.get("ok"):
+        return validation
+
+    project, project_error = _load_project_for_raw(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    source = Path(str(validation["path"]))
+    file_format = str(validation["format"])
+    project_path = Path(project.project_dir).expanduser()
+    relative_file = Path("raw", f"{role}_{_safe_file_slug(source.stem)}.{file_format}").as_posix()
+    target_path = project_path / relative_file
+
+    if target_path.exists():
+        return _error(
+            "LOCAL_RAW_FILE_EXISTS",
+            "项目 raw/ 目录中已经存在同名文件，DockStart 不会覆盖。",
+            raw_error=str(target_path),
+            suggestion="请更换项目名称、保存目录，或先清理已有 raw 文件。",
+        )
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_path)
+        file_ref = project.receptor if is_receptor else project.ligand
+        file_ref.source = "local_file"
+        file_ref.source_id = source.name
+        file_ref.query_type = "local_file"
+        file_ref.downloaded_at = _now_iso()
+        file_ref.raw_file = relative_file
+        if not file_ref.file:
+            file_ref.file = f"prepared/{role}.pdbqt"
+
+        saved = save_project(project)
+        if not saved.get("ok"):
+            return saved
+
+        return {
+            **_success(project, f"{label}已复制到 raw/ 目录。"),
+            "source": "local_file",
+            "source_id": source.name,
+            "query_type": "local_file",
+            "format": file_format,
+            "raw_file": relative_file,
+        }
+    except Exception as exc:  # noqa: BLE001 - UI needs structured errors.
+        return _error(
+            "LOCAL_RAW_IMPORT_ERROR",
+            "导入本地原始结构文件时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认项目目录可写，源文件未被其他程序锁定。",
+        )
+
+
+def import_receptor_raw_file(project_dir: str, source_path: str) -> dict[str, Any]:
+    return _import_local_raw_file(project_dir, source_path, "receptor")
+
+
+def import_ligand_raw_file(project_dir: str, source_path: str) -> dict[str, Any]:
+    return _import_local_raw_file(project_dir, source_path, "ligand")
 
 
 def _rcsb_url(pdb_id: str, file_format: str) -> str:
@@ -539,6 +653,20 @@ def main() -> None:
             _print_json(_error("RAW_FILES_STATUS_ARGS", "读取 raw 文件状态需要 project_dir 参数。"))
             return
         _print_json(get_raw_files_status(sys.argv[2]))
+        return
+
+    if command == "import-receptor-raw":
+        if len(sys.argv) < 4:
+            _print_json(_error("IMPORT_RECEPTOR_RAW_ARGS", "导入受体原始结构需要 project_dir 和 source_path 参数。"))
+            return
+        _print_json(import_receptor_raw_file(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "import-ligand-raw":
+        if len(sys.argv) < 4:
+            _print_json(_error("IMPORT_LIGAND_RAW_ARGS", "导入配体原始结构需要 project_dir 和 source_path 参数。"))
+            return
+        _print_json(import_ligand_raw_file(sys.argv[2], sys.argv[3]))
         return
 
     if command == "clear-receptor-raw":

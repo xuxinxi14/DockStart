@@ -311,7 +311,7 @@ seed = 12345
 通过命令行调用：
 
 ```text
-vina --config configs/vina_config.txt --out runs/run_001/out.pdbqt --log runs/run_001/log.txt
+vina --config configs/vina_config.txt --out runs/run_001/out.pdbqt
 ```
 
 运行时需要：
@@ -319,6 +319,7 @@ vina --config configs/vina_config.txt --out runs/run_001/out.pdbqt --log runs/ru
 * 显示实时日志；
 * 支持取消任务；
 * 保存 stdout/stderr；
+* 将 Vina stdout 保存为 `runs/run_001/log.txt` 供结果解析；
 * 记录开始时间、结束时间、工具版本、参数。
 
 ### 6.7 解析结果

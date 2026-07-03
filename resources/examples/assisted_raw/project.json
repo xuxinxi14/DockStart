@@ -1,0 +1,92 @@
+{
+  "project_name": "assisted_raw",
+  "created_at": "2026-06-29T00:00:00+00:00",
+  "updated_at": "2026-06-29T00:00:00+00:00",
+  "project_dir": "resources/examples/assisted_raw",
+  "demo": {
+    "type": "assisted_raw",
+    "mode": "assisted",
+    "title": "从原始结构开始示例",
+    "description": "示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。"
+  },
+  "receptor": {
+    "source": "demo",
+    "source_id": "toy_receptor_raw",
+    "query_type": "demo",
+    "downloaded_at": "2026-06-29T00:00:00+00:00",
+    "raw_file": "raw/receptor.pdb",
+    "file": "prepared/receptor.pdbqt"
+  },
+  "ligand": {
+    "source": "demo",
+    "source_id": "toy_ligand_raw",
+    "query_type": "demo",
+    "downloaded_at": "2026-06-29T00:00:00+00:00",
+    "raw_file": "raw/ligand.sdf",
+    "file": "prepared/ligand.pdbqt"
+  },
+  "box": {
+    "center_x": 0,
+    "center_y": 0,
+    "center_z": 0,
+    "size_x": 12,
+    "size_y": 12,
+    "size_z": 12
+  },
+  "vina": {
+    "exhaustiveness": 8,
+    "num_modes": 9,
+    "energy_range": 4,
+    "cpu": 0,
+    "seed": null
+  },
+  "config": {
+    "vina_config_file": "",
+    "generated_at": ""
+  },
+  "preparation": {
+    "receptor": {
+      "target": "receptor",
+      "status": "finished",
+      "method": "external_manual",
+      "input_file": "raw/receptor.pdb",
+      "output_file": "prepared/receptor.pdbqt",
+      "started_at": null,
+      "finished_at": "2026-06-29T00:00:00+00:00",
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": ["参考 PDBQT 文件仅用于流程体验；真实研究需检查结构准备质量。"]
+    },
+    "ligand": {
+      "target": "ligand",
+      "status": "finished",
+      "method": "external_manual",
+      "input_file": "raw/ligand.sdf",
+      "output_file": "prepared/ligand.pdbqt",
+      "started_at": null,
+      "finished_at": "2026-06-29T00:00:00+00:00",
+      "python_path": "",
+      "python_source": "unknown",
+      "rdkit_available": false,
+      "meeko_available": false,
+      "command": [],
+      "stdout_file": "",
+      "stderr_file": "",
+      "log_file": "",
+      "error": null,
+      "warnings": ["参考 PDBQT 文件仅用于流程体验；真实研究需检查结构准备质量。"]
+    }
+  },
+  "latest_preparation": {
+    "receptor": "",
+    "ligand": ""
+  },
+  "runs": []
+}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AppShell from "./layout/AppShell";
-import type { PageId } from "./navigation/pages";
+import type { NavigateOptions, PageId, StartMode } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import HelpPage from "./pages/HelpPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
@@ -28,8 +28,12 @@ export default function App() {
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
+  const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
 
-  function navigateTo(page: PageId) {
+  function navigateTo(page: PageId, options?: NavigateOptions) {
+    if (page === "project-create") {
+      setProjectStartMode(options?.startMode ?? "basic");
+    }
     setCurrentPage(page);
   }
 
@@ -66,9 +70,12 @@ export default function App() {
     if (currentPage === "project-create") {
       return (
         <ProjectCreatePage
+          startMode={projectStartMode}
           onBack={() => navigateTo("home")}
-          onCreated={(project, nextPage = "structure-fetch") => {
+          onStartModeChange={setProjectStartMode}
+          onCreated={(project, nextPage = "structure-fetch", runId = "") => {
             setCurrentProject(project);
+            setCurrentRunId(runId);
             setWorkflowStatus(null);
             navigateTo(nextPage);
           }}

@@ -77,7 +77,7 @@ export default function PathInput({
   }, [disabled, filters, mode, onChange, title]);
 
   return (
-    <div className="path-input">
+    <div className="path-input" data-layout="form-row">
       <input
         id={id}
         type="text"

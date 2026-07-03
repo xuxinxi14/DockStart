@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import ReportStatusCard from "../components/ReportStatusCard";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
@@ -131,85 +132,119 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   };
 
   return (
-    <section className="workbench-page" aria-labelledby="report-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">结果与报告</p>
-          <h1 id="report-title">导出实验记录</h1>
-          <p>导出 Markdown 记录，便于复现和排查。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="report-title">
+      <PageHero
+        eyebrow="结果与报告"
+        title="导出实验记录"
+        titleId="report-title"
+        description="导出 Markdown 记录，便于复现和排查。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
           <ActionButton onClick={() => void reloadReportStatus()} disabled={isBusy}>刷新状态</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <VinaWorkflowBar current="report" runId={runId} />
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <VinaWorkflowBar current="report" runId={runId} />
 
-      <div className="status-strip">
-        <article className="metric-card">
-          <span>运行记录</span>
-          <strong>{runId}</strong>
-        </article>
-        <article className="metric-card">
-          <span>scores.csv</span>
-          <strong>{scoresStatus ? fileStatusText[scoresStatus.status] : "未检查"}</strong>
-          <StatusBadge tone={hasScores ? "ok" : "warning"}>{hasScores ? "已完成" : "缺失"}</StatusBadge>
-        </article>
-        <article className="metric-card">
-          <span>报告</span>
-          <strong>{reportStatus === "exported" ? "已导出" : "未导出"}</strong>
-          <StatusBadge tone={reportStatus === "exported" ? "ok" : "muted"}>
-            {reportStatus === "exported" ? "已完成" : "未开始"}
-          </StatusBadge>
-        </article>
-      </div>
-
-      {!hasScores ? (
-        <WarningCallout title="报告暂不可导出">
-          <p>请先回到结果页解析 scores.csv。</p>
-        </WarningCallout>
-      ) : null}
-
-      <SectionCard title="导出">
-        <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
-        <div className="button-row">
-          <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-            {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
-          </ActionButton>
-        </div>
-      </SectionCard>
-
-      {(reportStatus === "exported" || displayedReportedAt) ? (
-        <div className="next-step-strip">
-          <div>
-            <strong>实验记录已导出</strong>
-            <p>{displayedProjectReportFile}</p>
-          </div>
-        </div>
-      ) : null}
-
-      <AdvancedDetails>
-        <dl className="meta-list">
-          {[scoresStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
-            <div key={file!.key}>
-              <dt>{file!.name}</dt>
-              <dd><code>{file!.path}</code> · {fileStatusText[file!.status]}</dd>
+            <div className="status-strip">
+              <article className="metric-card">
+                <span>运行记录</span>
+                <strong>{runId}</strong>
+              </article>
+              <article className="metric-card">
+                <span>scores.csv</span>
+                <strong>{scoresStatus ? fileStatusText[scoresStatus.status] : "未检查"}</strong>
+                <StatusBadge tone={hasScores ? "ok" : "warning"}>{hasScores ? "已完成" : "缺失"}</StatusBadge>
+              </article>
+              <article className="metric-card">
+                <span>报告</span>
+                <strong>{reportStatus === "exported" ? "已导出" : "未导出"}</strong>
+                <StatusBadge tone={reportStatus === "exported" ? "ok" : "muted"}>
+                  {reportStatus === "exported" ? "已完成" : "未开始"}
+                </StatusBadge>
+              </article>
             </div>
-          ))}
-          <div>
-            <dt>运行内报告</dt>
-            <dd><code>{displayedReportFile}</code></dd>
-          </div>
-          <div>
-            <dt>导出时间</dt>
-            <dd>{displayedReportedAt || "未记录"}</dd>
-          </div>
-        </dl>
-      </AdvancedDetails>
 
-      <ScientificDisclaimer kind="score" />
-      <CommandResultPanel title="报告导出" message={message} rawError={rawError} />
-    </section>
+            {!hasScores ? (
+              <WarningCallout title="报告暂不可导出">
+                <p>请先回到结果页解析 scores.csv。</p>
+              </WarningCallout>
+            ) : null}
+
+            <SectionCard title="导出">
+              <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
+              <div className="button-row">
+                <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
+                  {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
+                </ActionButton>
+              </div>
+            </SectionCard>
+
+            {(reportStatus === "exported" || displayedReportedAt) ? (
+              <div className="next-step-strip">
+                <div>
+                  <strong>实验记录已导出</strong>
+                  <p>{displayedProjectReportFile}</p>
+                </div>
+              </div>
+            ) : null}
+
+            <AdvancedDetails>
+              <dl className="meta-list">
+                {[scoresStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
+                  <div key={file!.key}>
+                    <dt>{file!.name}</dt>
+                    <dd><code>{file!.path}</code> · {fileStatusText[file!.status]}</dd>
+                  </div>
+                ))}
+                <div>
+                  <dt>运行内报告</dt>
+                  <dd><code>{displayedReportFile}</code></dd>
+                </div>
+                <div>
+                  <dt>导出时间</dt>
+                  <dd>{displayedReportedAt || "未记录"}</dd>
+                </div>
+              </dl>
+            </AdvancedDetails>
+
+            <ScientificDisclaimer kind="score" />
+            <CommandResultPanel title="报告导出" message={message} rawError={rawError} />
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="报告状态">
+            <dl className="mode-context-list">
+              <div>
+                <dt>run</dt>
+                <dd>{runId}</dd>
+              </div>
+              <div>
+                <dt>scores</dt>
+                <dd>{scoresStatus ? fileStatusText[scoresStatus.status] : "未检查"}</dd>
+              </div>
+              <div>
+                <dt>报告</dt>
+                <dd>{reportStatus === "exported" ? "已导出" : "未导出"}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="输出位置">
+            <p>{displayedProjectReportFile}</p>
+          </RightRailSection>
+
+          <RightRailSection title="说明">
+            <p>报告用于记录参数、输入、日志和评分，不能替代实验验证。</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

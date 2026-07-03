@@ -1,42 +1,38 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
-import BasicModeGuide from "../components/BasicModeGuide";
-import EmptyState from "../components/EmptyState";
 import ErrorPanel from "../components/ErrorPanel";
 import FilePathText from "../components/FilePathText";
-import OnboardingGuide from "../components/OnboardingGuide";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
-import type { PageId } from "../navigation/pages";
+import type { NavigateHandler, PageId } from "../navigation/pages";
 import type {
-  AppCapabilityProfile,
   DockStartProject,
   ProjectWorkflowStatusResponse,
-  ToolSource,
   ToolStatus,
+  ToolchainStatusResponse,
   WorkflowFileStatus,
 } from "../types";
 
 type ProjectDashboardPageProps = {
   project: DockStartProject | null;
-  onNavigate: (page: PageId) => void;
+  onNavigate: NavigateHandler;
   onProjectChange: (project: DockStartProject) => void;
   onWorkflowChange?: (workflow: ProjectWorkflowStatusResponse | null) => void;
 };
 
-type FirstRunToolchainStatus = {
+type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "缺失" | "失败" | "需检查";
+type StepperState = "not-started" | "active" | "done";
+type FirstRunToolchainSummary = {
   vinaStatus: ToolStatus;
   pythonStatus: ToolStatus;
-  pythonSource: ToolSource;
   rdkitStatus: ToolStatus;
   meekoStatus: ToolStatus;
 };
 
-type ModeTone = "ok" | "warning" | "error" | "muted" | "info";
-
-type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "缺失" | "失败" | "需检查";
+const dockingStepperSteps = ["准备结构", "搜索范围", "运行对接", "查看结果"];
 
 function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectWorkflowStatusResponse>;
@@ -58,41 +54,18 @@ function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse 
   };
 }
 
-function parseFirstRunToolchainStatus(rawPayload: string): FirstRunToolchainStatus {
-  const parsed = JSON.parse(rawPayload) as Record<string, any>;
-  return {
-    vinaStatus: (parsed.active_vina?.status ?? "unknown") as ToolStatus,
-    pythonStatus: (parsed.resolved_python?.status ?? "unknown") as ToolStatus,
-    pythonSource: (parsed.python_source ?? parsed.resolved_python?.source ?? "unknown") as ToolSource,
-    rdkitStatus: (parsed.rdkit_for_python?.status ?? "unknown") as ToolStatus,
-    meekoStatus: (parsed.meeko_for_python?.status ?? "unknown") as ToolStatus,
-  };
-}
-
-function parseCapabilityProfile(rawPayload: string): AppCapabilityProfile {
-  const parsed = JSON.parse(rawPayload) as Partial<AppCapabilityProfile>;
-  return {
-    ok: Boolean(parsed.ok),
-    app_version: parsed.app_version ?? "",
-    vina_status: parsed.vina_status ?? null,
-    python_status: parsed.python_status ?? null,
-    rdkit_status: parsed.rdkit_status ?? null,
-    meeko_status: parsed.meeko_status ?? null,
-    viewer_status: parsed.viewer_status ?? null,
-    basic_mode_available: Boolean(parsed.basic_mode_available),
-    assisted_mode_available: Boolean(parsed.assisted_mode_available),
-    demo_mode_available: Boolean(parsed.demo_mode_available),
-    recommended_mode: parsed.recommended_mode ?? "setup",
-    blocking_items: parsed.blocking_items ?? [],
-    next_action: parsed.next_action ?? "请先检查工具链状态。",
-    demo_projects: parsed.demo_projects ?? [],
-    message: parsed.message ?? "",
-    error: parsed.error ?? null,
-  };
-}
-
 function fileReady(file?: WorkflowFileStatus): boolean {
   return file?.status === "ok";
+}
+
+function parseToolchainSummary(rawPayload: string): FirstRunToolchainSummary {
+  const parsed = JSON.parse(rawPayload) as Partial<ToolchainStatusResponse>;
+  return {
+    vinaStatus: parsed.active_vina?.status ?? "unknown",
+    pythonStatus: parsed.resolved_python?.status ?? "unknown",
+    rdkitStatus: parsed.rdkit_for_python?.status ?? "unknown",
+    meekoStatus: parsed.meeko_for_python?.status ?? "unknown",
+  };
 }
 
 function statusTone(state: UiState): "ok" | "warning" | "error" | "muted" | "info" {
@@ -108,34 +81,6 @@ function statusTone(state: UiState): "ok" | "warning" | "error" | "muted" | "inf
   if (state === "进行中") {
     return "info";
   }
-  return "muted";
-}
-
-function toolText(status: ToolStatus): string {
-  if (status === "ok") return "可用";
-  if (status === "missing") return "缺失";
-  if (status === "error") return "失败";
-  return "需检查";
-}
-
-function sourceText(source: ToolSource): string {
-  if (source === "bundled") return "内置";
-  if (source === "configured") return "已配置";
-  if (source === "auto") return "PATH";
-  if (source === "current_environment") return "当前环境";
-  return "未确认";
-}
-
-function modeText(mode: string): string {
-  if (mode === "basic") return "Basic Mode";
-  if (mode === "assisted") return "Assisted Mode";
-  if (mode === "demo") return "Demo Mode";
-  return "先完成配置";
-}
-
-function modeTone(available: boolean, recommended: boolean): ModeTone {
-  if (recommended && available) return "ok";
-  if (available) return "info";
   return "muted";
 }
 
@@ -181,7 +126,7 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
     {
       title: "3 设置搜索范围",
       state: workflow?.box?.status === "ok" ? "已完成" : "可进行",
-      text: "Box 中心与尺寸",
+      text: "搜索范围中心与尺寸",
       target: "box-setup",
     },
     {
@@ -208,6 +153,87 @@ function artifact(label: string, state: UiState, detail: string) {
   return { label, state, detail };
 }
 
+function toolStatusClass(status: ToolStatus | undefined, pending: boolean): string {
+  if (pending) return "checking";
+  if (status === "ok") return "ready";
+  if (status === "error") return "error";
+  if (status === "missing") return "warning";
+  return "muted";
+}
+
+function preparationStatusText(toolchain: FirstRunToolchainSummary | null, pending: boolean): string {
+  if (pending) return "检测中";
+  const rdkitReady = toolchain?.rdkitStatus === "ok";
+  const meekoReady = toolchain?.meekoStatus === "ok";
+  if (rdkitReady && meekoReady) return "可用";
+  if (rdkitReady || meekoReady) return "需要确认";
+  return "需要配置";
+}
+
+function preparationStatusClass(toolchain: FirstRunToolchainSummary | null, pending: boolean): string {
+  if (pending) return "checking";
+  const rdkitReady = toolchain?.rdkitStatus === "ok";
+  const meekoReady = toolchain?.meekoStatus === "ok";
+  if (rdkitReady && meekoReady) return "ready";
+  if (rdkitReady || meekoReady) return "warning";
+  return "warning";
+}
+
+function vinaStatusSummary(status: ToolStatus | undefined, pending: boolean): string {
+  if (pending) return "检测中 · 运行对接前会再次检查";
+  if (status === "ok") return "可用 · 可运行对接";
+  if (status === "error") return "不可用 · 运行对接前需要配置";
+  if (status === "missing") return "需要配置 · 运行对接前确认";
+  return "需要确认 · 运行对接前确认";
+}
+
+function pythonStatusSummary(status: ToolStatus | undefined, pending: boolean): string {
+  if (pending) return "检测中 · 仅影响 PDB/SDF 自动准备";
+  if (status === "ok") return "可用 · 可处理 PDB/SDF";
+  if (status === "error") return "不可用 · 影响 PDB/SDF";
+  if (status === "missing") return "需要配置 · 影响 PDB/SDF";
+  return "需要确认 · 影响 PDB/SDF";
+}
+
+function preparationStatusSummary(toolchain: FirstRunToolchainSummary | null, pending: boolean): string {
+  const state = preparationStatusText(toolchain, pending);
+  if (pending) return `${state} · 仅影响结构转换`;
+  if (state === "可用") return "可用 · 可转换结构";
+  return "需要确认 · 影响结构转换";
+}
+
+function stepperState(index: number, activeIndex: number | null): StepperState {
+  if (activeIndex === null) return "not-started";
+  if (index < activeIndex) return "done";
+  if (index === activeIndex) return "active";
+  return "not-started";
+}
+
+function projectStepperIndex(workflow: ProjectWorkflowStatusResponse | null): number {
+  const receptorPrepared = fileReady(workflow?.prepared?.receptor);
+  const ligandPrepared = fileReady(workflow?.prepared?.ligand);
+  if (!(receptorPrepared && ligandPrepared)) return 0;
+  if (workflow?.box?.status !== "ok") return 1;
+  if (String(workflow?.latest_run?.status ?? "") !== "finished") return 2;
+  return 3;
+}
+
+function DockingStepper({ activeIndex }: { activeIndex: number | null }) {
+  return (
+    <ol className="first-run-stepper" aria-label="对接流程进度">
+      {dockingStepperSteps.map((label, index) => {
+        const state = stepperState(index, activeIndex);
+        return (
+          <li className={state} key={label}>
+            <span aria-hidden="true">{index + 1}</span>
+            <strong>{label}</strong>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function ProjectDashboardPage({
   project,
   onNavigate,
@@ -218,8 +244,8 @@ export default function ProjectDashboardPage({
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [rawError, setRawError] = useState("");
-  const [toolchain, setToolchain] = useState<FirstRunToolchainStatus | null>(null);
-  const [capabilityProfile, setCapabilityProfile] = useState<AppCapabilityProfile | null>(null);
+  const [firstRunToolchain, setFirstRunToolchain] = useState<FirstRunToolchainSummary | null>(null);
+  const [toolchainChecked, setToolchainChecked] = useState(false);
 
   const loadWorkflow = useCallback(async () => {
     if (!project) {
@@ -256,23 +282,32 @@ export default function ProjectDashboardPage({
 
   useEffect(() => {
     if (project) {
-      setToolchain(null);
+      setFirstRunToolchain(null);
+      setToolchainChecked(false);
       return;
     }
+    let cancelled = false;
     const loadToolchain = async () => {
+      setToolchainChecked(false);
       try {
-        const [toolchainPayload, profilePayload] = await Promise.all([
-          invoke<string>("get_toolchain_status"),
-          invoke<string>("get_app_capability_profile"),
-        ]);
-        setToolchain(parseFirstRunToolchainStatus(toolchainPayload));
-        setCapabilityProfile(parseCapabilityProfile(profilePayload));
+        const rawPayload = await invoke<string>("get_toolchain_status");
+        if (!cancelled) {
+          setFirstRunToolchain(parseToolchainSummary(rawPayload));
+        }
       } catch {
-        setToolchain(null);
-        setCapabilityProfile(null);
+        if (!cancelled) {
+          setFirstRunToolchain(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setToolchainChecked(true);
+        }
       }
     };
     void loadToolchain();
+    return () => {
+      cancelled = true;
+    };
   }, [project]);
 
   const rows = useMemo(() => workflowRows(workflow), [workflow]);
@@ -298,161 +333,223 @@ export default function ProjectDashboardPage({
   );
 
   if (!project) {
+    const toolchainPending = !toolchainChecked;
     return (
-      <section className="workbench-page">
-        <EmptyState
-          title="开始一个 DockStart 项目"
-          description="从结构获取或 PDBQT 导入开始，完成一次可复现的 AutoDock Vina 对接记录。"
-          action={
-            <>
-              <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>
-                创建项目
-              </ActionButton>
-              <ActionButton disabled title="当前版本尚未提供打开已有项目入口">
-                打开已有项目
-              </ActionButton>
-              <ActionButton onClick={() => onNavigate("project-create")}>打开示例项目</ActionButton>
-              <ActionButton onClick={() => onNavigate("project-create")}>体验 Basic Mode</ActionButton>
-              <ActionButton onClick={() => onNavigate("project-create")}>查看 3D Viewer 示例</ActionButton>
-              <ActionButton onClick={() => onNavigate("help")}>查看流程</ActionButton>
-            </>
+      <PageShell className="first-run-landing" labelledBy="first-run-title">
+        <PageHero
+          title="新建对接项目"
+          titleId="first-run-title"
+          description="导入受体和配体，设置搜索范围，然后运行 AutoDock Vina。"
+          actions={
+            <ActionButton variant="text" onClick={() => onNavigate("project-create")}>
+              打开已有项目
+            </ActionButton>
           }
         />
 
-        <BasicModeGuide
-          onPrimaryAction={() => onNavigate("project-create")}
-          primaryLabel="创建项目并导入 PDBQT"
-        />
+        <BodyGrid className="first-run-workspace">
+          <MainPanel className="first-run-main-panel">
+            <div className="main-panel-content">
+              <section className="first-run-stepper-shell" aria-label="对接流程">
+                <p className="first-run-stepper-status">未开始</p>
+                <DockingStepper activeIndex={null} />
+              </section>
 
-        <SectionCard title="首次使用向导">
-          <OnboardingGuide profile={capabilityProfile} onNavigate={onNavigate} />
-        </SectionCard>
-
-        <SectionCard title="工具链简况">
-          {capabilityProfile ? (
-            <div className="mode-panel">
-              <div className="mode-panel-header">
-                <div>
-                  <span className="eyebrow">当前推荐</span>
-                  <strong>{modeText(capabilityProfile.recommended_mode)}</strong>
+              <section className="start-route-section" aria-labelledby="start-route-title">
+                <div className="start-route-heading">
+                  <h2 id="start-route-title">选择开始方式</h2>
                 </div>
-                <StatusBadge tone={capabilityProfile.basic_mode_available ? "ok" : "warning"}>
-                  {capabilityProfile.basic_mode_available ? "最低依赖可用" : "需要配置 Vina"}
-                </StatusBadge>
+                <div className="start-route-grid">
+                  <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "basic" })}>
+                    <div className="start-route-card-copy">
+                      <h3>已准备好的对接文件</h3>
+                      <p>已有 PDBQT 格式的受体和配体。</p>
+                    </div>
+                    <span className="secondary-button start-route-button start-route-button-proxy">选择 PDBQT 文件</span>
+                  </button>
+
+                  <button
+                    className="start-route-card"
+                    data-layout="task-card"
+                    type="button"
+                    onClick={() => onNavigate("project-create", { startMode: "assisted" })}
+                  >
+                    <div className="start-route-card-copy">
+                      <h3>从原始结构开始</h3>
+                      <p>从 PDB / SDF 准备 Vina 输入文件。</p>
+                    </div>
+                    <span className="secondary-button start-route-button start-route-button-proxy">导入 PDB / SDF</span>
+                  </button>
+
+                  <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "demo" })}>
+                    <div className="start-route-card-copy">
+                      <h3>打开示例流程</h3>
+                      <p>使用内置示例完成一次对接。</p>
+                    </div>
+                    <span className="secondary-button start-route-button start-route-button-proxy">打开示例</span>
+                  </button>
+                </div>
+              </section>
+
+              <p className="first-run-storage-note">
+                DockStart 项目将保存受体、配体、搜索范围、配置文件、运行日志和结果报告。
+              </p>
               </div>
-              <p>{capabilityProfile.next_action}</p>
-              <div className="compact-grid">
-                <article className="metric-card">
-                  <span>Basic Mode</span>
-                  <strong>已有 PDBQT</strong>
-                  <StatusBadge
-                    tone={modeTone(capabilityProfile.basic_mode_available, capabilityProfile.recommended_mode === "basic")}
-                  >
-                    {capabilityProfile.basic_mode_available ? "可用" : "缺 Vina"}
-                  </StatusBadge>
-                </article>
-                <article className="metric-card">
-                  <span>Assisted Mode</span>
-                  <strong>raw → PDBQT</strong>
-                  <StatusBadge
-                    tone={modeTone(capabilityProfile.assisted_mode_available, capabilityProfile.recommended_mode === "assisted")}
-                  >
-                    {capabilityProfile.assisted_mode_available ? "可用" : "需 Python/RDKit/Meeko"}
-                  </StatusBadge>
-                </article>
-                <article className="metric-card">
-                  <span>Demo Mode</span>
-                  <strong>示例流程</strong>
-                  <StatusBadge
-                    tone={modeTone(capabilityProfile.demo_mode_available, capabilityProfile.recommended_mode === "demo")}
-                  >
-                    {capabilityProfile.demo_mode_available ? "可用" : "暂无示例"}
-                  </StatusBadge>
-                </article>
+          </MainPanel>
+
+          <RightRail className="first-run-side-rail">
+            <RightRailSection title="当前状态">
+              <dl className="side-rail-list">
+                <div>
+                  <dt>项目</dt>
+                  <dd>未加载项目</dd>
+                </div>
+                <div>
+                  <dt>下一步</dt>
+                  <dd>选择一种开始方式</dd>
+                </div>
+              </dl>
+            </RightRailSection>
+
+            <RightRailSection title="工具链">
+              <dl className="side-rail-list toolchain-summary-list">
+                <div>
+                  <dt>Vina</dt>
+                  <dd className={toolStatusClass(firstRunToolchain?.vinaStatus, toolchainPending)}>
+                    {vinaStatusSummary(firstRunToolchain?.vinaStatus, toolchainPending)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Python</dt>
+                  <dd className={toolStatusClass(firstRunToolchain?.pythonStatus, toolchainPending)}>
+                    {pythonStatusSummary(firstRunToolchain?.pythonStatus, toolchainPending)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>RDKit / Meeko</dt>
+                  <dd className={preparationStatusClass(firstRunToolchain, toolchainPending)}>
+                    {preparationStatusSummary(firstRunToolchain, toolchainPending)}
+                  </dd>
+                </div>
+              </dl>
+            </RightRailSection>
+
+            <RightRailSection title="最近项目">
+              <p className="side-rail-muted">暂无最近项目</p>
+            </RightRailSection>
+
+            <RightRailSection title="快速帮助">
+              <div className="side-rail-help">
+                <p>
+                  <strong>已有 receptor.pdbqt 和 ligand.pdbqt？</strong>
+                  <span>选择“已准备好的对接文件”。</span>
+                </p>
+                <p>
+                  <strong>只有 PDB 或 SDF？</strong>
+                  <span>选择“从原始结构开始”。</span>
+                </p>
               </div>
-            </div>
-          ) : null}
-          {toolchain ? (
-            <div className="status-strip">
-              <article className="metric-card">
-                <span>AutoDock Vina</span>
-                <strong>{toolText(toolchain.vinaStatus)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>Python</span>
-                <strong>{toolText(toolchain.pythonStatus)} · {sourceText(toolchain.pythonSource)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>RDKit / Meeko</span>
-                <strong>{toolText(toolchain.rdkitStatus)} / {toolText(toolchain.meekoStatus)}</strong>
-              </article>
-            </div>
-          ) : (
-            <p className="message-line">尚未读取工具链状态。</p>
-          )}
-          <div className="button-row">
-            <ActionButton onClick={() => onNavigate("toolchain-status")}>配置工具链</ActionButton>
-            <ActionButton variant="primary" onClick={() => onNavigate("project-create")}>创建项目</ActionButton>
-          </div>
-        </SectionCard>
-      </section>
+            </RightRailSection>
+          </RightRail>
+        </BodyGrid>
+      </PageShell>
     );
   }
 
+  const dashboardStepperIndex = projectStepperIndex(workflow);
+
   return (
-    <section className="workbench-page">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">项目总览</p>
-          <h1>{project.project_name || "DockStart 项目"}</h1>
-          <p>{workflow?.next_recommended_action || "读取项目状态后会给出下一步。"}</p>
-          <FilePathText value={project.project_dir} />
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="project-dashboard-title">
+      <PageHero
+        eyebrow="项目总览"
+        title={project.project_name || "DockStart 项目"}
+        titleId="project-dashboard-title"
+        description={workflow?.next_recommended_action || "读取项目状态后会给出下一步。"}
+        actions={
+          <>
           <ActionButton onClick={() => void loadWorkflow()}>{isBusy ? "刷新中..." : "刷新状态"}</ActionButton>
           <ActionButton onClick={() => onNavigate("project-create")}>创建项目</ActionButton>
           <ActionButton variant="primary" onClick={() => onNavigate(nextPage)}>继续当前步骤</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <SectionCard title="工作流">
-        <div className="dashboard-timeline">
-          {rows.map((row) => (
-            <button className="workflow-step action-card" key={row.title} type="button" onClick={() => onNavigate(row.target)}>
-              <span>{row.title}</span>
-              <strong>{row.text}</strong>
-              <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
-            </button>
-          ))}
-        </div>
-      </SectionCard>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <FilePathText value={project.project_dir} />
 
-      <SectionCard title="项目产物">
-        <div className="compact-grid">
-          {artifacts.map((item) => (
-            <article className="file-card" key={item.label}>
-              <span>{item.label}</span>
-              <strong>{item.detail}</strong>
-              <StatusBadge tone={statusTone(item.state)}>{item.state}</StatusBadge>
-            </article>
-          ))}
-        </div>
-      </SectionCard>
+            <section className="dashboard-progress-strip" aria-label="对接流程状态">
+              <p className="first-run-stepper-status active">
+                第 {dashboardStepperIndex + 1} 步 / 共 4 步：{dockingStepperSteps[dashboardStepperIndex]}
+              </p>
+              <DockingStepper activeIndex={dashboardStepperIndex} />
+            </section>
 
-      <SectionCard title="风险提示">
-        <div className="two-column-grid">
-          <ScientificDisclaimer kind="score" />
-          <ScientificDisclaimer kind="preparation" />
-        </div>
-      </SectionCard>
+            <SectionCard title="工作流">
+              <div className="dashboard-timeline">
+                {rows.map((row) => (
+                  <button className="workflow-step action-card" key={row.title} type="button" onClick={() => onNavigate(row.target)}>
+                    <span>{row.title}</span>
+                    <strong>{row.text}</strong>
+                    <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
+                  </button>
+                ))}
+              </div>
+            </SectionCard>
 
-      <ErrorPanel error={workflow?.error ?? null} message={errorMessage} />
-      {rawError ? (
-        <details className="technical-details">
-          <summary>技术详情</summary>
-          <pre>{rawError}</pre>
-        </details>
-      ) : null}
-    </section>
+            <SectionCard title="项目产物">
+              <div className="compact-grid">
+                {artifacts.map((item) => (
+                  <article className="file-card" key={item.label}>
+                    <span>{item.label}</span>
+                    <strong>{item.detail}</strong>
+                    <StatusBadge tone={statusTone(item.state)}>{item.state}</StatusBadge>
+                  </article>
+                ))}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="风险提示">
+              <div className="two-column-grid">
+                <ScientificDisclaimer kind="score" />
+                <ScientificDisclaimer kind="preparation" />
+              </div>
+            </SectionCard>
+
+            <ErrorPanel error={workflow?.error ?? null} message={errorMessage} />
+            {rawError ? (
+              <details className="technical-details">
+                <summary>技术详情</summary>
+                <pre>{rawError}</pre>
+              </details>
+            ) : null}
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="当前状态">
+            <dl className="mode-context-list">
+              <div>
+                <dt>当前步骤</dt>
+                <dd>{dockingStepperSteps[dashboardStepperIndex]}</dd>
+              </div>
+              <div>
+                <dt>下一步</dt>
+                <dd>{workflow?.next_recommended_action || "继续当前步骤"}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="项目目录">
+            <FilePathText value={project.project_dir} />
+          </RightRailSection>
+
+          <RightRailSection title="提示">
+            <p>工作流卡片可直接进入对应步骤；右侧信息只显示当前项目的辅助状态。</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

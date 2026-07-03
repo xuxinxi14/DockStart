@@ -1357,7 +1357,6 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             "log_file": log_file,
             "exit_code": None,
             "best_affinity": None,
-            "note": "当前版本只准备运行记录，尚未真正调用 AutoDock Vina。",
         }
 
         (run_dir / "metadata.json").write_text(
@@ -1392,7 +1391,7 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             "command_preview": _format_command_preview(command),
             "checks": prerequisites.get("checks", []),
             "warnings": prerequisites.get("warnings", []),
-            "message": "运行记录已准备完成；当前版本尚未真正调用 AutoDock Vina。",
+            "message": "运行记录已准备完成，可以执行 AutoDock Vina。",
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - return structured errors.

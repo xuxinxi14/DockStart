@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
@@ -134,82 +135,121 @@ export default function BoxSetupPage({
   };
 
   return (
-    <section className="workbench-page" aria-labelledby="box-setup-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">工作流 3</p>
-          <h1 id="box-setup-title">设置搜索范围</h1>
-          <p>编辑 docking box 的中心和尺寸，单位为 Å。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="box-setup-title">
+      <PageHero
+        eyebrow="工作流 3"
+        title="设置搜索范围"
+        titleId="box-setup-title"
+        description="编辑 docking box 的中心和尺寸，单位为 Å。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
           <ActionButton onClick={() => onOpenViewer(project)}>在 3D 中查看</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <div className="status-strip">
-        <article className="metric-card">
-          <span>受体 PDBQT</span>
-          <strong>{project.receptor.file || "未导入"}</strong>
-          <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
-        </article>
-        <article className="metric-card">
-          <span>配体 PDBQT</span>
-          <strong>{project.ligand.file || "未导入"}</strong>
-          <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
-        </article>
-      </div>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <div className="status-strip">
+              <article className="metric-card">
+                <span>受体 PDBQT</span>
+                <strong>{project.receptor.file || "未导入"}</strong>
+                <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
+              </article>
+              <article className="metric-card">
+                <span>配体 PDBQT</span>
+                <strong>{project.ligand.file || "未导入"}</strong>
+                <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
+              </article>
+            </div>
 
-      {!hasPreparedFiles(project) ? (
-        <WarningCallout title="输入文件缺失">
-          <p>可以先保存搜索范围，但运行对接前需要补全受体和配体 PDBQT。</p>
-        </WarningCallout>
-      ) : null}
+            {!hasPreparedFiles(project) ? (
+              <WarningCallout title="输入文件缺失">
+                <p>可以先保存搜索范围，但运行对接前需要补全受体和配体 PDBQT。</p>
+              </WarningCallout>
+            ) : null}
 
-      <SectionCard title="Box 参数">
-        <div className="box-form">
-          {boxFields.map((field) => (
-            <label className="box-field" key={field.key}>
-              <span>{field.label}</span>
-              <input
-                type="text"
-                value={boxForm[field.key]}
-                onChange={(event) => updateField(field.key, event.target.value)}
-                inputMode="decimal"
-              />
-            </label>
-          ))}
-        </div>
-        <div className="button-row end">
-          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadBox()}>重新加载</ActionButton>
-          <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveBox()}>
-            {isBusy ? "保存中..." : "保存搜索范围"}
-          </ActionButton>
-        </div>
-      </SectionCard>
+            <SectionCard title="Box 参数">
+              <div className="box-form">
+                {boxFields.map((field) => (
+                  <label className="box-field" key={field.key}>
+                    <span>{field.label}</span>
+                    <input
+                      type="text"
+                      value={boxForm[field.key]}
+                      onChange={(event) => updateField(field.key, event.target.value)}
+                      inputMode="decimal"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="button-row end">
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadBox()}>重新加载</ActionButton>
+                <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveBox()}>
+                  {isBusy ? "保存中..." : "保存搜索范围"}
+                </ActionButton>
+              </div>
+            </SectionCard>
 
-      <div className="next-step-strip">
-        <div>
-          <strong>{canOpenVinaParams ? "下一步：设置 Vina 参数" : "保存后继续设置 Vina 参数"}</strong>
-          <p>Box 是搜索空间，不等于真实结合位点。</p>
-        </div>
-        <ActionButton variant="primary" disabled={!canOpenVinaParams} onClick={() => onOpenVinaParams(project)}>
-          进入 Vina 参数
-        </ActionButton>
-      </div>
+            <div className="next-step-strip">
+              <div>
+                <strong>{canOpenVinaParams ? "下一步：设置 Vina 参数" : "保存后继续设置 Vina 参数"}</strong>
+                <p>Box 是搜索空间，不等于真实结合位点。</p>
+              </div>
+              <ActionButton variant="primary" disabled={!canOpenVinaParams} onClick={() => onOpenVinaParams(project)}>
+                进入 Vina 参数
+              </ActionButton>
+            </div>
 
-      {warnings.map((warning) => (
-        <WarningCallout key={warning} title="搜索范围提示">
-          <p>{warning}</p>
-        </WarningCallout>
-      ))}
+            {warnings.map((warning) => (
+              <WarningCallout key={warning} title="搜索范围提示">
+                <p>{warning}</p>
+              </WarningCallout>
+            ))}
 
-      {message ? <p className="message-line">{message}</p> : null}
-      {rawError ? (
-        <AdvancedDetails>
-          <pre>{rawError}</pre>
-        </AdvancedDetails>
-      ) : null}
-    </section>
+            {message ? <p className="message-line">{message}</p> : null}
+            {rawError ? (
+              <AdvancedDetails>
+                <pre>{rawError}</pre>
+              </AdvancedDetails>
+            ) : null}
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="输入状态">
+            <dl className="mode-context-list">
+              <div>
+                <dt>受体</dt>
+                <dd>{project.receptor.file ? "已导入" : "缺失"}</dd>
+              </div>
+              <div>
+                <dt>配体</dt>
+                <dd>{project.ligand.file ? "已导入" : "缺失"}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="搜索范围">
+            <dl className="mode-context-list">
+              <div>
+                <dt>中心</dt>
+                <dd>{project.box.center_x}, {project.box.center_y}, {project.box.center_z}</dd>
+              </div>
+              <div>
+                <dt>尺寸</dt>
+                <dd>{project.box.size_x}, {project.box.size_y}, {project.box.size_z}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="下一步">
+            <p>{canOpenVinaParams ? "进入 Vina 参数设置。" : "保存搜索范围后继续。"}</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

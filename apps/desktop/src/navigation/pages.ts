@@ -17,6 +17,14 @@ export type PageId =
   | "report"
   | "help";
 
+export type StartMode = "basic" | "assisted" | "demo";
+
+export type NavigateOptions = {
+  startMode?: StartMode;
+};
+
+export type NavigateHandler = (page: PageId, options?: NavigateOptions) => void;
+
 export type NavigationItem = {
   id: PageId;
   group: "Project" | "Workflow" | "Workbench" | "Support";
@@ -65,7 +73,7 @@ export const navigationItems: NavigationItem[] = [
     id: "box-setup",
     group: "Workflow",
     label: "设置搜索范围",
-    description: "Box 中心与尺寸",
+    description: "搜索范围中心与尺寸",
     requiresProject: true,
   },
   {
@@ -85,8 +93,8 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "viewer",
     group: "Workbench",
-    label: "3D 查看 / Box",
-    description: "结构、Box、构象",
+    label: "3D 查看 / 搜索范围",
+    description: "结构、搜索范围、构象",
     requiresProject: true,
   },
   {

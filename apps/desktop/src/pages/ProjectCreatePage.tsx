@@ -1,16 +1,60 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import PathInput from "../components/PathInput";
-import SectionCard from "../components/SectionCard";
-import StatusBadge from "../components/StatusBadge";
-import type { PageId } from "../navigation/pages";
-import type { DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
+import type { PageId, StartMode } from "../navigation/pages";
+import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 
 type ProjectCreatePageProps = {
+  startMode: StartMode;
   onBack: () => void;
-  onCreated: (project: DockStartProject, nextPage: PageId) => void;
+  onCreated: (project: DockStartProject, nextPage: PageId, runId?: string) => void;
+  onStartModeChange: (mode: StartMode) => void;
+};
+
+type ModeConfig = {
+  title: string;
+  subtitle: string;
+  primaryLabel: string;
+  currentPath: string;
+  nextStep: string;
+  requirement: string;
+};
+
+const modeOptions: Array<{ id: StartMode; label: string }> = [
+  { id: "basic", label: "基础项目" },
+  { id: "assisted", label: "原始结构项目" },
+  { id: "demo", label: "示例流程" },
+];
+
+const modeConfig: Record<StartMode, ModeConfig> = {
+  basic: {
+    title: "创建基础模式项目",
+    subtitle: "已有 receptor.pdbqt 和 ligand.pdbqt 时，使用此模式。",
+    primaryLabel: "创建项目并进入准备结构",
+    currentPath: "基础模式",
+    nextStep: "导入受体和配体",
+    requirement: "AutoDock Vina",
+  },
+  assisted: {
+    title: "从原始结构创建项目",
+    subtitle: "从 PDB / SDF 准备 Vina 输入文件。",
+    primaryLabel: "创建项目并进入结构准备",
+    currentPath: "辅助模式",
+    nextStep: "准备 Vina 输入文件",
+    requirement: "Python、RDKit / Meeko",
+  },
+  demo: {
+    title: "打开示例流程",
+    subtitle: "选择一个内置示例，复制到工作区后体验完整流程。",
+    primaryLabel: "",
+    currentPath: "示例流程",
+    nextStep: "选择一个示例并复制到工作区",
+    requirement: "示例项目资源",
+  },
 };
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -19,6 +63,12 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
     ok: Boolean(parsed.ok),
     project_dir: parsed.project_dir,
     project: parsed.project ?? null,
+    demo_type: parsed.demo_type,
+    entry_step: parsed.entry_step,
+    entry_page: parsed.entry_page,
+    entry_run_id: parsed.entry_run_id,
+    target_name: parsed.target_name,
+    disclaimer: parsed.disclaimer,
     message: parsed.message,
     error: parsed.error,
   };
@@ -45,18 +95,78 @@ function parseDemoProjectsResponse(rawPayload: string): DemoProjectsResponse {
   };
 }
 
-function nextPageForDemo(demoType: string): PageId {
-  if (demoType === "basic_pdbqt" || demoType === "viewer_only") return "import-pdbqt";
-  return "structure-fetch";
+const pageIds: PageId[] = [
+  "home",
+  "tool-check",
+  "toolchain-status",
+  "settings",
+  "project-create",
+  "structure-fetch",
+  "preparation",
+  "import-pdbqt",
+  "box-setup",
+  "vina-param",
+  "vina-config",
+  "run-prepare",
+  "run-execute",
+  "result",
+  "viewer",
+  "report",
+  "help",
+];
+
+function isPageId(value: string | undefined): value is PageId {
+  return Boolean(value && pageIds.includes(value as PageId));
 }
 
-export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePageProps) {
+function nextPageForDemo(response: ProjectResponse, demo: DemoProjectSummary): PageId {
+  if (isPageId(response.entry_page)) return response.entry_page;
+  if (demo.entry_step === "results") return "result";
+  if (demo.mode === "assisted") return "preparation";
+  return "import-pdbqt";
+}
+
+function demoToolHint(demo: DemoProjectSummary): string {
+  const tools = demo.required_tools.map((tool) => tool.toLowerCase());
+  if (tools.length === 0) {
+    return "无需工具链，可直接查看示例结果。";
+  }
+  if (tools.includes("rdkit") || tools.includes("meeko") || tools.includes("python")) {
+    return "结构自动准备需要 Python、RDKit / Meeko；不可用时可使用参考 PDBQT 继续。";
+  }
+  if (tools.includes("vina")) {
+    return "运行对接前需要配置 AutoDock Vina。";
+  }
+  return "复制后可在对应步骤继续检查工具链。";
+}
+
+function projectFromResponse(response: ProjectResponse, fallbackMessage: string): DockStartProject {
+  if (response.ok && response.project) {
+    return response.project;
+  }
+  throw new Error(response.error?.message ?? fallbackMessage);
+}
+
+export default function ProjectCreatePage({
+  startMode,
+  onBack,
+  onCreated,
+  onStartModeChange,
+}: ProjectCreatePageProps) {
   const [projectName, setProjectName] = useState("demo_project");
   const [baseDir, setBaseDir] = useState("");
+  const [existingProjectDir, setExistingProjectDir] = useState("");
+  const [receptorPdbqtPath, setReceptorPdbqtPath] = useState("");
+  const [ligandPdbqtPath, setLigandPdbqtPath] = useState("");
+  const [receptorRawPath, setReceptorRawPath] = useState("");
+  const [ligandRawPath, setLigandRawPath] = useState("");
+  const [showExistingProject, setShowExistingProject] = useState(false);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [demos, setDemos] = useState<DemoProjectsResponse["demos"]>([]);
+
+  const currentConfig = modeConfig[startMode];
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -80,7 +190,7 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
         const rawPayload = await invoke<string>("list_available_demo_projects");
         const response = parseDemoProjectsResponse(rawPayload);
         if (response.ok) {
-          setDemos(response.demos.filter((demo) => demo.exists));
+          setDemos(response.demos);
         }
       } catch {
         setDemos([]);
@@ -90,43 +200,138 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
     void loadDemos();
   }, []);
 
-  const createProject = useCallback(async () => {
-    setIsBusy(true);
+  const resetFeedback = () => {
     setMessage("");
     setRawError("");
+  };
+
+  const runProjectCommand = async (
+    command: string,
+    payload: Record<string, string>,
+    fallbackMessage: string,
+  ): Promise<DockStartProject> => {
+    const rawPayload = await invoke<string>(command, payload);
+    const response = parseProjectResponse(rawPayload);
+    return projectFromResponse(response, fallbackMessage);
+  };
+
+  const createProject = useCallback(async () => {
+    setIsBusy(true);
+    resetFeedback();
     try {
-      const rawPayload = await invoke<string>("create_project", {
-        projectName,
-        baseDir,
+      let project = await runProjectCommand(
+        "create_project",
+        { projectName, baseDir },
+        "项目创建失败。",
+      );
+
+      if (startMode === "basic") {
+        project = await runProjectCommand(
+          "import_receptor_pdbqt",
+          { projectDir: project.project_dir, sourcePath: receptorPdbqtPath },
+          "受体 PDBQT 导入失败。",
+        );
+        project = await runProjectCommand(
+          "import_ligand_pdbqt",
+          { projectDir: project.project_dir, sourcePath: ligandPdbqtPath },
+          "配体 PDBQT 导入失败。",
+        );
+        onCreated(project, "import-pdbqt");
+        return;
+      }
+
+      if (startMode === "assisted") {
+        project = await runProjectCommand(
+          "import_receptor_raw_file",
+          { projectDir: project.project_dir, sourcePath: receptorRawPath },
+          "受体结构文件导入失败。",
+        );
+        project = await runProjectCommand(
+          "import_ligand_raw_file",
+          { projectDir: project.project_dir, sourcePath: ligandRawPath },
+          "配体结构文件导入失败。",
+        );
+        onCreated(project, "preparation");
+        return;
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "无法创建项目。");
+      setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [
+    baseDir,
+    ligandPdbqtPath,
+    ligandRawPath,
+    onCreated,
+    projectName,
+    receptorPdbqtPath,
+    receptorRawPath,
+    startMode,
+  ]);
+
+  const loadExistingProject = useCallback(async () => {
+    setIsBusy(true);
+    resetFeedback();
+    try {
+      const rawPayload = await invoke<string>("load_project", {
+        projectDir: existingProjectDir,
       });
       const response = parseProjectResponse(rawPayload);
       if (response.ok && response.project) {
-        onCreated(response.project, "structure-fetch");
+        onCreated(response.project, "home");
         return;
       }
-      setMessage(response.error?.message ?? "项目创建失败。");
+      setMessage(response.error?.message ?? "项目加载失败。");
       setRawError(response.error?.raw_error ?? "");
     } catch (error) {
-      setMessage("无法创建项目。请确认当前运行环境是 DockStart 桌面端。");
+      setMessage("无法加载项目。请确认当前运行环境是 DockStart 桌面端。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
-  }, [baseDir, onCreated, projectName]);
+  }, [existingProjectDir, onCreated]);
+
+  const pickDemoDestinationDir = useCallback(async (): Promise<string> => {
+    const currentDir = baseDir.trim();
+    if (currentDir) return currentDir;
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择示例保存目录",
+      });
+      const nextDir = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
+      if (nextDir) {
+        setBaseDir(nextDir);
+        return nextDir;
+      }
+      setMessage("请选择一个工作区目录后再复制示例。");
+      return "";
+    } catch (error) {
+      setMessage("无法打开目录选择器，请手动填写工作区目录。");
+      setRawError(error instanceof Error ? error.message : String(error));
+      return "";
+    }
+  }, [baseDir]);
 
   const createDemo = useCallback(
-    async (demoType: string) => {
+    async (demo: DemoProjectSummary) => {
       setIsBusy(true);
-      setMessage("");
-      setRawError("");
+      resetFeedback();
       try {
+        const destinationDir = await pickDemoDestinationDir();
+        if (!destinationDir) {
+          return;
+        }
         const rawPayload = await invoke<string>("create_demo_project", {
-          destinationDir: baseDir,
-          demoType,
+          destinationDir,
+          demoType: demo.demo_type,
         });
         const response = parseProjectResponse(rawPayload);
         if (response.ok && response.project) {
-          onCreated(response.project, nextPageForDemo(demoType));
+          onCreated(response.project, nextPageForDemo(response, demo), response.entry_run_id || demo.entry_run_id || "");
           return;
         }
         setMessage(response.error?.message ?? "示例项目创建失败。");
@@ -138,72 +343,226 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
         setIsBusy(false);
       }
     },
-    [baseDir, onCreated],
+    [onCreated, pickDemoDestinationDir],
   );
 
-  return (
-    <section className="workbench-page" aria-labelledby="project-create-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">项目</p>
-          <h1 id="project-create-title">创建项目</h1>
-          <p>创建标准项目目录和 project.json，随后进入结构获取步骤。</p>
+  const canCreateBasic = Boolean(
+    projectName.trim() && baseDir.trim() && receptorPdbqtPath.trim() && ligandPdbqtPath.trim(),
+  );
+  const canCreateAssisted = Boolean(
+    projectName.trim() && baseDir.trim() && receptorRawPath.trim() && ligandRawPath.trim(),
+  );
+  const canCreate = startMode === "basic" ? canCreateBasic : canCreateAssisted;
+
+  const renderModeForm = () => {
+    if (startMode === "demo") {
+      return (
+        <div className="main-panel-section">
+          <div className="main-panel-section-header">
+            <h2>示例项目</h2>
+            <p>选择一个示例，复制到你的工作区。示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。</p>
+          </div>
+          <div className="demo-project-list">
+            {demos.length === 0 ? (
+              <div className="demo-project-empty">未检测到示例资源。请检查 resources/examples 是否随应用打包。</div>
+            ) : null}
+            {demos.map((demo) => {
+              const disabled = isBusy || !demo.exists;
+              const missingText = demo.missing_files.length > 0 ? demo.missing_files.slice(0, 3).join("、") : "";
+              return (
+                <button
+                  className={`demo-project-card ${demo.exists ? "" : "missing"}`.trim()}
+                  data-layout="task-card"
+                  disabled={disabled}
+                  key={demo.demo_type}
+                  onClick={() => void createDemo(demo)}
+                  type="button"
+                >
+                  <span className="demo-project-card-copy">
+                    <span className="demo-project-title-row">
+                      <strong>{demo.title}</strong>
+                      {demo.tags.length > 0 ? (
+                        <span className="demo-project-tags" aria-label="示例标签">
+                          {demo.tags.map((tag) => (
+                            <span className="demo-project-tag" key={tag}>{tag}</span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </span>
+                    <small>{demo.description}</small>
+                    <small className="demo-project-hint">{demo.exists ? demoToolHint(demo) : "示例资源未找到"}</small>
+                    {!demo.exists && missingText ? (
+                      <small className="demo-project-warning">缺少：{missingText}</small>
+                    ) : null}
+                  </span>
+                  <span className="secondary-button demo-project-card-action">
+                    {demo.exists ? demo.button_label : "示例资源未找到"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div className="page-hero-actions">
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+      );
+    }
+
+    return (
+      <div className="main-panel-section">
+        <div className="main-panel-section-header">
+          <h2>项目信息</h2>
+          <p>{startMode === "basic" ? "选择项目保存位置，并导入已经准备好的受体和配体 PDBQT。" : "选择项目保存位置，并导入受体与配体的原始结构文件。"}</p>
         </div>
-      </header>
+        <div className="form-panel create-mode-form">
+          <div className="form-field" data-layout="form-row">
+            <label htmlFor="project-name">项目名称</label>
+            <input
+              id="project-name"
+              type="text"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="例如 demo_project"
+            />
+          </div>
 
-      <div className="task-layout">
-        <main className="task-main">
-          <SectionCard title="项目信息">
-            <div className="form-panel">
-              <label htmlFor="project-name">项目名称</label>
-              <input
-                id="project-name"
-                type="text"
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-                placeholder="例如 demo_project"
-              />
+          <div className="form-field" data-layout="form-row">
+            <label htmlFor="base-dir">保存目录</label>
+            <PathInput
+              id="base-dir"
+              value={baseDir}
+              onChange={setBaseDir}
+              mode="directory"
+              title="选择项目保存目录"
+              placeholder="选择项目的父目录"
+            />
+          </div>
 
-              <label htmlFor="base-dir">保存目录</label>
-              <PathInput
-                id="base-dir"
-                value={baseDir}
-                onChange={setBaseDir}
-                mode="directory"
-                title="选择项目保存目录"
-                placeholder="选择项目的父目录"
-              />
-
-              <div className="button-row end">
-                <ActionButton variant="primary" disabled={isBusy} onClick={() => void createProject()}>
-                  {isBusy ? "创建中..." : "创建项目"}
-                </ActionButton>
+          {startMode === "basic" ? (
+            <>
+              <div className="form-field" data-layout="form-row">
+                <label htmlFor="receptor-pdbqt">受体 PDBQT 文件</label>
+                <PathInput
+                  id="receptor-pdbqt"
+                  value={receptorPdbqtPath}
+                  onChange={setReceptorPdbqtPath}
+                  mode="file"
+                  title="选择 receptor.pdbqt"
+                  placeholder="选择 receptor.pdbqt"
+                  filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
+                />
               </div>
-            </div>
-          </SectionCard>
 
-          <SectionCard title="示例项目">
-            <p className="placeholder-note">
-              示例只用于软件流程演示，不用于科研结论。请选择保存目录后复制一份示例到你的工作区。
-            </p>
-            <div className="compact-grid">
-              {demos.map((demo) => (
-                <article className="metric-card" key={demo.demo_type}>
-                  <span>{demo.demo_type}</span>
-                  <strong>{demo.title}</strong>
-                  <p>{demo.description}</p>
-                  <StatusBadge tone="warning">仅演示流程</StatusBadge>
-                  <ActionButton disabled={isBusy || !baseDir.trim()} onClick={() => void createDemo(demo.demo_type)}>
-                    复制示例项目
+              <div className="form-field" data-layout="form-row">
+                <label htmlFor="ligand-pdbqt">配体 PDBQT 文件</label>
+                <PathInput
+                  id="ligand-pdbqt"
+                  value={ligandPdbqtPath}
+                  onChange={setLigandPdbqtPath}
+                  mode="file"
+                  title="选择 ligand.pdbqt"
+                  placeholder="选择 ligand.pdbqt"
+                  filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="form-field" data-layout="form-row">
+                <label htmlFor="receptor-raw">受体结构文件：PDB / PDBQT</label>
+                <PathInput
+                  id="receptor-raw"
+                  value={receptorRawPath}
+                  onChange={setReceptorRawPath}
+                  mode="file"
+                  title="选择受体结构文件"
+                  placeholder="选择受体 PDB / PDBQT"
+                  filters={[{ name: "Receptor structure", extensions: ["pdb", "pdbqt"] }]}
+                />
+              </div>
+
+              <div className="form-field" data-layout="form-row">
+                <label htmlFor="ligand-raw">配体结构文件：SDF / MOL2 / PDB</label>
+                <PathInput
+                  id="ligand-raw"
+                  value={ligandRawPath}
+                  onChange={setLigandRawPath}
+                  mode="file"
+                  title="选择配体结构文件"
+                  placeholder="选择配体 SDF / MOL2 / PDB"
+                  filters={[{ name: "Ligand structure", extensions: ["sdf", "mol2", "pdb"] }]}
+                />
+              </div>
+            </>
+          )}
+
+          <div className="button-row end">
+            <ActionButton variant="primary" disabled={isBusy || !canCreate} onClick={() => void createProject()}>
+              {isBusy ? "处理中..." : currentConfig.primaryLabel}
+            </ActionButton>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <PageShell className="project-create-workbench" labelledBy="project-create-title">
+      <PageHero
+        eyebrow="项目"
+        title={currentConfig.title}
+        titleId="project-create-title"
+        description={currentConfig.subtitle}
+        actions={
+          <>
+          <ActionButton variant="text" onClick={() => setShowExistingProject((value) => !value)}>
+            打开已有项目
+          </ActionButton>
+          <ActionButton variant="text" onClick={onBack}>返回总览</ActionButton>
+          </>
+        }
+      />
+
+      <BodyGrid>
+        <MainPanel>
+          <ModeTabs
+            active={startMode}
+            label="选择开始方式"
+            onChange={(mode) => {
+              resetFeedback();
+              onStartModeChange(mode);
+            }}
+            options={modeOptions}
+          />
+          <div className="main-panel-content">
+          {showExistingProject ? (
+            <section className="main-panel-section inline-secondary-section">
+              <div className="main-panel-section-header">
+                <h2>打开已有项目</h2>
+              </div>
+              <div className="form-panel compact-project-open-form">
+                <div className="form-field" data-layout="form-row">
+                  <label htmlFor="existing-project-dir">DockStart 项目目录</label>
+                  <PathInput
+                    id="existing-project-dir"
+                    value={existingProjectDir}
+                    onChange={setExistingProjectDir}
+                    mode="directory"
+                    title="选择已有 DockStart 项目目录"
+                    placeholder="选择包含 project.json 的目录"
+                  />
+                </div>
+                <div className="button-row end">
+                  <ActionButton
+                    disabled={isBusy || !existingProjectDir.trim()}
+                    onClick={() => void loadExistingProject()}
+                  >
+                    {isBusy ? "加载中..." : "打开已有项目"}
                   </ActionButton>
-                </article>
-              ))}
-              {!demos.length ? <p className="placeholder-note">没有检测到可用示例项目资源。</p> : null}
-            </div>
-          </SectionCard>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {renderModeForm()}
 
           {message ? <p className="message-line">{message}</p> : null}
           {rawError ? (
@@ -211,19 +570,52 @@ export default function ProjectCreatePage({ onBack, onCreated }: ProjectCreatePa
               <pre>{rawError}</pre>
             </AdvancedDetails>
           ) : null}
-        </main>
+          </div>
+        </MainPanel>
 
-        <aside className="task-context">
-          <SectionCard title="下一步">
-            <div className="next-step-strip">
+        <RightRail>
+          <RightRailSection title="当前路径">
+            <dl className="mode-context-list">
               <div>
-                <strong>选择路径</strong>
-                <p>Basic Mode 可直接导入 PDBQT；Assisted Mode 可从 raw 文件开始；Demo Mode 可先复制示例。</p>
+                <dt>当前路径</dt>
+                <dd>{currentConfig.currentPath}</dd>
               </div>
-            </div>
-          </SectionCard>
-        </aside>
-      </div>
-    </section>
+              <div>
+                <dt>下一步</dt>
+                <dd>{currentConfig.nextStep}</dd>
+              </div>
+              <div>
+                <dt>需要</dt>
+                <dd>{currentConfig.requirement}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          {startMode === "demo" ? (
+            <RightRailSection title="复制到">
+              <div className="form-panel compact-project-open-form">
+                <div className="form-field" data-layout="form-row">
+                  <label htmlFor="demo-base-dir">工作区目录</label>
+                  <PathInput
+                    id="demo-base-dir"
+                    value={baseDir}
+                    onChange={setBaseDir}
+                    mode="directory"
+                    title="选择示例保存目录"
+                    placeholder="选择保存示例的父目录"
+                  />
+                </div>
+              </div>
+            </RightRailSection>
+          ) : null}
+
+          {startMode === "demo" ? (
+            <RightRailSection title="复制规则">
+              <p>复制为新项目；若目录已存在，自动生成不冲突名称。</p>
+            </RightRailSection>
+          ) : null}
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

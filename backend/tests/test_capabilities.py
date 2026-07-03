@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -45,9 +46,26 @@ def toolchain_payload(
 
 class CapabilityProfileTests(unittest.TestCase):
     def _create_demo_resource(self, root: Path) -> None:
-        demo_dir = root / "examples" / "demo_basic_project"
+        demo_dir = root / "resources" / "examples" / "basic_pdbqt"
         demo_dir.mkdir(parents=True)
-        (demo_dir / "project.json").write_text('{"project_name":"demo_basic_project"}\n', encoding="utf-8")
+        (demo_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": "basic_pdbqt",
+                    "title": "基础对接示例",
+                    "description": "已有 PDBQT 的示例。",
+                    "mode": "basic",
+                    "requiredTools": ["vina"],
+                    "tags": ["推荐"],
+                    "entryStep": "prepare",
+                    "files": {"project": "project.json"},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (demo_dir / "project.json").write_text('{"project_name":"basic_pdbqt"}\n', encoding="utf-8")
 
     def _create_project_with_pdbqt(self, base_dir: str) -> Path:
         response = create_project("basic_project", base_dir)

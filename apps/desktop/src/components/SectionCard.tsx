@@ -9,7 +9,7 @@ type SectionCardProps = {
 
 export default function SectionCard({ title, description, children, className = "" }: SectionCardProps) {
   return (
-    <section className={`section-card ${className}`.trim()}>
+    <section className={`section-card ${className}`.trim()} data-layout="card">
       {title || description ? (
         <div className="section-card-header">
           {title ? <h2>{title}</h2> : null}

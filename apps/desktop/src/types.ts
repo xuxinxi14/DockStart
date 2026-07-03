@@ -349,14 +349,26 @@ export type DiagnosticReportResponse = {
 };
 
 export type DemoProjectSummary = {
-  demo_type: "basic_pdbqt" | "assisted_raw" | "viewer_only" | string;
+  demo_type: string;
+  id: string;
   title: string;
   description: string;
+  mode: string;
+  required_tools: string[];
+  tags: string[];
+  entry_step: string;
+  entry_run_id: string;
+  button_label: string;
+  target_name_prefix: string;
   template_dir: string;
+  manifest: string;
   project_json: string;
   exists: boolean;
+  missing_files: string[];
   size_bytes: number;
   readme: string;
+  files: Record<string, unknown>;
+  note: string;
   disclaimer: string;
 };
 
@@ -689,6 +701,10 @@ export type ProjectResponse = {
   scores_status?: RunFileStatus | null;
   can_export?: boolean;
   demo_type?: string;
+  entry_step?: string;
+  entry_page?: string;
+  entry_run_id?: string;
+  target_name?: string;
   disclaimer?: string;
   files?: RunFileStatus[];
   command?: string[];

@@ -1,25 +1,25 @@
 # Release Artifact Capability Profile
 
-DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。V0.9.0 开始准备 Basic 可分发包：随安装包提供 AutoDock Vina、轻量 Python backend runtime 和小型示例项目。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
+DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、不包含什么、预期能完成哪种模式”。V0.9.4 延续 Basic/Assisted/Demo 分层发布档案：随安装包提供 AutoDock Vina、轻量 Python backend runtime 和小型示例项目；Full 本地工具链可包含 RDKit/Meeko 相关 Python 包。这不是新增科学功能，而是避免把“开箱即用”误解为“无需任何外部条件即可自动准备所有分子”。
 
-## 当前 V0.9.0 Basic 可分发发布档案
+## 当前 V0.9.4 发布档案
 
 ```json
 {
-  "app_version": "0.9.0",
-  "build_type": "basic_distributable",
+  "app_version": "0.9.4",
+  "build_type": "full_toolchain_local_candidate",
   "includes_bundled_vina": true,
   "includes_bundled_python": true,
   "includes_conda_env": false,
   "includes_demo_projects": true,
   "includes_examples": true,
   "basic_mode_expected": "安装包内置 AutoDock Vina；用户需要已有 receptor/ligand PDBQT。",
-  "assisted_mode_expected": "安装包不内置 RDKit/Meeko；需要用户配置 Python + RDKit + Meeko 环境。",
+  "assisted_mode_expected": "Full 本地工具链候选包可内置 RDKit/Meeko Python 包；轻量/Basic 包仍需要用户配置 Python + RDKit + Meeko 环境。",
   "known_requirements": [
     "不包含 PLIP/ProLIF",
     "不包含 Open Babel/MGLTools",
     "不做药效判断",
-    "Basic 分发包不包含 conda env 或 RDKit/Meeko site-packages"
+    "轻量/Basic 分发包不包含 conda env 或 RDKit/Meeko site-packages"
   ]
 }
 ```
@@ -29,7 +29,7 @@ DockStart V0.8.6 开始在发布材料中明确描述安装包“包含什么、
 Basic Mode 是最低依赖路径：
 
 - DockStart 桌面应用；
-- AutoDock Vina 可用。V0.9.0 Basic 分发包内置 Vina，仍允许用户改用外部配置路径；
+- AutoDock Vina 可用。V0.9.4 发布候选包内置 Vina，仍允许用户改用外部配置路径；
 - 用户已有 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
 
 RDKit/Meeko 缺失不应阻止 Basic Mode。
@@ -40,7 +40,7 @@ Assisted Mode 用于从 raw PDB/CIF/SDF/MOL 尝试生成 PDBQT：
 
 - DockStart 桌面应用；
 - AutoDock Vina 可用；
-- Python 可用。V0.9.0 Basic 分发包内置的轻量 Python 主要用于运行 DockStart 后端；
+- Python 可用。V0.9.4 本地 Full 工具链候选包可包含用于后端与 Assisted Mode 的 bundled Python；轻量/Basic 包仍可只用于运行 DockStart 后端；
 - RDKit 可 import；
 - Meeko 可 import 且准备能力可检测。
 

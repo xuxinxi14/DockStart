@@ -9,7 +9,7 @@ export default function ActionButton({ variant = "secondary", children, classNam
   const variantClass =
     variant === "primary" ? "primary-button" : variant === "text" ? "text-button inline" : "secondary-button";
   return (
-    <button className={`${variantClass} ${className}`.trim()} type="button" {...props}>
+    <button className={`${variantClass} ${className}`.trim()} data-layout="action-button" type="button" {...props}>
       {children}
     </button>
   );

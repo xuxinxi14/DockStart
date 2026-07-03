@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
@@ -140,63 +141,89 @@ export default function RunPreparePage({
   ].filter(Boolean) as RunCheckResult[];
 
   return (
-    <section className="workbench-page" aria-labelledby="run-prepare-title">
-      <header className="page-hero">
-        <div className="page-hero-main">
-          <p className="eyebrow">运行对接</p>
-          <h1 id="run-prepare-title">准备对接运行</h1>
-          <p>创建 run 记录，保存配置快照和命令预览。</p>
-        </div>
-        <div className="page-hero-actions">
+    <PageShell labelledBy="run-prepare-title">
+      <PageHero
+        eyebrow="运行对接"
+        title="准备对接运行"
+        titleId="run-prepare-title"
+        description="创建 run 记录，保存配置快照和命令预览。"
+        actions={
+          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <VinaWorkflowBar current="prepare" runId={nextRunId || prepared?.run_id} />
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <VinaWorkflowBar current="prepare" runId={nextRunId || prepared?.run_id} />
 
-      <SectionCard title="运行前状态">
-        <div className="status-strip">
-          {summaryChecks.length > 0 ? (
-            summaryChecks.map((check) => (
-              <article className="metric-card" key={check.key}>
-                <span>{check.name}</span>
-                <strong>{check.message || check.path || check.version || "已检查"}</strong>
-                <StatusBadge tone={statusTone(check.status)}>{statusText[check.status]}</StatusBadge>
-              </article>
-            ))
-          ) : (
-            <p className="message-line">尚未获得检查结果。</p>
-          )}
-        </div>
-        <AdvancedDetails summary="命令预览">
-          <pre>{commandPreview || "运行前检查通过后会显示命令数组预览。"}</pre>
-        </AdvancedDetails>
-        <div className="button-row end">
-          <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadChecks()}>重新检查</ActionButton>
-          <ActionButton variant="primary" disabled={isBusy} onClick={() => void prepareRun()}>
-            {isBusy ? "准备中..." : "创建运行记录"}
-          </ActionButton>
-        </div>
-      </SectionCard>
+            <SectionCard title="运行前状态">
+              <div className="status-strip">
+                {summaryChecks.length > 0 ? (
+                  summaryChecks.map((check) => (
+                    <article className="metric-card" key={check.key}>
+                      <span>{check.name}</span>
+                      <strong>{check.message || check.path || check.version || "已检查"}</strong>
+                      <StatusBadge tone={statusTone(check.status)}>{statusText[check.status]}</StatusBadge>
+                    </article>
+                  ))
+                ) : (
+                  <p className="message-line">尚未获得检查结果。</p>
+                )}
+              </div>
+              <AdvancedDetails summary="命令预览">
+                <pre>{commandPreview || "运行前检查通过后会显示命令数组预览。"}</pre>
+              </AdvancedDetails>
+              <div className="button-row end">
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadChecks()}>重新检查</ActionButton>
+                <ActionButton variant="primary" disabled={isBusy} onClick={() => void prepareRun()}>
+                  {isBusy ? "准备中..." : "创建运行记录"}
+                </ActionButton>
+              </div>
+            </SectionCard>
 
-      {prepared?.ok && prepared.project && prepared.run_id ? (
-        <div className="next-step-strip">
-          <div>
-            <strong>下一步：开始对接</strong>
-            <p>运行记录 {prepared.run_id} 已创建。</p>
+            {prepared?.ok && prepared.project && prepared.run_id ? (
+              <div className="next-step-strip">
+                <div>
+                  <strong>下一步：开始对接</strong>
+                  <p>运行记录 {prepared.run_id} 已创建。</p>
+                </div>
+                <ActionButton variant="primary" onClick={() => onOpenRunExecute(prepared.project!, prepared.run_id!)}>
+                  开始对接
+                </ActionButton>
+              </div>
+            ) : null}
+
+            {warnings.map((warning) => (
+              <WarningCallout key={warning} title="运行前提示">
+                <p>{warning}</p>
+              </WarningCallout>
+            ))}
+            <CommandResultPanel title="运行准备结果" message={message} rawError={rawError} />
           </div>
-          <ActionButton variant="primary" onClick={() => onOpenRunExecute(prepared.project!, prepared.run_id!)}>
-            开始对接
-          </ActionButton>
-        </div>
-      ) : null}
+        </MainPanel>
 
-      {warnings.map((warning) => (
-        <WarningCallout key={warning} title="运行前提示">
-          <p>{warning}</p>
-        </WarningCallout>
-      ))}
-      <CommandResultPanel title="运行准备结果" message={message} rawError={rawError} />
-    </section>
+        <RightRail>
+          <RightRailSection title="当前运行">
+            <dl className="mode-context-list">
+              <div>
+                <dt>下一 run</dt>
+                <dd>{nextRunId || prepared?.run_id || "待创建"}</dd>
+              </div>
+              <div>
+                <dt>检查项</dt>
+                <dd>{summaryChecks.length || 0}</dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="下一步">
+            <p>{prepared?.ok ? "开始执行 AutoDock Vina。" : "通过检查后创建运行记录。"}</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }
