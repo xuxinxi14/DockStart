@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { SpinnerGap } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
 import type { NavigateOptions, PageId, StartMode } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
@@ -15,8 +17,8 @@ import RunPreparePage from "./pages/RunPreparePage";
 import SettingsPage from "./pages/SettingsPage";
 import StructureFetchPage from "./pages/StructureFetchPage";
 import ToolCheckPage from "./pages/ToolCheckPage";
-import ToolchainStatusPage from "./pages/ToolchainStatusPage";
-import ViewerPage from "./pages/ViewerPage";
+const ToolchainStatusPage = lazy(() => import("./pages/ToolchainStatusPage"));
+const ViewerPage = lazy(() => import("./pages/ViewerPage"));
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
@@ -29,6 +31,44 @@ export default function App() {
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
+  const [projectRevision, setProjectRevision] = useState(0);
+
+  const commitProject = useCallback((project: DockStartProject) => {
+    setCurrentProject(project);
+    setProjectRevision((revision) => revision + 1);
+  }, []);
+
+  useEffect(() => {
+    const projectDir = currentProject?.project_dir;
+    if (!projectDir) {
+      setWorkflowStatus(null);
+      return;
+    }
+
+    let cancelled = false;
+    async function refreshWorkflowStatus() {
+      try {
+        const rawPayload = await invoke<string>("get_project_workflow_status", {
+          projectDir,
+        });
+        const parsed = JSON.parse(rawPayload) as ProjectWorkflowStatusResponse;
+        if (cancelled) return;
+        setWorkflowStatus(parsed);
+        if (parsed.project) setCurrentProject(parsed.project);
+        const latestRunId = parsed.latest_run?.run_id;
+        if (typeof latestRunId === "string" && latestRunId) {
+          setCurrentRunId((runId) => runId || latestRunId);
+        }
+      } catch {
+        if (!cancelled) setWorkflowStatus(null);
+      }
+    }
+
+    void refreshWorkflowStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProject?.project_dir, projectRevision]);
 
   function navigateTo(page: PageId, options?: NavigateOptions) {
     if (page === "project-create") {
@@ -43,14 +83,14 @@ export default function App() {
         <ProjectDashboardPage
           project={currentProject}
           onNavigate={navigateTo}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onWorkflowChange={setWorkflowStatus}
         />
       );
     }
 
     if (currentPage === "settings") {
-      return <SettingsPage onBack={() => navigateTo("tool-check")} />;
+      return <SettingsPage onBack={() => navigateTo("toolchain-status")} />;
     }
 
     if (currentPage === "toolchain-status") {
@@ -74,7 +114,7 @@ export default function App() {
           onBack={() => navigateTo("home")}
           onStartModeChange={setProjectStartMode}
           onCreated={(project, nextPage = "structure-fetch", runId = "") => {
-            setCurrentProject(project);
+            commitProject(project);
             setCurrentRunId(runId);
             setWorkflowStatus(null);
             navigateTo(nextPage);
@@ -92,13 +132,13 @@ export default function App() {
         <StructureFetchPage
           project={currentProject}
           onBack={() => navigateTo("project-create")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenImportPdbqt={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("import-pdbqt");
           }}
           onOpenPreparation={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("preparation");
           }}
         />
@@ -110,17 +150,17 @@ export default function App() {
         <PreparationPage
           project={currentProject}
           onBack={() => navigateTo("structure-fetch")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenImportPdbqt={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("import-pdbqt");
           }}
           onOpenViewer={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("viewer");
           }}
           onOpenBoxSetup={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("box-setup");
           }}
         />
@@ -133,18 +173,18 @@ export default function App() {
           project={currentProject}
           onBack={() => navigateTo("project-create")}
           onOpenStructureFetch={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("structure-fetch");
           }}
           onOpenBoxSetup={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("box-setup");
           }}
           onOpenViewer={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("viewer");
           }}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
         />
       );
     }
@@ -154,13 +194,13 @@ export default function App() {
         <BoxSetupPage
           project={currentProject}
           onBack={() => navigateTo("import-pdbqt")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenViewer={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("viewer");
           }}
           onOpenVinaParams={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("vina-param");
           }}
         />
@@ -172,9 +212,9 @@ export default function App() {
         <VinaParamPage
           project={currentProject}
           onBack={() => navigateTo("box-setup")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenVinaConfig={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("vina-config");
           }}
         />
@@ -186,9 +226,9 @@ export default function App() {
         <VinaConfigPage
           project={currentProject}
           onBack={() => navigateTo("vina-param")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenRunPrepare={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("run-prepare");
           }}
         />
@@ -200,9 +240,9 @@ export default function App() {
         <RunPreparePage
           project={currentProject}
           onBack={() => navigateTo("vina-config")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenRunExecute={(project, runId) => {
-            setCurrentProject(project);
+            commitProject(project);
             setCurrentRunId(runId);
             navigateTo("run-execute");
           }}
@@ -216,9 +256,9 @@ export default function App() {
           project={currentProject}
           runId={currentRunId}
           onBack={() => navigateTo("run-prepare")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenResultPage={(project, runId) => {
-            setCurrentProject(project);
+            commitProject(project);
             setCurrentRunId(runId);
             navigateTo("result");
           }}
@@ -236,13 +276,13 @@ export default function App() {
           project={currentProject}
           runId={currentRunId}
           onBack={() => navigateTo("run-execute")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
           onOpenViewer={(project) => {
-            setCurrentProject(project);
+            commitProject(project);
             navigateTo("viewer");
           }}
           onOpenReportPage={(project, runId) => {
-            setCurrentProject(project);
+            commitProject(project);
             setCurrentRunId(runId);
             navigateTo("report");
           }}
@@ -259,7 +299,7 @@ export default function App() {
         <ViewerPage
           project={currentProject}
           onBack={() => navigateTo("preparation")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
         />
       );
     }
@@ -270,7 +310,7 @@ export default function App() {
           project={currentProject}
           runId={currentRunId}
           onBack={() => navigateTo("result")}
-          onProjectChange={setCurrentProject}
+          onProjectChange={commitProject}
         />
       );
     }
@@ -283,7 +323,7 @@ export default function App() {
       <ProjectDashboardPage
         project={currentProject}
         onNavigate={navigateTo}
-        onProjectChange={setCurrentProject}
+        onProjectChange={commitProject}
         onWorkflowChange={setWorkflowStatus}
       />
     );
@@ -297,7 +337,19 @@ export default function App() {
       workflowSteps={buildWorkflowSteps(currentProject, workflowStatus)}
       onNavigate={navigateTo}
     >
-      {renderPage()}
+      <Suspense
+        fallback={(
+          <section aria-live="polite" className="page-loading-state" role="status">
+            <SpinnerGap aria-hidden="true" className="page-loading-indicator" size={24} weight="bold" />
+            <div>
+              <strong>正在打开工作区</strong>
+              <p>正在加载当前页面所需的本地组件。</p>
+            </div>
+          </section>
+        )}
+      >
+        {renderPage()}
+      </Suspense>
     </AppShell>
   );
 }

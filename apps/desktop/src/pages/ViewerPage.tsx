@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import * as $3Dmol from "3dmol";
 import type {
@@ -42,6 +42,11 @@ type CoordinateBounds = {
   size: Coordinate;
 };
 
+const boxFieldKeys = ["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as const;
+type BoxFieldKey = (typeof boxFieldKeys)[number];
+type BoxInputValues = Record<BoxFieldKey, string>;
+type BoxInputErrors = Partial<Record<BoxFieldKey, string>>;
+
 const fileKindOptions: Array<{ value: ViewerFileKind; label: string; description: string }> = [
   { value: "receptor_raw", label: "受体原始结构", description: "项目中记录的受体原始文件" },
   { value: "ligand_raw", label: "配体原始结构", description: "项目中记录的配体原始文件" },
@@ -71,11 +76,34 @@ const layerLabels: Record<ViewerLayerKey, string> = {
 const viewerFormats = new Set(["pdb", "pdbqt", "cif", "sdf", "mol", "mol2"]);
 const fitMarginAngstrom = 8;
 const minBoxDimension = 8;
+const viewerBackgroundColor = "#071b30";
 const boxStepOptions = [
   { label: "细调", value: 0.1 },
   { label: "常规", value: 1 },
   { label: "快速", value: 5 },
 ];
+
+function boxToInputValues(box: DockStartProject["box"]): BoxInputValues {
+  return boxFieldKeys.reduce(
+    (values, key) => ({ ...values, [key]: String(box[key]) }),
+    {} as BoxInputValues,
+  );
+}
+
+function parseBoxInput(key: BoxFieldKey, rawValue: string): { value: number | null; error: string } {
+  const valueText = rawValue.trim();
+  if (!valueText) {
+    return { value: null, error: "请输入数值" };
+  }
+  const value = Number(valueText);
+  if (!Number.isFinite(value)) {
+    return { value: null, error: "数值格式无效" };
+  }
+  if (key.startsWith("size_") && value <= 0) {
+    return { value: null, error: "尺寸必须大于 0" };
+  }
+  return { value, error: "" };
+}
 
 function parseViewerStatus(rawPayload: string): ViewerFileStatusResponse {
   return JSON.parse(rawPayload) as ViewerFileStatusResponse;
@@ -440,10 +468,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
   const [fileKind, setFileKind] = useState<ViewerFileKind>("receptor_prepared");
   const [box, setBox] = useState(project.box);
+  const [boxInputs, setBoxInputs] = useState<BoxInputValues>(() => boxToInputValues(project.box));
+  const [boxInputErrors, setBoxInputErrors] = useState<BoxInputErrors>({});
   const [boxVisualization, setBoxVisualization] = useState<BoxVisualizationPayload | null>(() =>
     buildLocalBoxVisualization(project.box),
   );
   const [showBox, setShowBox] = useState(true);
+  const boxVisualizationRef = useRef<BoxVisualizationPayload | null>(boxVisualization);
+  const showBoxRef = useRef(showBox);
   const [boxStep, setBoxStep] = useState(0.1);
   const [boxWarnings, setBoxWarnings] = useState<string[]>([]);
   const [runId, setRunId] = useState(() => latestRunId(project));
@@ -456,32 +488,39 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
 
-  const clearViewer = useCallback(() => {
+  const destroyViewer = useCallback(() => {
     viewerRef.current?.clear();
     viewerRef.current = null;
     if (containerRef.current) {
-      containerRef.current.innerHTML = "";
+      containerRef.current.replaceChildren();
     }
+  }, []);
+
+  const ensureViewer = useCallback(() => {
+    if (viewerRef.current) {
+      return viewerRef.current;
+    }
+    if (!containerRef.current) {
+      return null;
+    }
+    const viewer = $3Dmol.createViewer(containerRef.current, { backgroundColor: viewerBackgroundColor });
+    viewerRef.current = viewer;
+    return viewer;
   }, []);
 
   const renderScene = useCallback(
     (options: { fit?: boolean } = {}) => {
       const previousView = options.fit ? null : (viewerRef.current as unknown as { getView?: () => unknown })?.getView?.();
-      clearViewer();
-      if (!containerRef.current) {
-        return;
-      }
-
       const visibleLayers = layerOrder
         .map((key) => loadedLayers[key])
         .filter((layer): layer is LoadedViewerLayer => Boolean(layer?.visible && layer.structure.ok));
-      const shouldDrawBox = Boolean(showBox && boxVisualization);
-      if (!visibleLayers.length && !shouldDrawBox) {
+      const viewer = ensureViewer();
+      if (!viewer) {
         return;
       }
 
       try {
-        const viewer = $3Dmol.createViewer(containerRef.current, { backgroundColor: "white" });
+        viewer.clear();
         for (const layer of visibleLayers) {
           if (!viewerFormats.has(layer.structure.format)) {
             continue;
@@ -489,8 +528,8 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           const model = viewer.addModel(layer.structure.content, layer.structure.format);
           setModelStyle(model, layer.key);
         }
-        if (shouldDrawBox && boxVisualization) {
-          addSearchBoxOverlay(viewer, boxVisualization);
+        if (showBoxRef.current && boxVisualizationRef.current) {
+          addSearchBoxOverlay(viewer, boxVisualizationRef.current);
         }
         if (previousView) {
           (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
@@ -498,20 +537,54 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           viewer.zoomTo();
         }
         viewer.render();
-        viewerRef.current = viewer;
       } catch (error) {
         setMessage("3Dmol.js 未能显示当前视图。结构格式或内容可能不被当前 viewer 支持。");
         setRawError(error instanceof Error ? error.message : String(error));
       }
     },
-    [boxVisualization, clearViewer, loadedLayers, showBox],
+    [ensureViewer, loadedLayers],
   );
 
-  const setBoxAndVisualization = useCallback((next: DockStartProject["box"]) => {
+  const refreshBoxOverlay = useCallback(() => {
+    const viewer = ensureViewer();
+    if (!viewer) {
+      return;
+    }
+    try {
+      (viewer as unknown as { removeAllShapes?: () => void }).removeAllShapes?.();
+      if (showBoxRef.current && boxVisualizationRef.current) {
+        addSearchBoxOverlay(viewer, boxVisualizationRef.current);
+      }
+      viewer.render();
+    } catch (error) {
+      setMessage("搜索范围增量刷新失败，结构视图仍保留。可尝试重新进入 3D 工作台。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    }
+  }, [ensureViewer]);
+
+  const fitScene = useCallback(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) {
+      return;
+    }
+    viewer.zoomTo();
+    viewer.render();
+  }, []);
+
+  const applyBoxPreview = useCallback((next: DockStartProject["box"]) => {
     setBox(next);
     setBoxVisualization(buildLocalBoxVisualization(next));
     setBoxWarnings(localBoxWarnings(next));
   }, []);
+
+  const syncBoxState = useCallback(
+    (next: DockStartProject["box"]) => {
+      applyBoxPreview(next);
+      setBoxInputs(boxToInputValues(next));
+      setBoxInputErrors({});
+    },
+    [applyBoxPreview],
+  );
 
   const readStructure = useCallback(
     async (kind: ViewerFileKind): Promise<ViewerStructureResult> => {
@@ -744,22 +817,55 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         setRawError(parsed.error?.raw_error ?? "");
         return;
       }
-      setBox(parsed.box);
+      syncBoxState(parsed.box);
       setBoxVisualization(parsed.visualization);
       setBoxWarnings(parsed.warnings ?? []);
     } catch (error) {
       setMessage("前端未能调用 Box 可视化命令。");
       setRawError(error instanceof Error ? error.message : String(error));
     }
-  }, [project.project_dir]);
+  }, [project.project_dir, syncBoxState]);
+
+  const collectBoxInputs = useCallback((): DockStartProject["box"] | null => {
+    const next = { ...box };
+    const errors: BoxInputErrors = {};
+    for (const key of boxFieldKeys) {
+      const parsed = parseBoxInput(key, boxInputs[key]);
+      if (parsed.value === null) {
+        errors[key] = parsed.error;
+      } else {
+        next[key] = parsed.value;
+      }
+    }
+    setBoxInputErrors(errors);
+    return Object.keys(errors).length ? null : next;
+  }, [box, boxInputs]);
+
+  const applyPendingBox = useCallback(() => {
+    const next = collectBoxInputs();
+    if (!next) {
+      setMessage("部分 Box 参数尚未完成，请修正标出的输入项后再应用预览。");
+      return false;
+    }
+    syncBoxState(next);
+    setMessage("搜索范围预览已更新；如需写入 project.json，请继续保存。");
+    return true;
+  }, [collectBoxInputs, syncBoxState]);
 
   const saveBox = useCallback(async () => {
+    const nextBox = collectBoxInputs();
+    if (!nextBox) {
+      setMessage("部分 Box 参数尚未完成，未写入 project.json。");
+      setRawError("");
+      return;
+    }
+    syncBoxState(nextBox);
     setIsBusy(true);
     setRawError("");
     try {
       const rawPayload = await invoke<string>("update_box_from_visualization", {
         projectDir: project.project_dir,
-        boxJson: JSON.stringify(box),
+        boxJson: JSON.stringify(nextBox),
       });
       const parsed = parseBoxVisualization(rawPayload);
       if (!parsed.ok) {
@@ -767,7 +873,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         setRawError(parsed.error?.raw_error ?? "");
         return;
       }
-      setBox(parsed.box);
+      syncBoxState(parsed.box);
       setBoxVisualization(parsed.visualization);
       setBoxWarnings(parsed.warnings ?? []);
       if (parsed.project) {
@@ -780,10 +886,62 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     } finally {
       setIsBusy(false);
     }
-  }, [box, onProjectChange, project.project_dir]);
+  }, [collectBoxInputs, onProjectChange, project.project_dir, syncBoxState]);
 
-  const updateBoxField = (key: keyof DockStartProject["box"], value: number) => {
-    setBoxAndVisualization({ ...box, [key]: value });
+  const updateBoxInput = (key: BoxFieldKey, value: string) => {
+    setBoxInputs((previous) => ({ ...previous, [key]: value }));
+    setBoxInputErrors((previous) => {
+      if (!previous[key]) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const commitBoxField = (key: BoxFieldKey) => {
+    const parsed = parseBoxInput(key, boxInputs[key]);
+    if (parsed.value === null) {
+      setBoxInputErrors((previous) => ({ ...previous, [key]: parsed.error }));
+      return;
+    }
+    const next = { ...box, [key]: parsed.value };
+    applyBoxPreview(next);
+    setBoxInputs((previous) => ({ ...previous, [key]: String(parsed.value) }));
+    setBoxInputErrors((previous) => {
+      const nextErrors = { ...previous };
+      delete nextErrors[key];
+      return nextErrors;
+    });
+  };
+
+  const stepBoxField = (key: BoxFieldKey, direction: 1 | -1) => {
+    const parsed = parseBoxInput(key, boxInputs[key]);
+    const baseValue = parsed.value ?? box[key];
+    let nextValue = roundBoxValue(baseValue + boxStep * direction);
+    if (key.startsWith("size_") && nextValue <= 0) {
+      nextValue = boxStep;
+    }
+    updateBoxInput(key, String(nextValue));
+    applyBoxPreview({ ...box, [key]: nextValue });
+  };
+
+  const handleBoxInputKeyDown = (key: BoxFieldKey, event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitBoxField(key);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      updateBoxInput(key, String(box[key]));
+      return;
+    }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      stepBoxField(key, event.key === "ArrowUp" ? 1 : -1);
+    }
   };
 
   const toggleLayer = (key: ViewerLayerKey) => {
@@ -811,7 +969,6 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     setLoadedLayers({});
     setSelectedPose(null);
     setStructure(null);
-    clearViewer();
     setMessage("视图已清空，Box 参数仍保留在当前项目中。");
   };
 
@@ -835,7 +992,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             }
           : {}),
       };
-      setBoxAndVisualization(next);
+      syncBoxState(next);
       setShowBox(true);
       setMessage(
         mode === "fit"
@@ -851,45 +1008,77 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     void reloadStatus();
     void loadBoxVisualization();
     return () => {
-      clearViewer();
+      destroyViewer();
     };
-  }, [clearViewer, loadBoxVisualization, reloadStatus]);
+  }, [destroyViewer, loadBoxVisualization, reloadStatus]);
 
   useEffect(() => {
     renderScene();
   }, [renderScene]);
 
+  useEffect(() => {
+    boxVisualizationRef.current = boxVisualization;
+    showBoxRef.current = showBox;
+    refreshBoxOverlay();
+  }, [boxVisualization, refreshBoxOverlay, showBox]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      const viewer = viewerRef.current as unknown as { resize?: () => void; render?: () => void } | null;
+      viewer?.resize?.();
+      viewer?.render?.();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
   const selectedStatus = status?.files?.[fileKind];
   const selectedOption = fileKindOptions.find((item) => item.value === fileKind);
   const loadedLayerList = layerOrder.map((key) => loadedLayers[key]).filter(Boolean) as LoadedViewerLayer[];
   const visibleLayerList = loadedLayerList.filter((layer) => layer.visible);
+  const isBoxVisible = Boolean(showBox && boxVisualization);
   const visibleLayerSummary =
-    visibleLayerList.length > 0 ? visibleLayerList.map((layer) => layer.label).join(" + ") : "仅显示搜索范围";
+    visibleLayerList.length > 0
+      ? visibleLayerList.map((layer) => layer.label).join(" + ")
+      : isBoxVisible
+        ? "仅显示搜索范围"
+        : "暂无可见图层";
 
   const currentBounds = structure ? boundsForStructure(structure) : null;
   const ligandTargetAvailable = Boolean(loadedLayers.ligand_prepared || loadedLayers.ligand_raw);
   const poseTargetAvailable = Boolean(loadedLayers.pose);
 
   const boxSummary = boxVisualization ?? buildLocalBoxVisualization(box);
+  const hasPendingBoxEdits = boxFieldKeys.some((key) => boxInputs[key].trim() !== String(box[key]));
+  const hasBoxInputErrors = Object.keys(boxInputErrors).length > 0;
 
   return (
     <section className="project-page viewer-page">
       <PageHeader
         eyebrow="3D 工作台"
         title="3D 分子工作台"
-        description="叠加结构、构象和搜索范围，用可见 Box 设置 Vina 空间。"
+        description="在同一视图叠加受体、配体、对接构象与搜索范围；所有定位操作只使用已加载结构的几何坐标。"
         actions={
-          <button className="text-button" type="button" onClick={onBack}>
+          <button className="text-button" type="button" onClick={onBack} aria-label="返回上一工作流页面">
             返回上一页
           </button>
         }
       />
-      <section className="viewer-workspace-grid" aria-label="3D viewer workspace">
-        <aside className="viewer-control-column" aria-label="结构 Inspector">
-          <SectionCard title="结构来源" description={selectedOption?.description}>
-            <label className="viewer-source-row">
+      <section className="viewer-workspace-grid" aria-label="3D 分子工作台" aria-busy={isBusy}>
+        <aside className="viewer-control-column" aria-label="结构与搜索范围控制">
+          <SectionCard className="viewer-source-card" title="结构来源" description={selectedOption?.description}>
+            <label className="viewer-source-row" htmlFor="viewer-file-kind">
               <span>结构来源</span>
-              <select value={fileKind} onChange={(event) => setFileKind(event.target.value as ViewerFileKind)}>
+              <select
+                id="viewer-file-kind"
+                value={fileKind}
+                onChange={(event) => setFileKind(event.target.value as ViewerFileKind)}
+                aria-describedby="viewer-source-help"
+              >
                 {fileKindOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -897,17 +1086,41 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 ))}
               </select>
             </label>
+            <p className="viewer-field-help" id="viewer-source-help">
+              加载会新增或更新对应图层，不会覆盖项目文件。
+            </p>
             <div className="viewer-quick-actions">
-              <button className="primary-button" type="button" disabled={isBusy} onClick={() => void loadStructure()}>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={isBusy}
+                onClick={() => void loadStructure()}
+                aria-label={`加载${selectedOption?.label ?? "所选结构"}到 3D 视图`}
+              >
                 加载到视图
               </button>
-              <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadDefaultPair()}>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isBusy}
+                onClick={() => void loadDefaultPair()}
+              >
                 加载受体+配体
               </button>
-              <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void loadAllAvailable()}>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isBusy}
+                onClick={() => void loadAllAvailable()}
+              >
                 加载全部可用
               </button>
-              <button className="secondary-button" type="button" disabled={isBusy} onClick={() => void reloadStatus()}>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isBusy}
+                onClick={() => void reloadStatus()}
+              >
                 重新读取状态
               </button>
             </div>
@@ -918,13 +1131,18 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
               {layerOrder.map((key) => {
                 const layer = loadedLayers[key];
                 return (
-                  <div key={key} className={`viewer-layer-row ${layer?.visible ? "visible" : ""}`}>
+                  <div
+                    key={key}
+                    className={`viewer-layer-row ${layer?.visible ? "visible" : ""}`}
+                    aria-label={`${layerLabels[key]}：${layer ? (layer.visible ? "显示" : "隐藏") : "未加载"}`}
+                  >
                     <label>
                       <input
                         type="checkbox"
                         checked={Boolean(layer?.visible)}
                         disabled={!layer}
                         onChange={() => toggleLayer(key)}
+                        aria-label={`${layer?.visible ? "隐藏" : "显示"}${layerLabels[key]}`}
                       />
                       <span>{layerLabels[key]}</span>
                     </label>
@@ -933,7 +1151,12 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                         {layer ? (layer.visible ? "显示" : "隐藏") : "未加载"}
                       </StatusBadge>
                       {layer ? (
-                        <button className="text-button inline" type="button" onClick={() => removeLayer(key)}>
+                        <button
+                          className="text-button inline"
+                          type="button"
+                          onClick={() => removeLayer(key)}
+                          aria-label={`从 3D 视图移除${layerLabels[key]}`}
+                        >
                           移除
                         </button>
                       ) : null}
@@ -945,15 +1168,22 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           </SectionCard>
 
           <SectionCard title="对接构象" description="读取 run 输出中的 mode。">
-            <label className="viewer-source-row">
+            <label className="viewer-source-row" htmlFor="viewer-run-id">
               <span>运行记录</span>
               <input
+                id="viewer-run-id"
                 type="text"
                 value={runId}
                 placeholder="run_001"
                 onChange={(event) => setRunId(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby="viewer-run-help"
               />
             </label>
+            <p className="viewer-field-help" id="viewer-run-help">
+              读取列表后，可在右侧选择单个构象叠加显示。
+            </p>
             <div className="toolbar project-toolbar">
               <button
                 className="secondary-button"
@@ -973,14 +1203,19 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             ) : null}
           </SectionCard>
 
-          <SectionCard title="搜索范围" description="单位：Å。Box 会随输入实时更新。">
+          <SectionCard title="搜索范围" description="单位：Å。输入期间保留原视图，确认后再增量更新 Box。">
             <div className="viewer-box-options">
               <label className="viewer-toggle-row">
-                <input type="checkbox" checked={showBox} onChange={(event) => setShowBox(event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={showBox}
+                  onChange={(event) => setShowBox(event.target.checked)}
+                  aria-controls="viewer-canvas"
+                />
                 <span>显示搜索范围</span>
               </label>
-              <div className="viewer-step-control" aria-label="Box 参数步进速度">
-                <span>步进</span>
+              <div className="viewer-step-control" role="group" aria-labelledby="viewer-box-step-label">
+                <span id="viewer-box-step-label">键盘步进</span>
                 <div>
                   {boxStepOptions.map((option) => (
                     <button
@@ -988,6 +1223,8 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                       className={option.value === boxStep ? "is-active" : ""}
                       type="button"
                       onClick={() => setBoxStep(option.value)}
+                      aria-pressed={option.value === boxStep}
+                      aria-label={`${option.label}步进，每次 ${option.value} 埃`}
                     >
                       {option.label}
                     </button>
@@ -995,20 +1232,42 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 </div>
               </div>
             </div>
-            <div className="box-control-grid">
-              {(["center_x", "center_y", "center_z", "size_x", "size_y", "size_z"] as Array<
-                keyof DockStartProject["box"]
-              >).map((key) => (
+            <p className="viewer-box-edit-help" id="viewer-box-edit-help">
+              输入后按 Enter 或移出焦点更新预览；按 Esc 恢复，↑/↓ 按所选步进微调。
+            </p>
+            <div className="box-control-grid" role="group" aria-label="搜索范围中心与尺寸参数">
+              {boxFieldKeys.map((key) => {
+                const errorId = `viewer-box-${key}-error`;
+                const inputId = `viewer-box-${key}`;
+                return (
                 <label key={key} className="box-control">
-                  <span>{boxFieldLabel(key)}</span>
+                  <span className="viewer-box-label">
+                    {boxFieldLabel(key)} <small>Å</small>
+                  </span>
                   <input
-                    type="number"
-                    step={boxStep}
-                    value={box[key]}
-                    onChange={(event) => updateBoxField(key, Number(event.target.value))}
+                    id={inputId}
+                    type="text"
+                    inputMode="decimal"
+                    role="spinbutton"
+                    value={boxInputs[key]}
+                    onChange={(event) => updateBoxInput(key, event.target.value)}
+                    onBlur={() => commitBoxField(key)}
+                    onKeyDown={(event) => handleBoxInputKeyDown(key, event)}
+                    aria-invalid={Boolean(boxInputErrors[key])}
+                    aria-valuenow={parseBoxInput(key, boxInputs[key]).value ?? undefined}
+                    aria-valuemin={key.startsWith("size_") ? 0 : undefined}
+                    aria-valuetext={`${boxInputs[key] || "未完成"} 埃`}
+                    aria-describedby={`viewer-box-edit-help${boxInputErrors[key] ? ` ${errorId}` : ""}`}
+                    aria-keyshortcuts="Enter Escape ArrowUp ArrowDown"
                   />
+                  {boxInputErrors[key] ? (
+                    <small className="viewer-box-error" id={errorId} role="alert">
+                      {boxInputErrors[key]}
+                    </small>
+                  ) : null}
                 </label>
-              ))}
+                );
+              })}
             </div>
             <div className="viewer-box-tools">
               <button
@@ -1037,7 +1296,20 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
               </button>
             </div>
             <p className="viewer-geometry-note">这些按钮只按已加载对象的几何坐标定位，不做结合位点预测。</p>
-            <div className="toolbar project-toolbar">
+            <div className="viewer-box-commit-row" aria-live="polite">
+              <StatusBadge tone={hasBoxInputErrors ? "error" : hasPendingBoxEdits ? "warning" : "ok"}>
+                {hasBoxInputErrors ? "输入待修正" : hasPendingBoxEdits ? "预览待应用" : "预览已同步"}
+              </StatusBadge>
+            </div>
+            <div className="toolbar project-toolbar viewer-box-save-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={isBusy || hasBoxInputErrors}
+                onClick={applyPendingBox}
+              >
+                应用到预览
+              </button>
               <button className="primary-button" type="button" disabled={isBusy} onClick={() => void saveBox()}>
                 保存搜索范围
               </button>
@@ -1058,28 +1330,59 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
           </SectionCard>
         </aside>
 
-        <section className="viewer-stage" aria-label="3D molecular viewer">
+        <section className="viewer-stage" aria-labelledby="viewer-stage-heading">
           <div className="viewer-stage-toolbar">
             <div className="viewer-stage-title">
               <span>当前视图</span>
-              <strong>{visibleLayerSummary}</strong>
+              <strong id="viewer-stage-heading">{visibleLayerSummary}</strong>
             </div>
             <div className="viewer-stage-actions">
-              <StatusBadge tone={showBox && boxVisualization ? "info" : "muted"}>
-                {showBox && boxVisualization ? "Box 已显示" : "Box 已隐藏"}
+              <StatusBadge tone={isBoxVisible ? "info" : "muted"}>
+                {isBoxVisible ? "Box 已显示" : "Box 已隐藏"}
               </StatusBadge>
-              <button className="text-button inline" type="button" onClick={() => renderScene({ fit: true })}>
-                Zoom to fit
+              <button
+                className="text-button inline"
+                type="button"
+                onClick={fitScene}
+                disabled={!visibleLayerList.length && !isBoxVisible}
+                aria-label="将全部可见结构和搜索范围适应到 3D 视图"
+              >
+                适应窗口
               </button>
-              <button className="text-button inline" type="button" onClick={clearScene}>
+              <button
+                className="text-button inline"
+                type="button"
+                onClick={clearScene}
+                disabled={!loadedLayerList.length}
+                aria-label="清空全部结构图层，保留搜索范围"
+              >
                 清空视图
               </button>
             </div>
           </div>
-          <div className="viewer-canvas" ref={containerRef} aria-label="3D molecular viewer canvas" />
+          <div className="viewer-canvas-shell">
+            <div
+              className="viewer-canvas"
+              id="viewer-canvas"
+              ref={containerRef}
+              role="region"
+              tabIndex={0}
+              aria-label={`3D 分子视图：${visibleLayerSummary}`}
+              aria-describedby="viewer-canvas-help"
+            />
+            {!visibleLayerList.length && !isBoxVisible ? (
+              <div className="viewer-canvas-empty" aria-hidden="true">
+                <strong>等待加载结构</strong>
+                <span>从左侧选择受体、配体或对接构象</span>
+              </div>
+            ) : null}
+            <p className="viewer-canvas-help" id="viewer-canvas-help">
+              拖动旋转 · 滚轮缩放 · Shift + 拖动平移
+            </p>
+          </div>
         </section>
 
-        <aside className="viewer-inspector-column" aria-label="Properties">
+        <aside className="viewer-inspector-column" aria-label="文件、Box 与构象属性">
           <SectionCard title="当前文件">
             <dl className="tool-meta">
               <div>
@@ -1178,6 +1481,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             {poseList?.poses?.length ? (
               <div className="scores-table-wrap compact-score-table">
                 <table className="scores-table">
+                  <caption className="viewer-sr-only">当前运行记录中的对接构象与评分</caption>
                   <thead>
                     <tr>
                       <th>构象</th>
@@ -1189,7 +1493,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                   </thead>
                   <tbody>
                     {poseList.poses.map((pose) => (
-                      <tr key={pose.mode}>
+                      <tr key={pose.mode} className={selectedPose?.mode === pose.mode ? "is-selected" : ""}>
                         <td>{pose.mode}</td>
                         <td>{pose.affinity_kcal_mol ?? "未解析"}</td>
                         <td>{pose.rmsd_lb ?? "未解析"}</td>
@@ -1200,8 +1504,10 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                             type="button"
                             disabled={isBusy}
                             onClick={() => void loadPose(pose.mode)}
+                            aria-label={`查看构象 ${pose.mode}，对接评分 ${pose.affinity_kcal_mol ?? "未解析"}`}
+                            aria-pressed={selectedPose?.mode === pose.mode}
                           >
-                            查看
+                            {selectedPose?.mode === pose.mode ? "当前" : "查看"}
                           </button>
                         </td>
                       </tr>
@@ -1224,7 +1530,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </dl>
           </SectionCard>
 
-          <CommandResultPanel title="Viewer 状态" message={message} rawError={rawError} />
+          <div className="viewer-status-region" role="status" aria-live="polite" aria-atomic="true">
+            <CommandResultPanel title="Viewer 状态" message={message} rawError={rawError} />
+          </div>
         </aside>
       </section>
     </section>

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type KeyboardEvent, type ReactNode } from "react";
 
 type PageShellProps = {
   labelledBy?: string;
@@ -25,10 +25,12 @@ type PanelProps = {
 };
 
 type ModeTabsProps<TMode extends string> = {
+  id?: string;
   label: string;
-  options: Array<{ id: TMode; label: string }>;
+  options: Array<{ id: TMode; label: string; controlsId?: string }>;
   active: TMode;
   onChange: (mode: TMode) => void;
+  orientation?: "horizontal" | "vertical";
 };
 
 export function PageShell({ labelledBy, className = "", children }: PageShellProps) {
@@ -66,9 +68,9 @@ export function BodyGrid({ children, className = "" }: BodyGridProps) {
 
 export function MainPanel({ children, className = "" }: PanelProps) {
   return (
-    <main className={`main-panel ${className}`.trim()} data-layout="main-panel">
+    <div className={`main-panel ${className}`.trim()} data-layout="main-panel">
       {children}
-    </main>
+    </div>
   );
 }
 
@@ -89,21 +91,83 @@ export function RightRailSection({ children, className = "", title }: PanelProps
   );
 }
 
-export function ModeTabs<TMode extends string>({ label, options, active, onChange }: ModeTabsProps<TMode>) {
+export function ModeTabs<TMode extends string>({
+  id,
+  label,
+  options,
+  active,
+  onChange,
+  orientation = "horizontal",
+}: ModeTabsProps<TMode>) {
+  const generatedId = useId().replace(/:/g, "");
+  const tabListId = id ?? `mode-tabs-${generatedId}`;
+  const hasActiveOption = options.some((option) => option.id === active);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || options.length === 0) {
+      return;
+    }
+
+    let nextIndex: number | undefined;
+    const lastIndex = options.length - 1;
+
+    if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = lastIndex;
+    } else if (
+      (orientation === "horizontal" && event.key === "ArrowRight") ||
+      (orientation === "vertical" && event.key === "ArrowDown")
+    ) {
+      nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1;
+    } else if (
+      (orientation === "horizontal" && event.key === "ArrowLeft") ||
+      (orientation === "vertical" && event.key === "ArrowUp")
+    ) {
+      nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1;
+    }
+
+    if (nextIndex === undefined) {
+      return;
+    }
+
+    event.preventDefault();
+    if (options[nextIndex].id !== active) {
+      onChange(options[nextIndex].id);
+    }
+    event.currentTarget.parentElement
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [nextIndex]?.focus();
+  };
+
   return (
-    <div className="mode-tabs" aria-label={label} data-layout="mode-tabs" role="tablist">
-      {options.map((option) => (
-        <button
-          aria-selected={active === option.id}
-          className={active === option.id ? "active" : ""}
-          key={option.id}
-          onClick={() => onChange(option.id)}
-          role="tab"
-          type="button"
-        >
-          {option.label}
-        </button>
-      ))}
+    <div
+      aria-label={label}
+      aria-orientation={orientation}
+      className="mode-tabs"
+      data-layout="mode-tabs"
+      id={tabListId}
+      role="tablist"
+    >
+      {options.map((option, index) => {
+        const isActive = active === option.id;
+        return (
+          <button
+            aria-controls={option.controlsId}
+            aria-selected={isActive}
+            className={isActive ? "active" : ""}
+            id={`${tabListId}-tab-${index}`}
+            key={option.id}
+            onKeyDown={(event) => handleKeyDown(event, index)}
+            onClick={() => onChange(option.id)}
+            role="tab"
+            tabIndex={isActive || (!hasActiveOption && index === 0) ? 0 : -1}
+            type="button"
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

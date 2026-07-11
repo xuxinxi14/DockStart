@@ -7,6 +7,7 @@
 | 名称 | 用途 | 许可证 | 集成方式 | 是否内置 | 是否需要用户自行安装 |
 | --- | --- | --- | --- | --- | --- |
 | React | 桌面端 UI | MIT | npm 依赖 | 是 | 否 |
+| Phosphor Icons React 2.1.10 | 桌面端导航、状态与操作图标 | MIT | npm 依赖 `@phosphor-icons/react`，由 Vite 按需打包 | 是 | 否 |
 | Vite | 前端开发与构建 | MIT | npm 开发依赖 | 是 | 否 |
 | Tauri | 桌面应用壳 | Apache-2.0 / MIT | npm CLI + Rust crate | 是 | 需要本机具备 Rust/Tauri 构建环境 |
 | tauri-plugin-dialog | 原生文件/目录选择对话框（路径输入的“选择…”按钮） | Apache-2.0 / MIT（Tauri 官方插件） | Rust crate + npm 包，通过 capabilities 授权 `dialog:default` | 是 | 否 |

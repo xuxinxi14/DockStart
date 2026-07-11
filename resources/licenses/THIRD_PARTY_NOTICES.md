@@ -15,6 +15,14 @@ Vina distribution.
 If a release package includes AutoDock Vina binaries, keep this notice and any
 required upstream license files together with the packaged application.
 
+## Phosphor Icons React
+
+- Version: 2.1.10.
+- Purpose: navigation, state, and action icons in the DockStart desktop UI.
+- License: MIT.
+- Integration mode: npm dependency bundled by Vite.
+- License text: `resources/licenses/Phosphor-Icons_LICENSE.txt`.
+
 ## Python Runtime
 
 - Purpose: optional bundled runtime for DockStart's Python backend.

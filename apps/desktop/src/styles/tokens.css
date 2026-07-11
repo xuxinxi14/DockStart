@@ -1,50 +1,59 @@
 :root {
-  --ds-bg-app: #F4F7FA;
-  --ds-bg-subtle: #EEF3F7;
+  --ds-bg-app: #EAF0F6;
+  --ds-bg-subtle: #F0F4F8;
   --ds-bg-panel: #FFFFFF;
-  --ds-bg-panel-soft: #FAFCFE;
+  --ds-bg-panel-soft: #F7FAFC;
   --ds-bg-elevated: #FFFFFF;
 
-  --ds-border-subtle: #D9E2EC;
-  --ds-border-default: #C8D4E0;
-  --ds-border-strong: #AAB8C5;
+  --ds-navy-950: #061A2F;
+  --ds-navy-900: #08233F;
+  --ds-navy-850: #0B2D50;
+  --ds-navy-800: #10395F;
+  --ds-navy-700: #164A78;
+  --ds-navy-soft: #DDEAF7;
+  --ds-shell-text: #F6F9FC;
+  --ds-shell-text-muted: #AAC0D6;
 
-  --ds-text-primary: #102033;
-  --ds-text-secondary: #41546A;
-  --ds-text-muted: #6E7F91;
-  --ds-text-faint: #94A3B3;
+  --ds-border-subtle: #D8E1EA;
+  --ds-border-default: #C7D3DF;
+  --ds-border-strong: #9FB0C1;
+
+  --ds-text-primary: #0B1D31;
+  --ds-text-secondary: #3E5268;
+  --ds-text-muted: #5C7187;
+  --ds-text-faint: #7F91A3;
   --ds-text-inverse: #FFFFFF;
 
-  --ds-accent: #245C9E;
-  --ds-accent-hover: #1E4E8C;
-  --ds-accent-soft: #E6F0FA;
-  --ds-accent-border: #B9D3EF;
+  --ds-accent: #1F6FCB;
+  --ds-accent-hover: #175BAB;
+  --ds-accent-soft: #E1EEFB;
+  --ds-accent-border: #A9CAE9;
 
-  --ds-molecule: #2BB3B1;
-  --ds-molecule-soft: #E4F7F6;
+  --ds-molecule: #167F86;
+  --ds-molecule-soft: #E1F2F3;
 
   --ds-vina: #6C63FF;
   --ds-vina-soft: #EEECFF;
 
-  --ds-success: #2E9D64;
+  --ds-success: #177A46;
   --ds-success-soft: #E7F6EE;
   --ds-success-border: rgba(46, 157, 100, 0.24);
-  --ds-warning: #D9902F;
+  --ds-warning: #9B5A12;
   --ds-warning-soft: #FFF4DC;
   --ds-warning-border: rgba(217, 144, 47, 0.28);
-  --ds-danger: #D64545;
+  --ds-danger: #B83232;
   --ds-danger-soft: #FDECEC;
   --ds-danger-border: rgba(214, 69, 69, 0.24);
-  --ds-info: #2B6CB0;
+  --ds-info: #1E63A7;
   --ds-info-soft: #EAF3FF;
   --ds-info-border: rgba(43, 108, 176, 0.22);
   --ds-molecule-border: rgba(43, 179, 177, 0.24);
 
-  --ds-code-bg: #102033;
+  --ds-code-bg: #071C32;
   --ds-code-text: #F4F7FA;
-  --ds-focus-ring: rgba(36, 92, 158, 0.16);
+  --ds-focus-ring: rgba(74, 156, 235, 0.35);
 
-  --ds-font-ui: Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+  --ds-font-ui: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
   --ds-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 
   --ds-text-xs: 12px;
@@ -63,33 +72,35 @@
   --ds-space-2: 8px;
   --ds-space-3: 12px;
   --ds-space-4: 16px;
-  --ds-space-5: 20px;
-  --ds-space-6: 24px;
-  --ds-space-7: 40px;
+  --ds-space-5: 24px;
+  --ds-space-6: 32px;
+  --ds-space-7: 48px;
 
   --ds-radius-sm: 6px;
   --ds-radius-md: 8px;
-  --ds-radius-lg: 8px;
-  --ds-radius-xl: 20px;
-  --ds-radius-card: 8px;
+  --ds-radius-lg: 10px;
+  --ds-radius-xl: 14px;
+  --ds-radius-card: 10px;
 
   --ds-shadow-none: none;
-  --ds-shadow-soft: 0 1px 2px rgba(16, 32, 51, 0.05);
-  --ds-shadow-panel: 0 10px 28px rgba(16, 32, 51, 0.08);
+  --ds-shadow-soft: 0 1px 2px rgba(6, 26, 47, 0.07);
+  --ds-shadow-panel: 0 14px 32px rgba(6, 26, 47, 0.1);
 
-  --ds-sidebar-width: 220px;
-  --ds-topbar-height: 44px;
-  --ds-context-width: 260px;
-  --ds-content-max: 980px;
+  --ds-sidebar-width: 248px;
+  --ds-sidebar-collapsed-width: 76px;
+  --ds-topbar-height: 60px;
+  --ds-statusbar-height: 34px;
+  --ds-context-width: 316px;
+  --ds-content-max: 1280px;
   --ds-content-wide: 1440px;
-  --ds-page-max: 980px;
-  --ds-main-width: 680px;
-  --ds-rail-width: 260px;
-  --ds-body-gap: 20px;
-  --ds-workbench-width: calc(var(--ds-main-width) + var(--ds-rail-width) + var(--ds-body-gap));
+  --ds-page-max: 1280px;
+  --ds-main-width: 1fr;
+  --ds-rail-width: 316px;
+  --ds-body-gap: 16px;
+  --ds-workbench-width: 100%;
   --ds-panel-min-height: 420px;
-  --ds-button-width: 160px;
-  --ds-border-line: 1px solid var(--ds-border-strong);
+  --ds-button-width: 168px;
+  --ds-border-line: 1px solid var(--ds-border-default);
 
   /* Backward-compatible aliases for the existing V0.7 UI classes. */
   --ds-background: var(--ds-bg-app);

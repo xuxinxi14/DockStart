@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
+import AdvancedDetails from "../components/AdvancedDetails";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import SectionCard from "../components/SectionCard";
+import StatusBadge from "../components/StatusBadge";
 import type { ToolCheckResult, ToolSource, ToolStatus } from "../types";
 
 type ToolCheckPageProps = {
@@ -22,6 +27,13 @@ const sourceText: Record<ToolSource, string> = {
   missing: "未找到来源",
   unknown: "未知来源",
 };
+
+function statusTone(status: ToolStatus): "ok" | "warning" | "error" | "muted" {
+  if (status === "ok") return "ok";
+  if (status === "missing") return "warning";
+  if (status === "error") return "error";
+  return "muted";
+}
 
 function normalizeResult(item: Partial<ToolCheckResult>): ToolCheckResult {
   return {
@@ -80,70 +92,150 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
     void runCheck();
   }, [runCheck]);
 
+  const detectedCount = results.filter((tool) => tool.status === "ok").length;
+  const attentionCount = results.filter((tool) => tool.status !== "ok").length;
+  const vinaResult = results.find((tool) => tool.key === "vina");
+  const assistedKeys = ["vina", "python", "rdkit", "meeko"];
+  const assistedResults = assistedKeys.map((key) => results.find((tool) => tool.key === key));
+  const assistedReady = assistedResults.every((tool) => tool?.status === "ok");
+
   return (
-    <section className="tool-check" aria-labelledby="tool-check-title">
-      <div className="page-heading">
-        <p className="eyebrow">工具检测</p>
-        <h1 id="tool-check-title">工具检测</h1>
-        <p>
-          这一步只确认本机是否具备 DockStart MVP 需要的运行环境。检测不会下载数据库，
-          不会准备分子文件，也不会运行 docking。
-        </p>
-      </div>
+    <PageShell labelledBy="tool-check-title">
+      <PageHero
+        eyebrow="运行环境"
+        title="工具检测"
+        titleId="tool-check-title"
+        description="确认本机运行环境；检测不会下载数据库、准备分子文件或运行 docking。"
+        actions={
+          <>
+            <ActionButton onClick={onOpenSettings}>配置工具路径</ActionButton>
+            <ActionButton variant="primary" onClick={() => void runCheck()} disabled={isChecking}>
+              {isChecking ? "检测中..." : "重新检测"}
+            </ActionButton>
+          </>
+        }
+      />
 
-      <div className="toolbar">
-        <button className="secondary-button" type="button" onClick={onOpenSettings}>
-          配置工具路径
-        </button>
-        <button className="primary-button" type="button" onClick={runCheck} disabled={isChecking}>
-          {isChecking ? "检测中..." : "重新检测"}
-        </button>
-      </div>
-
-      <div className="tool-grid">
-        {results.map((tool) => (
-          <article className="tool-card" key={tool.key}>
-            <div className="tool-card-header">
-              <h2>{tool.name}</h2>
-              <span className={`status-badge status-${tool.status}`}>
-                {statusText[tool.status] ?? statusText.unknown}
-              </span>
+      <BodyGrid>
+        <MainPanel>
+          <div className="main-panel-content">
+            <div className="status-strip">
+              <article className="metric-card">
+                <span>检测项目</span>
+                <strong>{results.length || "等待结果"}</strong>
+                <StatusBadge tone={isChecking ? "info" : "muted"}>{isChecking ? "检测中" : "本机环境"}</StatusBadge>
+              </article>
+              <article className="metric-card">
+                <span>已检测</span>
+                <strong>{detectedCount}</strong>
+                <StatusBadge tone={detectedCount > 0 ? "ok" : "muted"}>{detectedCount > 0 ? "可用" : "尚无结果"}</StatusBadge>
+              </article>
+              <article className="metric-card">
+                <span>需要处理</span>
+                <strong>{attentionCount}</strong>
+                <StatusBadge tone={results.length === 0 ? "muted" : attentionCount > 0 ? "warning" : "ok"}>
+                  {results.length === 0 ? "等待结果" : attentionCount > 0 ? "请检查" : "无异常"}
+                </StatusBadge>
+              </article>
             </div>
 
-            <dl className="tool-meta">
+            <SectionCard title="检测结果" description="路径、版本和来源会决定 DockStart 实际调用哪套工具链。">
+              {results.length === 0 ? <p className="placeholder-note">正在读取本机工具状态。</p> : null}
+              <div className="tool-grid">
+                {results.map((tool) => (
+                  <article className="tool-card" key={tool.key}>
+                    <div className="tool-card-header">
+                      <h2>{tool.name}</h2>
+                      <StatusBadge tone={statusTone(tool.status)}>
+                        {statusText[tool.status] ?? statusText.unknown}
+                      </StatusBadge>
+                    </div>
+
+                    <dl className="tool-meta">
+                      <div>
+                        <dt>版本</dt>
+                        <dd>{tool.version || "未获取"}</dd>
+                      </div>
+                      <div>
+                        <dt>路径</dt>
+                        <dd>{tool.path || "未检测到路径"}</dd>
+                      </div>
+                      <div>
+                        <dt>来源</dt>
+                        <dd>{sourceText[tool.source] ?? sourceText.unknown}</dd>
+                      </div>
+                      {tool.bundled_path ? (
+                        <div>
+                          <dt>随附 Vina 路径</dt>
+                          <dd>{tool.bundled_path}</dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>说明</dt>
+                        <dd>{tool.message}</dd>
+                      </div>
+                    </dl>
+
+                    {tool.raw_error ? (
+                      <AdvancedDetails>
+                        <pre>{tool.raw_error}</pre>
+                      </AdvancedDetails>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            </SectionCard>
+          </div>
+        </MainPanel>
+
+        <RightRail>
+          <RightRailSection title="本次检测">
+            <dl className="mode-context-list">
               <div>
-                <dt>版本</dt>
-                <dd>{tool.version || "未获取"}</dd>
+                <dt>状态</dt>
+                <dd>{isChecking ? "正在检测" : results.length > 0 ? "检测已完成" : "等待检测"}</dd>
               </div>
               <div>
-                <dt>路径</dt>
-                <dd>{tool.path || "未检测到路径"}</dd>
+                <dt>已检测</dt>
+                <dd>{detectedCount} 项</dd>
               </div>
               <div>
-                <dt>来源</dt>
-                <dd>{sourceText[tool.source] ?? sourceText.unknown}</dd>
-              </div>
-              {tool.bundled_path ? (
-                <div>
-                <dt>随附 Vina 路径</dt>
-                  <dd>{tool.bundled_path}</dd>
-                </div>
-              ) : null}
-              <div>
-                <dt>说明</dt>
-                <dd>{tool.message}</dd>
+                <dt>需要处理</dt>
+                <dd>{attentionCount} 项</dd>
               </div>
             </dl>
+          </RightRailSection>
 
-            {tool.raw_error ? (
-              <details className="raw-error">
-                <summary>技术详情</summary>
-                <pre>{tool.raw_error}</pre>
-              </details>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </section>
+          <RightRailSection title="模式影响">
+            <dl className="mode-context-list">
+              <div>
+                <dt>Basic Mode</dt>
+                <dd>
+                  {isChecking || results.length === 0
+                    ? "正在确认 Vina 状态"
+                    : vinaResult?.status === "ok"
+                      ? "Vina 已就绪"
+                      : "需要可用的 AutoDock Vina"}
+                </dd>
+              </div>
+              <div>
+                <dt>Assisted Mode</dt>
+                <dd>
+                  {isChecking || results.length === 0
+                    ? "正在确认准备工具链"
+                    : assistedReady
+                      ? "Vina、Python、RDKit、Meeko 已就绪"
+                      : "需要检查 Vina、Python、RDKit、Meeko"}
+                </dd>
+              </div>
+            </dl>
+          </RightRailSection>
+
+          <RightRailSection title="修复顺序">
+            <p>先配置 Vina 或 Python 的可执行文件路径，再重新检测。RDKit / Meeko 缺失只影响自动准备流程。</p>
+          </RightRailSection>
+        </RightRail>
+      </BodyGrid>
+    </PageShell>
   );
 }

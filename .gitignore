@@ -29,6 +29,7 @@ env/
 dockstart_settings.json
 *.log
 .workbuddy/
+.codex-ui-audit/
 
 # Third-party source archives and downloads
 *_master.zip

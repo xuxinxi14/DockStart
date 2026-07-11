@@ -2,9 +2,15 @@
 
 ## 产品气质
 
-**DockStart Molecular Workbench / 分子工作台**
+**DockStart Instrument Console / 深蓝分子工作台**
 
-DockStart 是现代分子建模与对接实验工作台，不是营销页、后台模板或游戏式 dashboard。界面应专业、冷静、可信、低噪声、强引导、状态明确，并为文件、日志、表格和 3D viewer 留出稳定空间。
+DockStart 是现代分子建模与对接实验工作台，不是营销页、后台模板或游戏式 dashboard。深蓝 Sidebar、Topbar、ContextPanel 与底部状态栏构成稳定的“仪器外壳”，浅色任务画布承载文件、参数、日志、表格和 3D viewer。界面应专业、冷静、可信、低噪声、强引导、状态明确。
+
+深蓝覆盖原则：
+- 目标覆盖约 35%–40%，用于长时间工作时建立视觉锚点。
+- 深蓝只用于应用壳、上下文检查区和 Viewer 工作轨，不把数值表单、表格或日志正文整体反白。
+- 深色区域必须使用高对比文字，不使用灰字压在深蓝底上。
+- 不使用渐变、霓虹、发光、玻璃拟态或装饰纹理。
 
 完整主题 token 定义见 `docs/design/molecular_workbench_theme_tokens.md`。本文件说明这些 token 在 DockStart 前端组件中的使用方式。
 

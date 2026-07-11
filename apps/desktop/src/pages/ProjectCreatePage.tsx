@@ -24,10 +24,14 @@ type ModeConfig = {
   requirement: string;
 };
 
-const modeOptions: Array<{ id: StartMode; label: string }> = [
-  { id: "basic", label: "基础项目" },
-  { id: "assisted", label: "原始结构项目" },
-  { id: "demo", label: "示例流程" },
+function projectModePanelId(mode: StartMode) {
+  return `project-mode-panel-${mode}`;
+}
+
+const modeOptions: Array<{ id: StartMode; label: string; controlsId: string }> = [
+  { id: "basic", label: "基础项目", controlsId: projectModePanelId("basic") },
+  { id: "assisted", label: "原始结构项目", controlsId: projectModePanelId("assisted") },
+  { id: "demo", label: "示例流程", controlsId: projectModePanelId("demo") },
 ];
 
 const modeConfig: Record<StartMode, ModeConfig> = {
@@ -167,6 +171,7 @@ export default function ProjectCreatePage({
   const [demos, setDemos] = useState<DemoProjectsResponse["demos"]>([]);
 
   const currentConfig = modeConfig[startMode];
+  const activeModeIndex = Math.max(0, modeOptions.findIndex((option) => option.id === startMode));
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -525,6 +530,7 @@ export default function ProjectCreatePage({
         <MainPanel>
           <ModeTabs
             active={startMode}
+            id="project-mode-tabs"
             label="选择开始方式"
             onChange={(mode) => {
               resetFeedback();
@@ -532,7 +538,24 @@ export default function ProjectCreatePage({
             }}
             options={modeOptions}
           />
-          <div className="main-panel-content">
+          {modeOptions.map((option, index) =>
+            option.id === startMode ? null : (
+              <div
+                aria-labelledby={`project-mode-tabs-tab-${index}`}
+                hidden
+                id={option.controlsId}
+                key={option.id}
+                role="tabpanel"
+              />
+            ),
+          )}
+          <div
+            aria-labelledby={`project-mode-tabs-tab-${activeModeIndex}`}
+            className="main-panel-content"
+            id={projectModePanelId(startMode)}
+            role="tabpanel"
+            tabIndex={0}
+          >
           {showExistingProject ? (
             <section className="main-panel-section inline-secondary-section">
               <div className="main-panel-section-header">

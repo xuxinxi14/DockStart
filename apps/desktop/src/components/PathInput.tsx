@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
 type FileFilter = {
@@ -29,6 +29,8 @@ type PathInputProps = {
   id?: string;
   /** 输入框 aria-label，无可见 label 时使用 */
   ariaLabel?: string;
+  /** 输入框已有的辅助说明 id；选择器错误提示会与其合并 */
+  ariaDescribedBy?: string;
 };
 
 /**
@@ -37,8 +39,8 @@ type PathInputProps = {
  * 点击按钮调用 tauri-plugin-dialog 的 open() 打开原生文件/目录选择对话框，
  * 把选中的绝对路径写回输入框。用户可继续手动编辑路径。
  *
- * 非 Tauri 环境（如纯浏览器开发预览）下 open() 会抛错，此处静默忽略，
- * 不影响手动输入。
+ * 非 Tauri 环境（如纯浏览器开发预览）下 open() 会抛错，此处显示中文提示，
+ * 同时保留文本框供用户手动输入。
  */
 export default function PathInput({
   value,
@@ -50,17 +52,24 @@ export default function PathInput({
   title,
   id,
   ariaLabel,
+  ariaDescribedBy,
 }: PathInputProps) {
+  const generatedId = useId().replace(/:/g, "");
+  const feedbackId = `${id ?? `path-input-${generatedId}`}-picker-feedback`;
+  const [pickerError, setPickerError] = useState("");
+  const pickerTitle = title ?? (mode === "directory" ? "选择文件夹" : "选择文件");
+
   const pickPath = useCallback(async () => {
     if (disabled) {
       return;
     }
+    setPickerError("");
     try {
       const selected = await open({
         directory: mode === "directory",
         multiple: false,
         filters: mode === "file" ? filters : undefined,
-        title: title ?? (mode === "directory" ? "选择文件夹" : "选择文件"),
+        title: pickerTitle,
       });
       if (selected === null || selected === undefined) {
         return;
@@ -71,32 +80,49 @@ export default function PathInput({
         onChange(nextPath);
       }
     } catch {
-      // 非 Tauri 桌面环境（例如 vite dev server 纯浏览器预览）下插件不可用，
-      // 忽略错误，用户仍可手动输入路径。
+      const targetLabel = mode === "directory" ? "文件夹" : "文件";
+      setPickerError(
+        `无法打开${targetLabel}选择器。请直接在输入框中手动填写路径；浏览器预览模式不支持系统选择器。`,
+      );
     }
-  }, [disabled, filters, mode, onChange, title]);
+  }, [disabled, filters, mode, onChange, pickerTitle]);
+
+  const describedBy = [ariaDescribedBy, pickerError ? feedbackId : undefined].filter(Boolean).join(" ") || undefined;
 
   return (
-    <div className="path-input" data-layout="form-row">
-      <input
-        id={id}
-        type="text"
-        className="path-input-field"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-        aria-label={ariaLabel}
-      />
-      <button
-        type="button"
-        className="secondary-button path-input-button"
-        disabled={disabled}
-        onClick={() => void pickPath()}
-        title={mode === "directory" ? "选择文件夹" : "选择文件"}
-      >
-        选择…
-      </button>
+    <div className="path-input-group form-field">
+      <div className="path-input" data-layout="form-row">
+        <input
+          aria-describedby={describedBy}
+          aria-label={ariaLabel}
+          className="path-input-field"
+          disabled={disabled}
+          id={id}
+          onChange={(event) => {
+            setPickerError("");
+            onChange(event.target.value);
+          }}
+          placeholder={placeholder}
+          type="text"
+          value={value}
+        />
+        <button
+          aria-describedby={pickerError ? feedbackId : undefined}
+          aria-label={pickerTitle}
+          className="secondary-button path-input-button"
+          disabled={disabled}
+          onClick={() => void pickPath()}
+          title={pickerTitle}
+          type="button"
+        >
+          选择…
+        </button>
+      </div>
+      {pickerError ? (
+        <p className="message-line" id={feedbackId} role="alert">
+          {pickerError}
+        </p>
+      ) : null}
     </div>
   );
 }

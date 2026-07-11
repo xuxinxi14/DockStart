@@ -246,9 +246,10 @@ export default function ProjectDashboardPage({
   const [rawError, setRawError] = useState("");
   const [firstRunToolchain, setFirstRunToolchain] = useState<FirstRunToolchainSummary | null>(null);
   const [toolchainChecked, setToolchainChecked] = useState(false);
+  const projectDir = project?.project_dir;
 
   const loadWorkflow = useCallback(async () => {
-    if (!project) {
+    if (!projectDir) {
       setWorkflow(null);
       onWorkflowChange?.(null);
       return;
@@ -258,7 +259,7 @@ export default function ProjectDashboardPage({
     setRawError("");
     try {
       const rawPayload = await invoke<string>("get_project_workflow_status", {
-        projectDir: project.project_dir,
+        projectDir,
       });
       const parsed = parseWorkflowStatus(rawPayload);
       setWorkflow(parsed);
@@ -274,7 +275,7 @@ export default function ProjectDashboardPage({
     } finally {
       setIsBusy(false);
     }
-  }, [onProjectChange, onWorkflowChange, project]);
+  }, [onProjectChange, onWorkflowChange, projectDir]);
 
   useEffect(() => {
     void loadWorkflow();
