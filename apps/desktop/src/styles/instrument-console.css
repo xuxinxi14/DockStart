@@ -797,7 +797,7 @@ summary:focus-visible {
 .secondary-button {
   border-color: var(--ds-brand-border);
   background: var(--ds-surface-raised);
-  color: var(--ds-brand-active);
+  color: var(--ds-brand-on-dark);
 }
 
 .secondary-button:hover:not(:disabled) {
@@ -808,12 +808,12 @@ summary:focus-visible {
 .text-button {
   border-color: var(--ds-color-transparent);
   background: var(--ds-color-transparent);
-  color: var(--ds-brand);
+  color: var(--ds-brand-on-dark);
 }
 
 .text-button:hover:not(:disabled) {
   background: var(--ds-surface-hover);
-  color: var(--ds-brand-hover);
+  color: var(--ds-text-on-dark);
 }
 
 input,

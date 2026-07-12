@@ -1,14 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X } from "@phosphor-icons/react";
+import { CheckCircle, Clock, FileText, FolderOpen, Gauge, Microscope, Timer } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
-import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import { PageHero, PageShell } from "../components/layout/PageLayout";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
-import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
-import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
 
@@ -66,6 +64,19 @@ function formatScoreValue(value: number): string {
   return Number.isFinite(value) ? String(value) : "";
 }
 
+function formatTimestamp(value: string): string {
+  if (!value) return "未记录";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 export default function ResultPage({
   project: initialProject,
   runId,
@@ -87,8 +98,6 @@ export default function ResultPage({
   const [isBusy, setIsBusy] = useState(false);
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
-  const closeViewerButtonRef = useRef<HTMLButtonElement | null>(null);
-  const viewerTriggerRef = useRef<HTMLElement | null>(null);
 
   const status = metadataString(metadata, "status") || "unknown";
   const canAnalyze = status === "finished" && !isBusy;
@@ -100,33 +109,17 @@ export default function ResultPage({
   const displayedReportFile = metadataString(metadata, "report_file") || metadataString(metadata, "project_report_file");
   const reportReady = Boolean(displayedReportFile);
 
-  const openPoseViewer = (mode: number, trigger: HTMLElement) => {
-    viewerTriggerRef.current = trigger;
-    setViewerMode(mode);
-  };
-
-  const closePoseViewer = useCallback(() => {
-    setViewerMode(null);
-    window.setTimeout(() => viewerTriggerRef.current?.focus(), 0);
-  }, []);
-
-  useEffect(() => {
-    if (viewerMode === null) return;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePoseViewer();
-    };
-    document.body.style.overflow = "hidden";
-    document.addEventListener("keydown", handleKeyDown);
-    closeViewerButtonRef.current?.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [closePoseViewer, viewerMode]);
-
   useEffect(() => {
     setViewerMode(null);
+    setMetadata(null);
+    setScores([]);
+    setLogFile("");
+    setScoresFile("");
+    setProjectScoresFile("");
+    setBestAffinity(null);
+    setAnalyzedAt("");
+    setMessage("");
+    setRawError("");
   }, [runId]);
 
   const applyResponse = useCallback(
@@ -239,236 +232,163 @@ export default function ResultPage({
     }
   };
 
+  const selectedMode = viewerMode ?? scores[0]?.mode ?? 1;
+  const selectedScore = scores.find((score) => score.mode === selectedMode) ?? scores[0];
+  const startedAt = metadataString(metadata, "started_at");
+  const metadataFinishedAt = metadataString(metadata, "finished_at");
+  const measuredElapsedSeconds = startedAt && metadataFinishedAt
+    ? Math.max(0, (new Date(metadataFinishedAt).getTime() - new Date(startedAt).getTime()) / 1000)
+    : null;
+  const elapsedSeconds = metadataNumber(metadata, "elapsed_seconds") ?? measuredElapsedSeconds;
+  const vinaVersion = metadataString(metadata, "vina_version") || "1.2.7";
+  const vinaDisplay = vinaVersion.toLowerCase().includes("vina") ? vinaVersion : `AutoDock Vina ${vinaVersion}`;
+  const finishedAt = metadataString(metadata, "finished_at") || displayedAnalyzedAt || project.updated_at;
+
+  const copyOutputPath = async () => {
+    try {
+      await navigator.clipboard.writeText(`${project.project_dir}\\runs\\${runId}`);
+      setMessage("运行输出路径已复制。");
+      setRawError("");
+    } catch (error) {
+      setMessage("无法复制运行输出路径。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
-    <PageShell labelledBy="result-title">
+    <PageShell labelledBy="result-title" className="result-analysis-page">
       <PageHero
-        eyebrow="结果与报告"
-        title="查看对接结果"
+        eyebrow="结果 · RESULT ANALYSIS"
+        title="对接结果分析"
         titleId="result-title"
-        description="解析 log.txt，生成 scores.csv，并查看对接评分表。"
+        description="查看与比较对接构象的评分与结构，访问运行记录并导出实验文件。"
         actions={
           <>
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
-          <ActionButton onClick={() => void reloadRunMetadata()} disabled={isBusy}>刷新运行记录</ActionButton>
+            <StatusBadge tone={status === "finished" ? "ok" : status === "failed" ? "error" : "warning"}>
+              {runStatusText[status] ?? "需检查"}
+            </StatusBadge>
+            <ActionButton variant="text" onClick={onBack}>返回工作台</ActionButton>
+            <ActionButton onClick={() => void reloadRunMetadata()} disabled={isBusy}>刷新结果</ActionButton>
           </>
         }
       />
 
-      <BodyGrid>
-        <MainPanel>
-          <div className="main-panel-content">
-            <VinaWorkflowBar current={reportReady ? "report" : "result"} runId={runId} />
+      <section className="result-run-strip" aria-label="运行摘要">
+        <div><Microscope aria-hidden="true" size={18} /><span>运行标识<strong>{runId}</strong></span></div>
+        <div><CheckCircle aria-hidden="true" size={18} weight="fill" /><span>状态<strong>{runStatusText[status] ?? status}</strong></span></div>
+        <div><Gauge aria-hidden="true" size={18} /><span>对接引擎<strong>{vinaDisplay}</strong></span></div>
+        <div><Timer aria-hidden="true" size={18} /><span>运行耗时<strong>{elapsedSeconds === null || !Number.isFinite(elapsedSeconds) ? "未记录" : `${Math.round(elapsedSeconds)} 秒`}</strong></span></div>
+        <div><Clock aria-hidden="true" size={18} /><span>保存时间<strong>{formatTimestamp(finishedAt)}</strong></span></div>
+      </section>
 
-            <div className="status-strip">
-              <article className="metric-card">
-                <span>运行记录</span>
-                <strong>{runId}</strong>
-              </article>
-              <article className="metric-card">
-                <span>运行状态</span>
-                <strong>{runStatusText[status] ?? status}</strong>
-                <StatusBadge tone={status === "finished" ? "ok" : status === "failed" ? "error" : "warning"}>
-                  {runStatusText[status] ?? "需检查"}
-                </StatusBadge>
-              </article>
-              <article className="metric-card">
-                <span>最佳对接评分</span>
-                <strong>{displayedBestAffinity === null ? "尚未解析" : `${displayedBestAffinity} kcal/mol`}</strong>
-              </article>
+      {status !== "finished" ? (
+        <WarningCallout title="结果暂不可解析"><p>需要先完成 Vina 运行。</p></WarningCallout>
+      ) : null}
+
+      <div className="result-analysis-layout">
+        <main className="result-analysis-main">
+          <section className="result-pose-workbench">
+            <div className="result-pose-viewer">
+              {scores.length ? (
+                <Suspense fallback={<div className="run-preview-loading">正在加载 3D 构象查看器…</div>}>
+                  <PoseStructurePreview
+                    className="result-pose-preview"
+                    projectDir={project.project_dir}
+                    runId={runId}
+                    mode={selectedMode}
+                  />
+                </Suspense>
+              ) : (
+                <div className="result-pose-empty"><Microscope aria-hidden="true" size={28} /><span>解析 scores 后显示构象</span></div>
+              )}
             </div>
 
-            {status !== "finished" ? (
-              <WarningCallout title="结果暂不可解析">
-                <p>需要先完成 Vina 运行。</p>
-              </WarningCallout>
-            ) : null}
-
-            <SectionCard title="scores.csv">
-              <div className="button-row">
-                <ActionButton variant="primary" disabled={!canAnalyze} onClick={() => void analyzeResults()}>
-                  {isBusy ? "处理中..." : "解析 scores"}
-                </ActionButton>
-                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
-                <ActionButton
-                  disabled={status !== "finished" || !scores.length}
-                  onClick={(event) => openPoseViewer(scores[0].mode, event.currentTarget)}
-                >
-                  查看构象
-                </ActionButton>
-                <ActionButton disabled={!(scores.length > 0 || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
-                  {reportReady ? "查看实验记录" : "导出实验记录"}
-                </ActionButton>
+            <div className="result-pose-ranking">
+              <header><span>构象列表</span><strong>按评分排序</strong></header>
+              <div className="result-ranking-head"><span>排名</span><span>构象</span><span>评分</span><span>RMSD l.b.</span><span>RMSD u.b.</span></div>
+              <div className="result-ranking-list">
+                {scores.map((score, index) => (
+                  <button
+                    key={score.mode}
+                    type="button"
+                    className={selectedMode === score.mode ? "is-selected" : ""}
+                    onClick={() => setViewerMode(score.mode)}
+                    aria-pressed={selectedMode === score.mode}
+                  >
+                    <span>{index + 1}</span>
+                    <strong>Mode {score.mode}</strong>
+                    <span>{formatScoreValue(score.affinity_kcal_mol)}</span>
+                    <span>{formatScoreValue(score.rmsd_lb)}</span>
+                    <span>{formatScoreValue(score.rmsd_ub)}</span>
+                  </button>
+                ))}
               </div>
+              <p>RMSD 相对基于 Mode 1 的构象，仅用于本次输出内比较。</p>
+            </div>
+          </section>
 
-              {scores.length > 0 ? (
-                <div className="scores-table-wrap">
-                  <table className="scores-table">
-                    <thead>
-                      <tr>
-                        <th>构象</th>
-                        <th>对接评分 kcal/mol</th>
-                        <th>RMSD l.b.</th>
-                        <th>RMSD u.b.</th>
-                        <th>3D 复核</th>
+          <nav className="result-tabs" aria-label="结果详情">
+            <button className="active" type="button">评分</button>
+            <button type="button" onClick={() => void reloadRunMetadata()}>运行记录</button>
+            <button type="button" onClick={() => onOpenReportPage(project, runId)}>实验记录</button>
+          </nav>
+
+          <section className="result-score-ledger">
+            <div className="result-score-actions">
+              <div><strong>scores.csv</strong><span>{displayedScoresFile || "尚未生成"}</span></div>
+              <div>
+                <ActionButton variant="primary" disabled={!canAnalyze} onClick={() => void analyzeResults()}>{isBusy ? "处理中…" : "解析 scores"}</ActionButton>
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
+              </div>
+            </div>
+
+            {scores.length ? (
+              <div className="scores-table-wrap">
+                <table className="scores-table">
+                  <thead><tr><th>构象</th><th>对接评分 kcal/mol</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
+                  <tbody>
+                    {scores.map((score) => (
+                      <tr key={score.mode} className={selectedMode === score.mode ? "is-selected" : ""} onClick={() => setViewerMode(score.mode)}>
+                        <td>Mode {score.mode}</td><td>{formatScoreValue(score.affinity_kcal_mol)}</td><td>{formatScoreValue(score.rmsd_lb)}</td><td>{formatScoreValue(score.rmsd_ub)}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {scores.map((score) => (
-                        <tr key={score.mode}>
-                          <td>{score.mode}</td>
-                          <td>{formatScoreValue(score.affinity_kcal_mol)}</td>
-                          <td>{formatScoreValue(score.rmsd_lb)}</td>
-                          <td>{formatScoreValue(score.rmsd_ub)}</td>
-                          <td>
-                            <button
-                              className="text-button inline"
-                              type="button"
-                              onClick={(event) => openPoseViewer(score.mode, event.currentTarget)}
-                            >
-                              打开 mode {score.mode}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="message-line">尚未加载 scores.csv。</p>
-              )}
-            </SectionCard>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <p className="message-line">尚未加载 scores.csv。</p>}
 
-            <AdvancedDetails>
+            <AdvancedDetails summary="运行与文件详情">
               <dl className="meta-list">
-                <div>
-                  <dt>log.txt</dt>
-                  <dd><code>{logPath}</code></dd>
-                </div>
-                <div>
-                  <dt>本次 scores</dt>
-                  <dd><code>{displayedScoresFile || "尚未生成"}</code></dd>
-                </div>
-                <div>
-                  <dt>项目 scores</dt>
-                  <dd><code>{displayedProjectScoresFile || "尚未生成"}</code></dd>
-                </div>
-                <div>
-                  <dt>解析时间</dt>
-                  <dd>{displayedAnalyzedAt || "未记录"}</dd>
-                </div>
+                <div><dt>log.txt</dt><dd><code>{logPath}</code></dd></div>
+                <div><dt>本次 scores</dt><dd><code>{displayedScoresFile || "尚未生成"}</code></dd></div>
+                <div><dt>项目 scores</dt><dd><code>{displayedProjectScoresFile || "尚未生成"}</code></dd></div>
+                <div><dt>解析时间</dt><dd>{displayedAnalyzedAt || "未记录"}</dd></div>
               </dl>
             </AdvancedDetails>
+            {message || rawError ? <CommandResultPanel title="结果状态" message={message} rawError={rawError} /> : null}
+          </section>
+        </main>
 
-            <ScientificDisclaimer kind="score" />
-            <CommandResultPanel title="结果解析" message={message} rawError={rawError} />
-          </div>
-        </MainPanel>
-
-        <RightRail>
-          <RightRailSection title="运行状态">
-            <dl className="mode-context-list">
-              <div>
-                <dt>run</dt>
-                <dd>{runId}</dd>
-              </div>
-              <div>
-                <dt>状态</dt>
-                <dd>{runStatusText[status] ?? status}</dd>
-              </div>
-              <div>
-                <dt>最佳评分</dt>
-                <dd>{displayedBestAffinity === null ? "未解析" : `${displayedBestAffinity} kcal/mol`}</dd>
-              </div>
-            </dl>
-          </RightRailSection>
-
-          <RightRailSection title="输出文件">
-            <dl className="mode-context-list">
-              <div>
-                <dt>log</dt>
-                <dd>{logPath}</dd>
-              </div>
-              <div>
-                <dt>scores</dt>
-                <dd>{displayedScoresFile || "未生成"}</dd>
-              </div>
-              <div>
-                <dt>report</dt>
-                <dd>{displayedReportFile || "未生成"}</dd>
-              </div>
-            </dl>
-          </RightRailSection>
-
-          <RightRailSection title="下一步">
-            <p>
-              {reportReady
-                ? "查看已生成的 Markdown 实验记录，或点击列表复核 3D 构象。"
-                : scores.length > 0 || displayedScoresFile
-                  ? "导出 Markdown 实验记录。"
-                  : "先解析 scores.csv。"}
-            </p>
-          </RightRailSection>
-        </RightRail>
-      </BodyGrid>
-
-      {viewerMode !== null ? (
-        <div
-          className="pose-viewer-modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pose-viewer-modal-title"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closePoseViewer();
-          }}
-        >
-          <div className="pose-viewer-modal-content">
-            <header className="pose-viewer-modal-header">
-              <h2 id="pose-viewer-modal-title">
-                对接构象 3D 查看 <small>({runId} · Mode {viewerMode})</small>
-              </h2>
-              <button
-                type="button"
-                className="close-modal-btn"
-                onClick={closePoseViewer}
-                ref={closeViewerButtonRef}
-                aria-label="关闭弹窗"
-              >
-                <X size={20} />
-              </button>
-            </header>
-
-            <div className="pose-viewer-modal-body">
-              <Suspense fallback={<div className="run-preview-loading">正在加载 3D 构象查看器…</div>}>
-                <PoseStructurePreview
-                  projectDir={project.project_dir}
-                  runId={runId}
-                  mode={viewerMode}
-                />
-              </Suspense>
-
-              <div className="pose-viewer-modal-sidebar">
-                <h3>构象列表 (affinity)</h3>
-                <div className="pose-viewer-modal-list">
-                  {scores.map((score) => (
-                    <button
-                      key={score.mode}
-                      type="button"
-                      className={`pose-viewer-modal-row ${viewerMode === score.mode ? "is-selected" : ""}`}
-                      onClick={() => setViewerMode(score.mode)}
-                    >
-                      <strong>Mode {score.mode}</strong>
-                      <span>{formatScoreValue(score.affinity_kcal_mol)} kcal/mol</span>
-                    </button>
-                  ))}
-                </div>
-                <p className="pose-viewer-modal-note">
-                  图例可在视图下方点击切换受体和构象显示。
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+        <aside className="result-analysis-rail">
+          <section className="result-selected-pose">
+            <span>所选构象</span><strong>Mode {selectedMode}</strong>
+            <b>{selectedScore ? formatScoreValue(selectedScore.affinity_kcal_mol) : displayedBestAffinity ?? "—"} <small>kcal/mol</small></b>
+          </section>
+          <section className="result-output-files">
+            <h2>输出文件</h2>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>log.txt</strong><small>{logPath}</small></span></div>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>scores.csv</strong><small>{displayedScoresFile || "未生成"}</small></span></div>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>docking_report.md</strong><small>{displayedReportFile || "未生成"}</small></span></div>
+          </section>
+          <section className="result-rail-actions">
+            <ActionButton variant="primary" disabled={!(scores.length || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
+              <FileText aria-hidden="true" size={17} /> {reportReady ? "查看实验记录" : "导出实验记录"}
+            </ActionButton>
+            <ActionButton onClick={() => void copyOutputPath()}><FolderOpen aria-hidden="true" size={17} /> 复制输出路径</ActionButton>
+          </section>
+          <ScientificDisclaimer kind="score" />
+        </aside>
+      </div>
     </PageShell>
   );
 }

@@ -1,84 +1,93 @@
-# DockStart 3D 工作台与运行流程设计 QA
+# DockStart v0.9.6 Design QA
 
-## 审查范围
+## Comparison Target
 
-- 目标：重排 3D 工作台、加入 XYZ 方向轴和 Box 单参数滚轮绑定、统一折叠导航与信息框、消除页面切换和按钮点击时的主线程卡顿。
-- 参考图：用户提供的 5 张 1588 × 1014 / 局部界面截图。
-- 实现环境：真实 Tauri WebView2 桌面窗口，不是静态网页替身。
-- 核心视口：1588 × 1014；补充检查 1200 × 800 响应式布局。
-- QA 项目：`.codex-ui-audit/viewer-workbench-redesign/qa-final/basic_demo_001`。
+- Source visual truth:
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\structure-preparation.png`
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\docking-workbench.png`
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\result-analysis.png`
+- Rendered implementation:
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-preparation.png`
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-docking.png`
+  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-results.png`
+  - Runtime interaction evidence: `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-results-fresh-mode2.png`
+- Viewport: 1570 x 1002 CSS pixels, device pixel ratio 1.
+- Runtime: real Tauri desktop application rendered by WebView2 at `http://127.0.0.1:1420/`.
+- State:
+  - Preparation: `result_demo_005`, existing-PDBQT and raw-structure modes.
+  - Docking: `result_demo_005`, receptor and ligand loaded, valid 12 x 12 x 12 A box, preflight ready.
+  - Results: fresh `result_demo_005`, `run_001`, modes 1-3 available; modes 2 and 3 loaded successfully during interaction QA.
 
-## 对照证据
+## Comparison Evidence
 
-- 改造前 Viewer：`.codex-ui-audit/viewer-workbench-redesign/baseline/01-current-viewer.png`
-- 改造前折叠导航：`.codex-ui-audit/viewer-workbench-redesign/baseline/02-collapsed-sidebar.png`
-- 最终 Viewer 首屏：`.codex-ui-audit/viewer-workbench-redesign/qa-final/01-viewer-top.png`
-- Viewer 尺寸 X 滚轮绑定：`.codex-ui-audit/viewer-workbench-redesign/qa-final/02-viewer-box-bound.png`
-- 下方仪表盘滚动修复：`.codex-ui-audit/viewer-workbench-redesign/qa-final/04-viewer-dashboard-fixed.png`
-- 最终折叠导航：`.codex-ui-audit/viewer-workbench-redesign/qa-final/05-collapsed-sidebar.png`
-- 蓝色下一步区域：`.codex-ui-audit/viewer-workbench-redesign/qa-final/06-callouts.png`
-- 绿色结果区域：`.codex-ui-audit/viewer-workbench-redesign/qa-final/07-green-result.png`
-- 运行页 Box 绑定与 XYZ 轴：`.codex-ui-audit/viewer-workbench-redesign/qa-final/08-run-box-bound.png`
-- 真实运行完成状态：`.codex-ui-audit/viewer-workbench-redesign/qa-final/09-run-complete.png`
-- 参考与实现同屏比较：`.codex-ui-audit/viewer-workbench-redesign/qa-final/10-viewer-comparison.png`
+### Full-view comparisons
 
-## 可见设计核对
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-preparation.png`
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-docking.png`
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-results.png`
 
-| 目标 | 结果 | 证据 |
-| --- | --- | --- |
-| 取消左右夹持画布 | 通过 | 画布占主列，右侧只保留结构加载、图层、Pose、Box 等互动信息。 |
-| 仪表盘移至画布下方 | 通过 | 当前文件、Box 摘要、可查看文件按三列对齐；窄屏自动改为两列/单列。 |
-| 滚动时不遮挡仪表盘 | 通过 | 真实滚动发现 sticky 画布覆盖问题后已移除错误粘性定位，复测无重叠。 |
-| XYZ 方向提示 | 通过 | Viewer 与运行页均显示随模型旋转的 X 红、Y 绿、Z 蓝真实 3Dmol 轴。 |
-| Box 控制清晰 | 通过 | 六项参数各有独立绑定按钮、单选高亮、步进选择和实时状态说明。 |
-| 折叠导航统一 | 通过 | 11 个入口均为 48 × 48 点击区、20 × 20 图标；组内 5px、组间 18px。 |
-| 蓝/绿信息框排版 | 通过 | 统一 4px 语义边线、12px/14px 内边距、标题/正文行高；按钮宽屏右对齐，窄屏整行换行。 |
-| 深蓝视觉区域 | 通过 | 导航、顶部栏、3D 画布、右侧工作栏、运行前检和底部状态栏组成连续深蓝框架。 |
+Each comparison places the selected visual target and the rendered implementation in one image. The implementation intentionally applies the user's later all-dark, slightly lighter deep-blue direction across all three workspaces; the first two source images retain their earlier light center surfaces.
 
-## 核心交互核对
+### Focused region comparisons
 
-- Viewer：绑定“尺寸 X”后，滚轮将 Box 从 `12` 调整到 `12.1`，其余五项不变；取消绑定后再次滚动，六项 Box 值均不再改变，恢复 3Dmol 默认缩放。
-- Viewer：六个绑定按钮同一时间只有一个 `aria-pressed=true`；中心参数允许负值，尺寸参数最小为 0.1 Å。
-- 运行页：默认使用 0.1 Å 细调；快速 5 Å 步进向下滚动时，尺寸由 0.2 Å 正确钳制到 0.1 Å，不会反向跳到 5 Å。
-- 运行页：尺寸 X 绑定、取消绑定、XYZ 轴显示均在真实桌面窗口验证。
-- Result：完整流程生成报告后，按钮改为“查看实验记录”，右栏显示 report 路径，不再错误提示“待导出”。
-- Pose：`run_002` 的 9 个构象可读取，mode 1 自动加载到 Viewer，当前评分和图层状态同步显示。
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-preparation.png`
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-docking.png`
+- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-results.png`
 
-## 性能核对
+The focused comparisons cover typography hierarchy, tab and control spacing, the 3D viewport and Box controls, ranked pose rows, result tabs, the right context rail, status colors, icons, borders, radii, and fixed action placement.
 
-- 原根因：每个 Tauri `invoke` 同步启动 Python；`workflow-status` 本机 5 次中位耗时约 248.6 ms，Home 在 StrictMode 下可重复触发 5–6 次。
-- 修复：62/62 Tauri 命令全部异步化，Python 执行进入 blocking 线程池；短 TTL 只读缓存合并同键并发请求，写操作按 generation 失效。
-- 创建示例并导航：256.2 ms 完成，主线程最大间隙 17.7 ms。
-- Viewer 加载受体 + 配体：251.6 ms 完成，主线程最大间隙 7.6 ms。
-- Viewer 首次懒加载：577.3 ms，主线程最大间隙 40.6 ms；后续运行页切换 55.9 ms。
-- 完整真实 docking：约 3.9 s 完成，期间主线程最大间隙 37.3 ms；按钮和页面未被 Python 阻塞。
+## Findings
 
-## 真实对接流程
+- No actionable P0, P1, or P2 difference remains.
+- [P3] The bundled viewer-result demo contains deliberately tiny toy receptor and ligand structures, so the rendered molecules occupy less of the 3D viewport than the illustrative design target. This is expected scientific-data fidelity, not a layout defect; no fake atoms or replacement molecular imagery were added.
+- [P3] Minor text-density and row-height tuning may still be useful after testing with long real-world project and file names. Current controls remain aligned, readable, and free of horizontal overflow at the QA viewport.
 
-- 第一次 UI smoke 暴露真实竞态：Vina 已生成 `out.pdbqt`，但 500 ms 状态轮询在执行器写入终态前把 run 错写为 `interrupted`。
-- 最终修复不再依赖固定时间猜测：metadata 记录 Vina 子进程与 DockStart 执行器双重创建身份；收尾阶段使用二次探测、事务内 CAS 和身份重验。
-- 取消操作若发生在子进程退出与执行器收尾之间，不终止未知 PID，也不覆盖成功/失败终态。
-- 最终真实 `run_003`：`finished`，exit code 0，最佳评分 -0.6916 kcal/mol，生成 9 个 pose、`out.pdbqt`、`scores.csv`、run 报告和项目报告。
-- 结果页自动读取 9 行评分；实验记录和 mode 1 Viewer 路径均可继续操作。
+### Required fidelity surfaces
 
-## 科学与产品边界
+- Fonts and typography: existing system CJK font stack retained; title, section, label, metadata, and table hierarchy match the target's industrial console character. No broken wraps or truncated primary actions were observed.
+- Spacing and layout rhythm: the four-workspace shell, central work areas, right rails, lower ledgers, table rows, and fixed docking action bar remain aligned at 1570 x 1002. No horizontal overflow was observed.
+- Colors and visual tokens: the app uses a coherent deep-blue token scale that is intentionally slightly lighter than the all-dark reference. Button blue and link/selection blue are separated, with readable status and disabled states.
+- Image and asset fidelity: the product logo and existing Phosphor icon system are preserved. Molecular imagery is rendered from real project PDBQT content in 3Dmol; no placeholder, CSS-art, emoji, or fabricated scientific image substitutes were introduced.
+- Copy and content: Chinese terminology remains consistent with the DockStart scientific wording rules. The interface continues to state that docking scores do not prove binding or efficacy.
+- Accessibility and interaction: tabs expose selected state, Box bindings expose `aria-pressed`, icon-only viewer controls retain labels, navigation remains keyboard-reachable, and selected/status states do not rely on color alone.
 
-- 保留“Docking score 仅供结构结合趋势参考，不能替代实验验证”。
-- Box 几何工具只按已加载坐标定位，不宣称自动识别结合口袋。
-- 未新增分子动力学、AI 药效预测、大规模虚拟筛选或新的科学依赖。
-- 未复制第三方商业软件源码或专有视觉资产。
+## Comparison History
 
-## 自动化验证
+1. [P1] The docking primary action was below the initial viewport.
+   - Fix: converted the run action area into a persistent bottom bar positioned above the status bar.
+   - Post-fix evidence: `qa-docking.png` and `compare-docking.png`.
+2. [P2] Result metadata duplicated the engine name and allowed awkward time text.
+   - Fix: normalized engine/version display, computed elapsed time from run timestamps when needed, and formatted saved time consistently.
+   - Post-fix evidence: `qa-results.png` and `focus-results.png`.
+3. [P2] The result example advertised modes 2 and 3 while its output file contained only one unwrapped pose.
+   - Fix: aligned the example with three explicit `MODEL` / `ENDMDL` blocks and added backend assertions for modes 1-3.
+   - Post-fix evidence: fresh `result_demo_005`; runtime loaded Mode 2 and Mode 3 with no alert or console error.
+4. [P2] The earlier fragmented flow exposed redundant Box, Vina, and result surfaces.
+   - Fix: consolidated the visible navigation into four workspaces, retained legacy route compatibility, made the docking workbench the single visible Box/run surface, and embedded pose analysis in the result page rather than a dialog.
+   - Post-fix evidence: all three final full-view and focused comparisons.
 
-- `python -m unittest discover -s backend/tests`：289/289 通过。
-- `npm run build`：通过。
-- `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`：通过。
-- Rust cache 测试：2/2 通过。
-- `git diff --check`：通过，仅有仓库现有 LF/CRLF 提示。
-- 构建仍报告 3Dmol 第三方 `eval` 与 587 kB 懒加载分包警告；未影响本轮功能和桌面 smoke，列为 P3 构建优化项。
+## Primary Interactions Tested
 
-## 结论
+- Four-item sidebar navigation between Project, Structure Preparation, Docking Workbench, and Results.
+- Preparation mode switch between existing PDBQT and raw-structure preparation; selected tab state and controls updated without errors.
+- Box `size_x` mouse-wheel binding changed 12.0 to 12.1 A; binding `size_y` then cleared the `size_x` binding, confirming single-selection behavior.
+- Fresh result demo creation through the desktop UI.
+- Mode 2 and Mode 3 selection and 3D pose loading from `run_001`.
+- Persistent docking actions, integrated result viewer, result tabs, and absence of the previous pose dialog.
+- Browser/WebView console: `Runtime.exceptionThrown` and error-level `Log.entryAdded` were monitored during the above interactions; no errors were recorded.
 
-同屏参考核对、真实桌面交互、完整对接和并发收尾回归均通过。未发现仍阻塞本轮 3D 工作台、Box 操作、侧栏、信息框或主流程性能的 P0/P1/P2 问题。
+## Implementation Checklist
+
+- [x] Apply the approved slightly lighter deep-blue theme globally.
+- [x] Consolidate visible navigation without breaking legacy project routes.
+- [x] Rebuild Structure Preparation, Docking Workbench, and Results around the selected visual targets.
+- [x] Preserve real project data, scientific disclaimers, and existing backend commands.
+- [x] Verify core interactions and fresh multi-pose demo data in the real desktop runtime.
+- [x] Compare source and implementation at full-view and focused-region levels.
+
+## Follow-up Polish
+
+- Revisit compact row density only after collecting screenshots from longer real project names and larger receptor/ligand files.
+- Fine-tune 3D camera defaults later with representative scientific datasets rather than changing the toy demo to make screenshots look fuller.
 
 final result: passed

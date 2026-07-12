@@ -66,34 +66,31 @@ export default function Sidebar({
 }: SidebarProps) {
   const hasProject = Boolean(project);
   const groups: Array<"Project" | "Workflow" | "Workbench" | "Support"> = ["Project", "Workflow", "Workbench", "Support"];
-  const visibleGroups = hasProject ? groups : groups.filter((group) => group !== "Workbench");
+  const visibleGroups = groups.filter((group) => navigationItems.some((item) => item.group === group));
   const groupLabels: Record<(typeof groups)[number], string> = {
-    Project: "项目",
-    Workflow: "对接流程",
+    Project: "导航",
+    Workflow: "",
     Workbench: "工作台",
     Support: "支持",
   };
-  const noProjectWorkflowLabels: Partial<Record<PageId, string>> = {
-    "structure-fetch": "1 准备结构",
-    "box-setup": "2 设置搜索范围",
-    "run-prepare": "3 运行对接",
-    result: "4 查看结果",
-  };
-
   function isActive(itemId: PageId): boolean {
-    if (currentPage === itemId) {
+    if (currentPage === itemId || (itemId === "home" && currentPage === "project-create")) {
       return true;
     }
     if (itemId === "preparation") {
-      return currentPage === "preparation" || currentPage === "import-pdbqt";
+      return currentPage === "structure-fetch" || currentPage === "preparation" || currentPage === "import-pdbqt";
     }
     if (itemId === "run-prepare") {
       return (
+        currentPage === "box-setup" ||
         currentPage === "vina-param" ||
         currentPage === "vina-config" ||
         currentPage === "run-prepare" ||
         currentPage === "run-execute"
       );
+    }
+    if (itemId === "result") {
+      return currentPage === "result" || currentPage === "report";
     }
     if (itemId === "toolchain-status") {
       return currentPage === "toolchain-status" || currentPage === "tool-check" || currentPage === "settings";
@@ -136,18 +133,16 @@ export default function Sidebar({
       <nav className="sidebar-nav">
         {visibleGroups.map((group) => (
           <div className="sidebar-group" key={group}>
-            <span className="sidebar-group-title">{groupLabels[group]}</span>
-            {!hasProject && group === "Workflow" ? <span className="sidebar-group-note">创建项目后启用</span> : null}
+            {groupLabels[group] ? <span className="sidebar-group-title">{groupLabels[group]}</span> : null}
             {navigationItems
               .filter((item) => item.group === group)
-              .filter((item) => hasProject || item.id !== "preparation")
               .map((item) => {
                 const target = resolveNavigationTarget(item, hasProject);
                 const active = isActive(item.id);
                 const requiresProjectBlocked = Boolean(item.requiresProject && !hasProject);
                 const disabled = Boolean(item.disabled);
                 const state = itemState(item.id, item.requiresProject);
-                const itemLabel = !hasProject ? noProjectWorkflowLabels[item.id] ?? item.label : item.label;
+                const itemLabel = item.label;
                 return (
                   <button
                     aria-current={active ? "page" : undefined}

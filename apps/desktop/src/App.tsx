@@ -253,7 +253,7 @@ export default function App() {
       return (
         <RunPreparePage
           project={currentProject}
-          onBack={() => navigateTo("vina-config")}
+          onBack={() => navigateTo("preparation")}
           onNavigate={navigateTo}
           onProjectChange={commitProject}
           onOpenRunExecute={(project, runId) => {

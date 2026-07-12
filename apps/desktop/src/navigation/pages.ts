@@ -33,74 +33,35 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.9.5";
+export const appVersion = "0.9.6";
 
 export const navigationItems: NavigationItem[] = [
   {
     id: "home",
     group: "Project",
-    label: "总览",
-    description: "项目状态、下一步和主要入口",
-  },
-  {
-    id: "project-create",
-    group: "Project",
-    label: "创建 / 打开项目",
-    description: "建立或加载项目工作目录",
-  },
-  {
-    id: "toolchain-status",
-    group: "Support",
-    label: "工具链",
-    description: "Vina、Python、RDKit、Meeko",
-  },
-  {
-    id: "structure-fetch",
-    group: "Workflow",
-    label: "获取结构",
-    description: "受体与配体 raw 文件",
-    requiresProject: true,
+    label: "项目",
+    description: "项目状态与管理",
   },
   {
     id: "preparation",
     group: "Workflow",
-    label: "准备 Vina 输入",
-    description: "生成或导入 PDBQT",
-    requiresProject: true,
-  },
-  {
-    id: "box-setup",
-    group: "Workflow",
-    label: "设置搜索范围",
-    description: "搜索范围中心与尺寸",
+    label: "结构准备",
+    description: "受体与配体准备",
     requiresProject: true,
   },
   {
     id: "run-prepare",
     group: "Workflow",
-    label: "运行对接",
-    description: "复核、运行、监控",
+    label: "对接工作台",
+    description: "搜索范围与运行",
     requiresProject: true,
   },
   {
     id: "result",
     group: "Workflow",
-    label: "结果与报告",
-    description: "scores 与实验记录",
+    label: "结果",
+    description: "结果分析与实验记录",
     requiresProject: true,
-  },
-  {
-    id: "report",
-    group: "Workbench",
-    label: "实验记录",
-    description: "导出 Markdown 实验记录",
-    requiresProject: true,
-  },
-  {
-    id: "help",
-    group: "Support",
-    label: "文档帮助",
-    description: "流程、文件、边界",
   },
 ];
 

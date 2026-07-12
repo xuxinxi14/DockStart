@@ -16,6 +16,7 @@ from dockstart_core.demo_projects import (  # noqa: E402
     validate_demo_project,
 )
 from dockstart_core.project import load_project  # noqa: E402
+from dockstart_core.viewer import load_docking_pose_for_viewer  # noqa: E402
 
 
 class DemoProjectTests(unittest.TestCase):
@@ -92,6 +93,10 @@ class DemoProjectTests(unittest.TestCase):
             self.assertEqual(response["entry_run_id"], "run_001")
             self.assertTrue((project_dir / "runs" / "run_001" / "metadata.json").is_file())
             self.assertTrue((project_dir / "runs" / "run_001" / "scores.csv").is_file())
+            for mode in (1, 2, 3):
+                pose = load_docking_pose_for_viewer(str(project_dir), "run_001", mode)
+                self.assertTrue(pose["ok"])
+                self.assertEqual(pose["mode"], mode)
             loaded = load_project(str(project_dir))
 
         self.assertTrue(loaded["ok"])

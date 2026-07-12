@@ -513,15 +513,15 @@ export default function RunPreparePage({
     <section className="run-cockpit-page" aria-labelledby="run-cockpit-title">
       <header className="run-cockpit-header">
         <div>
-          <span>运行对接 · Run cockpit</span>
-          <h1 id="run-cockpit-title">运行前复核与执行</h1>
-          <p>同屏确认结构、搜索范围、参数与本机环境，然后创建完整、可追溯的 Vina 运行记录。</p>
+          <span>对接工作台 · DOCKING CONSOLE</span>
+          <h1 id="run-cockpit-title">搜索范围与运行</h1>
+          <p>可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。</p>
         </div>
         <div className="run-cockpit-header-actions">
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
             {isDirty ? "开始时将保存并复核" : preflight?.ready ? "可开始对接" : preflight ? `${preflight.blockers.length} 个阻塞项` : "检查中"}
           </StatusBadge>
-          <ActionButton variant="text" onClick={onBack}>返回配置页</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>返回结构准备</ActionButton>
         </div>
       </header>
 
@@ -533,7 +533,6 @@ export default function RunPreparePage({
                 <span className="run-cockpit-kicker">结构复核</span>
                 <h2>受体、配体与搜索范围</h2>
               </div>
-              <button className="text-button inline" type="button" onClick={() => onNavigate("box-setup")}>返回修改搜索范围 <ArrowRight size={14} /></button>
             </div>
             <div className="run-preview-grid">
               <Suspense fallback={<div className="run-preview run-preview-loading"><SpinnerGap className="run-monitor-spinner" size={24} /><span>正在加载 3D 复核视图…</span></div>}>

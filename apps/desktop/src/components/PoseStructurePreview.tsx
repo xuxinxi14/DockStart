@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ArrowClockwise,
   ArrowsOut,
   MagnifyingGlassMinus,
   MagnifyingGlassPlus,
@@ -17,6 +16,7 @@ type PoseStructurePreviewProps = {
   runId: string;
   mode: number;
   refreshKey?: number;
+  className?: string;
 };
 
 function parseStructure(rawPayload: string): ViewerStructureResult {
@@ -28,6 +28,7 @@ export default function PoseStructurePreview({
   runId,
   mode,
   refreshKey = 0,
+  className = "",
 }: PoseStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
@@ -88,32 +89,39 @@ export default function PoseStructurePreview({
 
   useEffect(() => {
     let cancelled = false;
-    async function loadPoseData() {
+    async function loadReceptor() {
+      try {
+        const payload = await invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "receptor_prepared" });
+        if (!cancelled) setReceptor(parseStructure(payload));
+      } catch (error) {
+        if (!cancelled) setMessage(error instanceof Error ? error.message : "受体加载失败");
+      }
+    }
+    void loadReceptor();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectDir, refreshKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPose() {
       setMessage(`正在读取 Mode ${mode} 的对接构象…`);
       try {
-        const [receptorPayload, posePayload] = await Promise.all([
-          invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "receptor_prepared" }),
-          invoke<string>("load_docking_pose_for_viewer", { projectDir, runId, mode }),
-        ]);
+        const payload = await invoke<string>("load_docking_pose_for_viewer", { projectDir, runId, mode });
         if (cancelled) return;
-        const recData = parseStructure(receptorPayload);
-        const poseData = parseStructure(posePayload);
-        setReceptor(recData);
+        const poseData = parseStructure(payload);
         setPose(poseData);
-        if (recData.ok && poseData.ok) {
-          setMessage(`构象 Mode ${mode} 已加载`);
-        } else {
-          setMessage("结构或构象文件加载有误，请确认输入");
-        }
+        setMessage(poseData.ok ? `构象 Mode ${mode} 已加载` : "构象文件加载有误，请确认输出文件");
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "构象加载失败");
       }
     }
-    void loadPoseData();
+    void loadPose();
     return () => {
       cancelled = true;
     };
-  }, [projectDir, runId, mode, refreshKey]);
+  }, [mode, projectDir, refreshKey, runId]);
 
   useEffect(() => {
     try {
@@ -143,7 +151,7 @@ export default function PoseStructurePreview({
   };
 
   return (
-    <div className="run-preview" style={{ height: "420px", minHeight: "420px" }} aria-label="构象 3D 预览">
+    <div className={`run-preview pose-structure-preview ${className}`.trim()} aria-label="构象 3D 预览">
       <div className="run-preview-toolbar" aria-label="3D 视图工具">
         <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大">
           <MagnifyingGlassPlus size={18} />
@@ -153,9 +161,6 @@ export default function PoseStructurePreview({
         </button>
         <button type="button" onClick={() => renderScene(true)} title="适应窗口" aria-label="适应窗口">
           <ArrowsOut size={18} />
-        </button>
-        <button type="button" onClick={() => renderScene(true)} title="重置视角" aria-label="重置视角">
-          <ArrowClockwise size={18} />
         </button>
         <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label="旋转">
           {isSpinning ? <Pause size={18} /> : <Play size={18} />}

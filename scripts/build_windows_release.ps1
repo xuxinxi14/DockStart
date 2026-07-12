@@ -99,18 +99,47 @@ Write-Step "Release artifact capability profile"
 $resourcesDir = Join-Path $repoRoot "resources"
 $includesBundledVina = (Test-Path -LiteralPath (Join-Path $resourcesDir "vina\vina.exe"))
 $includesBundledPython = (Test-Path -LiteralPath (Join-Path $resourcesDir "python\python.exe"))
-$buildType = if ($includesBundledVina -and $includesBundledPython) { "basic_distributable" } else { "lightweight_or_toolchain_assisted" }
+$toolchainManifestPath = Join-Path $resourcesDir "toolchain_manifest.json"
+$toolchainManifest = if (Test-Path -LiteralPath $toolchainManifestPath) {
+    Get-Content -LiteralPath $toolchainManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+else {
+    $null
+}
+$includesBundledRdkit = $includesBundledPython -and
+    ($null -ne $toolchainManifest.bundled_python.packages.rdkit) -and
+    (Test-Path -LiteralPath (Join-Path $resourcesDir "python\Lib\site-packages\rdkit"))
+$includesBundledMeeko = $includesBundledPython -and
+    ($null -ne $toolchainManifest.bundled_python.packages.meeko) -and
+    (Test-Path -LiteralPath (Join-Path $resourcesDir "python\Lib\site-packages\meeko"))
+$includesFullPreparationRuntime = $includesBundledRdkit -and $includesBundledMeeko
+$buildType = if ($includesBundledVina -and $includesFullPreparationRuntime) {
+    "full_toolchain_local_candidate"
+}
+elseif ($includesBundledVina -and $includesBundledPython) {
+    "basic_distributable"
+}
+else {
+    "lightweight_or_toolchain_assisted"
+}
 $profile = [ordered]@{
     "app_version" = $uniqueVersions[0]
     "build_type" = $buildType
     "includes_bundled_vina" = $includesBundledVina
     "includes_bundled_python" = $includesBundledPython
+    "includes_bundled_rdkit" = $includesBundledRdkit
+    "includes_bundled_meeko" = $includesBundledMeeko
     "includes_conda_env" = $false
     "includes_demo_projects" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_basic_project")) -and (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_assisted_project"))
     "includes_examples" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples"))
     "basic_mode_expected" = "Bundled Vina can run Basic Mode when the user provides receptor/ligand PDBQT."
-    "assisted_mode_expected" = "Requires a configured Python environment with RDKit/Meeko; the bundled backend runtime does not include those packages."
-    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda env or RDKit/Meeko site-packages")
+    "assisted_mode_expected" = if ($includesFullPreparationRuntime) {
+        "The local Full candidate includes bundled Python with RDKit/Meeko; preparation still requires user inspection."
+    }
+    else {
+        "Requires a configured Python environment with RDKit/Meeko."
+    }
+    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda environment")
 }
 $profile.GetEnumerator() | ForEach-Object {
     if ($_.Value -is [array]) {
