@@ -1,57 +1,121 @@
 :root {
-  --ds-bg-app: #EAF0F6;
-  --ds-bg-subtle: #F0F4F8;
-  --ds-bg-panel: #FFFFFF;
-  --ds-bg-panel-soft: #F7FAFC;
-  --ds-bg-elevated: #FFFFFF;
+  color-scheme: light;
 
-  --ds-navy-950: #061A2F;
-  --ds-navy-900: #08233F;
-  --ds-navy-850: #0B2D50;
-  --ds-navy-800: #10395F;
-  --ds-navy-700: #164A78;
-  --ds-navy-soft: #DDEAF7;
-  --ds-shell-text: #F6F9FC;
-  --ds-shell-text-muted: #AAC0D6;
+  /* Theme primitives: color literals live here and nowhere else in the UI. */
+  --ds-color-transparent: rgba(0, 0, 0, 0);
 
-  --ds-border-subtle: #D8E1EA;
-  --ds-border-default: #C7D3DF;
-  --ds-border-strong: #9FB0C1;
+  /* Industrial light workspace: workspace < panel < raised/input. */
+  --ds-bg-app: #D2DBE4;
+  --ds-bg-workspace: #D7E0E8;
+  --ds-surface-panel: #EDF1F5;
+  --ds-surface-raised: #F5F7F9;
+  --ds-surface-input: #F8FAFB;
+  --ds-surface-hover: #E7EDF3;
+  --ds-surface-selected: #DCE8F3;
 
-  --ds-text-primary: #0B1D31;
-  --ds-text-secondary: #3E5268;
-  --ds-text-muted: #5C7187;
-  --ds-text-faint: #7F91A3;
-  --ds-text-inverse: #FFFFFF;
+  /* Deep structural surfaces. */
+  --ds-nav-bg: #041B30;
+  --ds-topbar-bg: #051D34;
+  --ds-statusbar-bg: #03182B;
+  --ds-rail-bg: #082846;
+  --ds-rail-bg-hover: #0B3155;
+  --ds-viewer-bg: #061C31;
+  --ds-viewer-bg-raised: #0A2947;
+  --ds-viewer-bg-soft: #123B60;
 
-  --ds-accent: #1F6FCB;
-  --ds-accent-hover: #175BAB;
-  --ds-accent-soft: #E1EEFB;
-  --ds-accent-border: #A9CAE9;
+  /* Borders and dividers. */
+  --ds-border-strong: #9EACBA;
+  --ds-border-default: #B6C2CE;
+  --ds-border-subtle: #CAD3DC;
+  --ds-divider: #C5CED7;
+  --ds-rail-border: rgba(122, 164, 198, 0.22);
+  --ds-rail-divider: rgba(255, 255, 255, 0.10);
+  --ds-on-dark-border-subtle: rgba(169, 199, 225, 0.16);
+  --ds-on-dark-border-default: rgba(169, 199, 225, 0.22);
+  --ds-on-dark-border-strong: rgba(122, 164, 198, 0.38);
+  --ds-viewer-border: rgba(164, 194, 219, 0.34);
 
-  --ds-molecule: #167F86;
-  --ds-molecule-soft: #E1F2F3;
+  /* Light-surface text. */
+  --ds-text-strong: #102337;
+  --ds-text-primary: #263C52;
+  --ds-text-secondary: #53687D;
+  --ds-text-muted: #718295;
+  --ds-text-disabled: #97A5B3;
 
-  --ds-vina: #6C63FF;
-  --ds-vina-soft: #EEECFF;
+  /* Deep-surface text. */
+  --ds-text-on-dark: #F4F7FA;
+  --ds-text-on-dark-secondary: #C2CFDB;
+  --ds-text-on-dark-muted: #8FA4B7;
+  --ds-text-on-dark-accent: #9AC8ED;
 
-  --ds-success: #177A46;
-  --ds-success-soft: #E7F6EE;
-  --ds-success-border: rgba(46, 157, 100, 0.24);
-  --ds-warning: #9B5A12;
-  --ds-warning-soft: #FFF4DC;
-  --ds-warning-border: rgba(217, 144, 47, 0.28);
-  --ds-danger: #B83232;
-  --ds-danger-soft: #FDECEC;
-  --ds-danger-border: rgba(214, 69, 69, 0.24);
-  --ds-info: #1E63A7;
-  --ds-info-soft: #EAF3FF;
-  --ds-info-border: rgba(43, 108, 176, 0.22);
-  --ds-molecule-border: rgba(43, 179, 177, 0.24);
+  /* Brand hierarchy. */
+  --ds-brand: #1F669F;
+  --ds-brand-hover: #185686;
+  --ds-brand-active: #12456D;
+  --ds-brand-soft: #D9E8F4;
+  --ds-brand-border: #82A9C9;
+  --ds-brand-on-dark: #78B4E3;
+  --ds-brand-selection: rgba(31, 102, 159, 0.72);
+  --ds-brand-hover-on-dark: rgba(57, 118, 167, 0.24);
+  --ds-brand-border-on-dark: rgba(103, 161, 207, 0.42);
 
+  /* Scientific accents. */
+  --ds-molecule: #287C80;
+  --ds-molecule-soft: #E2EEEE;
+  --ds-molecule-border: #A6C7C8;
+  --ds-vina: #655FAF;
+  --ds-vina-soft: #EAE8F4;
+
+  /* Status colors: restrained on light and dark surfaces. */
+  --ds-success: #2F9663;
+  --ds-success-text: #246A47;
+  --ds-success-soft: #DBEEE3;
+  --ds-success-border: #8EBBA2;
+  --ds-success-on-dark: #70C695;
+  --ds-warning: #C9822F;
+  --ds-warning-text: #80501A;
+  --ds-warning-soft: #F3E4CC;
+  --ds-warning-border: #CBB083;
+  --ds-warning-on-dark: #D8A35F;
+  --ds-danger: #B94F52;
+  --ds-danger-text: #8B3639;
+  --ds-danger-soft: #F0DCDC;
+  --ds-danger-border: #CB9A9C;
+  --ds-danger-on-dark: #DF8E91;
+  --ds-info: #3C7FAE;
+  --ds-info-text: #2B668E;
+  --ds-info-soft: #DCEAF3;
+  --ds-info-border: #97B7CE;
+  --ds-neutral-soft: #E5EAEF;
+  --ds-neutral-border: #AAB5C0;
+
+  /* Dark-surface interaction layers. */
+  --ds-on-dark-surface: rgba(17, 55, 90, 0.70);
+  --ds-on-dark-surface-muted: rgba(5, 28, 50, 0.30);
+  --ds-on-dark-hover: rgba(255, 255, 255, 0.08);
+  --ds-viewer-help-bg: rgba(3, 18, 33, 0.78);
+  --ds-scrollbar-on-dark: rgba(143, 164, 183, 0.34);
+  --ds-scrollbar-on-light: #8E9DAB;
+
+  /* Focus, code, debug and selection. */
   --ds-code-bg: #071C32;
   --ds-code-text: #F4F7FA;
-  --ds-focus-ring: rgba(74, 156, 235, 0.35);
+  --ds-focus-outline: #6F9FC5;
+  --ds-focus-ring: rgba(31, 102, 159, 0.14);
+  --ds-focus-ring-strong: rgba(31, 102, 159, 0.28);
+  --ds-debug-grid-line: rgba(36, 92, 158, 0.12);
+  --ds-debug-box-border: rgba(185, 79, 82, 0.78);
+  --ds-debug-box-bg: rgba(185, 79, 82, 0.05);
+  --ds-debug-label-bg: rgba(16, 35, 55, 0.88);
+
+  /* Shadows remain quiet; borders carry most of the hierarchy. */
+  --ds-shadow-none: none;
+  --ds-shadow-soft: 0 1px 3px rgba(12, 32, 52, 0.08);
+  --ds-shadow-panel: 0 1px 2px rgba(12, 32, 52, 0.08), 0 8px 24px rgba(12, 32, 52, 0.06);
+  --ds-shadow-raised: 0 1px 3px rgba(12, 32, 52, 0.08);
+  --ds-shadow-rail: 0 10px 28px rgba(2, 19, 36, 0.18);
+  --ds-shadow-viewer: 0 12px 28px rgba(2, 19, 36, 0.18);
+  --ds-shadow-brand: 0 2px 6px rgba(18, 69, 109, 0.18);
 
   --ds-font-ui: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
   --ds-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
@@ -82,12 +146,13 @@
   --ds-radius-xl: 14px;
   --ds-radius-card: 10px;
 
-  --ds-shadow-none: none;
-  --ds-shadow-soft: 0 1px 2px rgba(6, 26, 47, 0.07);
-  --ds-shadow-panel: 0 14px 32px rgba(6, 26, 47, 0.1);
-
   --ds-sidebar-width: 248px;
   --ds-sidebar-collapsed-width: 76px;
+  --ds-sidebar-nav-hit-size: 48px;
+  --ds-sidebar-nav-icon-size: 20px;
+  --ds-sidebar-nav-state-size: 18px;
+  --ds-sidebar-item-gap: 5px;
+  --ds-sidebar-group-gap: 18px;
   --ds-topbar-height: 60px;
   --ds-statusbar-height: 34px;
   --ds-context-width: 316px;
@@ -101,13 +166,34 @@
   --ds-panel-min-height: 420px;
   --ds-button-width: 168px;
   --ds-border-line: 1px solid var(--ds-border-default);
+  --ds-callout-accent-width: 4px;
+  --ds-callout-padding-block: 12px;
+  --ds-callout-padding-inline: 14px;
 
-  /* Backward-compatible aliases for the existing V0.7 UI classes. */
-  --ds-background: var(--ds-bg-app);
-  --ds-background-subtle: var(--ds-bg-subtle);
-  --ds-surface: var(--ds-bg-panel);
-  --ds-surface-elevated: var(--ds-bg-elevated);
-  --ds-surface-inset: var(--ds-bg-panel-soft);
+  /* Compatibility aliases for existing components during semantic migration. */
+  --ds-bg-subtle: var(--ds-surface-hover);
+  --ds-bg-panel: var(--ds-surface-panel);
+  --ds-bg-panel-soft: var(--ds-surface-raised);
+  --ds-bg-elevated: var(--ds-surface-raised);
+  --ds-navy-950: var(--ds-nav-bg);
+  --ds-navy-900: var(--ds-rail-bg);
+  --ds-navy-850: var(--ds-rail-bg-hover);
+  --ds-navy-800: #10395F;
+  --ds-navy-700: #164A78;
+  --ds-navy-soft: var(--ds-brand-soft);
+  --ds-shell-text: var(--ds-text-on-dark);
+  --ds-shell-text-muted: var(--ds-text-on-dark-muted);
+  --ds-text-faint: var(--ds-text-disabled);
+  --ds-text-inverse: var(--ds-text-on-dark);
+  --ds-accent: var(--ds-brand);
+  --ds-accent-hover: var(--ds-brand-hover);
+  --ds-accent-soft: var(--ds-brand-soft);
+  --ds-accent-border: var(--ds-brand-border);
+  --ds-background: var(--ds-bg-workspace);
+  --ds-background-subtle: var(--ds-surface-hover);
+  --ds-surface: var(--ds-surface-panel);
+  --ds-surface-elevated: var(--ds-surface-raised);
+  --ds-surface-inset: var(--ds-surface-raised);
   --ds-border: var(--ds-border-default);
   --ds-shadow-border: var(--ds-shadow-soft);
   --ds-space-8: var(--ds-space-6);

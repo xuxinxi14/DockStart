@@ -55,6 +55,12 @@ function hasPreparedFiles(project: DockStartProject): boolean {
   return Boolean(project.receptor.file && project.ligand.file);
 }
 
+function isValidBox(box: DockStartProject["box"]): boolean {
+  const centerValues = [box.center_x, box.center_y, box.center_z];
+  const sizeValues = [box.size_x, box.size_y, box.size_z];
+  return centerValues.every(Number.isFinite) && sizeValues.every((value) => Number.isFinite(value) && value > 0);
+}
+
 export default function BoxSetupPage({
   project: initialProject,
   onBack,
@@ -71,7 +77,7 @@ export default function BoxSetupPage({
   const [canOpenVinaParams, setCanOpenVinaParams] = useState(false);
 
   const applyProjectResponse = useCallback(
-    (response: ProjectResponse, fallbackMessage: string, showNextAction = false) => {
+    (response: ProjectResponse, fallbackMessage: string) => {
       if (response.ok && response.project) {
         setProject(response.project);
         setBoxForm(boxToForm(response.project));
@@ -79,7 +85,7 @@ export default function BoxSetupPage({
         setMessage(response.message ?? fallbackMessage);
         setWarnings(response.warnings ?? []);
         setRawError("");
-        setCanOpenVinaParams(showNextAction);
+        setCanOpenVinaParams(isValidBox(response.project.box));
         return;
       }
       setMessage(response.error?.message ?? "Box 参数保存失败。");
@@ -92,6 +98,7 @@ export default function BoxSetupPage({
 
   const reloadBox = useCallback(async () => {
     setIsBusy(true);
+    setCanOpenVinaParams(false);
     try {
       const rawPayload = await invoke<string>("get_box_params", {
         projectDir: initialProject.project_dir,
@@ -101,6 +108,7 @@ export default function BoxSetupPage({
       setMessage("无法读取 Box 参数。");
       setWarnings([]);
       setRawError(error instanceof Error ? error.message : String(error));
+      setCanOpenVinaParams(false);
     } finally {
       setIsBusy(false);
     }
@@ -117,6 +125,7 @@ export default function BoxSetupPage({
 
   const saveBox = async () => {
     setIsBusy(true);
+    setCanOpenVinaParams(false);
     setMessage("");
     setWarnings([]);
     setRawError("");
@@ -125,10 +134,11 @@ export default function BoxSetupPage({
         projectDir: project.project_dir,
         boxJson: JSON.stringify(boxForm),
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "搜索范围已保存。", true);
+      applyProjectResponse(parseProjectResponse(rawPayload), "搜索范围已保存。");
     } catch (error) {
       setMessage("无法保存搜索范围。");
       setRawError(error instanceof Error ? error.message : String(error));
+      setCanOpenVinaParams(false);
     } finally {
       setIsBusy(false);
     }

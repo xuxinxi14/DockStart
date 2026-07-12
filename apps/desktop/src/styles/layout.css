@@ -13,9 +13,7 @@ body {
 
 .dockstart-workspace {
   min-width: 0;
-  background:
-    linear-gradient(180deg, rgba(238, 243, 247, 0.85), rgba(244, 247, 250, 1) 220px),
-    var(--ds-bg-app);
+  background: var(--ds-bg-workspace);
 }
 
 .app-sidebar {
@@ -511,26 +509,37 @@ body {
 }
 
 .next-step-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--ds-space-4);
+  gap: var(--ds-space-3) var(--ds-space-5);
+  min-width: 0;
   border: 1px solid var(--ds-accent-border);
-  border-left: 4px solid var(--ds-accent);
-  border-radius: var(--ds-radius-lg);
-  background: var(--ds-bg-panel-soft);
-  padding: var(--ds-space-4);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-brand);
+  border-radius: 0 7px 7px 0;
+  background: var(--ds-surface-selected);
+  padding: var(--ds-callout-padding-block) var(--ds-callout-padding-inline);
 }
 
-.next-step-strip div {
+.next-step-strip > div:first-child {
   display: grid;
   gap: var(--ds-space-1);
+  min-width: 0;
+}
+
+.next-step-strip > .button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 
 .next-step-strip strong {
   color: var(--ds-text-primary);
   font-size: var(--ds-text-md);
+  line-height: var(--ds-leading-tight);
 }
 
 .next-step-strip p {
@@ -562,15 +571,15 @@ body {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(to right, rgba(36, 92, 158, 0.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(36, 92, 158, 0.12) 1px, transparent 1px);
+    linear-gradient(to right, var(--ds-debug-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ds-debug-grid-line) 1px, transparent 1px);
   background-size: 8px 8px;
 }
 
 .layout-debug-box {
   position: fixed;
-  border: 1px solid rgba(214, 69, 69, 0.78);
-  background: rgba(214, 69, 69, 0.05);
+  border: 1px solid var(--ds-debug-box-border);
+  background: var(--ds-debug-box-bg);
 }
 
 .layout-debug-box span {
@@ -579,7 +588,7 @@ body {
   left: 0;
   max-width: 180px;
   overflow: hidden;
-  background: rgba(16, 32, 51, 0.86);
+  background: var(--ds-debug-label-bg);
   color: var(--ds-text-inverse);
   padding: 2px 5px;
   font-size: 11px;
@@ -652,7 +661,11 @@ body {
   }
 
   .next-step-strip {
-    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .next-step-strip > .button-row {
+    justify-content: flex-start;
   }
 }
 
@@ -665,5 +678,11 @@ body {
   .page-header h1,
   .page-heading h1 {
     font-size: 24px;
+  }
+
+  .next-step-strip > .button-row > button,
+  .next-step-strip > .button-row > a {
+    flex: 1 1 100%;
+    justify-content: center;
   }
 }

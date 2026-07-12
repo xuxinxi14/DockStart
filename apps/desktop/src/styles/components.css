@@ -139,8 +139,8 @@ textarea {
   min-height: 100%;
 }
 
-.metric-card span,
-.file-card span,
+.metric-card span:not(.status-badge):not(.status-pill),
+.file-card span:not(.status-badge):not(.status-pill),
 .task-card .meta-label {
   color: var(--ds-text-muted);
   font-size: var(--ds-text-xs);
@@ -202,7 +202,7 @@ textarea {
   padding: var(--ds-space-5);
   border: 1px solid var(--ds-border-strong);
   border-radius: var(--ds-radius-lg);
-  background: linear-gradient(135deg, var(--ds-bg-panel), var(--ds-accent-soft));
+  background: var(--ds-surface-raised);
   box-shadow: var(--ds-shadow-soft);
 }
 
@@ -415,11 +415,11 @@ textarea {
   padding: var(--ds-space-4);
 }
 
-.project-summary span,
-.settings-meta span,
-.param-summary span,
-.dashboard-meta-grid span,
-.dashboard-status-card span {
+.project-summary span:not(.status-badge):not(.status-pill),
+.settings-meta span:not(.status-badge):not(.status-pill),
+.param-summary span:not(.status-badge):not(.status-pill),
+.dashboard-meta-grid span:not(.status-badge):not(.status-pill),
+.dashboard-status-card span:not(.status-badge):not(.status-pill) {
   color: var(--ds-text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -543,11 +543,14 @@ pre,
   display: inline-flex;
   align-items: center;
   width: fit-content;
+  max-width: 100%;
   min-height: 24px;
+  border: 1px solid var(--ds-neutral-border);
   border-radius: 999px;
   padding: 3px 9px;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -593,6 +596,20 @@ pre,
   line-height: 1.55;
 }
 
+.warning-note,
+.ready-note,
+.disclaimer-note,
+.warning-callout,
+.scientific-disclaimer {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border-left-width: var(--ds-callout-accent-width);
+  border-radius: 0 7px 7px 0;
+  padding: var(--ds-callout-padding-block) var(--ds-callout-padding-inline);
+  overflow-wrap: anywhere;
+}
+
 .message-line {
   width: fit-content;
   max-width: 100%;
@@ -605,6 +622,28 @@ pre,
   line-height: var(--ds-leading-normal);
 }
 
+.command-result-panel {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: var(--ds-callout-padding-block) var(--ds-callout-padding-inline);
+  overflow-wrap: anywhere;
+}
+
+.command-result-panel > strong {
+  margin: 0;
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-md);
+  line-height: var(--ds-leading-tight);
+}
+
+.command-result-panel > p {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
 .ready-note {
   display: flex;
   flex-wrap: wrap;
@@ -612,23 +651,26 @@ pre,
   justify-content: space-between;
   gap: var(--ds-space-3);
   border: 1px solid var(--ds-success-border);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-success);
   background: var(--ds-success-soft);
-  color: var(--ds-success);
+  color: var(--ds-success-text);
   font-weight: 650;
 }
 
 .warning-note,
 .warning-callout {
   border: 1px solid var(--ds-warning-border);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-warning);
   background: var(--ds-warning-soft);
-  color: var(--ds-warning);
+  color: var(--ds-warning-text);
 }
 
 .disclaimer-note,
 .scientific-disclaimer {
-  border: 1px solid var(--ds-info-border);
-  background: var(--ds-info-soft);
-  color: var(--ds-info);
+  border: 1px solid var(--ds-molecule-border);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-molecule);
+  background: var(--ds-molecule-soft);
+  color: var(--ds-molecule);
   font-weight: 650;
 }
 
@@ -641,9 +683,34 @@ pre,
   font-weight: 650;
 }
 
+.warning-callout {
+  display: grid;
+  gap: 3px;
+}
+
 .warning-callout strong {
   display: block;
-  margin-bottom: var(--ds-space-1);
+  margin: 0;
+  color: var(--ds-warning-text);
+  font-size: var(--ds-text-md);
+  line-height: var(--ds-leading-tight);
+}
+
+.warning-callout > div {
+  display: grid;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+.warning-callout > div > :first-child {
+  margin-top: 0;
+}
+
+.warning-callout > div > :last-child {
+  margin-bottom: 0;
 }
 
 .import-grid,
@@ -697,10 +764,10 @@ pre,
   display: grid;
   gap: var(--ds-space-2);
   border: 1px solid var(--ds-accent-border);
-  border-left: 4px solid var(--ds-accent);
-  border-radius: var(--ds-radius-lg);
-  background: var(--ds-bg-panel-soft);
-  padding: var(--ds-space-5);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-brand);
+  border-radius: 0 7px 7px 0;
+  background: var(--ds-surface-selected);
+  padding: var(--ds-callout-padding-block) var(--ds-callout-padding-inline);
 }
 
 .next-action-card strong {
@@ -881,7 +948,7 @@ pre,
   padding: var(--ds-space-3);
 }
 
-.workflow-step span {
+.workflow-step span:not(.status-badge):not(.status-pill) {
   color: var(--ds-text-muted);
   font-size: 11px;
   font-weight: 700;
@@ -1024,7 +1091,7 @@ pre,
   border: 1px solid var(--ds-border-strong);
   border-radius: var(--ds-radius-card);
   background: var(--ds-bg-panel);
-  box-shadow: 0 1px 3px rgba(16, 32, 51, 0.07);
+  box-shadow: var(--ds-shadow-raised);
   padding: var(--ds-space-6);
 }
 
@@ -1229,7 +1296,7 @@ pre,
 .start-route-card:hover {
   border-color: var(--ds-accent-border);
   background: var(--ds-bg-panel-soft);
-  box-shadow: 0 1px 4px rgba(16, 32, 51, 0.07);
+  box-shadow: var(--ds-shadow-raised);
 }
 
 .start-route-card:focus-visible {
@@ -1420,7 +1487,7 @@ pre,
 .demo-project-card:focus-visible {
   border-color: var(--ds-accent-border);
   background: var(--ds-bg-panel-soft);
-  box-shadow: 0 1px 4px rgba(16, 32, 51, 0.07);
+  box-shadow: var(--ds-shadow-raised);
 }
 
 .demo-project-card:disabled {
@@ -1715,7 +1782,7 @@ pre,
   font-size: 15px;
 }
 
-.action-card span,
+.action-card span:not(.status-badge):not(.status-pill),
 .dashboard-status-card p,
 .unified-status-card p,
 .onboarding-step p,
@@ -1897,7 +1964,7 @@ pre,
 .status-card.finished {
   border-color: var(--ds-success-border);
   background: var(--ds-success-soft);
-  color: var(--ds-success);
+  color: var(--ds-success-text);
 }
 
 .status-pill.missing,
@@ -1908,7 +1975,7 @@ pre,
 .status-card.failed {
   border-color: var(--ds-danger-border);
   background: var(--ds-danger-soft);
-  color: var(--ds-danger);
+  color: var(--ds-danger-text);
 }
 
 .status-pill.partial,
@@ -1917,7 +1984,7 @@ pre,
 .status-card.warning {
   border-color: var(--ds-warning-border);
   background: var(--ds-warning-soft);
-  color: var(--ds-warning);
+  color: var(--ds-warning-text);
 }
 
 .status-pill.running,
@@ -1927,7 +1994,7 @@ pre,
 .status-card.info {
   border-color: var(--ds-accent-border);
   background: var(--ds-info-soft);
-  color: var(--ds-info);
+  color: var(--ds-info-text);
 }
 
 .status-card {
@@ -1993,30 +2060,41 @@ pre,
 
 .notice {
   display: grid;
-  gap: var(--ds-space-1);
+  gap: 3px;
+  min-width: 0;
+  margin: 0;
   border-color: var(--ds-accent-border);
+  border-left: var(--ds-callout-accent-width) solid var(--ds-brand);
+  border-radius: 0 7px 7px 0;
   background: var(--ds-info-soft);
+  padding: var(--ds-callout-padding-block) var(--ds-callout-padding-inline);
+  overflow-wrap: anywhere;
 }
 
 .notice.warning {
   border-color: var(--ds-warning-border);
+  border-left-color: var(--ds-warning);
   background: var(--ds-warning-soft);
 }
 
 .notice.danger {
   border-color: var(--ds-danger-border);
+  border-left-color: var(--ds-danger);
   background: var(--ds-danger-soft);
 }
 
 .notice.scientific {
   border-color: var(--ds-molecule-border);
+  border-left-color: var(--ds-molecule);
   background: var(--ds-molecule-soft);
 }
 
 .notice strong,
 .error-recovery-panel strong {
+  margin: 0;
   color: var(--ds-text-primary);
   font-size: var(--ds-text-md);
+  line-height: var(--ds-leading-tight);
 }
 
 .notice p,

@@ -15,6 +15,18 @@ type TopbarProps = {
   onNavigate: NavigateHandler;
 };
 
+function formatSavedAt(value: string | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export default function Topbar({ currentPage, project, workflowSummary, onNavigate }: TopbarProps) {
   const hasProject = Boolean(project);
   return (
@@ -32,6 +44,7 @@ export default function Topbar({ currentPage, project, workflowSummary, onNaviga
           <>
             <CheckCircle aria-hidden="true" size={17} weight="fill" />
             <span>{workflowSummary}</span>
+            <span className="topbar-save-indicator">已保存 {formatSavedAt(project?.updated_at)}</span>
           </>
         ) : (
           <span>选择一种开始方式，DockStart 会逐步引导。</span>

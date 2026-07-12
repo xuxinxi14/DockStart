@@ -133,7 +133,7 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
       title: "4 运行对接",
       state: run,
       text: "配置、记录、执行",
-      target: run === "未开始" ? "vina-config" : "run-prepare",
+      target: "run-prepare",
     },
     {
       title: "5 结果与报告",

@@ -395,6 +395,121 @@ export type RunCheckResult = {
   raw_error?: string;
 };
 
+export type RunPreflightStatus = "ok" | "warning" | "error" | "missing" | "unknown";
+
+export type RunPreflightCheck = {
+  key: string;
+  name: string;
+  status: RunPreflightStatus;
+  message: string;
+  detail?: string;
+  blocking: boolean;
+  action_page?: string;
+  path?: string;
+  version?: string;
+};
+
+export type PdbqtInputStats = {
+  relative_path: string;
+  absolute_path: string;
+  size_bytes: number;
+  sha256: string;
+  atom_count: number;
+  chains: string[];
+  atom_types: string[];
+  torsdof?: number | null;
+};
+
+export type RunHistoryItem = {
+  run_id: string;
+  status: string;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  duration_seconds: number | null;
+  best_affinity: number | null;
+  stage: string;
+};
+
+export type RunPreflightResponse = {
+  ok: boolean;
+  ready: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  checks: RunPreflightCheck[];
+  blockers: string[];
+  warnings: string[];
+  input_stats: {
+    receptor: PdbqtInputStats | null;
+    ligand: PdbqtInputStats | null;
+  };
+  box: DockStartProject["box"] & {
+    volume_angstrom3: number;
+    warnings: string[];
+  };
+  vina_params: DockStartProject["vina"];
+  tool: {
+    status: ToolStatus | string;
+    version: string;
+    path: string;
+    source: ToolSource | string;
+    message: string;
+  };
+  output: {
+    runs_dir: string;
+    writable: boolean;
+    free_bytes: number;
+  };
+  system: {
+    system: string;
+    release: string;
+    machine: string;
+    cpu_count: number;
+    memory_bytes: number;
+    fingerprint: string;
+  };
+  estimate: {
+    available: boolean;
+    sample_count: number;
+    range_label: string;
+    message: string;
+  };
+  next_run_id: string;
+  command_preview: string;
+  run_history: RunHistoryItem[];
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type RunRuntimeStatusResponse = {
+  ok: boolean;
+  project_dir: string;
+  project: DockStartProject | null;
+  run_id: string;
+  metadata: Record<string, unknown> | null;
+  progress: {
+    percent: number;
+    message: string;
+  };
+  stage: string;
+  elapsed_seconds: number;
+  stdout_tail: string;
+  stderr_tail: string;
+  log_tail: string;
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type RunFileStatus = {
   key: string;
   name: string;

@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
+import os
+import platform
 import re
 import shutil
-import subprocess
+import subprocess  # Compatibility surface for existing no-execution regression tests.
 import sys
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from adapters import vina_adapter
+from dockstart_core import __version__
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
-from dockstart_core.process_utils import hidden_subprocess_kwargs
 from dockstart_core.settings import load_settings
 
 PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation")
@@ -115,6 +122,101 @@ def _success(project: DockStartProject, message: str = "", warnings: list[str] |
 
 def _project_json_path(project_dir: Path) -> Path:
     return project_dir / "project.json"
+
+
+def _project_lock_path(project_dir: str | Path) -> Path:
+    project_root = Path(project_dir).expanduser().resolve()
+    return project_root / ".project.lock"
+
+
+@contextmanager
+def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
+    """Hold an advisory one-byte lock across processes.
+
+    The lock file itself must be a regular path, not a symlink/reparse target.
+    This keeps an untrusted project from redirecting DockStart's coordination
+    writes outside the directory that the user opened.
+    """
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.is_symlink() or lock_path.resolve(strict=False) != lock_path.absolute():
+        raise RuntimeError(f"锁文件路径不安全：{lock_path}")
+    with lock_path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _project_lock(project_dir: str | Path) -> Iterator[None]:
+    with _exclusive_file_lock(_project_lock_path(project_dir)):
+        yield
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    """Durably replace a UTF-8 text file without exposing partial JSON."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        last_error: OSError | None = None
+        for attempt in range(6):
+            try:
+                os.replace(temporary_path, path)
+                last_error = None
+                break
+            except PermissionError as exc:
+                last_error = exc
+                if attempt == 5:
+                    break
+                time.sleep(0.02 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink(missing_ok=True)
+
+
+def _write_project_json_unlocked(project_root: Path, project: DockStartProject) -> None:
+    project_json = _project_json_path(project_root)
+    if project_json.is_symlink():
+        raise RuntimeError("project.json 不能是符号链接。")
+    _atomic_write_text(
+        project_json,
+        json.dumps(project.to_dict(), ensure_ascii=False, indent=2) + "\n",
+    )
 
 
 def _sanitize_project_name(project_name: str) -> str:
@@ -217,15 +319,30 @@ def ensure_project_structure(project_dir: str | Path) -> dict[str, Any]:
 
 def save_project(project: DockStartProject) -> dict[str, Any]:
     try:
-        project_dir = Path(project.project_dir).expanduser()
+        project_dir = Path(project.project_dir).expanduser().resolve()
         structure = ensure_project_structure(project_dir)
         if not structure.get("ok"):
             return structure
-        project.updated_at = _now_iso()
-        _project_json_path(project_dir).write_text(
-            json.dumps(project.to_dict(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        with _project_lock(project_dir):
+            project_json = _project_json_path(project_dir)
+            if project_json.exists():
+                if project_json.is_symlink() or project_json.resolve(strict=True) != project_json.absolute():
+                    return _error(
+                        "PROJECT_JSON_PATH_UNSAFE",
+                        "project.json 不能是符号链接或重解析到其他位置。",
+                        raw_error=str(project_json),
+                    )
+                current_data = json.loads(project_json.read_text(encoding="utf-8"))
+                current_updated_at = str(current_data.get("updated_at") or "") if isinstance(current_data, dict) else ""
+                if current_updated_at and project.updated_at and current_updated_at != project.updated_at:
+                    return _error(
+                        "PROJECT_SAVE_CONFLICT",
+                        "project.json 已被其他操作更新，本次保存已拒绝以避免覆盖新数据。",
+                        raw_error=f"expected updated_at={project.updated_at}; current updated_at={current_updated_at}",
+                        suggestion="请重新读取项目后再提交本次修改。",
+                    )
+            project.updated_at = _now_iso()
+            _write_project_json_unlocked(project_dir, project)
         return _success(project, "项目已保存。")
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
@@ -283,7 +400,7 @@ def create_project(project_name: str, base_dir: str) -> dict[str, Any]:
 
 def load_project(project_dir: str) -> dict[str, Any]:
     try:
-        path = Path(project_dir).expanduser()
+        path = Path(project_dir).expanduser().resolve()
         project_json = _project_json_path(path)
         if not project_json.exists():
             return _error(
@@ -292,6 +409,13 @@ def load_project(project_dir: str) -> dict[str, Any]:
                 suggestion="请确认选择的是 DockStart 项目目录。",
             )
 
+        if project_json.is_symlink() or project_json.resolve(strict=True) != project_json.absolute():
+            return _error(
+                "PROJECT_JSON_PATH_UNSAFE",
+                "project.json 不能是符号链接或重解析到其他位置。",
+                raw_error=str(project_json),
+                suggestion="请恢复项目根目录中的普通 project.json 文件。",
+            )
         data = json.loads(project_json.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return _error("PROJECT_JSON_INVALID", "project.json 格式不是 JSON 对象。")
@@ -998,6 +1122,500 @@ def _run_error(
     return payload
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _parse_pdbqt_stats(path: Path, relative_path: str, *, ligand: bool = False) -> dict[str, Any]:
+    """Return lightweight, deterministic PDBQT facts without chemistry claims."""
+
+    atom_count = 0
+    chains: set[str] = set()
+    atom_types: set[str] = set()
+    torsdof: int | None = None
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            record = line[:6].strip().upper()
+            if record in {"ATOM", "HETATM"}:
+                atom_count += 1
+                chain = line[21:22].strip() if len(line) > 21 else ""
+                if chain:
+                    chains.add(chain)
+                parts = line.split()
+                if parts:
+                    atom_type = parts[-1].strip()
+                    if atom_type and len(atom_type) <= 4:
+                        atom_types.add(atom_type)
+            if ligand and line.lstrip().upper().startswith("TORSDOF"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        torsdof = int(parts[1])
+                    except ValueError:
+                        torsdof = None
+
+    return {
+        "relative_path": Path(relative_path).as_posix(),
+        "absolute_path": str(path),
+        "size_bytes": path.stat().st_size,
+        "sha256": _sha256_file(path),
+        "atom_count": atom_count,
+        "chains": sorted(chains),
+        "atom_types": sorted(atom_types),
+        "torsdof": torsdof if ligand else None,
+    }
+
+
+def _memory_bytes() -> int | None:
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("memory_load", ctypes.c_ulong),
+                    ("total_phys", ctypes.c_ulonglong),
+                    ("avail_phys", ctypes.c_ulonglong),
+                    ("total_page_file", ctypes.c_ulonglong),
+                    ("avail_page_file", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("avail_virtual", ctypes.c_ulonglong),
+                    ("avail_extended_virtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(MemoryStatus)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):  # type: ignore[attr-defined]
+                return int(status.total_phys)
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        page_count = os.sysconf("SC_PHYS_PAGES")
+        return int(page_size * page_count)
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _system_snapshot() -> dict[str, Any]:
+    cpu_count = os.cpu_count() or 1
+    release = platform.release()
+    if sys.platform == "win32":
+        try:
+            windows_version = sys.getwindowsversion()
+            if windows_version.build >= 22000:
+                release = "11"
+        except (AttributeError, OSError):
+            pass
+    identity = "|".join(
+        [platform.system(), release, platform.machine(), platform.processor(), str(cpu_count)],
+    )
+    return {
+        "system": platform.system(),
+        "release": release,
+        "machine": platform.machine(),
+        "cpu_count": cpu_count,
+        "memory_bytes": _memory_bytes(),
+        "fingerprint": hashlib.sha256(identity.encode("utf-8", errors="replace")).hexdigest()[:16],
+    }
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _duration_seconds(started_at: Any, finished_at: Any = None) -> float | None:
+    started = _parse_iso_datetime(started_at)
+    finished = _parse_iso_datetime(finished_at) if finished_at else datetime.now(UTC)
+    if not started or not finished:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    if finished.tzinfo is None:
+        finished = finished.replace(tzinfo=UTC)
+    return max(0.0, round((finished - started).total_seconds(), 3))
+
+
+def _verify_metadata_process(
+    metadata: dict[str, Any],
+    *,
+    pid_key: str,
+    executable_key: str,
+    identity_key: str,
+) -> dict[str, object]:
+    pid = metadata.get(pid_key)
+    executable = str(metadata.get(executable_key) or "")
+    identity = metadata.get(identity_key) if isinstance(metadata.get(identity_key), dict) else None
+    if not isinstance(pid, int) or pid <= 0 or not executable or identity is None:
+        return {"ok": False, "running": False, "message": "缺少可验证的进程身份。"}
+    return vina_adapter.verify_process_identity(pid, executable, identity)
+
+
+def _collect_run_history(project_path: Path, project: DockStartProject) -> list[dict[str, Any]]:
+    run_ids: set[str] = {
+        str(item.get("run_id"))
+        for item in project.runs
+        if isinstance(item, dict) and RUN_ID_PATTERN.match(str(item.get("run_id", "")))
+    }
+    runs_dir = project_path / "runs"
+    if runs_dir.is_dir():
+        run_ids.update(child.name for child in runs_dir.iterdir() if child.is_dir() and RUN_ID_PATTERN.match(child.name))
+
+    history: list[dict[str, Any]] = []
+    project_summaries = {
+        str(item.get("run_id")): item for item in project.runs if isinstance(item, dict) and item.get("run_id")
+    }
+    for run_id in sorted(run_ids, reverse=True):
+        summary = dict(project_summaries.get(run_id, {}))
+        metadata_path = runs_dir / run_id / "metadata.json"
+        metadata: dict[str, Any] = {}
+        try:
+            candidate = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict):
+                metadata = candidate
+        except (OSError, json.JSONDecodeError):
+            pass
+        combined = {**summary, **metadata}
+        duration = combined.get("duration_seconds")
+        if not isinstance(duration, (int, float)):
+            duration = _duration_seconds(combined.get("started_at"), combined.get("finished_at"))
+        history.append(
+            {
+                "run_id": run_id,
+                "status": str(combined.get("status") or "unknown"),
+                "created_at": combined.get("created_at"),
+                "started_at": combined.get("started_at"),
+                "finished_at": combined.get("finished_at"),
+                "duration_seconds": duration,
+                "best_affinity": combined.get("best_affinity"),
+                "stage": str(combined.get("stage") or combined.get("status") or "unknown"),
+            },
+        )
+    return history
+
+
+def _format_duration_range(seconds_low: float, seconds_high: float) -> str:
+    if seconds_high < 60:
+        return f"约 {max(1, round(seconds_low))}–{max(1, round(seconds_high))} 秒"
+    return f"约 {max(1, round(seconds_low / 60))}–{max(1, round(seconds_high / 60))} 分钟"
+
+
+def _runtime_estimate(run_history: list[dict[str, Any]]) -> dict[str, Any]:
+    samples = sorted(
+        float(item["duration_seconds"])
+        for item in run_history
+        if item.get("status") == "finished"
+        and isinstance(item.get("duration_seconds"), (int, float))
+        and float(item["duration_seconds"]) > 0
+    )
+    if len(samples) < 3:
+        return {
+            "available": False,
+            "sample_count": len(samples),
+            "range_label": "",
+            "message": "暂无足够的同项目成功运行历史，暂不提供耗时估计。",
+        }
+    low_index = max(0, int((len(samples) - 1) * 0.25))
+    high_index = min(len(samples) - 1, int((len(samples) - 1) * 0.75 + 0.999))
+    return {
+        "available": True,
+        "sample_count": len(samples),
+        "range_label": _format_duration_range(samples[low_index], samples[high_index]),
+        "message": "根据当前项目最近的成功运行历史估计；结构、Box 和参数变化会影响实际耗时。",
+    }
+
+
+def get_run_preflight(project_dir: str) -> dict[str, Any]:
+    """Aggregate every run blocker and warning for the run cockpit."""
+
+    checks: list[dict[str, Any]] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+    input_stats: dict[str, dict[str, Any]] = {"receptor": {}, "ligand": {}}
+    default_payload: dict[str, Any] = {
+        "ok": False,
+        "ready": False,
+        "project": None,
+        "project_dir": str(Path(project_dir).expanduser()),
+        "checks": checks,
+        "blockers": blockers,
+        "warnings": warnings,
+        "input_stats": input_stats,
+        "box": {},
+        "vina_params": {},
+        "tool": {"status": "unknown", "version": "", "path": "", "source": "unknown", "message": ""},
+        "output": {"runs_dir": "", "writable": False, "free_bytes": None},
+        "system": _system_snapshot(),
+        "estimate": {"available": False, "sample_count": 0, "range_label": "", "message": "暂无运行历史。"},
+        "next_run_id": "",
+        "command_preview": "",
+        "run_history": [],
+        "config": {"status": "missing", "relative_path": "", "absolute_path": "", "exists": False, "non_empty": False, "sha256": ""},
+        "message": "运行前检查未完成。",
+        "error": None,
+    }
+
+    def add_check(
+        key: str,
+        name: str,
+        status: str,
+        message: str,
+        *,
+        blocking: bool,
+        detail: str = "",
+        action_page: str = "",
+        path: str = "",
+        version: str = "",
+    ) -> None:
+        checks.append(
+            {
+                "key": key,
+                "name": name,
+                "status": status,
+                "message": message,
+                "detail": detail,
+                "blocking": blocking,
+                "action_page": action_page,
+                "path": path,
+                "version": version,
+            },
+        )
+        if blocking and message not in blockers:
+            blockers.append(message)
+
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        error = loaded.get("error") or {}
+        message = str(error.get("message") or "没有找到可读取的 DockStart 项目。")
+        add_check("project", "项目文件", "missing", message, blocking=True, action_page="project", path=project_dir)
+        default_payload["message"] = "项目不可用，无法完成运行前检查。"
+        default_payload["error"] = error
+        return default_payload
+
+    project_path = Path(project_dir).expanduser().resolve()
+    project = _project_from_dict(loaded["project"], project_path)
+    default_payload.update({"ok": True, "project": project.to_dict(), "project_dir": str(project_path)})
+    add_check("project", "项目文件", "ok", "project.json 已读取。", blocking=False, path=str(project_path / "project.json"))
+
+    def inspect_input(role: str, relative_path: str) -> None:
+        label = "受体 PDBQT" if role == "receptor" else "配体 PDBQT"
+        if not relative_path:
+            add_check(role, label, "missing", f"尚未设置{label}。", blocking=True, action_page="import")
+            return
+        relative = Path(relative_path)
+        if relative.is_absolute():
+            add_check(role, label, "error", f"{label}必须使用项目内相对路径。", blocking=True, action_page="import", path=relative_path)
+            return
+        resolved = (project_path / relative).resolve()
+        try:
+            resolved.relative_to(project_path)
+        except ValueError:
+            add_check(role, label, "error", f"{label}指向项目目录外。", blocking=True, action_page="import", path=str(resolved))
+            return
+        if not resolved.is_file():
+            add_check(role, label, "missing", f"没有找到{label}。", blocking=True, action_page="import", path=str(resolved))
+            return
+        if resolved.stat().st_size <= 0:
+            add_check(role, label, "error", f"{label}为空文件。", blocking=True, action_page="import", path=str(resolved))
+            return
+        try:
+            stats = _parse_pdbqt_stats(resolved, relative_path, ligand=role == "ligand")
+            input_stats[role] = stats
+        except OSError as exc:
+            add_check(role, label, "error", f"无法读取{label}。", blocking=True, detail=str(exc), action_page="import", path=str(resolved))
+            return
+        if stats["atom_count"] <= 0:
+            add_check(
+                role,
+                label,
+                "error",
+                f"{label}中没有识别到 ATOM/HETATM 记录。",
+                blocking=True,
+                detail="请确认文件是准备后的 PDBQT，而不是只有备注的占位文件。",
+                action_page="import",
+                path=str(resolved),
+            )
+            return
+        add_check(
+            role,
+            label,
+            "ok",
+            f"已读取 {stats['atom_count']} 个原子。",
+            blocking=False,
+            detail=f"atom types: {', '.join(stats['atom_types']) or '未标注'}",
+            path=str(resolved),
+        )
+
+    inspect_input("receptor", project.receptor.file)
+    inspect_input("ligand", project.ligand.file)
+
+    box_data = asdict(project.box)
+    box_validation = validate_box_params(box_data)
+    volume = float(project.box.size_x * project.box.size_y * project.box.size_z)
+    box_warnings: list[str] = []
+    if box_validation.get("ok"):
+        if any(box_data[key] > 30 for key in ("size_x", "size_y", "size_z")) or volume > 27000:
+            warning = "对接箱体较大（任一轴超过 30 Å 或体积超过 27,000 Å³），运行可能明显变慢。"
+            box_warnings.append(warning)
+            warnings.append(warning)
+            add_check("box", "对接箱体", "warning", warning, blocking=False, action_page="box")
+        else:
+            add_check("box", "对接箱体", "ok", "中心、尺寸和体积有效。", blocking=False, action_page="box")
+    else:
+        error = box_validation.get("error") or {}
+        add_check("box", "对接箱体", "error", str(error.get("message") or "Box 参数无效。"), blocking=True, detail=str(error.get("raw_error") or ""), action_page="box")
+    default_payload["box"] = {**box_data, "volume_angstrom3": round(volume, 3), "warnings": box_warnings}
+
+    vina_data = asdict(project.vina)
+    vina_validation = validate_vina_params(vina_data)
+    if vina_validation.get("ok"):
+        add_check("vina_params", "Vina 参数", "ok", "Vina 参数格式有效。", blocking=False, action_page="vina-param")
+        for warning in vina_validation.get("warnings", []):
+            if warning not in warnings:
+                warnings.append(warning)
+    else:
+        error = vina_validation.get("error") or {}
+        add_check("vina_params", "Vina 参数", "error", str(error.get("message") or "Vina 参数无效。"), blocking=True, detail=str(error.get("raw_error") or ""), action_page="vina-param")
+    cpu_count = int(default_payload["system"]["cpu_count"] or 1)
+    configured_cpu = int(vina_data.get("cpu") or 0)
+    if configured_cpu > cpu_count:
+        warning = f"Vina CPU 设置为 {configured_cpu}，超过系统检测到的 {cpu_count} 个逻辑核心。"
+        warnings.append(warning)
+        add_check("cpu", "CPU 线程", "warning", warning, blocking=False, action_page="vina-param")
+    else:
+        add_check("cpu", "CPU 线程", "ok", "CPU 线程设置未超过系统逻辑核心数。", blocking=False, action_page="vina-param")
+    default_payload["vina_params"] = vina_data
+
+    config_file = _config_relative_path(project)
+    config_relative = Path(config_file)
+    config_path = (project_path / config_relative).resolve() if not config_relative.is_absolute() else config_relative.resolve()
+    config_contained = not config_relative.is_absolute()
+    if config_contained:
+        try:
+            config_path.relative_to(project_path)
+        except ValueError:
+            config_contained = False
+    config_status = {
+        "status": "missing" if config_contained else "invalid",
+        "relative_path": Path(config_file).as_posix(),
+        "absolute_path": str(config_path),
+        "exists": config_path.is_file() if config_contained else False,
+        "non_empty": False,
+        "sha256": "",
+        "generated_at": project.config.generated_at,
+    }
+    if not config_contained:
+        add_check(
+            "config",
+            "Vina 配置",
+            "error",
+            "Vina 配置路径指向项目目录外，已拒绝读取。",
+            blocking=True,
+            detail=str(config_path),
+            action_page="vina-config",
+            path=str(config_path),
+        )
+    elif config_path.is_file():
+        try:
+            config_status["non_empty"] = config_path.stat().st_size > 0
+            if config_status["non_empty"]:
+                config_status["sha256"] = _sha256_file(config_path)
+                preview = build_vina_config_text(str(project_path))
+                current_text = config_path.read_text(encoding="utf-8")
+                expected_text = str(preview.get("config_text") or "") if preview.get("ok") else ""
+                if expected_text and current_text.replace("\r\n", "\n") != expected_text.replace("\r\n", "\n"):
+                    config_status["status"] = "stale"
+                    warning = "Vina 配置与当前项目参数不一致，启动时将生成/刷新。"
+                    warnings.append(warning)
+                    add_check("config", "Vina 配置", "warning", warning, blocking=False, action_page="vina-config", path=str(config_path))
+                else:
+                    config_status["status"] = "ok"
+                    add_check("config", "Vina 配置", "ok", "vina_config.txt 已生成且与当前参数一致。", blocking=False, action_page="vina-config", path=str(config_path))
+            else:
+                config_status["status"] = "stale"
+                warning = "vina_config.txt 为空，启动时将生成/刷新。"
+                warnings.append(warning)
+                add_check("config", "Vina 配置", "warning", warning, blocking=False, action_page="vina-config", path=str(config_path))
+        except OSError as exc:
+            config_status["status"] = "stale"
+            warning = "当前 vina_config.txt 无法读取，启动时将生成/刷新。"
+            warnings.append(warning)
+            add_check("config", "Vina 配置", "warning", warning, blocking=False, detail=str(exc), action_page="vina-config", path=str(config_path))
+    else:
+        warning = "尚未生成 vina_config.txt，启动时将生成/刷新。"
+        warnings.append(warning)
+        add_check("config", "Vina 配置", "warning", warning, blocking=False, action_page="vina-config", path=str(config_path))
+    default_payload["config"] = config_status
+
+    settings = load_settings()
+    detection = vina_adapter.detect(settings.tool_paths.vina)
+    tool = {
+        "status": detection.status,
+        "version": detection.version,
+        "path": detection.path,
+        "source": detection.source,
+        "message": detection.message,
+    }
+    default_payload["tool"] = tool
+    if detection.status == "ok":
+        add_check("tool", "AutoDock Vina", "ok", detection.message or "AutoDock Vina 可用。", blocking=False, path=detection.path, version=detection.version)
+    else:
+        add_check("tool", "AutoDock Vina", detection.status, detection.message or "AutoDock Vina 不可用。", blocking=True, detail=detection.raw_error, action_page="settings", path=detection.path, version=detection.version)
+
+    runs_dir = project_path / "runs"
+    writable = False
+    output_error = ""
+    try:
+        runs_dir = _safe_runs_directory(project_path, create=True)
+        with tempfile.NamedTemporaryFile(prefix=".dockstart-write-check-", dir=runs_dir, delete=False) as marker:
+            marker_path = Path(marker.name)
+        marker_path.unlink(missing_ok=True)
+        writable = True
+    except (OSError, RuntimeError) as exc:
+        output_error = str(exc)
+    try:
+        free_bytes: int | None = shutil.disk_usage(project_path).free
+    except OSError:
+        free_bytes = None
+    default_payload["output"] = {"runs_dir": str(runs_dir), "writable": writable, "free_bytes": free_bytes}
+    if writable:
+        add_check("output", "运行输出目录", "ok", "runs 目录可写。", blocking=False, path=str(runs_dir))
+    else:
+        add_check("output", "运行输出目录", "error", "runs 目录不可写。", blocking=True, detail=output_error, action_page="project", path=str(runs_dir))
+    if free_bytes is not None and free_bytes < 256 * 1024 * 1024:
+        warning = "项目磁盘剩余空间不足 256 MB，请清理空间后再运行。"
+        warnings.append(warning)
+        add_check("disk", "磁盘空间", "warning", warning, blocking=False, path=str(project_path))
+    elif free_bytes is not None:
+        add_check("disk", "磁盘空间", "ok", "项目磁盘剩余空间可用。", blocking=False, detail=f"{free_bytes} bytes", path=str(project_path))
+    else:
+        warning = "无法读取项目磁盘剩余空间。"
+        warnings.append(warning)
+        add_check("disk", "磁盘空间", "warning", warning, blocking=False, path=str(project_path))
+
+    run_history = _collect_run_history(project_path, project)
+    next_run_id = get_next_run_id(str(project_path))
+    command = _build_vina_command(detection.path, config_file, next_run_id)
+    default_payload.update(
+        {
+            "ready": not blockers,
+            "estimate": _runtime_estimate(run_history),
+            "next_run_id": next_run_id,
+            "command_preview": _format_command_preview(command),
+            "run_history": run_history,
+            "message": "全部运行前条件已满足。" if not blockers else f"发现 {len(blockers)} 个阻塞项，请修复后再运行。",
+        },
+    )
+    return default_payload
+
+
 def _config_relative_path(project: DockStartProject) -> str:
     return project.config.vina_config_file or "configs/vina_config.txt"
 
@@ -1069,6 +1687,31 @@ def _build_vina_command(
         "--out",
         Path("runs", run_id, "out.pdbqt").as_posix(),
     ]
+
+
+def _build_run_snapshot_config(project: DockStartProject, run_id: str) -> str:
+    receptor = Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()
+    ligand = Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix()
+    lines = [
+        f"receptor = {receptor}",
+        f"ligand = {ligand}",
+        "",
+        f"center_x = {_format_config_number(project.box.center_x)}",
+        f"center_y = {_format_config_number(project.box.center_y)}",
+        f"center_z = {_format_config_number(project.box.center_z)}",
+        "",
+        f"size_x = {_format_config_number(project.box.size_x)}",
+        f"size_y = {_format_config_number(project.box.size_y)}",
+        f"size_z = {_format_config_number(project.box.size_z)}",
+        "",
+        f"exhaustiveness = {project.vina.exhaustiveness}",
+        f"num_modes = {project.vina.num_modes}",
+        f"energy_range = {_format_config_number(project.vina.energy_range)}",
+        f"cpu = {project.vina.cpu}",
+    ]
+    if project.vina.seed is not None:
+        lines.append(f"seed = {project.vina.seed}")
+    return "\n".join(lines) + "\n"
 
 
 def _format_command_preview(command: list[str]) -> str:
@@ -1316,9 +1959,20 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
     if not prerequisites.get("ok"):
         return prerequisites
 
-    project = _project_from_dict(prerequisites["project"], Path(project_dir).expanduser())
+    project_root = Path(project_dir).expanduser().resolve()
+    project = _project_from_dict(prerequisites["project"], project_root)
+    project.project_dir = str(project_root)
     run_id = prerequisites["next_run_id"]
-    run_dir = Path(project.project_dir).expanduser() / "runs" / run_id
+    try:
+        run_dir = _safe_run_directory(project_root, run_id, require_exists=False)
+    except Exception as exc:  # noqa: BLE001 - reject symlinked/reparsed run roots.
+        return _run_error(
+            "RUN_PATH_UNSAFE",
+            "runs 目录或待创建的 run 路径不安全，已拒绝准备运行。",
+            prerequisites.get("checks", []),
+            str(exc),
+            "请恢复项目内普通的 runs 目录后重试。",
+        )
     if run_dir.exists():
         return _run_error(
             "RUN_DIR_EXISTS",
@@ -1330,41 +1984,86 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
 
     try:
         run_dir.mkdir(parents=True, exist_ok=False)
+        inputs_dir = run_dir / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=False)
         created_at = _now_iso()
         config_file = prerequisites["config_file"]
-        config_path = Path(project.project_dir).expanduser() / config_file
-        config_text = config_path.read_text(encoding="utf-8")
 
         metadata_file = Path("runs", run_id, "metadata.json").as_posix()
         command_preview_file = Path("runs", run_id, "command_preview.txt").as_posix()
         config_snapshot_file = Path("runs", run_id, "config_snapshot.txt").as_posix()
+        receptor_snapshot_file = Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()
+        ligand_snapshot_file = Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix()
         output_file = Path("runs", run_id, "out.pdbqt").as_posix()
         log_file = Path("runs", run_id, "log.txt").as_posix()
-        command = _build_vina_command(prerequisites["vina_path"], config_file, run_id)
+        command = _build_vina_command(prerequisites["vina_path"], config_snapshot_file, run_id)
+        receptor_path = project_root / project.receptor.file
+        ligand_path = project_root / project.ligand.file
+        receptor_snapshot_path = project_root / receptor_snapshot_file
+        ligand_snapshot_path = project_root / ligand_snapshot_file
+        config_snapshot_path = project_root / config_snapshot_file
+        shutil.copyfile(receptor_path, receptor_snapshot_path)
+        shutil.copyfile(ligand_path, ligand_snapshot_path)
+        config_snapshot_path.write_text(_build_run_snapshot_config(project, run_id), encoding="utf-8", newline="")
+        receptor_snapshot = _parse_pdbqt_stats(receptor_snapshot_path, receptor_snapshot_file)
+        receptor_snapshot["source_relative_path"] = Path(project.receptor.file).as_posix()
+        ligand_snapshot = _parse_pdbqt_stats(ligand_snapshot_path, ligand_snapshot_file, ligand=True)
+        ligand_snapshot["source_relative_path"] = Path(project.ligand.file).as_posix()
+        config_sha256 = _sha256_file(config_snapshot_path)
+        system_snapshot = _system_snapshot()
+        vina_source = str((prerequisites.get("vina") or {}).get("source") or "unknown")
 
         metadata = {
             "run_id": run_id,
             "status": "prepared",
+            "stage": "prepared",
+            "progress": {"percent": 0, "message": "运行记录已准备。"},
             "created_at": created_at,
             "started_at": None,
             "finished_at": None,
+            "duration_seconds": None,
+            "pid": None,
             "vina_version": prerequisites.get("vina_version", ""),
             "vina_path": prerequisites.get("vina_path", ""),
+            "vina_source": vina_source,
+            "app_version": __version__,
+            "app": {"name": "DockStart", "version": __version__},
+            "vina_tool": {
+                "version": prerequisites.get("vina_version", ""),
+                "path": prerequisites.get("vina_path", ""),
+                "source": vina_source,
+            },
+            "system": system_snapshot,
             "command": command,
             "config_file": Path(config_file).as_posix(),
             "config_snapshot": config_snapshot_file,
+            "snapshots": {
+                "inputs": {"receptor": receptor_snapshot, "ligand": ligand_snapshot},
+                "config": {
+                    "source_relative_path": Path(config_file).as_posix(),
+                    "relative_path": config_snapshot_file,
+                    "snapshot_file": config_snapshot_file,
+                    "sha256": config_sha256,
+                    "size_bytes": config_snapshot_path.stat().st_size,
+                },
+                "box": asdict(project.box),
+                "vina": asdict(project.vina),
+            },
+            "input_sha256": {
+                "receptor": receptor_snapshot["sha256"],
+                "ligand": ligand_snapshot["sha256"],
+                "config": config_sha256,
+            },
+            "box_snapshot": asdict(project.box),
+            "vina_snapshot": asdict(project.vina),
             "output_file": output_file,
             "log_file": log_file,
             "exit_code": None,
             "best_affinity": None,
         }
 
-        (run_dir / "metadata.json").write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
         (run_dir / "command_preview.txt").write_text(_format_command_preview(command) + "\n", encoding="utf-8")
-        (run_dir / "config_snapshot.txt").write_text(config_text, encoding="utf-8")
+        _write_run_metadata(project.project_dir, run_id, metadata)
 
         project.runs.append(
             {
@@ -1592,24 +2291,17 @@ def load_run_metadata(project_dir: str, run_id: str) -> dict[str, Any]:
             suggestion="请使用项目 runs 列表中的 run_id。",
         )
 
-    metadata_path = Path(project_dir).expanduser() / "runs" / run_id / "metadata.json"
     try:
-        if not metadata_path.exists():
-            return _error(
-                "RUN_METADATA_NOT_FOUND",
-                "没有找到该 run 的 metadata.json。",
-                raw_error=str(metadata_path),
-                suggestion="请先准备运行记录，或检查 run_id 是否正确。",
-            )
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if not isinstance(metadata, dict):
-            return _error("RUN_METADATA_INVALID", "metadata.json 格式不是 JSON 对象。")
+        metadata, error = _read_run_metadata(project_dir, run_id)
+        if error:
+            return error
+        assert metadata is not None
         return {
             "ok": True,
             "project_dir": str(Path(project_dir).expanduser()),
             "run_id": run_id,
             "metadata": metadata,
-            "metadata_file": Path("runs", run_id, "metadata.json").as_posix(),
+            "metadata_file": _metadata_relative_path(run_id),
             "message": "运行元数据读取成功。",
             "error": None,
         }
@@ -1626,24 +2318,72 @@ def _metadata_relative_path(run_id: str) -> str:
     return Path("runs", run_id, "metadata.json").as_posix()
 
 
-def _run_metadata_path(project_dir: str | Path, run_id: str) -> Path:
-    return Path(project_dir).expanduser() / "runs" / run_id / "metadata.json"
+def _safe_runs_directory(project_dir: str | Path, *, create: bool = False) -> Path:
+    project_root = Path(project_dir).expanduser().resolve()
+    runs_dir = project_root / "runs"
+    if create:
+        runs_dir.mkdir(parents=True, exist_ok=True)
+    if runs_dir.exists():
+        resolved = runs_dir.resolve(strict=True)
+        if runs_dir.is_symlink() or resolved != runs_dir.absolute():
+            raise RuntimeError(f"runs 目录不能是符号链接或重解析目录：{runs_dir}")
+        if not resolved.is_dir():
+            raise RuntimeError(f"runs 路径不是目录：{runs_dir}")
+    return runs_dir
 
 
-def _write_run_metadata(project_dir: str | Path, run_id: str, metadata: dict[str, Any]) -> None:
-    metadata_path = _run_metadata_path(project_dir, run_id)
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def _read_run_metadata(project_dir: str, run_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _safe_run_directory(project_dir: str | Path, run_id: str, *, require_exists: bool = True) -> Path:
     if not RUN_ID_PATTERN.match(run_id):
-        return None, _error(
-            "RUN_ID_INVALID",
-            "run_id 格式无效，应类似 run_001。",
-            suggestion="请使用项目 runs 列表中的 run_id。",
-        )
+        raise RuntimeError(f"run_id 格式无效：{run_id}")
+    runs_dir = _safe_runs_directory(project_dir)
+    run_dir = runs_dir / run_id
+    if require_exists and not run_dir.is_dir():
+        raise RuntimeError(f"run 目录不存在：{run_dir}")
+    if run_dir.exists():
+        resolved = run_dir.resolve(strict=True)
+        if run_dir.is_symlink() or resolved != run_dir.absolute():
+            raise RuntimeError(f"run 目录不能是符号链接或重解析目录：{run_dir}")
+        if not resolved.is_dir():
+            raise RuntimeError(f"run 路径不是目录：{run_dir}")
+    return run_dir
 
+
+def _run_metadata_path(project_dir: str | Path, run_id: str) -> Path:
+    return _safe_run_directory(project_dir, run_id) / "metadata.json"
+
+
+def _run_lock_path(project_dir: str | Path, run_id: str) -> Path:
+    return _safe_run_directory(project_dir, run_id) / ".metadata.lock"
+
+
+def _cancel_marker_path(project_dir: str | Path, run_id: str) -> Path:
+    marker = _safe_run_directory(project_dir, run_id) / ".cancel_requested"
+    if marker.is_symlink() or marker.resolve(strict=False) != marker.absolute():
+        raise RuntimeError(f"取消标记路径不安全：{marker}")
+    return marker
+
+
+def _create_cancel_marker(project_dir: str | Path, run_id: str, requested_at: str) -> None:
+    marker = _cancel_marker_path(project_dir, run_id)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f".{marker.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temporary.write_text(requested_at + "\n", encoding="utf-8")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def _run_metadata_lock(project_dir: str | Path, run_id: str) -> Iterator[None]:
+    """Cross-process exclusive lock for one run's metadata transaction."""
+
+    lock_path = _run_lock_path(project_dir, run_id)
+    with _exclusive_file_lock(lock_path):
+        yield
+
+
+def _read_run_metadata_unlocked(project_dir: str | Path, run_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     metadata_path = _run_metadata_path(project_dir, run_id)
     if not metadata_path.exists():
         return None, _error(
@@ -1652,7 +2392,13 @@ def _read_run_metadata(project_dir: str, run_id: str) -> tuple[dict[str, Any] | 
             raw_error=str(metadata_path),
             suggestion="请先在运行准备页创建 run 记录。",
         )
-
+    if metadata_path.is_symlink() or metadata_path.resolve(strict=True) != metadata_path.absolute():
+        return None, _error(
+            "RUN_METADATA_PATH_UNSAFE",
+            "metadata.json 不能是符号链接或重解析到其他位置。",
+            raw_error=str(metadata_path),
+            suggestion="请恢复 run 目录中的普通 metadata.json 文件。",
+        )
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - return structured errors.
@@ -1662,11 +2408,93 @@ def _read_run_metadata(project_dir: str, run_id: str) -> tuple[dict[str, Any] | 
             str(exc),
             "请检查 metadata.json 是否为 UTF-8 JSON 文件。",
         )
-
     if not isinstance(metadata, dict):
         return None, _error("RUN_METADATA_INVALID", "metadata.json 格式不是 JSON 对象。")
-
     return metadata, None
+
+
+def _validate_run_status_transition(current: dict[str, Any] | None, updated: dict[str, Any]) -> None:
+    if current is None:
+        return
+    before = str(current.get("status") or "")
+    after = str(updated.get("status") or before)
+    terminal = {"finished", "failed", "cancelled", "interrupted"}
+    if before in terminal and after != before:
+        raise RuntimeError(f"禁止将 run 终态从 {before} 改写为 {after}。")
+    allowed = {
+        "prepared": {"prepared", "running", "cancelled", "interrupted"},
+        "running": {"running", "finished", "failed", "cancelled", "interrupted"},
+    }
+    if before in allowed and after not in allowed[before]:
+        raise RuntimeError(f"不允许的 run 状态迁移：{before} -> {after}。")
+
+
+def _write_run_metadata_unlocked(project_dir: str | Path, run_id: str, metadata: dict[str, Any]) -> None:
+    metadata_path = _run_metadata_path(project_dir, run_id)
+    if metadata_path.is_symlink():
+        raise RuntimeError("metadata.json 不能是符号链接。")
+    payload = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
+    _atomic_write_text(metadata_path, payload)
+
+
+def _write_run_metadata(project_dir: str | Path, run_id: str, metadata: dict[str, Any]) -> None:
+    with _run_metadata_lock(project_dir, run_id):
+        current, _ = _read_run_metadata_unlocked(project_dir, run_id)
+        _validate_run_status_transition(current, metadata)
+        _write_run_metadata_unlocked(project_dir, run_id, metadata)
+
+
+def _read_run_metadata(project_dir: str, run_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not RUN_ID_PATTERN.match(run_id):
+        return None, _error(
+            "RUN_ID_INVALID",
+            "run_id 格式无效，应类似 run_001。",
+            suggestion="请使用项目 runs 列表中的 run_id。",
+        )
+    try:
+        run_dir = _safe_run_directory(project_dir, run_id, require_exists=False)
+        if not run_dir.is_dir():
+            metadata_path = run_dir / "metadata.json"
+            return None, _error(
+                "RUN_METADATA_NOT_FOUND",
+                "没有找到该 run 的 metadata.json，无法执行 Vina。",
+                raw_error=str(metadata_path),
+                suggestion="请先在运行准备页创建 run 记录。",
+            )
+        with _run_metadata_lock(project_dir, run_id):
+            return _read_run_metadata_unlocked(project_dir, run_id)
+    except Exception as exc:  # noqa: BLE001 - unsafe paths become structured errors.
+        return None, _error(
+            "RUN_PATH_UNSAFE",
+            "run 目录或运行元数据路径不安全，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请恢复项目 runs 目录中的普通 run 文件夹和 metadata.json。",
+        )
+
+
+def _update_run_metadata_transaction(
+    project_dir: str,
+    run_id: str,
+    updater: Any,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    try:
+        with _run_metadata_lock(project_dir, run_id):
+            current, error = _read_run_metadata_unlocked(project_dir, run_id)
+            if error or current is None:
+                return None, error
+            updated = updater(dict(current))
+            if not isinstance(updated, dict):
+                return None, _error("RUN_METADATA_UPDATE_INVALID", "run metadata 更新器没有返回 JSON 对象。")
+            _validate_run_status_transition(current, updated)
+            _write_run_metadata_unlocked(project_dir, run_id, updated)
+            return updated, None
+    except Exception as exc:  # noqa: BLE001 - unsafe paths become structured errors.
+        return None, _error(
+            "RUN_METADATA_TRANSACTION_ERROR",
+            "更新 run metadata 时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认 run 目录是项目内普通目录且可写。",
+        )
 
 
 def _project_relative_path_for_run(
@@ -2461,14 +3289,15 @@ def update_run_metadata(project_dir: str, run_id: str, patch: dict[str, Any]) ->
     if not isinstance(patch, dict):
         return _error("RUN_METADATA_PATCH_INVALID", "metadata patch 必须是 JSON 对象。")
 
-    metadata, error = _read_run_metadata(project_dir, run_id)
-    if error:
-        return error
-    assert metadata is not None
-
     try:
-        metadata.update(patch)
-        _write_run_metadata(project_dir, run_id, metadata)
+        def apply_patch(current: dict[str, Any]) -> dict[str, Any]:
+            current.update(patch)
+            return current
+
+        metadata, error = _update_run_metadata_transaction(project_dir, run_id, apply_patch)
+        if error:
+            return error
+        assert metadata is not None
         return {
             "ok": True,
             "project_dir": str(Path(project_dir).expanduser()),
@@ -2491,29 +3320,37 @@ def update_project_run_summary(project_dir: str, run_id: str, patch: dict[str, A
     if not isinstance(patch, dict):
         return _error("RUN_SUMMARY_PATCH_INVALID", "run summary patch 必须是 JSON 对象。")
 
-    loaded = load_project(project_dir)
-    if not loaded.get("ok"):
-        return loaded
-
     try:
-        project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
-        matched = False
-        for run_summary in project.runs:
-            if isinstance(run_summary, dict) and run_summary.get("run_id") == run_id:
-                run_summary.update(patch)
-                matched = True
-                break
+        project_root = Path(project_dir).expanduser().resolve()
+        with _project_lock(project_root):
+            project_json = _project_json_path(project_root)
+            if project_json.is_symlink() or project_json.resolve(strict=True) != project_json.absolute():
+                return _error(
+                    "PROJECT_JSON_PATH_UNSAFE",
+                    "project.json 不能是符号链接或重解析到其他位置。",
+                    raw_error=str(project_json),
+                )
+            data = json.loads(project_json.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return _error("PROJECT_JSON_INVALID", "project.json 格式不是 JSON 对象。")
+            project = _project_from_dict(data, project_root)
+            project.project_dir = str(project_root)
+            matched = False
+            for run_summary in project.runs:
+                if isinstance(run_summary, dict) and run_summary.get("run_id") == run_id:
+                    run_summary.update(patch)
+                    matched = True
+                    break
 
-        if not matched:
-            return _error(
-                "RUN_SUMMARY_NOT_FOUND",
-                "project.json 的 runs 数组中没有找到对应 run。",
-                suggestion="请回到运行准备页重新创建运行记录。",
-            )
+            if not matched:
+                return _error(
+                    "RUN_SUMMARY_NOT_FOUND",
+                    "project.json 的 runs 数组中没有找到对应 run。",
+                    suggestion="请回到运行准备页重新创建运行记录。",
+                )
 
-        saved = save_project(project)
-        if not saved.get("ok"):
-            return saved
+            project.updated_at = _now_iso()
+            _write_project_json_unlocked(project_root, project)
         return {
             "ok": True,
             "project_dir": project.project_dir,
@@ -2539,8 +3376,7 @@ def _validate_execute_prerequisites(
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
         return loaded
-
-    project_path = Path(project_dir).expanduser()
+    project_path = Path(project_dir).expanduser().resolve()
     project = _project_from_dict(loaded["project"], project_path)
     if not any(isinstance(item, dict) and item.get("run_id") == run_id for item in project.runs):
         return _error(
@@ -2549,74 +3385,120 @@ def _validate_execute_prerequisites(
             suggestion="请回到运行准备页重新创建运行记录。",
         )
 
-    receptor_path, receptor_error = _project_relative_file(project_path, project.receptor.file, "receptor")
-    if receptor_error:
-        return receptor_error
-    if receptor_path and receptor_path.stat().st_size == 0:
+    fixed_relative_paths = {
+        "receptor": Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix(),
+        "ligand": Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix(),
+        "config": Path("runs", run_id, "config_snapshot.txt").as_posix(),
+        "output": Path("runs", run_id, "out.pdbqt").as_posix(),
+        "log": Path("runs", run_id, "log.txt").as_posix(),
+        "stdout": Path("runs", run_id, "stdout.txt").as_posix(),
+        "stderr": Path("runs", run_id, "stderr.txt").as_posix(),
+    }
+    try:
+        run_dir = _safe_run_directory(project_path, run_id)
+    except Exception as exc:  # noqa: BLE001 - reject symlinked/reparsed run roots.
         return _error(
-            "RECEPTOR_FILE_EMPTY",
-            "受体 PDBQT 文件为空，无法执行 Vina。",
-            raw_error=str(receptor_path),
-            suggestion="请重新导入非空的 receptor.pdbqt。",
+            "RUN_PATH_UNSAFE",
+            "run 目录不是项目内普通目录，拒绝执行。",
+            raw_error=str(exc),
+            suggestion="请重新准备新的 run。",
         )
+    lexical_paths = {key: project_path / relative for key, relative in fixed_relative_paths.items()}
+    fixed_paths: dict[str, Path] = {}
+    for key, lexical_path in lexical_paths.items():
+        if lexical_path.is_symlink():
+            return _error(
+                "RUN_PATH_SYMLINK_UNSAFE",
+                f"固定运行路径 {key} 不能是符号链接。",
+                raw_error=str(lexical_path),
+                suggestion="请删除该链接并重新准备新的 run。",
+            )
+        if key in {"output", "log", "stdout", "stderr"} and lexical_path.exists():
+            return _error(
+                "RUN_OUTPUT_ALREADY_EXISTS",
+                f"prepared run 的 {key} 输出路径已存在，拒绝覆盖。",
+                raw_error=str(lexical_path),
+                suggestion="请保留当前 run 作为审计记录，并重新准备新的 run。",
+            )
+        try:
+            resolved = lexical_path.resolve(strict=False)
+            resolved.relative_to(project_path)
+        except (OSError, ValueError) as exc:
+            return _error(
+                "RUN_PATH_OUTSIDE_PROJECT",
+                f"固定运行路径 {key} 越出项目目录，拒绝执行。",
+                raw_error=f"{lexical_path}: {exc}",
+            )
+        expected_parent = run_dir / "inputs" if key in {"receptor", "ligand"} else run_dir
+        if resolved.parent != expected_parent or resolved != lexical_path.absolute():
+            return _error(
+                "RUN_PATH_REPARSE_UNSAFE",
+                f"固定运行路径 {key} 被重解析到本次 run 之外，拒绝执行。",
+                raw_error=f"lexical={lexical_path}; resolved={resolved}",
+                suggestion="请重新准备新的 run，且不要用链接替换运行文件。",
+            )
+        fixed_paths[key] = resolved
 
-    ligand_path, ligand_error = _project_relative_file(project_path, project.ligand.file, "ligand")
-    if ligand_error:
-        return ligand_error
-    if ligand_path and ligand_path.stat().st_size == 0:
-        return _error(
-            "LIGAND_FILE_EMPTY",
-            "配体 PDBQT 文件为空，无法执行 Vina。",
-            raw_error=str(ligand_path),
-            suggestion="请重新导入非空的 ligand.pdbqt。",
-        )
+    for key in ("receptor", "ligand", "config"):
+        path = fixed_paths[key]
+        if not path.is_file() or path.stat().st_size <= 0:
+            return _error(
+                f"RUN_{key.upper()}_SNAPSHOT_MISSING",
+                f"本次 run 的 {key} 快照缺失或为空，拒绝执行。",
+                raw_error=str(path),
+                suggestion="请重新准备新的 run；DockStart 不会回退到可变的项目输入。",
+            )
 
-    config_file = str(metadata.get("config_file") or _config_relative_path(project))
-    config_path, config_error = _project_relative_existing_file(project_path, config_file, "VINA_CONFIG", "configs/vina_config.txt")
-    if config_error:
-        return config_error
-    if config_path and config_path.stat().st_size == 0:
-        return _error(
-            "VINA_CONFIG_FILE_EMPTY",
-            "vina_config.txt 文件为空，无法执行 Vina。",
-            raw_error=str(config_path),
-            suggestion="请重新生成 vina_config.txt。",
-        )
+    snapshots = metadata.get("snapshots") if isinstance(metadata.get("snapshots"), dict) else {}
+    inputs = snapshots.get("inputs") if isinstance(snapshots.get("inputs"), dict) else {}
+    config_snapshot = snapshots.get("config") if isinstance(snapshots.get("config"), dict) else {}
+    expected_hashes = {
+        "receptor": str((inputs.get("receptor") or {}).get("sha256") or "") if isinstance(inputs.get("receptor"), dict) else "",
+        "ligand": str((inputs.get("ligand") or {}).get("sha256") or "") if isinstance(inputs.get("ligand"), dict) else "",
+        "config": str(config_snapshot.get("sha256") or ""),
+    }
+    for key, expected in expected_hashes.items():
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+            return _error(
+                "RUN_SNAPSHOT_HASH_MISSING",
+                f"metadata 中缺少可信的 {key} 快照 SHA256，拒绝执行。",
+                suggestion="请重新准备新的 run。",
+            )
+        actual = _sha256_file(fixed_paths[key])
+        if actual.lower() != expected.lower():
+            return _error(
+                "RUN_SNAPSHOT_HASH_MISMATCH",
+                f"{key} 快照在准备后发生变化，拒绝执行。",
+                raw_error=f"expected={expected}; actual={actual}; path={fixed_paths[key]}",
+                suggestion="请重新准备 run，或恢复未被修改的快照。",
+            )
 
-    command = metadata.get("command")
-    if not isinstance(command, list) or not command:
+    config_text = fixed_paths["config"].read_text(encoding="utf-8", errors="strict")
+    expected_receptor_line = f"receptor = {fixed_relative_paths['receptor']}"
+    expected_ligand_line = f"ligand = {fixed_relative_paths['ligand']}"
+    if expected_receptor_line not in config_text.splitlines() or expected_ligand_line not in config_text.splitlines():
         return _error(
-            "RUN_COMMAND_INVALID",
-            "metadata.command 必须是非空数组，不能执行字符串命令。",
-            suggestion="请回到运行准备页重新生成 run 记录。",
+            "RUN_CONFIG_SNAPSHOT_INPUT_MISMATCH",
+            "运行配置快照没有引用本次 run 的 immutable 输入快照。",
+            suggestion="请重新准备新的 run。",
         )
-    if not all(isinstance(item, str) and item.strip() for item in command):
-        return _error(
-            "RUN_COMMAND_INVALID",
-            "metadata.command 数组中的每一项都必须是非空字符串。",
-            suggestion="请回到运行准备页重新生成 run 记录。",
-        )
-
-    output_file = str(metadata.get("output_file") or "")
-    log_file = str(metadata.get("log_file") or "")
-    output_path, output_error = _project_relative_path_for_run(project_path, output_file, "RUN_OUTPUT_FILE", "out.pdbqt")
-    if output_error:
-        return output_error
-    log_path, log_error = _project_relative_path_for_run(project_path, log_file, "RUN_LOG_FILE", "log.txt")
-    if log_error:
-        return log_error
 
     return {
         "ok": True,
-        "project_dir": project.project_dir,
+        "project_dir": str(project_path),
         "project": project.to_dict(),
-        "command": command,
-        "config_file": config_file,
-        "config_path": str(config_path) if config_path else "",
-        "output_file": output_file,
-        "output_path": str(output_path) if output_path else "",
-        "log_file": log_file,
-        "log_path": str(log_path) if log_path else "",
+        "config_file": fixed_relative_paths["config"],
+        "config_path": str(fixed_paths["config"]),
+        "receptor_file": fixed_relative_paths["receptor"],
+        "ligand_file": fixed_relative_paths["ligand"],
+        "output_file": fixed_relative_paths["output"],
+        "output_path": str(fixed_paths["output"]),
+        "log_file": fixed_relative_paths["log"],
+        "log_path": str(fixed_paths["log"]),
+        "stdout_file": fixed_relative_paths["stdout"],
+        "stdout_path": str(fixed_paths["stdout"]),
+        "stderr_file": fixed_relative_paths["stderr"],
+        "stderr_path": str(fixed_paths["stderr"]),
         "error": None,
     }
 
@@ -2632,24 +3514,24 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
         _file_status(project_path, _metadata_relative_path(run_id), "metadata", "metadata.json"),
         _file_status(
             project_path,
-            str(metadata.get("config_snapshot") or Path("runs", run_id, "config_snapshot.txt").as_posix()),
+            Path("runs", run_id, "config_snapshot.txt").as_posix(),
             "config_snapshot",
             "config_snapshot.txt",
         ),
         _file_status(
             project_path,
-            str(metadata.get("stdout_file") or Path("runs", run_id, "stdout.txt").as_posix()),
+            Path("runs", run_id, "stdout.txt").as_posix(),
             "stdout",
             "stdout.txt",
         ),
         _file_status(
             project_path,
-            str(metadata.get("stderr_file") or Path("runs", run_id, "stderr.txt").as_posix()),
+            Path("runs", run_id, "stderr.txt").as_posix(),
             "stderr",
             "stderr.txt",
         ),
-        _file_status(project_path, str(metadata.get("log_file") or ""), "log", "log.txt"),
-        _file_status(project_path, str(metadata.get("output_file") or ""), "out", "out.pdbqt"),
+        _file_status(project_path, Path("runs", run_id, "log.txt").as_posix(), "log", "log.txt"),
+        _file_status(project_path, Path("runs", run_id, "out.pdbqt").as_posix(), "out", "out.pdbqt"),
     ]
 
     loaded = load_project(project_dir)
@@ -2667,156 +3549,809 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
     }
 
 
-def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
+def _tail_text(path: Path, *, max_bytes: int = 65536, max_lines: int = 80) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            content = handle.read().decode("utf-8", errors="replace")
+        return "\n".join(content.splitlines()[-max_lines:])
+    except OSError:
+        return ""
+
+
+def _safe_fixed_run_artifact(project_path: Path, run_id: str, filename: str) -> tuple[Path | None, str]:
+    try:
+        run_dir = _safe_run_directory(project_path, run_id)
+    except Exception as exc:  # noqa: BLE001 - return a safe empty tail.
+        return None, f"run 目录不安全：{exc}"
+    candidate = run_dir / filename
+    if candidate.is_symlink():
+        return None, f"{filename} 不能是符号链接"
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(project_path)
+    except (OSError, ValueError) as exc:
+        return None, f"{filename} 固定路径越出项目目录：{exc}"
+    if resolved.parent != run_dir or resolved != candidate.absolute():
+        return None, f"{filename} 被重解析到本次 run 之外"
+    return resolved, ""
+
+
+def get_run_runtime_status(project_dir: str, run_id: str) -> dict[str, Any]:
     metadata, error = _read_run_metadata(project_dir, run_id)
     if error:
         return error
     assert metadata is not None
 
+    project_path = Path(project_dir).expanduser().resolve()
+    status = str(metadata.get("status") or "unknown")
+    stage = str(metadata.get("stage") or status)
+    process_active = False
+    identity_error = ""
+    summary_sync_error: dict[str, Any] | None = None
+    elapsed = metadata.get("duration_seconds")
+    if not isinstance(elapsed, (int, float)):
+        elapsed = _duration_seconds(metadata.get("started_at"), metadata.get("finished_at"))
+
+    executor_active = False
+    if status == "running":
+        pid = metadata.get("pid")
+        launch_grace = (
+            stage == "starting"
+            and not isinstance(pid, int)
+            and isinstance(elapsed, (int, float))
+            and elapsed < 10
+        )
+        verification = _verify_metadata_process(
+            metadata,
+            pid_key="pid",
+            executable_key="trusted_executable",
+            identity_key="process_identity",
+        )
+        executor_verification = _verify_metadata_process(
+            metadata,
+            pid_key="executor_pid",
+            executable_key="executor_executable",
+            identity_key="executor_identity",
+        )
+        process_active = bool(verification.get("ok"))
+        executor_active = bool(executor_verification.get("ok"))
+
+        if process_active and metadata.get("process_missing_since"):
+            observed_probe = metadata.get("process_missing_since")
+
+            def clear_missing_probe(current: dict[str, Any]) -> dict[str, Any]:
+                if (
+                    current.get("status") == "running"
+                    and current.get("process_missing_since") == observed_probe
+                    and _verify_metadata_process(
+                        current,
+                        pid_key="pid",
+                        executable_key="trusted_executable",
+                        identity_key="process_identity",
+                    ).get("ok")
+                ):
+                    current.pop("process_missing_since", None)
+                return current
+
+            cleared, clear_error = _update_run_metadata_transaction(project_dir, run_id, clear_missing_probe)
+            if clear_error:
+                return clear_error
+            assert cleared is not None
+            metadata = cleared
+
+        if not process_active and not launch_grace:
+            identity_error = str(verification.get("message") or "没有找到可验证的 Vina 进程身份。")
+            observed_probe = metadata.get("process_missing_since")
+            if not observed_probe:
+                detected_at = _now_iso()
+
+                def record_missing_probe(current: dict[str, Any]) -> dict[str, Any]:
+                    if current.get("status") != "running" or current.get("process_missing_since"):
+                        return current
+                    child_now = _verify_metadata_process(
+                        current,
+                        pid_key="pid",
+                        executable_key="trusted_executable",
+                        identity_key="process_identity",
+                    )
+                    if not child_now.get("ok"):
+                        current["process_missing_since"] = detected_at
+                    return current
+
+                probed, probe_error = _update_run_metadata_transaction(project_dir, run_id, record_missing_probe)
+                if probe_error:
+                    return probe_error
+                assert probed is not None
+                metadata = probed
+            else:
+                marker_exists = _cancel_marker_path(project_path, run_id).exists()
+                terminal_status = "cancelled" if marker_exists else "interrupted"
+                finished_at = _now_iso()
+
+                def converge(current: dict[str, Any]) -> dict[str, Any]:
+                    if (
+                        current.get("status") != "running"
+                        or current.get("process_missing_since") != observed_probe
+                    ):
+                        return current
+                    child_now = _verify_metadata_process(
+                        current,
+                        pid_key="pid",
+                        executable_key="trusted_executable",
+                        identity_key="process_identity",
+                    )
+                    executor_now = _verify_metadata_process(
+                        current,
+                        pid_key="executor_pid",
+                        executable_key="executor_executable",
+                        identity_key="executor_identity",
+                    )
+                    if child_now.get("ok"):
+                        current.pop("process_missing_since", None)
+                        return current
+                    if executor_now.get("ok"):
+                        return current
+                    current.update(
+                        {
+                            "status": terminal_status,
+                            "stage": terminal_status,
+                            "finished_at": finished_at,
+                            "duration_seconds": _duration_seconds(current.get("started_at"), finished_at),
+                            "progress": {
+                                "percent": int((current.get("progress") or {}).get("percent") or 0),
+                                "message": "运行已取消。" if terminal_status == "cancelled" else "Vina 进程意外中断。",
+                            },
+                        },
+                    )
+                    current.pop("process_missing_since", None)
+                    if terminal_status == "interrupted":
+                        current["error_message"] = identity_error
+                    else:
+                        current.pop("error_message", None)
+                    return current
+
+                converged, transaction_error = _update_run_metadata_transaction(project_dir, run_id, converge)
+                if transaction_error:
+                    return transaction_error
+                assert converged is not None
+                metadata = converged
+
+            status = str(metadata.get("status") or status)
+            stage = str(metadata.get("stage") or status)
+            elapsed = metadata.get("duration_seconds")
+            process_active = bool(
+                _verify_metadata_process(
+                    metadata,
+                    pid_key="pid",
+                    executable_key="trusted_executable",
+                    identity_key="process_identity",
+                ).get("ok")
+            ) if status == "running" else False
+            executor_active = bool(
+                _verify_metadata_process(
+                    metadata,
+                    pid_key="executor_pid",
+                    executable_key="executor_executable",
+                    identity_key="executor_identity",
+                ).get("ok")
+            ) if status == "running" else False
+
+            if status != "running":
+                summary_update = update_project_run_summary(
+                    project_dir,
+                    run_id,
+                    {
+                        "status": status,
+                        "stage": stage,
+                        "finished_at": metadata.get("finished_at"),
+                        "duration_seconds": elapsed,
+                        "exit_code": metadata.get("exit_code"),
+                    },
+                )
+                if not summary_update.get("ok"):
+                    summary_sync_error = summary_update.get("error") or {"message": "project.json run 摘要同步失败。"}
+
+    progress = metadata.get("progress") if isinstance(metadata.get("progress"), dict) else {}
+    if status == "running" and metadata.get("process_missing_since"):
+        progress = {
+            "percent": int(progress.get("percent") or 0),
+            "message": "Vina 进程已退出，正在等待运行记录收尾。",
+        }
+    if not progress and status == "finished":
+        progress = {"percent": 100, "message": "AutoDock Vina 已成功完成。"}
+    message_by_status = {
+        "prepared": "运行记录已准备，尚未启动 Vina。",
+        "running": "AutoDock Vina 正在运行。",
+        "finished": "AutoDock Vina 已成功完成。",
+        "failed": "AutoDock Vina 运行失败，请查看日志。",
+        "cancelled": "AutoDock Vina 运行已取消。",
+        "interrupted": "Vina 进程已中断，请检查日志后重新准备运行。",
+    }
+    tail_paths: dict[str, Path | None] = {}
+    tail_path_errors: list[str] = []
+    for key, filename in (("stdout", "stdout.txt"), ("stderr", "stderr.txt"), ("log", "log.txt")):
+        path, path_error = _safe_fixed_run_artifact(project_path, run_id, filename)
+        tail_paths[key] = path
+        if path_error:
+            tail_path_errors.append(path_error)
+    if tail_path_errors and summary_sync_error is None:
+        summary_sync_error = {
+            "code": "RUN_LOG_PATH_UNSAFE",
+            "message": "运行日志固定路径不安全，已拒绝读取。",
+            "raw_error": "; ".join(tail_path_errors),
+        }
+
+    loaded = load_project(project_dir)
+    return {
+        "ok": summary_sync_error is None,
+        "project": loaded.get("project") if loaded.get("ok") else None,
+        "project_dir": str(project_path),
+        "run_id": run_id,
+        "metadata": metadata,
+        "progress": {
+            "percent": int(progress.get("percent") or 0),
+            "message": str(progress.get("message") or message_by_status.get(status, "运行状态已读取。")),
+        },
+        "stage": stage,
+        "elapsed_seconds": elapsed,
+        "process_active": process_active,
+        "executor_active": executor_active,
+        "stdout_tail": _tail_text(tail_paths["stdout"]) if tail_paths["stdout"] is not None else "",
+        "stderr_tail": _tail_text(tail_paths["stderr"]) if tail_paths["stderr"] is not None else "",
+        "log_tail": _tail_text(tail_paths["log"]) if tail_paths["log"] is not None else "",
+        "message": message_by_status.get(status, "运行状态已读取。"),
+        "error": summary_sync_error,
+    }
+
+
+def cancel_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
+    metadata, error = _read_run_metadata(project_dir, run_id)
+    if error:
+        return error
+    assert metadata is not None
+    if str(metadata.get("status") or "") != "running":
+        return _error(
+            "RUN_NOT_RUNNING",
+            f"当前 run 状态为 {metadata.get('status') or 'unknown'}，没有可取消的 Vina 进程。",
+            suggestion="只能取消 running 状态的运行。",
+        )
+
+    pid = metadata.get("pid")
+    requested_at = _now_iso()
+    if not isinstance(pid, int) or pid <= 0:
+        _create_cancel_marker(project_dir, run_id, requested_at)
+
+        def request_pending(current: dict[str, Any]) -> dict[str, Any]:
+            if current.get("status") != "running":
+                return current
+            progress = current.get("progress") if isinstance(current.get("progress"), dict) else {}
+            current.update(
+                {
+                    "stage": "cancel_pending",
+                    "cancel_requested_at": requested_at,
+                    "progress": {
+                        "percent": int(progress.get("percent") or 0),
+                        "message": "取消请求已登记，等待 Vina 进程身份可用。",
+                    },
+                },
+            )
+            return current
+
+        pending, transaction_error = _update_run_metadata_transaction(project_dir, run_id, request_pending)
+        if transaction_error:
+            return transaction_error
+        assert pending is not None
+        if pending.get("status") != "running":
+            runtime = get_run_runtime_status(project_dir, run_id)
+            runtime.update(
+                {
+                    "accepted": False,
+                    "cancelled": pending.get("status") == "cancelled",
+                    "message": f"运行已进入 {pending.get('status')} 状态，无需继续取消。",
+                }
+            )
+            return runtime
+        pending_summary = update_project_run_summary(
+            project_dir,
+            run_id,
+            {
+                "status": "running",
+                "stage": pending.get("stage") or "cancel_pending",
+                "cancel_requested_at": pending.get("cancel_requested_at") or requested_at,
+            },
+        )
+        return {
+            "ok": bool(pending_summary.get("ok")),
+            "accepted": True,
+            "cancelled": False,
+            "project": pending_summary.get("project") if pending_summary.get("ok") else None,
+            "project_dir": str(Path(project_dir).expanduser()),
+            "run_id": run_id,
+            "metadata": pending,
+            "stage": "cancel_pending",
+            "message": "取消请求已登记；Vina PID 尚未可验证，正在等待安全终止。",
+            "error": None if pending_summary.get("ok") else pending_summary.get("error"),
+        }
+
+    trusted_executable = str(metadata.get("trusted_executable") or "")
+    recorded_identity = metadata.get("process_identity") if isinstance(metadata.get("process_identity"), dict) else None
+    verification = _verify_metadata_process(
+        metadata,
+        pid_key="pid",
+        executable_key="trusted_executable",
+        identity_key="process_identity",
+    )
+    if not verification.get("ok"):
+        detected_at = str(metadata.get("process_missing_since") or _now_iso())
+
+        def note_process_exit(current: dict[str, Any]) -> dict[str, Any]:
+            if current.get("status") != "running":
+                return current
+            child_now = _verify_metadata_process(
+                current,
+                pid_key="pid",
+                executable_key="trusted_executable",
+                identity_key="process_identity",
+            )
+            if child_now.get("ok"):
+                current.pop("process_missing_since", None)
+                return current
+            current.setdefault("process_missing_since", detected_at)
+            return current
+
+        settling, transaction_error = _update_run_metadata_transaction(project_dir, run_id, note_process_exit)
+        if transaction_error:
+            return transaction_error
+        assert settling is not None
+        if settling.get("status") != "running":
+            runtime = get_run_runtime_status(project_dir, run_id)
+            runtime.update(
+                {
+                    "accepted": False,
+                    "cancelled": settling.get("status") == "cancelled",
+                    "message": f"运行已进入 {settling.get('status')} 状态，无需继续取消。",
+                }
+            )
+            return runtime
+
+        metadata = settling
+        pid = metadata.get("pid")
+        trusted_executable = str(metadata.get("trusted_executable") or "")
+        recorded_identity = metadata.get("process_identity") if isinstance(metadata.get("process_identity"), dict) else None
+        verification = _verify_metadata_process(
+            metadata,
+            pid_key="pid",
+            executable_key="trusted_executable",
+            identity_key="process_identity",
+        )
+        if verification.get("ok"):
+            # The first verification raced a still-starting process identity;
+            # continue through the normal, verified cancellation path.
+            pass
+        elif _verify_metadata_process(
+            metadata,
+            pid_key="executor_pid",
+            executable_key="executor_executable",
+            identity_key="executor_identity",
+        ).get("ok"):
+            loaded = load_project(project_dir)
+            return {
+                "ok": True,
+                "accepted": False,
+                "cancelled": False,
+                "project": loaded.get("project") if loaded.get("ok") else None,
+                "project_dir": str(Path(project_dir).expanduser()),
+                "run_id": run_id,
+                "metadata": metadata,
+                "stage": metadata.get("stage") or "running",
+                "message": "Vina 进程已退出，DockStart 正在收尾；本次取消未再终止任何 PID。",
+                "error": None,
+            }
+        else:
+            payload = _error(
+                "VINA_CANCEL_IDENTITY_MISMATCH",
+                str(verification.get("message") or "Vina 进程已经退出，无法再执行终止。"),
+                suggestion="未终止任何 PID；请刷新运行状态，DockStart 将在再次确认后收敛该 run。",
+            )
+            payload.update(
+                {
+                    "project_dir": str(Path(project_dir).expanduser()),
+                    "run_id": run_id,
+                    "metadata": metadata,
+                }
+            )
+            return payload
+
+    _create_cancel_marker(project_dir, run_id, requested_at)
+
+    def mark_cancelling(current: dict[str, Any]) -> dict[str, Any]:
+        if current.get("status") != "running":
+            return current
+        progress = current.get("progress") if isinstance(current.get("progress"), dict) else {}
+        current.update(
+            {
+                "stage": "cancelling",
+                "cancel_requested_at": requested_at,
+                "progress": {"percent": int(progress.get("percent") or 0), "message": "正在取消 AutoDock Vina。"},
+            },
+        )
+        return current
+
+    cancelling, transaction_error = _update_run_metadata_transaction(project_dir, run_id, mark_cancelling)
+    if transaction_error:
+        return transaction_error
+    termination = vina_adapter.terminate_process(
+        pid,
+        expected_executable=trusted_executable,
+        recorded_identity=recorded_identity,
+    )
+    if not termination.get("ok"):
+        return _error(
+            "VINA_CANCEL_FAILED",
+            str(termination.get("message") or "无法安全终止 Vina 进程。"),
+            str(termination.get("raw_error") or ""),
+            "运行未被报告为已取消；请重新检查 runtime 状态。",
+        )
+
+    cancelled_at = _now_iso()
+
+    def finalize_cancel(current: dict[str, Any]) -> dict[str, Any]:
+        if current.get("status") != "running":
+            return current
+        progress = current.get("progress") if isinstance(current.get("progress"), dict) else {}
+        current.update(
+            {
+                "status": "cancelled",
+                "stage": "cancelled",
+                "finished_at": cancelled_at,
+                "duration_seconds": _duration_seconds(current.get("started_at"), cancelled_at),
+                "progress": {"percent": int(progress.get("percent") or 0), "message": "用户已取消运行。"},
+            },
+        )
+        current.pop("error_message", None)
+        return current
+
+    cancelled, transaction_error = _update_run_metadata_transaction(project_dir, run_id, finalize_cancel)
+    if transaction_error:
+        return transaction_error
+    assert cancelled is not None
+    if cancelled.get("status") != "cancelled":
+        return _error(
+            "RUN_CANCEL_RACE_TERMINAL",
+            f"运行在取消过程中已进入 {cancelled.get('status')} 状态，未覆盖该终态。",
+        )
+    project_update = update_project_run_summary(
+        project_dir,
+        run_id,
+        {
+            "status": "cancelled",
+            "stage": "cancelled",
+            "finished_at": cancelled.get("finished_at"),
+            "duration_seconds": cancelled.get("duration_seconds"),
+        },
+    )
+    runtime = get_run_runtime_status(project_dir, run_id)
+    runtime["termination"] = termination
+    runtime["message"] = "已取消 AutoDock Vina 运行。"
+    if not project_update.get("ok"):
+        runtime["ok"] = False
+        runtime["error"] = project_update.get("error") or {"message": "project.json run 摘要同步失败。"}
+    else:
+        runtime["project"] = project_update.get("project")
+    return runtime
+
+
+def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
+    metadata, error = _read_run_metadata(project_dir, run_id)
+    if error:
+        return error
+    assert metadata is not None
     status = str(metadata.get("status") or "")
     if status != "prepared":
         return _error(
             "RUN_STATUS_NOT_EXECUTABLE",
             f"当前 run 状态为 {status or 'unknown'}，只能执行 prepared 状态的 run。",
-            suggestion="请不要重复执行 running、finished、failed 或 cancelled 的 run。",
+            suggestion="请不要重复执行 running、finished、failed、interrupted 或 cancelled 的 run。",
+        )
+    if _cancel_marker_path(project_dir, run_id).exists():
+        return _error(
+            "RUN_CANCEL_MARKER_PRESENT",
+            "该 run 已存在取消标记，拒绝启动 Vina。",
+            suggestion="请重新准备新的 run。",
         )
 
     prerequisites = _validate_execute_prerequisites(project_dir, run_id, metadata)
     if not prerequisites.get("ok"):
         return prerequisites
 
-    project_path = Path(project_dir).expanduser()
-    stdout_file = Path("runs", run_id, "stdout.txt").as_posix()
-    stderr_file = Path("runs", run_id, "stderr.txt").as_posix()
-    stdout_path = project_path / stdout_file
-    stderr_path = project_path / stderr_file
-    log_file = str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())
-    log_path = project_path / log_file
-    output_path = Path(prerequisites["output_path"])
-    command = [str(item) for item in prerequisites["command"]]
-
-    started_at = _now_iso()
-    metadata.update(
-        {
-            "status": "running",
-            "started_at": started_at,
-            "finished_at": None,
-            "stdout_file": stdout_file,
-            "stderr_file": stderr_file,
-            "exit_code": None,
-            "best_affinity": None,
-        },
-    )
-    try:
-        _write_run_metadata(project_dir, run_id, metadata)
-        running_project_update = update_project_run_summary(project_dir, run_id, {"status": "running", "started_at": started_at})
-        if not running_project_update.get("ok"):
-            metadata["status"] = "prepared"
-            metadata["started_at"] = None
-            _write_run_metadata(project_dir, run_id, metadata)
-            return running_project_update
-    except Exception as exc:  # noqa: BLE001 - return structured errors.
+    settings = load_settings()
+    detection = vina_adapter.detect(settings.tool_paths.vina)
+    if detection.status != "ok" or not detection.path:
         return _error(
-            "RUN_START_UPDATE_ERROR",
-            "更新运行中状态时发生错误，未执行 Vina。",
-            str(exc),
-            "请确认 run 目录和 project.json 可写。",
+            "VINA_NOT_AVAILABLE",
+            detection.message or "执行前未检测到可信的 AutoDock Vina。",
+            detection.raw_error,
+            "请在设置页修复 Vina 路径后重新执行。",
         )
 
-    exit_code: int | None
-    stdout_text = ""
-    stderr_text = ""
-    run_exception = ""
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=str(project_path),
-            capture_output=True,
-            text=True,
-            **hidden_subprocess_kwargs(),
+    project_path = Path(project_dir).expanduser().resolve()
+    stdout_file = str(prerequisites["stdout_file"])
+    stderr_file = str(prerequisites["stderr_file"])
+    log_file = str(prerequisites["log_file"])
+    output_file = str(prerequisites["output_file"])
+    config_file = str(prerequisites["config_file"])
+    stdout_path = Path(prerequisites["stdout_path"])
+    stderr_path = Path(prerequisites["stderr_path"])
+    log_path = Path(prerequisites["log_path"])
+    output_path = Path(prerequisites["output_path"])
+    command = _build_vina_command(detection.path, config_file, run_id)
+    started_at = _now_iso()
+    launch_token = f"{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
+    executor_pid = os.getpid()
+    executor_identity = vina_adapter.get_process_identity(executor_pid)
+    executor_executable = str((executor_identity or {}).get("executable_path") or "")
+    if executor_identity is None or not executor_executable:
+        return _error(
+            "RUN_EXECUTOR_IDENTITY_UNAVAILABLE",
+            "无法记录 DockStart 运行执行器的进程身份，已拒绝启动 Vina。",
+            suggestion="请重新检查 Python 运行环境后再试；该 run 仍保持 prepared 状态。",
         )
-        exit_code = completed.returncode
-        stdout_text = completed.stdout or ""
-        stderr_text = completed.stderr or ""
-    except Exception as exc:  # noqa: BLE001 - return structured errors.
-        exit_code = None
-        run_exception = str(exc)
-        stderr_text = run_exception
 
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_path.write_text(stdout_text, encoding="utf-8")
-    stderr_path.write_text(stderr_text, encoding="utf-8")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(stdout_text, encoding="utf-8")
+    def mark_running(current: dict[str, Any]) -> dict[str, Any]:
+        if current.get("status") != "prepared":
+            return current
+        current.update(
+            {
+                "status": "running",
+                "stage": "starting",
+                "progress": {"percent": 5, "message": "正在启动 AutoDock Vina。"},
+                "started_at": started_at,
+                "finished_at": None,
+                "duration_seconds": None,
+                "pid": None,
+                "process_identity": None,
+                "process_started_at": None,
+                "launch_token": launch_token,
+                "executor_pid": executor_pid,
+                "executor_executable": executor_executable,
+                "executor_identity": executor_identity,
+                "trusted_executable": detection.path,
+                "executed_command": command,
+                "execution_vina": {
+                    "path": detection.path,
+                    "version": detection.version,
+                    "source": detection.source,
+                },
+                "stdout_file": stdout_file,
+                "stderr_file": stderr_file,
+                "output_file": output_file,
+                "log_file": log_file,
+                "config_snapshot": config_file,
+                "exit_code": None,
+                "best_affinity": None,
+            },
+        )
+        current.pop("cancel_requested_at", None)
+        current.pop("process_missing_since", None)
+        current.pop("error_message", None)
+        return current
+
+    running_metadata, transaction_error = _update_run_metadata_transaction(project_dir, run_id, mark_running)
+    if transaction_error:
+        return transaction_error
+    assert running_metadata is not None
+    if running_metadata.get("status") != "running" or running_metadata.get("launch_token") != launch_token:
+        return _error("RUN_START_RACE", "run 状态在启动前发生变化，未执行 Vina。")
+    running_project_update = update_project_run_summary(
+        project_dir,
+        run_id,
+        {"status": "running", "stage": "starting", "started_at": started_at},
+    )
+    if not running_project_update.get("ok"):
+        interrupted_at = _now_iso()
+
+        def interrupt_before_spawn(current: dict[str, Any]) -> dict[str, Any]:
+            if current.get("status") == "running":
+                current.update(
+                    {
+                        "status": "interrupted",
+                        "stage": "interrupted",
+                        "finished_at": interrupted_at,
+                        "duration_seconds": _duration_seconds(started_at, interrupted_at),
+                        "progress": {"percent": 0, "message": "project.json 摘要同步失败，未启动 Vina。"},
+                        "error_message": "project.json run 摘要同步失败。",
+                    },
+                )
+            return current
+
+        _update_run_metadata_transaction(project_dir, run_id, interrupt_before_spawn)
+        return running_project_update
+
+    callback_lock = threading.Lock()
+    progress_state = {"stdout_chunks": 0, "last_update": 0.0}
+
+    def on_started(pid: int) -> None:
+        identity = vina_adapter.get_process_identity(pid)
+        if identity is None:
+            raise RuntimeError("Vina 已启动，但无法记录可验证的进程身份。")
+        process_started_at = _now_iso()
+
+        def record_process(current: dict[str, Any]) -> dict[str, Any]:
+            if current.get("status") != "running":
+                raise RuntimeError(f"run 已进入 {current.get('status')} 状态，拒绝登记新进程。")
+            cancel_requested = _cancel_marker_path(project_dir, run_id).exists()
+            current.update(
+                {
+                    "pid": pid,
+                    "process_identity": identity,
+                    "process_started_at": process_started_at,
+                    "stage": "cancelling" if cancel_requested else "running",
+                    "progress": {
+                        "percent": 10,
+                        "message": "检测到取消请求，正在终止 Vina。" if cancel_requested else "AutoDock Vina 已启动，正在计算。",
+                    },
+                },
+            )
+            current.pop("process_missing_since", None)
+            return current
+
+        updated, callback_error = _update_run_metadata_transaction(project_dir, run_id, record_process)
+        if callback_error:
+            raise RuntimeError(str(callback_error.get("error") or callback_error))
+        if _cancel_marker_path(project_dir, run_id).exists():
+            termination = vina_adapter.terminate_process(
+                pid,
+                expected_executable=detection.path,
+                recorded_identity=identity,
+            )
+            if not termination.get("ok"):
+                raise RuntimeError(str(termination.get("message") or "取消已启动的 Vina 失败。"))
+
+    def on_output(stream_name: str, _chunk: str) -> None:
+        if stream_name != "stdout" or _cancel_marker_path(project_dir, run_id).exists():
+            return
+        with callback_lock:
+            progress_state["stdout_chunks"] += 1
+            now = time.monotonic()
+            if now - progress_state["last_update"] < 0.5:
+                return
+            progress_state["last_update"] = now
+            percent = min(90, 15 + int(progress_state["stdout_chunks"] / 25))
+
+            def update_progress(current: dict[str, Any]) -> dict[str, Any]:
+                if current.get("status") != "running" or _cancel_marker_path(project_dir, run_id).exists():
+                    return current
+                current.update(
+                    {
+                        "stage": "running",
+                        "progress": {"percent": percent, "message": "AutoDock Vina 正在计算并写入实时日志。"},
+                    },
+                )
+                return current
+
+            _, progress_error = _update_run_metadata_transaction(project_dir, run_id, update_progress)
+            if progress_error:
+                raise RuntimeError(str(progress_error.get("error") or progress_error))
+
+    run_result = vina_adapter.run_managed(
+        command,
+        project_path,
+        stdout_path,
+        stderr_path,
+        log_path,
+        on_started=on_started,
+        on_output=on_output,
+    )
+    if run_result.error:
+        stderr_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+        with stderr_path.open("a", encoding="utf-8") as handle:
+            if existing_size:
+                handle.write("\n")
+            handle.write(run_result.error)
 
     finished_at = _now_iso()
-    output_ok = output_path.exists() and output_path.is_file() and output_path.stat().st_size > 0
-    if exit_code == 0 and output_ok:
-        final_status = "finished"
-        error_message = ""
-    elif exit_code == 0:
-        final_status = "failed"
-        error_message = "AutoDock Vina 结束码为 0，但没有生成非空 out.pdbqt。请查看 stdout.txt、stderr.txt 和 log.txt。"
-    else:
-        final_status = "failed"
-        error_message = "AutoDock Vina 执行失败，请查看 stderr.txt 和 log.txt。"
+    output_ok = output_path.is_file() and output_path.stat().st_size > 0
+    cancel_requested = _cancel_marker_path(project_dir, run_id).exists()
 
-    metadata.update(
-        {
-            "status": final_status,
-            "finished_at": finished_at,
-            "exit_code": exit_code,
-            "stdout_file": stdout_file,
-            "stderr_file": stderr_file,
-            "output_file": prerequisites["output_file"],
-            "log_file": prerequisites["log_file"],
-            "best_affinity": None,
-        },
-    )
-    if error_message:
-        metadata["error_message"] = error_message
-    else:
-        metadata.pop("error_message", None)
+    def finalize(current: dict[str, Any]) -> dict[str, Any]:
+        if str(current.get("status") or "") in {"finished", "failed", "cancelled", "interrupted"}:
+            return current
+        if current.get("status") != "running":
+            return current
+        if cancel_requested:
+            final_status = "cancelled"
+            message = "用户已取消运行。"
+            error_message = ""
+            percent = int((current.get("progress") or {}).get("percent") or 0)
+        elif run_result.exit_code == 0 and output_ok and not run_result.error:
+            final_status = "finished"
+            message = "AutoDock Vina 运行完成。"
+            error_message = ""
+            percent = 100
+        else:
+            final_status = "failed"
+            message = "AutoDock Vina 运行失败。"
+            error_message = (
+                "AutoDock Vina 结束码为 0，但没有生成非空 out.pdbqt。"
+                if run_result.exit_code == 0 and not output_ok and not run_result.error
+                else "AutoDock Vina 执行失败，请查看 stderr.txt 和 log.txt。"
+            )
+            percent = 100
+        current.update(
+            {
+                "status": final_status,
+                "stage": final_status,
+                "progress": {"percent": percent, "message": message},
+                "finished_at": finished_at,
+                "duration_seconds": _duration_seconds(current.get("started_at"), finished_at),
+                "pid": run_result.pid if run_result.pid is not None else current.get("pid"),
+                "exit_code": run_result.exit_code,
+                "stdout_file": stdout_file,
+                "stderr_file": stderr_file,
+                "output_file": output_file,
+                "log_file": log_file,
+                "best_affinity": None,
+            },
+        )
+        current.pop("process_missing_since", None)
+        if error_message:
+            current["error_message"] = error_message
+        else:
+            current.pop("error_message", None)
+        return current
 
-    _write_run_metadata(project_dir, run_id, metadata)
+    final_metadata, transaction_error = _update_run_metadata_transaction(project_dir, run_id, finalize)
+    if transaction_error:
+        return transaction_error
+    assert final_metadata is not None
+    final_status = str(final_metadata.get("status") or "unknown")
     project_update = update_project_run_summary(
         project_dir,
         run_id,
         {
             "status": final_status,
-            "finished_at": finished_at,
-            "exit_code": exit_code,
+            "stage": final_metadata.get("stage"),
+            "finished_at": final_metadata.get("finished_at"),
+            "duration_seconds": final_metadata.get("duration_seconds"),
+            "exit_code": final_metadata.get("exit_code"),
         },
     )
-
     files_status = get_run_files_status(project_dir, run_id)
-    if not project_update.get("ok"):
-        project_update["metadata"] = metadata
-        project_update["files"] = files_status.get("files", [])
-        return project_update
-
+    message = {
+        "finished": "Vina 运行完成。",
+        "cancelled": "Vina 运行已取消。",
+        "failed": str(final_metadata.get("error_message") or "Vina 运行失败。"),
+        "interrupted": str(final_metadata.get("error_message") or "Vina 运行已中断。"),
+    }.get(final_status, "Vina 运行状态已更新。")
     payload = {
-        "ok": final_status == "finished",
+        "ok": final_status in {"finished", "cancelled"} and project_update.get("ok", False),
         "project_dir": str(project_path),
         "project": project_update.get("project") if project_update.get("ok") else None,
         "run_id": run_id,
-        "metadata": metadata,
+        "metadata": final_metadata,
         "metadata_file": _metadata_relative_path(run_id),
         "stdout_file": stdout_file,
         "stderr_file": stderr_file,
-        "output_file": prerequisites["output_file"],
-        "log_file": prerequisites["log_file"],
+        "output_file": output_file,
+        "log_file": log_file,
         "files": files_status.get("files", []),
-        "message": "Vina 运行完成。" if final_status == "finished" else error_message,
+        "message": message,
         "error": None,
     }
-
-    if final_status != "finished":
+    if not project_update.get("ok"):
+        payload["error"] = project_update.get("error") or {"code": "RUN_SUMMARY_SYNC_FAILED", "message": "project.json run 摘要同步失败。"}
+    elif final_status in {"failed", "interrupted"}:
         payload["error"] = {
-            "code": "VINA_RUN_FAILED",
-            "message": error_message,
-            "raw_error": run_exception or stderr_text,
-            "suggestion": "请查看 stderr.txt、stdout.txt 和 log.txt，确认 Vina 路径、输入文件和参数是否正确。",
+            "code": "VINA_RUN_FAILED" if final_status == "failed" else "VINA_RUN_INTERRUPTED",
+            "message": message,
+            "raw_error": run_result.error or _tail_text(stderr_path),
+            "suggestion": "请查看 stderr.txt、stdout.txt 和 log.txt 后重新准备运行。",
         }
     return payload
 
@@ -2917,6 +4452,13 @@ def main() -> None:
         _print_json(validate_run_prerequisites(sys.argv[2]))
         return
 
+    if command == "run-preflight":
+        if len(sys.argv) < 3:
+            _print_json(_error("RUN_PREFLIGHT_ARGS", "运行驾驶舱检查需要 project_dir 参数。"))
+            return
+        _print_json(get_run_preflight(sys.argv[2]))
+        return
+
     if command == "prepare-run":
         if len(sys.argv) < 3:
             _print_json(_error("RUN_PREPARE_ARGS", "准备运行记录需要 project_dir 参数。"))
@@ -2943,6 +4485,20 @@ def main() -> None:
             _print_json(_error("RUN_EXECUTE_ARGS", "执行 prepared run 需要 project_dir 和 run_id 参数。"))
             return
         _print_json(execute_prepared_vina_run(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "run-runtime-status":
+        if len(sys.argv) < 4:
+            _print_json(_error("RUN_RUNTIME_STATUS_ARGS", "读取运行状态需要 project_dir 和 run_id 参数。"))
+            return
+        _print_json(get_run_runtime_status(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "cancel-run":
+        if len(sys.argv) < 4:
+            _print_json(_error("RUN_CANCEL_ARGS", "取消运行需要 project_dir 和 run_id 参数。"))
+            return
+        _print_json(cancel_vina_run(sys.argv[2], sys.argv[3]))
         return
 
     if command == "run-files-status":

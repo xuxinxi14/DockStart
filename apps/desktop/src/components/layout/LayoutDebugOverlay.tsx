@@ -43,7 +43,10 @@ function warnLayout(message: string, detail: Record<string, unknown>) {
 
 function isFloatingCard(element: HTMLElement): boolean {
   const style = getComputedStyle(element);
-  const backgroundVisible = style.backgroundColor !== "rgba(0, 0, 0, 0)" && style.backgroundColor !== "transparent";
+  const transparentBackground = getComputedStyle(document.documentElement)
+    .getPropertyValue("--ds-color-transparent")
+    .trim();
+  const backgroundVisible = style.backgroundColor !== transparentBackground && style.backgroundColor !== "transparent";
   const hasShadow = style.boxShadow !== "none";
   const hasRadius = Number.parseFloat(style.borderTopLeftRadius) > 0;
   return (backgroundVisible || hasShadow) && hasRadius;

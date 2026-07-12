@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
@@ -16,7 +16,7 @@ type ResultPageProps = {
   runId: string;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
-  onOpenViewer: (project: DockStartProject) => void;
+  onOpenViewer: (project: DockStartProject, runId: string, mode?: number) => void;
   onOpenReportPage: (project: DockStartProject, runId: string) => void;
 };
 
@@ -25,7 +25,7 @@ const runStatusText: Record<string, string> = {
   running: "进行中",
   finished: "已完成",
   failed: "失败",
-  cancelled: "失败",
+  cancelled: "已取消",
   unknown: "需检查",
 };
 
@@ -83,6 +83,8 @@ export default function ResultPage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const mountedRef = useRef(true);
+  const loadRequestRef = useRef(0);
 
   const status = metadataString(metadata, "status") || "unknown";
   const canAnalyze = status === "finished" && !isBusy;
@@ -91,9 +93,12 @@ export default function ResultPage({
   const displayedProjectScoresFile = projectScoresFile || metadataString(metadata, "project_scores_file");
   const displayedBestAffinity = bestAffinity ?? metadataNumber(metadata, "best_affinity");
   const displayedAnalyzedAt = analyzedAt || metadataString(metadata, "analyzed_at");
+  const displayedReportFile = metadataString(metadata, "report_file") || metadataString(metadata, "project_report_file");
+  const reportReady = Boolean(displayedReportFile);
 
   const applyResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string) => {
+      if (!mountedRef.current) return false;
       if (response.project) {
         setProject(response.project);
         onProjectChange(response.project);
@@ -123,20 +128,43 @@ export default function ResultPage({
   );
 
   const reloadRunMetadata = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setIsBusy(true);
     try {
       const rawPayload = await invoke<string>("get_run_files_status", {
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "运行记录已刷新。");
+      if (!mountedRef.current || requestId !== loadRequestRef.current) return;
+      const runResponse = parseProjectResponse(rawPayload);
+      const runReady = applyResponse(runResponse, "运行记录已刷新。");
+      if (runReady && metadataString(runResponse.metadata ?? null, "status") === "finished") {
+        const scoresPayload = await invoke<string>("load_scores_csv", {
+          projectDir: initialProject.project_dir,
+          runId,
+        });
+        if (!mountedRef.current || requestId !== loadRequestRef.current) return;
+        const scoresResponse = parseProjectResponse(scoresPayload);
+        if (scoresResponse.ok) {
+          applyResponse(scoresResponse, "运行记录与 scores.csv 已加载。");
+        }
+      }
     } catch (error) {
+      if (!mountedRef.current || requestId !== loadRequestRef.current) return;
       setMessage("无法读取运行记录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      if (mountedRef.current && requestId === loadRequestRef.current) setIsBusy(false);
     }
   }, [applyResponse, initialProject.project_dir, runId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadRequestRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     void reloadRunMetadata();
@@ -196,7 +224,7 @@ export default function ResultPage({
       <BodyGrid>
         <MainPanel>
           <div className="main-panel-content">
-            <VinaWorkflowBar current="result" runId={runId} />
+            <VinaWorkflowBar current={reportReady ? "report" : "result"} runId={runId} />
 
             <div className="status-strip">
               <article className="metric-card">
@@ -228,9 +256,9 @@ export default function ResultPage({
                   {isBusy ? "处理中..." : "解析 scores"}
                 </ActionButton>
                 <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
-                <ActionButton disabled={status !== "finished"} onClick={() => onOpenViewer(project)}>查看构象</ActionButton>
+                <ActionButton disabled={status !== "finished"} onClick={() => onOpenViewer(project, runId, scores[0]?.mode)}>查看构象</ActionButton>
                 <ActionButton disabled={!(scores.length > 0 || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
-                  导出实验记录
+                  {reportReady ? "查看实验记录" : "导出实验记录"}
                 </ActionButton>
               </div>
 
@@ -243,6 +271,7 @@ export default function ResultPage({
                         <th>对接评分 kcal/mol</th>
                         <th>RMSD l.b.</th>
                         <th>RMSD u.b.</th>
+                        <th>3D 复核</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -252,6 +281,7 @@ export default function ResultPage({
                           <td>{formatScoreValue(score.affinity_kcal_mol)}</td>
                           <td>{formatScoreValue(score.rmsd_lb)}</td>
                           <td>{formatScoreValue(score.rmsd_ub)}</td>
+                          <td><button className="text-button inline" type="button" onClick={() => onOpenViewer(project, runId, score.mode)}>打开 mode {score.mode}</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -316,11 +346,21 @@ export default function ResultPage({
                 <dt>scores</dt>
                 <dd>{displayedScoresFile || "未生成"}</dd>
               </div>
+              <div>
+                <dt>report</dt>
+                <dd>{displayedReportFile || "未生成"}</dd>
+              </div>
             </dl>
           </RightRailSection>
 
           <RightRailSection title="下一步">
-            <p>{scores.length > 0 || displayedScoresFile ? "导出 Markdown 实验记录。" : "先解析 scores.csv。"}</p>
+            <p>
+              {reportReady
+                ? "查看已生成的 Markdown 实验记录，或进入 3D 工作台复核构象。"
+                : scores.length > 0 || displayedScoresFile
+                  ? "导出 Markdown 实验记录。"
+                  : "先解析 scores.csv。"}
+            </p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

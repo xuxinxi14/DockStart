@@ -16,11 +16,14 @@ import PageHeader from "../components/PageHeader";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
+import { addOrientationAxes } from "../components/viewerSceneHelpers";
 
 type ViewerPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
+  initialRunId?: string;
+  initialMode?: number | null;
 };
 
 type ViewerLayerKey = ViewerFileKind | "pose";
@@ -76,7 +79,8 @@ const layerLabels: Record<ViewerLayerKey, string> = {
 const viewerFormats = new Set(["pdb", "pdbqt", "cif", "sdf", "mol", "mol2"]);
 const fitMarginAngstrom = 8;
 const minBoxDimension = 8;
-const viewerBackgroundColor = "#071b30";
+const minEditableBoxDimension = 0.1;
+const wheelStepThreshold = 72;
 const boxStepOptions = [
   { label: "细调", value: 0.1 },
   { label: "常规", value: 1 },
@@ -99,8 +103,8 @@ function parseBoxInput(key: BoxFieldKey, rawValue: string): { value: number | nu
   if (!Number.isFinite(value)) {
     return { value: null, error: "数值格式无效" };
   }
-  if (key.startsWith("size_") && value <= 0) {
-    return { value: null, error: "尺寸必须大于 0" };
+  if (key.startsWith("size_") && value < minEditableBoxDimension) {
+    return { value: null, error: `尺寸不得小于 ${minEditableBoxDimension} Å` };
   }
   return { value, error: "" };
 }
@@ -463,8 +467,9 @@ function addSearchBoxOverlay(viewer: ReturnType<typeof $3Dmol.createViewer>, vis
   });
 }
 
-export default function ViewerPage({ project, onBack, onProjectChange }: ViewerPageProps) {
+export default function ViewerPage({ project, onBack, onProjectChange, initialRunId = "", initialMode = null }: ViewerPageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const canvasShellRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
   const [fileKind, setFileKind] = useState<ViewerFileKind>("receptor_prepared");
   const [box, setBox] = useState(project.box);
@@ -477,8 +482,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const boxVisualizationRef = useRef<BoxVisualizationPayload | null>(boxVisualization);
   const showBoxRef = useRef(showBox);
   const [boxStep, setBoxStep] = useState(0.1);
+  const boxStepRef = useRef(boxStep);
+  const boxRef = useRef(box);
+  const boxInputsRef = useRef(boxInputs);
+  const savedBoxRef = useRef(project.box);
+  const [boundBoxField, setBoundBoxField] = useState<BoxFieldKey | null>(null);
+  const boundBoxFieldRef = useRef<BoxFieldKey | null>(null);
   const [boxWarnings, setBoxWarnings] = useState<string[]>([]);
-  const [runId, setRunId] = useState(() => latestRunId(project));
+  const [runId, setRunId] = useState(() => initialRunId || latestRunId(project));
   const [poseList, setPoseList] = useState<DockingPoseListResponse | null>(null);
   const [selectedPose, setSelectedPose] = useState<DockingPoseSummary | null>(null);
   const [status, setStatus] = useState<ViewerFileStatusResponse | null>(null);
@@ -487,6 +498,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const initialPoseRequestHandled = useRef(false);
 
   const destroyViewer = useCallback(() => {
     viewerRef.current?.clear();
@@ -503,6 +515,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     if (!containerRef.current) {
       return null;
     }
+    const viewerBackgroundColor = getComputedStyle(document.documentElement)
+      .getPropertyValue("--ds-viewer-bg")
+      .trim();
     const viewer = $3Dmol.createViewer(containerRef.current, { backgroundColor: viewerBackgroundColor });
     viewerRef.current = viewer;
     return viewer;
@@ -531,6 +546,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         if (showBoxRef.current && boxVisualizationRef.current) {
           addSearchBoxOverlay(viewer, boxVisualizationRef.current);
         }
+        addOrientationAxes(viewer, boxVisualizationRef.current);
         if (previousView) {
           (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
         } else {
@@ -551,10 +567,16 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       return;
     }
     try {
-      (viewer as unknown as { removeAllShapes?: () => void }).removeAllShapes?.();
+      const overlayViewer = viewer as unknown as {
+        removeAllShapes?: () => void;
+        removeAllLabels?: () => void;
+      };
+      overlayViewer.removeAllShapes?.();
+      overlayViewer.removeAllLabels?.();
       if (showBoxRef.current && boxVisualizationRef.current) {
         addSearchBoxOverlay(viewer, boxVisualizationRef.current);
       }
+      addOrientationAxes(viewer, boxVisualizationRef.current);
       viewer.render();
     } catch (error) {
       setMessage("搜索范围增量刷新失败，结构视图仍保留。可尝试重新进入 3D 工作台。");
@@ -572,6 +594,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   }, []);
 
   const applyBoxPreview = useCallback((next: DockStartProject["box"]) => {
+    boxRef.current = next;
     setBox(next);
     setBoxVisualization(buildLocalBoxVisualization(next));
     setBoxWarnings(localBoxWarnings(next));
@@ -580,7 +603,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const syncBoxState = useCallback(
     (next: DockStartProject["box"]) => {
       applyBoxPreview(next);
-      setBoxInputs(boxToInputValues(next));
+      const nextInputs = boxToInputValues(next);
+      boxInputsRef.current = nextInputs;
+      setBoxInputs(nextInputs);
       setBoxInputErrors({});
     },
     [applyBoxPreview],
@@ -720,42 +745,45 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     await loadLayerSet(availableKinds);
   }, [loadLayerSet, status?.files]);
 
-  const loadPoseList = useCallback(async () => {
-    if (!runId.trim()) {
+  const loadPoseList = useCallback(async (requestedRunId = runId.trim()): Promise<DockingPoseListResponse | null> => {
+    const targetRunId = requestedRunId.trim();
+    if (!targetRunId) {
       setMessage("请先输入运行记录，例如 run_001。");
-      return;
+      return null;
     }
     setIsBusy(true);
     setRawError("");
     try {
       const rawPayload = await invoke<string>("list_docking_poses", {
         projectDir: project.project_dir,
-        runId: runId.trim(),
+        runId: targetRunId,
       });
       const parsed = parseDockingPoseList(rawPayload);
       setPoseList(parsed);
       if (!parsed.ok) {
         setMessage(parsed.error?.message ?? "构象列表读取失败。");
         setRawError(parsed.error?.raw_error ?? "");
-        return;
+        return parsed;
       }
       setMessage(parsed.message ?? "构象列表已读取。");
+      return parsed;
     } catch (error) {
       setMessage("前端未能调用构象列表命令。");
       setRawError(error instanceof Error ? error.message : String(error));
+      return null;
     } finally {
       setIsBusy(false);
     }
   }, [project.project_dir, runId]);
 
   const loadPose = useCallback(
-    async (mode: number) => {
+    async (mode: number, requestedRunId = runId.trim(), requestedPoses = poseList?.poses) => {
       setIsBusy(true);
       setRawError("");
       try {
         const rawPayload = await invoke<string>("load_docking_pose_for_viewer", {
           projectDir: project.project_dir,
-          runId: runId.trim(),
+          runId: requestedRunId.trim(),
           mode,
         });
         const parsed = parseViewerStructure(rawPayload);
@@ -783,7 +811,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         }
 
         setStructure(parsed);
-        setSelectedPose(poseList?.poses.find((pose) => pose.mode === mode) ?? null);
+        setSelectedPose(requestedPoses?.find((pose) => pose.mode === mode) ?? null);
         setFileKind("docking_output");
         setLoadedLayers((previous) => ({
           ...previous,
@@ -817,6 +845,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         setRawError(parsed.error?.raw_error ?? "");
         return;
       }
+      savedBoxRef.current = parsed.box;
       syncBoxState(parsed.box);
       setBoxVisualization(parsed.visualization);
       setBoxWarnings(parsed.warnings ?? []);
@@ -873,6 +902,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
         setRawError(parsed.error?.raw_error ?? "");
         return;
       }
+      savedBoxRef.current = parsed.box;
       syncBoxState(parsed.box);
       setBoxVisualization(parsed.visualization);
       setBoxWarnings(parsed.warnings ?? []);
@@ -889,7 +919,11 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   }, [collectBoxInputs, onProjectChange, project.project_dir, syncBoxState]);
 
   const updateBoxInput = (key: BoxFieldKey, value: string) => {
-    setBoxInputs((previous) => ({ ...previous, [key]: value }));
+    setBoxInputs((previous) => {
+      const next = { ...previous, [key]: value };
+      boxInputsRef.current = next;
+      return next;
+    });
     setBoxInputErrors((previous) => {
       if (!previous[key]) {
         return previous;
@@ -906,9 +940,13 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
       setBoxInputErrors((previous) => ({ ...previous, [key]: parsed.error }));
       return;
     }
-    const next = { ...box, [key]: parsed.value };
+    const next = { ...boxRef.current, [key]: parsed.value };
     applyBoxPreview(next);
-    setBoxInputs((previous) => ({ ...previous, [key]: String(parsed.value) }));
+    setBoxInputs((previous) => {
+      const nextInputs = { ...previous, [key]: String(parsed.value) };
+      boxInputsRef.current = nextInputs;
+      return nextInputs;
+    });
     setBoxInputErrors((previous) => {
       const nextErrors = { ...previous };
       delete nextErrors[key];
@@ -916,15 +954,41 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     });
   };
 
-  const stepBoxField = (key: BoxFieldKey, direction: 1 | -1) => {
-    const parsed = parseBoxInput(key, boxInputs[key]);
-    const baseValue = parsed.value ?? box[key];
-    let nextValue = roundBoxValue(baseValue + boxStep * direction);
+  const stepBoxField = useCallback((key: BoxFieldKey, direction: 1 | -1) => {
+    const currentInputs = boxInputsRef.current;
+    const currentBox = boxRef.current;
+    const parsed = parseBoxInput(key, currentInputs[key]);
+    const baseValue = parsed.value ?? currentBox[key];
+    let nextValue = roundBoxValue(baseValue + boxStepRef.current * direction);
     if (key.startsWith("size_") && nextValue <= 0) {
-      nextValue = boxStep;
+      nextValue = minEditableBoxDimension;
     }
-    updateBoxInput(key, String(nextValue));
-    applyBoxPreview({ ...box, [key]: nextValue });
+    const nextInputs = { ...currentInputs, [key]: String(nextValue) };
+    boxInputsRef.current = nextInputs;
+    setBoxInputs(nextInputs);
+    setBoxInputErrors((previous) => {
+      if (!previous[key]) return previous;
+      const nextErrors = { ...previous };
+      delete nextErrors[key];
+      return nextErrors;
+    });
+    applyBoxPreview({ ...currentBox, [key]: nextValue });
+  }, [applyBoxPreview]);
+
+  const changeBoxStep = (nextStep: number) => {
+    boxStepRef.current = nextStep;
+    setBoxStep(nextStep);
+  };
+
+  const toggleWheelBinding = (key: BoxFieldKey) => {
+    const next = boundBoxFieldRef.current === key ? null : key;
+    boundBoxFieldRef.current = next;
+    setBoundBoxField(next);
+    setMessage(
+      next
+        ? `滚轮已绑定到${boxFieldLabel(next)}；在 3D 视图中滚动可按当前步进调整。`
+        : "滚轮参数绑定已取消；在 3D 视图中滚动将恢复整体缩放。",
+    );
   };
 
   const handleBoxInputKeyDown = (key: BoxFieldKey, event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -1013,6 +1077,18 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   }, [destroyViewer, loadBoxVisualization, reloadStatus]);
 
   useEffect(() => {
+    if (!initialRunId || initialPoseRequestHandled.current) return;
+    initialPoseRequestHandled.current = true;
+    setRunId(initialRunId);
+    void (async () => {
+      const list = await loadPoseList(initialRunId);
+      if (initialMode !== null && list?.ok) {
+        await loadPose(initialMode, initialRunId, list.poses);
+      }
+    })();
+  }, [initialMode, initialRunId, loadPose, loadPoseList]);
+
+  useEffect(() => {
     renderScene();
   }, [renderScene]);
 
@@ -1036,6 +1112,37 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const shell = canvasShellRef.current;
+    if (!shell) return;
+    let accumulatedDelta = 0;
+
+    const handleBoundWheel = (event: WheelEvent) => {
+      const key = boundBoxFieldRef.current;
+      if (!key) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 36
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? 120
+          : 1;
+      accumulatedDelta += event.deltaY * unit;
+      if (Math.abs(accumulatedDelta) < wheelStepThreshold) return;
+
+      const direction: 1 | -1 = accumulatedDelta < 0 ? 1 : -1;
+      const steps = Math.min(4, Math.max(1, Math.floor(Math.abs(accumulatedDelta) / wheelStepThreshold)));
+      accumulatedDelta %= wheelStepThreshold;
+      for (let index = 0; index < steps; index += 1) {
+        stepBoxField(key, direction);
+      }
+    };
+
+    shell.addEventListener("wheel", handleBoundWheel, { capture: true, passive: false });
+    return () => shell.removeEventListener("wheel", handleBoundWheel, { capture: true });
+  }, [stepBoxField]);
+
   const selectedStatus = status?.files?.[fileKind];
   const selectedOption = fileKindOptions.find((item) => item.value === fileKind);
   const loadedLayerList = layerOrder.map((key) => loadedLayers[key]).filter(Boolean) as LoadedViewerLayer[];
@@ -1052,8 +1159,33 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
   const ligandTargetAvailable = Boolean(loadedLayers.ligand_prepared || loadedLayers.ligand_raw);
   const poseTargetAvailable = Boolean(loadedLayers.pose);
 
+  const movePoseSelection = (direction: -1 | 1) => {
+    const poses = poseList?.poses ?? [];
+    if (!poses.length || isBusy) return;
+    const currentIndex = selectedPose ? poses.findIndex((pose) => pose.mode === selectedPose.mode) : -1;
+    const fallbackIndex = direction > 0 ? 0 : poses.length - 1;
+    const nextIndex = currentIndex < 0
+      ? fallbackIndex
+      : Math.max(0, Math.min(poses.length - 1, currentIndex + direction));
+    void loadPose(poses[nextIndex].mode);
+  };
+
+  const handlePoseTableKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      movePoseSelection(1);
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      movePoseSelection(-1);
+    }
+  };
+
   const boxSummary = boxVisualization ?? buildLocalBoxVisualization(box);
   const hasPendingBoxEdits = boxFieldKeys.some((key) => boxInputs[key].trim() !== String(box[key]));
+  const hasUnsavedBoxChanges = boxFieldKeys.some(
+    (key) => boxInputs[key].trim() !== String(savedBoxRef.current[key]),
+  );
   const hasBoxInputErrors = Object.keys(boxInputErrors).length > 0;
 
   return (
@@ -1201,6 +1333,40 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 ))}
               </WarningCallout>
             ) : null}
+            {poseList?.poses?.length ? (
+              <div
+                className="viewer-pose-list"
+                tabIndex={0}
+                onKeyDown={handlePoseTableKeyDown}
+                aria-label="构象列表，使用上下方向键切换当前构象"
+              >
+                {poseList.poses.map((pose) => (
+                  <button
+                    key={pose.mode}
+                    className={`viewer-pose-row ${selectedPose?.mode === pose.mode ? "is-selected" : ""}`}
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => void loadPose(pose.mode)}
+                    aria-label={`查看构象 ${pose.mode}，对接评分 ${pose.affinity_kcal_mol ?? "未解析"}`}
+                    aria-pressed={selectedPose?.mode === pose.mode}
+                  >
+                    <strong>Mode {pose.mode}</strong>
+                    <span>{pose.affinity_kcal_mol ?? "—"} kcal/mol</span>
+                    <small>RMSD {pose.rmsd_lb ?? "—"}–{pose.rmsd_ub ?? "—"} Å</small>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="placeholder-note viewer-pose-placeholder">读取后在这里选择构象。</p>
+            )}
+            <div className="viewer-current-pose" aria-live="polite">
+              <span>当前构象</span>
+              <strong>
+                {selectedPose
+                  ? `Mode ${selectedPose.mode} · ${selectedPose.affinity_kcal_mol ?? "未解析"} kcal/mol`
+                  : "未选择"}
+              </strong>
+            </div>
           </SectionCard>
 
           <SectionCard title="搜索范围" description="单位：Å。输入期间保留原视图，确认后再增量更新 Box。">
@@ -1215,14 +1381,14 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 <span>显示搜索范围</span>
               </label>
               <div className="viewer-step-control" role="group" aria-labelledby="viewer-box-step-label">
-                <span id="viewer-box-step-label">键盘步进</span>
+                <span id="viewer-box-step-label">调整步进</span>
                 <div>
                   {boxStepOptions.map((option) => (
                     <button
                       key={option.value}
                       className={option.value === boxStep ? "is-active" : ""}
                       type="button"
-                      onClick={() => setBoxStep(option.value)}
+                      onClick={() => changeBoxStep(option.value)}
                       aria-pressed={option.value === boxStep}
                       aria-label={`${option.label}步进，每次 ${option.value} 埃`}
                     >
@@ -1233,39 +1399,63 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
               </div>
             </div>
             <p className="viewer-box-edit-help" id="viewer-box-edit-help">
-              输入后按 Enter 或移出焦点更新预览；按 Esc 恢复，↑/↓ 按所选步进微调。
+              每个参数可单独绑定滚轮；同一时间只绑定一项。输入框仍支持 Enter、Esc 和 ↑/↓。
             </p>
+            <div className="viewer-wheel-binding-status" aria-live="polite">
+              <StatusBadge tone={boundBoxField ? "info" : "muted"}>
+                {boundBoxField ? `滚轮：${boxFieldLabel(boundBoxField)}` : "滚轮：整体缩放"}
+              </StatusBadge>
+              <span>{boundBoxField ? "向上增大或正移，向下减小或负移" : "点击参数旁的绑定按钮开始精调"}</span>
+            </div>
             <div className="box-control-grid" role="group" aria-label="搜索范围中心与尺寸参数">
               {boxFieldKeys.map((key) => {
                 const errorId = `viewer-box-${key}-error`;
                 const inputId = `viewer-box-${key}`;
+                const isBound = boundBoxField === key;
                 return (
-                <label key={key} className="box-control">
-                  <span className="viewer-box-label">
+                <div key={key} className={`box-control ${isBound ? "is-wheel-bound" : ""}`}>
+                  <label className="viewer-box-label" htmlFor={inputId}>
                     {boxFieldLabel(key)} <small>Å</small>
-                  </span>
-                  <input
-                    id={inputId}
-                    type="text"
-                    inputMode="decimal"
-                    role="spinbutton"
-                    value={boxInputs[key]}
-                    onChange={(event) => updateBoxInput(key, event.target.value)}
-                    onBlur={() => commitBoxField(key)}
-                    onKeyDown={(event) => handleBoxInputKeyDown(key, event)}
-                    aria-invalid={Boolean(boxInputErrors[key])}
-                    aria-valuenow={parseBoxInput(key, boxInputs[key]).value ?? undefined}
-                    aria-valuemin={key.startsWith("size_") ? 0 : undefined}
-                    aria-valuetext={`${boxInputs[key] || "未完成"} 埃`}
-                    aria-describedby={`viewer-box-edit-help${boxInputErrors[key] ? ` ${errorId}` : ""}`}
-                    aria-keyshortcuts="Enter Escape ArrowUp ArrowDown"
-                  />
+                  </label>
+                  <div className="viewer-box-input-row">
+                    <input
+                      id={inputId}
+                      type="text"
+                      inputMode="decimal"
+                      role="spinbutton"
+                      value={boxInputs[key]}
+                      onChange={(event) => updateBoxInput(key, event.target.value)}
+                      onBlur={() => commitBoxField(key)}
+                      onKeyDown={(event) => handleBoxInputKeyDown(key, event)}
+                      aria-invalid={Boolean(boxInputErrors[key])}
+                      aria-valuenow={parseBoxInput(key, boxInputs[key]).value ?? undefined}
+                      aria-valuemin={key.startsWith("size_") ? minEditableBoxDimension : undefined}
+                      aria-valuetext={`${boxInputs[key] || "未完成"} 埃`}
+                      aria-describedby={`viewer-box-edit-help${boxInputErrors[key] ? ` ${errorId}` : ""}`}
+                      aria-keyshortcuts="Enter Escape ArrowUp ArrowDown"
+                    />
+                    <button
+                      className="viewer-wheel-bind-button"
+                      type="button"
+                      onClick={() => toggleWheelBinding(key)}
+                      aria-pressed={isBound}
+                      aria-controls="viewer-canvas"
+                      aria-label={
+                        isBound
+                          ? `取消${boxFieldLabel(key)}的 3D 视图滚轮绑定`
+                          : `将${boxFieldLabel(key)}绑定到 3D 视图滚轮`
+                      }
+                      title={isBound ? "取消滚轮绑定" : `用滚轮调整${boxFieldLabel(key)}`}
+                    >
+                      {isBound ? "已绑定" : "绑定"}
+                    </button>
+                  </div>
                   {boxInputErrors[key] ? (
                     <small className="viewer-box-error" id={errorId} role="alert">
                       {boxInputErrors[key]}
                     </small>
                   ) : null}
-                </label>
+                </div>
                 );
               })}
             </div>
@@ -1297,8 +1487,16 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </div>
             <p className="viewer-geometry-note">这些按钮只按已加载对象的几何坐标定位，不做结合位点预测。</p>
             <div className="viewer-box-commit-row" aria-live="polite">
-              <StatusBadge tone={hasBoxInputErrors ? "error" : hasPendingBoxEdits ? "warning" : "ok"}>
-                {hasBoxInputErrors ? "输入待修正" : hasPendingBoxEdits ? "预览待应用" : "预览已同步"}
+              <StatusBadge
+                tone={hasBoxInputErrors ? "error" : hasPendingBoxEdits || hasUnsavedBoxChanges ? "warning" : "ok"}
+              >
+                {hasBoxInputErrors
+                  ? "输入待修正"
+                  : hasPendingBoxEdits
+                    ? "预览待应用"
+                    : hasUnsavedBoxChanges
+                      ? "预览尚未保存"
+                      : "范围已保存"}
               </StatusBadge>
             </div>
             <div className="toolbar project-toolbar viewer-box-save-actions">
@@ -1340,6 +1538,9 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
               <StatusBadge tone={isBoxVisible ? "info" : "muted"}>
                 {isBoxVisible ? "Box 已显示" : "Box 已隐藏"}
               </StatusBadge>
+              <StatusBadge tone={boundBoxField ? "warning" : "muted"}>
+                {boundBoxField ? `滚轮绑定 ${boxFieldLabel(boundBoxField)}` : "滚轮缩放"}
+              </StatusBadge>
               <button
                 className="text-button inline"
                 type="button"
@@ -1360,30 +1561,32 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
               </button>
             </div>
           </div>
-          <div className="viewer-canvas-shell">
+          <div className={`viewer-canvas-shell ${boundBoxField ? "is-wheel-bound" : ""}`} ref={canvasShellRef}>
             <div
               className="viewer-canvas"
               id="viewer-canvas"
               ref={containerRef}
               role="region"
               tabIndex={0}
-              aria-label={`3D 分子视图：${visibleLayerSummary}`}
+              aria-label={`3D 分子视图：${visibleLayerSummary}。视图内显示 X、Y、Z 方向轴。`}
               aria-describedby="viewer-canvas-help"
             />
             {!visibleLayerList.length && !isBoxVisible ? (
               <div className="viewer-canvas-empty" aria-hidden="true">
                 <strong>等待加载结构</strong>
-                <span>从左侧选择受体、配体或对接构象</span>
+                <span>从右侧加载受体、配体或对接构象</span>
               </div>
             ) : null}
             <p className="viewer-canvas-help" id="viewer-canvas-help">
-              拖动旋转 · 滚轮缩放 · Shift + 拖动平移
+              {boundBoxField
+                ? `滚轮调整${boxFieldLabel(boundBoxField)}（步进 ${boxStep} Å）· 拖动旋转 · Shift + 拖动平移`
+                : "拖动旋转 · 滚轮缩放 · Shift + 拖动平移"}
             </p>
           </div>
         </section>
 
         <aside className="viewer-inspector-column" aria-label="文件、Box 与构象属性">
-          <SectionCard title="当前文件">
+          <SectionCard className="viewer-dashboard-card viewer-dashboard-current" title="当前文件">
             <dl className="tool-meta">
               <div>
                 <dt>当前选择</dt>
@@ -1423,7 +1626,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             ) : null}
           </SectionCard>
 
-          <SectionCard title="Box 摘要">
+          <SectionCard className="viewer-dashboard-card viewer-dashboard-box" title="Box 摘要">
             <dl className="tool-meta">
               <div>
                 <dt>中心</dt>
@@ -1436,6 +1639,10 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 <dd>
                   {box.size_x} × {box.size_y} × {box.size_z} Å
                 </dd>
+              </div>
+              <div>
+                <dt>体积</dt>
+                <dd>{roundBoxValue(box.size_x * box.size_y * box.size_z).toLocaleString()} Å³</dd>
               </div>
               <div>
                 <dt>最小坐标</dt>
@@ -1460,7 +1667,7 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
             </dl>
           </SectionCard>
 
-          <SectionCard title="可查看文件">
+          <SectionCard className="viewer-dashboard-card viewer-dashboard-files" title="可查看文件">
             <div className="viewer-file-status-list">
               {fileKindOptions.map((option) => {
                 const item = status?.files?.[option.value];
@@ -1475,59 +1682,6 @@ export default function ViewerPage({ project, onBack, onProjectChange }: ViewerP
                 );
               })}
             </div>
-          </SectionCard>
-
-          <SectionCard title="Pose 列表">
-            {poseList?.poses?.length ? (
-              <div className="scores-table-wrap compact-score-table">
-                <table className="scores-table">
-                  <caption className="viewer-sr-only">当前运行记录中的对接构象与评分</caption>
-                  <thead>
-                    <tr>
-                      <th>构象</th>
-                      <th>对接评分</th>
-                      <th>RMSD l.b.</th>
-                      <th>RMSD u.b.</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {poseList.poses.map((pose) => (
-                      <tr key={pose.mode} className={selectedPose?.mode === pose.mode ? "is-selected" : ""}>
-                        <td>{pose.mode}</td>
-                        <td>{pose.affinity_kcal_mol ?? "未解析"}</td>
-                        <td>{pose.rmsd_lb ?? "未解析"}</td>
-                        <td>{pose.rmsd_ub ?? "未解析"}</td>
-                        <td>
-                          <button
-                            className="text-button inline"
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => void loadPose(pose.mode)}
-                            aria-label={`查看构象 ${pose.mode}，对接评分 ${pose.affinity_kcal_mol ?? "未解析"}`}
-                            aria-pressed={selectedPose?.mode === pose.mode}
-                          >
-                            {selectedPose?.mode === pose.mode ? "当前" : "查看"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="placeholder-note">尚未读取构象列表。</p>
-            )}
-            <dl className="tool-meta">
-              <div>
-                <dt>当前构象</dt>
-                <dd>
-                  {selectedPose
-                    ? `mode ${selectedPose.mode}, 对接评分 ${selectedPose.affinity_kcal_mol ?? "未解析"}`
-                    : "未选择"}
-                </dd>
-              </div>
-            </dl>
           </SectionCard>
 
           <div className="viewer-status-region" role="status" aria-live="polite" aria-atomic="true">

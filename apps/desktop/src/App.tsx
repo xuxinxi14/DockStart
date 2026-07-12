@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SpinnerGap } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
@@ -25,6 +25,10 @@ import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
 import { getWorkflowSummary } from "./utils/workflowSummary";
 import { buildWorkflowSteps } from "./utils/workflowSteps";
 
+function projectStateKey(project: DockStartProject): string {
+  return `${project.project_dir}\u0000${project.updated_at ?? ""}`;
+}
+
 export default function App() {
   const [currentPage, setCurrentPage] = useState<PageId>("home");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
@@ -32,9 +36,14 @@ export default function App() {
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
   const [projectRevision, setProjectRevision] = useState(0);
+  const [viewerRequest, setViewerRequest] = useState<{ runId: string; mode: number | null; returnPage: PageId } | null>(null);
+  const committedProjectKeyRef = useRef("");
 
   const commitProject = useCallback((project: DockStartProject) => {
     setCurrentProject(project);
+    const nextKey = projectStateKey(project);
+    if (committedProjectKeyRef.current === nextKey) return;
+    committedProjectKeyRef.current = nextKey;
     setProjectRevision((revision) => revision + 1);
   }, []);
 
@@ -45,6 +54,12 @@ export default function App() {
       return;
     }
 
+    // Home owns its workflow request and publishes it through
+    // onWorkflowChange. Starting the same Python module here as well made one
+    // home mount fan out into duplicate backend processes (doubled again by
+    // StrictMode during development).
+    if (currentPage === "home") return;
+
     let cancelled = false;
     async function refreshWorkflowStatus() {
       try {
@@ -54,7 +69,10 @@ export default function App() {
         const parsed = JSON.parse(rawPayload) as ProjectWorkflowStatusResponse;
         if (cancelled) return;
         setWorkflowStatus(parsed);
-        if (parsed.project) setCurrentProject(parsed.project);
+        if (parsed.project) {
+          committedProjectKeyRef.current = projectStateKey(parsed.project);
+          setCurrentProject(parsed.project);
+        }
         const latestRunId = parsed.latest_run?.run_id;
         if (typeof latestRunId === "string" && latestRunId) {
           setCurrentRunId((runId) => runId || latestRunId);
@@ -64,15 +82,27 @@ export default function App() {
       }
     }
 
-    void refreshWorkflowStatus();
+    // Let the destination page paint first and collapse multiple project
+    // commits from one user action into a single refresh.
+    const refreshTimer = window.setTimeout(() => {
+      void refreshWorkflowStatus();
+    }, 120);
     return () => {
       cancelled = true;
+      window.clearTimeout(refreshTimer);
     };
+    // currentPage is intentionally not a dependency: navigation alone does
+    // not make project data stale. A project revision (or directory change)
+    // is the refresh signal; Home refreshes itself when it mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject?.project_dir, projectRevision]);
 
   function navigateTo(page: PageId, options?: NavigateOptions) {
     if (page === "project-create") {
       setProjectStartMode(options?.startMode ?? "basic");
+    }
+    if (page === "viewer") {
+      setViewerRequest(null);
     }
     setCurrentPage(page);
   }
@@ -240,11 +270,21 @@ export default function App() {
         <RunPreparePage
           project={currentProject}
           onBack={() => navigateTo("vina-config")}
+          onNavigate={navigateTo}
           onProjectChange={commitProject}
+          onOpenViewer={() => {
+            setViewerRequest({ runId: "", mode: null, returnPage: "run-prepare" });
+            setCurrentPage("viewer");
+          }}
           onOpenRunExecute={(project, runId) => {
             commitProject(project);
             setCurrentRunId(runId);
             navigateTo("run-execute");
+          }}
+          onOpenResultPage={(project, runId) => {
+            commitProject(project);
+            setCurrentRunId(runId);
+            navigateTo("result");
           }}
         />
       );
@@ -277,9 +317,10 @@ export default function App() {
           runId={currentRunId}
           onBack={() => navigateTo("run-execute")}
           onProjectChange={commitProject}
-          onOpenViewer={(project) => {
+          onOpenViewer={(project, requestedRunId, mode) => {
             commitProject(project);
-            navigateTo("viewer");
+            setViewerRequest({ runId: requestedRunId, mode: mode ?? null, returnPage: "result" });
+            setCurrentPage("viewer");
           }}
           onOpenReportPage={(project, runId) => {
             commitProject(project);
@@ -298,8 +339,10 @@ export default function App() {
       return (
         <ViewerPage
           project={currentProject}
-          onBack={() => navigateTo("preparation")}
+          onBack={() => navigateTo(viewerRequest?.returnPage ?? "preparation")}
           onProjectChange={commitProject}
+          initialRunId={viewerRequest?.runId}
+          initialMode={viewerRequest?.mode}
         />
       );
     }

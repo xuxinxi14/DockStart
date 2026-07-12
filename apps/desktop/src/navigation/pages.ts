@@ -77,10 +77,10 @@ export const navigationItems: NavigationItem[] = [
     requiresProject: true,
   },
   {
-    id: "vina-config",
+    id: "run-prepare",
     group: "Workflow",
     label: "运行对接",
-    description: "配置、运行、解析",
+    description: "复核、运行、监控",
     requiresProject: true,
   },
   {

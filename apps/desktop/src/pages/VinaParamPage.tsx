@@ -52,6 +52,20 @@ function hasPreparedFiles(project: DockStartProject): boolean {
   return Boolean(project.receptor.file && project.ligand.file);
 }
 
+function isValidVinaParams(vina: DockStartProject["vina"]): boolean {
+  return (
+    Number.isInteger(vina.exhaustiveness) &&
+    vina.exhaustiveness > 0 &&
+    Number.isInteger(vina.num_modes) &&
+    vina.num_modes > 0 &&
+    Number.isFinite(vina.energy_range) &&
+    vina.energy_range > 0 &&
+    Number.isInteger(vina.cpu) &&
+    vina.cpu >= 0 &&
+    (vina.seed === null || Number.isInteger(vina.seed))
+  );
+}
+
 export default function VinaParamPage({
   project: initialProject,
   onBack,
@@ -67,7 +81,7 @@ export default function VinaParamPage({
   const [canOpenConfig, setCanOpenConfig] = useState(false);
 
   const applyProjectResponse = useCallback(
-    (response: ProjectResponse, fallbackMessage: string, showNextAction = false) => {
+    (response: ProjectResponse, fallbackMessage: string) => {
       if (response.ok && response.project) {
         setProject(response.project);
         setVinaForm(vinaToForm(response.project));
@@ -75,7 +89,7 @@ export default function VinaParamPage({
         setMessage(response.message ?? fallbackMessage);
         setWarnings(response.warnings ?? []);
         setRawError("");
-        setCanOpenConfig(showNextAction);
+        setCanOpenConfig(isValidVinaParams(response.project.vina));
         return;
       }
       setMessage(response.error?.message ?? "Vina 参数保存失败。");
@@ -88,6 +102,7 @@ export default function VinaParamPage({
 
   const reloadVina = useCallback(async () => {
     setIsBusy(true);
+    setCanOpenConfig(false);
     try {
       const rawPayload = await invoke<string>("get_vina_params", {
         projectDir: initialProject.project_dir,
@@ -97,6 +112,7 @@ export default function VinaParamPage({
       setMessage("无法读取 Vina 参数。");
       setWarnings([]);
       setRawError(error instanceof Error ? error.message : String(error));
+      setCanOpenConfig(false);
     } finally {
       setIsBusy(false);
     }
@@ -113,6 +129,7 @@ export default function VinaParamPage({
 
   const saveVina = async () => {
     setIsBusy(true);
+    setCanOpenConfig(false);
     setMessage("");
     setWarnings([]);
     setRawError("");
@@ -121,10 +138,11 @@ export default function VinaParamPage({
         projectDir: project.project_dir,
         vinaJson: JSON.stringify(vinaForm),
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已保存。", true);
+      applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已保存。");
     } catch (error) {
       setMessage("无法保存 Vina 参数。");
       setRawError(error instanceof Error ? error.message : String(error));
+      setCanOpenConfig(false);
     } finally {
       setIsBusy(false);
     }

@@ -1,78 +1,84 @@
-# DockStart UI 重构设计 QA
+# DockStart 3D 工作台与运行流程设计 QA
 
 ## 审查范围
 
-- 设计基准：`.codex-ui-audit/reference/option-3-deep-blue-target.png`
-- 实现：`apps/desktop/src/` 下的 Tauri + React 桌面端
-- 核心状态：已创建 `viewer_result` 示例项目，受体、配体、对接结果与对接箱体均已加载
-- 核心视口：1440 × 1024、1200 × 800
-- 全流程抽查：项目总览、结构导入、结构准备、箱体设置、Vina 参数、结果、三维查看、报告、工具链、帮助、设置
+- 目标：重排 3D 工作台、加入 XYZ 方向轴和 Box 单参数滚轮绑定、统一折叠导航与信息框、消除页面切换和按钮点击时的主线程卡顿。
+- 参考图：用户提供的 5 张 1588 × 1014 / 局部界面截图。
+- 实现环境：真实 Tauri WebView2 桌面窗口，不是静态网页替身。
+- 核心视口：1588 × 1014；补充检查 1200 × 800 响应式布局。
+- QA 项目：`.codex-ui-audit/viewer-workbench-redesign/qa-final/basic_demo_001`。
 
-## 证据
+## 对照证据
 
-- 1440 × 1024 三维查看：`.codex-ui-audit/implementation/tauri-pass2/01-viewer-1440x1024.png`
-- 1200 × 800 三维查看：`.codex-ui-audit/implementation/tauri-pass2/02-viewer-1200x800.png`
-- 1200 × 800 报告页：`.codex-ui-audit/implementation/tauri-pass2/03-report-1200x800.png`
-- 全屏对照：`.codex-ui-audit/comparisons/design-full-final.png`
-- 顶部与双侧深蓝覆盖对照：`.codex-ui-audit/comparisons/design-focus-final.png`
-- 十个关键页面接触表：`.codex-ui-audit/comparisons/flow-pass2.png`
+- 改造前 Viewer：`.codex-ui-audit/viewer-workbench-redesign/baseline/01-current-viewer.png`
+- 改造前折叠导航：`.codex-ui-audit/viewer-workbench-redesign/baseline/02-collapsed-sidebar.png`
+- 最终 Viewer 首屏：`.codex-ui-audit/viewer-workbench-redesign/qa-final/01-viewer-top.png`
+- Viewer 尺寸 X 滚轮绑定：`.codex-ui-audit/viewer-workbench-redesign/qa-final/02-viewer-box-bound.png`
+- 下方仪表盘滚动修复：`.codex-ui-audit/viewer-workbench-redesign/qa-final/04-viewer-dashboard-fixed.png`
+- 最终折叠导航：`.codex-ui-audit/viewer-workbench-redesign/qa-final/05-collapsed-sidebar.png`
+- 蓝色下一步区域：`.codex-ui-audit/viewer-workbench-redesign/qa-final/06-callouts.png`
+- 绿色结果区域：`.codex-ui-audit/viewer-workbench-redesign/qa-final/07-green-result.png`
+- 运行页 Box 绑定与 XYZ 轴：`.codex-ui-audit/viewer-workbench-redesign/qa-final/08-run-box-bound.png`
+- 真实运行完成状态：`.codex-ui-audit/viewer-workbench-redesign/qa-final/09-run-complete.png`
+- 参考与实现同屏比较：`.codex-ui-audit/viewer-workbench-redesign/qa-final/10-viewer-comparison.png`
 
-## 设计意图核对
+## 可见设计核对
 
-| 目标 | 结果 | 证据与说明 |
+| 目标 | 结果 | 证据 |
 | --- | --- | --- |
-| 更多深蓝区域，缓解大面积白底疲劳 | 通过 | 左侧导航、顶部命令栏、右侧上下文栏、底部状态栏和 Viewer 画布均使用低饱和深海军蓝；任务表单仍保留浅色以维持可读性。 |
-| 简洁、成熟、科研仪器感 | 通过 | 去除可见渐变、玻璃拟态与装饰性光效，统一边框、间距、状态色、图标与按钮层级。 |
-| 1200 × 800 默认窗口可用 | 通过 | Viewer 在 1200 × 800 保持三栏；窄屏再按断点折叠，不再提前退化为单列。 |
-| 引导充分、开箱即用 | 通过 | 页面标题、步骤说明、右侧上下文帮助、下一步操作和中文错误提示形成统一结构。 |
-| 操作流畅 | 通过 | Viewer 复用 3Dmol 实例，只增量更新箱体；数值输入允许中间态并在 Enter/失焦时提交；重型页面按需加载。 |
-| 真实功能而非概念壳 | 通过 | 使用真实 Tauri 后端创建示例项目、解析结果并加载受体、配体、构象和箱体；未增加不存在的科研能力。 |
+| 取消左右夹持画布 | 通过 | 画布占主列，右侧只保留结构加载、图层、Pose、Box 等互动信息。 |
+| 仪表盘移至画布下方 | 通过 | 当前文件、Box 摘要、可查看文件按三列对齐；窄屏自动改为两列/单列。 |
+| 滚动时不遮挡仪表盘 | 通过 | 真实滚动发现 sticky 画布覆盖问题后已移除错误粘性定位，复测无重叠。 |
+| XYZ 方向提示 | 通过 | Viewer 与运行页均显示随模型旋转的 X 红、Y 绿、Z 蓝真实 3Dmol 轴。 |
+| Box 控制清晰 | 通过 | 六项参数各有独立绑定按钮、单选高亮、步进选择和实时状态说明。 |
+| 折叠导航统一 | 通过 | 11 个入口均为 48 × 48 点击区、20 × 20 图标；组内 5px、组间 18px。 |
+| 蓝/绿信息框排版 | 通过 | 统一 4px 语义边线、12px/14px 内边距、标题/正文行高；按钮宽屏右对齐，窄屏整行换行。 |
+| 深蓝视觉区域 | 通过 | 导航、顶部栏、3D 画布、右侧工作栏、运行前检和底部状态栏组成连续深蓝框架。 |
 
-## 可访问性与交互核对
+## 核心交互核对
 
-- 唯一主内容地标，提供跳到主内容链接。
-- 选项卡支持方向键、Home、End，具备 `aria-controls` 与对应 `tabpanel`。
-- 命令结果根据状态使用 `status` 或 `alert`。
-- 路径输入错误保持可见并通过 `aria-describedby` 关联。
-- 侧栏折叠、顶部项目/工具链/帮助入口均为真实可操作控件。
-- 状态色在深色背景上使用高对比前景色，并保留文字标签，不只依赖颜色。
-- 尊重 `prefers-reduced-motion`。
+- Viewer：绑定“尺寸 X”后，滚轮将 Box 从 `12` 调整到 `12.1`，其余五项不变；取消绑定后再次滚动，六项 Box 值均不再改变，恢复 3Dmol 默认缩放。
+- Viewer：六个绑定按钮同一时间只有一个 `aria-pressed=true`；中心参数允许负值，尺寸参数最小为 0.1 Å。
+- 运行页：默认使用 0.1 Å 细调；快速 5 Å 步进向下滚动时，尺寸由 0.2 Å 正确钳制到 0.1 Å，不会反向跳到 5 Å。
+- 运行页：尺寸 X 绑定、取消绑定、XYZ 轴显示均在真实桌面窗口验证。
+- Result：完整流程生成报告后，按钮改为“查看实验记录”，右栏显示 report 路径，不再错误提示“待导出”。
+- Pose：`run_002` 的 9 个构象可读取，mode 1 自动加载到 Viewer，当前评分和图层状态同步显示。
 
-## 比较与迭代记录
+## 性能核对
 
-### Pass 1 发现
+- 原根因：每个 Tauri `invoke` 同步启动 Python；`workflow-status` 本机 5 次中位耗时约 248.6 ms，Home 在 StrictMode 下可重复触发 5–6 次。
+- 修复：62/62 Tauri 命令全部异步化，Python 执行进入 blocking 线程池；短 TTL 只读缓存合并同键并发请求，写操作按 generation 失效。
+- 创建示例并导航：256.2 ms 完成，主线程最大间隙 17.7 ms。
+- Viewer 加载受体 + 配体：251.6 ms 完成，主线程最大间隙 7.6 ms。
+- Viewer 首次懒加载：577.3 ms，主线程最大间隙 40.6 ms；后续运行页切换 55.9 ms。
+- 完整真实 docking：约 3.9 s 完成，期间主线程最大间隙 37.3 ms；按钮和页面未被 Python 阻塞。
 
-- 深蓝只出现在局部，整体仍是旧式浅色后台。
-- Viewer 在默认 1200 × 800 过早折叠，分子画布空间不足。
-- Box 参数每次按键都会重建 3Dmol Viewer。
-- 旧帮助、设置、工具检查页与新工作台存在两套布局语言。
-- 工作流状态与最近运行可能在项目写入后滞后。
-- Viewer 静态进入主包，主入口约 986 kB。
-- 标签页、错误提示与主内容地标存在无障碍问题。
+## 真实对接流程
 
-### Pass 2 修复
+- 第一次 UI smoke 暴露真实竞态：Vina 已生成 `out.pdbqt`，但 500 ms 状态轮询在执行器写入终态前把 run 错写为 `interrupted`。
+- 最终修复不再依赖固定时间猜测：metadata 记录 Vina 子进程与 DockStart 执行器双重创建身份；收尾阶段使用二次探测、事务内 CAS 和身份重验。
+- 取消操作若发生在子进程退出与执行器收尾之间，不终止未知 PID，也不覆盖成功/失败终态。
+- 最终真实 `run_003`：`finished`，exit code 0，最佳评分 -0.6916 kcal/mol，生成 9 个 pose、`out.pdbqt`、`scores.csv`、run 报告和项目报告。
+- 结果页自动读取 9 行评分；实验记录和 mode 1 Viewer 路径均可继续操作。
 
-- 收敛为 Instrument Console：深蓝导航/命令/上下文/状态框架，浅色任务画布。
-- 重写 Viewer 响应式结构和 3Dmol 生命周期；1200 × 800 保持三栏。
-- 将帮助、设置、工具检查迁移到统一 PageShell。
-- 项目写入后集中刷新工作流状态，并恢复最近运行 ID。
-- Viewer 与工具链页面改为懒加载；主入口降至约 357 kB。
-- 补齐键盘交互、语义角色、可见错误和高对比状态。
+## 科学与产品边界
 
-## 接受的有意差异
+- 保留“Docking score 仅供结构结合趋势参考，不能替代实验验证”。
+- Box 几何工具只按已加载坐标定位，不宣称自动识别结合口袋。
+- 未新增分子动力学、AI 药效预测、大规模虚拟筛选或新的科学依赖。
+- 未复制第三方商业软件源码或专有视觉资产。
 
-- 概念图中央同时展示“运行准备 + 三维视图”，真实产品保留既有的分步工作流；实现对照选择真实三维查看页，不把多个科研步骤伪装成一个页面。
-- 概念图中的生成式标志和虚构保存操作未照搬；实现使用仓库现有 DockStart 品牌资产与已有功能入口。
-- 核心三维控件采用 3Dmol 的既有交互模型，未伪造键盘旋转能力。
+## 自动化验证
 
-## 剩余非阻塞项
-
-- 3Dmol 上游包仍产生 `eval` 警告，Viewer 独立分包仍超过 500 kB；它不再阻塞主工作台首屏。
-- 工具链首次检测取决于本机外部工具，慢机器上可能短暂显示明确的加载状态。
-- 已覆盖键盘语义和缩放断点，但尚未完成真实屏幕阅读器与 200% 系统缩放的人工认证。
+- `python -m unittest discover -s backend/tests`：289/289 通过。
+- `npm run build`：通过。
+- `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`：通过。
+- Rust cache 测试：2/2 通过。
+- `git diff --check`：通过，仅有仓库现有 LF/CRLF 提示。
+- 构建仍报告 3Dmol 第三方 `eval` 与 587 kB 懒加载分包警告；未影响本轮功能和桌面 smoke，列为 P3 构建优化项。
 
 ## 结论
 
-未发现仍需修复的 P0、P1 或 P2 设计问题。实现满足所选方案 3 的深蓝视觉方向，并在真实 Tauri 数据流和默认桌面视口中通过核心流程检查。
+同屏参考核对、真实桌面交互、完整对接和并发收尾回归均通过。未发现仍阻塞本轮 3D 工作台、Box 操作、侧栏、信息框或主流程性能的 P0/P1/P2 问题。
 
 final result: passed

@@ -27,7 +27,7 @@ type SidebarProps = {
 };
 
 function NavigationIcon({ page }: { page: PageId }) {
-  const props = { "aria-hidden": true, size: 19, weight: "regular" as const };
+  const props = { "aria-hidden": true, size: 20, weight: "regular" as const };
   switch (page) {
     case "home":
       return <House {...props} />;
@@ -39,7 +39,7 @@ function NavigationIcon({ page }: { page: PageId }) {
       return <Cube {...props} />;
     case "box-setup":
       return <Cube {...props} weight="duotone" />;
-    case "vina-config":
+    case "run-prepare":
       return <PlayCircle {...props} />;
     case "result":
       return <ChartBar {...props} />;
@@ -78,7 +78,7 @@ export default function Sidebar({
   const noProjectWorkflowLabels: Partial<Record<PageId, string>> = {
     "structure-fetch": "1 准备结构",
     "box-setup": "2 设置搜索范围",
-    "vina-config": "3 运行对接",
+    "run-prepare": "3 运行对接",
     result: "4 查看结果",
   };
 
@@ -89,7 +89,7 @@ export default function Sidebar({
     if (itemId === "preparation") {
       return currentPage === "preparation" || currentPage === "import-pdbqt";
     }
-    if (itemId === "vina-config") {
+    if (itemId === "run-prepare") {
       return (
         currentPage === "vina-param" ||
         currentPage === "vina-config" ||
@@ -123,7 +123,7 @@ export default function Sidebar({
   function StateIcon({ state }: { state: "ready" | "blocked" | "idle" }) {
     if (state === "ready") return <CheckCircle aria-hidden="true" size={16} weight="fill" />;
     if (state === "blocked") return <WarningCircle aria-hidden="true" size={16} weight="fill" />;
-    return <Circle aria-hidden="true" size={13} weight="bold" />;
+    return <Circle aria-hidden="true" size={16} weight="regular" />;
   }
 
   return (
@@ -153,6 +153,7 @@ export default function Sidebar({
                 return (
                   <button
                     aria-current={active ? "page" : undefined}
+                    aria-label={itemLabel}
                     className={`sidebar-nav-item ${active ? "active" : ""} ${state} ${
                       requiresProjectBlocked ? "project-required" : ""
                     }`.trim()}
