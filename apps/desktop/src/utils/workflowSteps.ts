@@ -136,12 +136,5 @@ export function buildWorkflowSteps(
     step("开始对接", "执行 AutoDock Vina 并保存 stdout/stderr/log/out。", executeStatus, "开始对接", "run-execute"),
     step("解析结果", "从 Vina log 解析 scores.csv。", resultStatus, "查看结果", "result"),
     step("导出实验记录", "导出 Markdown 实验记录。", resultStatus, "导出实验记录", "report"),
-    step(
-      "3D 查看 / 构象查看",
-      "查看原始结构、Vina 输入、搜索范围或对接构象。",
-      !hasProject ? "blocked" : canViewPose ? "done" : receptorPrepared || ligandPrepared || receptorRaw || ligandRaw ? "available" : "blocked",
-      "打开 3D 查看",
-      "viewer",
-    ),
   ];
 }

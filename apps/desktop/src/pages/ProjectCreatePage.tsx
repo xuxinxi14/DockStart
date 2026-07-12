@@ -114,7 +114,6 @@ const pageIds: PageId[] = [
   "run-prepare",
   "run-execute",
   "result",
-  "viewer",
   "report",
   "help",
 ];

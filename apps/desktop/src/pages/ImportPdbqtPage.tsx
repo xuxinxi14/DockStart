@@ -15,7 +15,6 @@ type ImportPdbqtPageProps = {
   onBack: () => void;
   onOpenStructureFetch: (project: DockStartProject) => void;
   onOpenBoxSetup: (project: DockStartProject) => void;
-  onOpenViewer: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
 
@@ -39,7 +38,6 @@ export default function ImportPdbqtPage({
   onBack,
   onOpenStructureFetch,
   onOpenBoxSetup,
-  onOpenViewer,
   onProjectChange,
 }: ImportPdbqtPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
@@ -164,7 +162,6 @@ export default function ImportPdbqtPage({
               </div>
               <div className="button-row end">
                 <ActionButton onClick={() => onOpenStructureFetch(project)}>获取结构</ActionButton>
-                <ActionButton onClick={() => onOpenViewer(project)}>3D 查看</ActionButton>
                 <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
                   设置搜索范围
                 </ActionButton>

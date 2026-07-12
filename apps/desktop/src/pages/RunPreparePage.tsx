@@ -35,7 +35,6 @@ type RunPreparePageProps = {
   project: DockStartProject;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
-  onOpenViewer: () => void;
   onOpenRunExecute: (project: DockStartProject, runId: string) => void;
   onOpenResultPage: (project: DockStartProject, runId: string) => void;
   onNavigate: (page: PageId) => void;
@@ -199,7 +198,6 @@ export default function RunPreparePage({
   project: initialProject,
   onBack,
   onProjectChange,
-  onOpenViewer,
   onOpenRunExecute,
   onOpenResultPage,
   onNavigate,
@@ -535,7 +533,7 @@ export default function RunPreparePage({
                 <span className="run-cockpit-kicker">结构复核</span>
                 <h2>受体、配体与搜索范围</h2>
               </div>
-              <button className="text-button inline" type="button" onClick={onOpenViewer}>打开完整 3D 工作台 <ArrowRight size={14} /></button>
+              <button className="text-button inline" type="button" onClick={() => onNavigate("box-setup")}>返回修改搜索范围 <ArrowRight size={14} /></button>
             </div>
             <div className="run-preview-grid">
               <Suspense fallback={<div className="run-preview run-preview-loading"><SpinnerGap className="run-monitor-spinner" size={24} /><span>正在加载 3D 复核视图…</span></div>}>

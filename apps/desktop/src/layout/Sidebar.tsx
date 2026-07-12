@@ -43,8 +43,6 @@ function NavigationIcon({ page }: { page: PageId }) {
       return <PlayCircle {...props} />;
     case "result":
       return <ChartBar {...props} />;
-    case "viewer":
-      return <Cube {...props} />;
     case "report":
       return <BookOpenText {...props} />;
     case "toolchain-status":

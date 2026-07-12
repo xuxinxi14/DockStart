@@ -13,7 +13,6 @@ export type PageId =
   | "run-prepare"
   | "run-execute"
   | "result"
-  | "viewer"
   | "report"
   | "help";
 
@@ -34,7 +33,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.9.4";
+export const appVersion = "0.9.5";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -91,13 +90,6 @@ export const navigationItems: NavigationItem[] = [
     requiresProject: true,
   },
   {
-    id: "viewer",
-    group: "Workbench",
-    label: "3D 查看 / 搜索范围",
-    description: "结构、搜索范围、构象",
-    requiresProject: true,
-  },
-  {
     id: "report",
     group: "Workbench",
     label: "实验记录",
@@ -127,7 +119,6 @@ export const pageTitles: Record<PageId, string> = {
   "run-prepare": "准备对接运行",
   "run-execute": "执行 AutoDock Vina",
   result: "查看对接结果",
-  viewer: "3D 分子工作台",
   report: "导出实验记录",
   help: "文档帮助",
 };

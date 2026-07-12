@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.5
+
+- Consolidated 3D inspection into the docking workflow: the run cockpit now provides receptor, ligand, and search-range visibility controls plus an expanded viewing mode.
+- Added an in-context docking-pose viewer to the result page so modes can be reviewed without leaving result analysis.
+- Removed the standalone 3D Viewer route and its duplicate navigation entries; Box editing remains a dedicated workflow step.
+- Improved keyboard and focus behavior for the expanded run preview and result-pose dialog, and removed stale Viewer navigation state.
+- Synchronized active package, backend, desktop, release-profile, README, and demo documentation to V0.9.5.
+- Kept the change limited to frontend workflow consolidation; no docking algorithm, score semantics, preparation logic, external scientific dependency, or project-data schema was changed.
+
 ## v0.9.4
 
 - Added ProDy, Biopython, and pyparsing to the local Full bundled Python runtime so Meeko's ProDy reader path can be invoked from DockStart.

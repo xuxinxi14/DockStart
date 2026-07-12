@@ -11,7 +11,7 @@ export function getWorkflowSummary(project: DockStartProject | null, page: PageI
   if (page === "run-prepare" || page === "run-execute") {
     return "Vina 运行阶段";
   }
-  if (page === "viewer" || page === "box-setup") {
+  if (page === "box-setup") {
     return "结构与 Box 阶段";
   }
   if (page === "preparation" || page === "import-pdbqt") {

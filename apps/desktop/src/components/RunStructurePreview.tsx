@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ArrowClockwise,
   ArrowsOut,
   Cube,
   MagnifyingGlassMinus,
   MagnifyingGlassPlus,
   Pause,
   Play,
+  CornersOut,
+  CornersIn,
 } from "@phosphor-icons/react";
 import * as $3Dmol from "3dmol";
 import type { BoxVisualizationPayload, DockStartProject, ViewerStructureResult } from "../types";
@@ -117,6 +118,12 @@ export default function RunStructurePreview({
   const [message, setMessage] = useState("正在读取受体、配体与搜索范围…");
   const [isSpinning, setIsSpinning] = useState(false);
 
+  // 轻量图层控制状态
+  const [showReceptor, setShowReceptor] = useState(true);
+  const [showLigand, setShowLigand] = useState(true);
+  const [showBox, setShowBox] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
   const ensureViewer = useCallback(() => {
     if (viewerRef.current) return viewerRef.current;
     if (!containerRef.current) return null;
@@ -130,19 +137,28 @@ export default function RunStructurePreview({
     if (!viewer) return;
     const previousView = fit ? null : (viewer as unknown as { getView?: () => unknown }).getView?.();
     viewer.clear();
-    if (structures.receptor?.ok) {
+
+    // 条件渲染受体
+    if (showReceptor && structures.receptor?.ok) {
       const model = viewer.addModel(structures.receptor.content, structures.receptor.format);
       model.setStyle({}, {
         cartoon: { color: "spectrum", opacity: 0.74 },
         stick: { radius: 0.1, colorscheme: "Jmol" },
       });
     }
-    if (structures.ligand?.ok) {
+
+    // 条件渲染配体
+    if (showLigand && structures.ligand?.ok) {
       const model = viewer.addModel(structures.ligand.content, structures.ligand.format);
       model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
     }
+
+    // 条件渲染 Box
     const boxVisualization = buildBoxVisualization(boxRef.current);
-    if (boxVisualization) addBoxOverlay(viewer, boxVisualization);
+    if (showBox && boxVisualization) {
+      addBoxOverlay(viewer, boxVisualization);
+    }
+
     addOrientationAxes(viewer, boxVisualization);
     if (previousView) {
       (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
@@ -150,7 +166,7 @@ export default function RunStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [ensureViewer, structures]);
+  }, [ensureViewer, structures, showReceptor, showLigand, showBox]);
 
   const refreshBoxOverlay = useCallback(() => {
     const viewer = ensureViewer();
@@ -158,10 +174,10 @@ export default function RunStructurePreview({
     (viewer as unknown as { removeAllShapes?: () => void }).removeAllShapes?.();
     (viewer as unknown as { removeAllLabels?: () => void }).removeAllLabels?.();
     const boxVisualization = buildBoxVisualization(boxRef.current);
-    if (boxVisualization) addBoxOverlay(viewer, boxVisualization);
+    if (showBox && boxVisualization) addBoxOverlay(viewer, boxVisualization);
     addOrientationAxes(viewer, boxVisualization);
     viewer.render();
-  }, [ensureViewer]);
+  }, [ensureViewer, showBox]);
 
   useEffect(() => {
     const viewer = ensureViewer();
@@ -238,7 +254,7 @@ export default function RunStructurePreview({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "3D 场景渲染失败");
     }
-  }, [renderScene, structures]);
+  }, [renderScene, structures, showReceptor, showLigand, showBox]);
 
   useEffect(() => {
     boxRef.current = box;
@@ -248,6 +264,31 @@ export default function RunStructurePreview({
       setMessage(error instanceof Error ? error.message : "搜索范围预览刷新失败");
     }
   }, [box, refreshBoxOverlay]);
+
+  // 全屏变化时的自适应调整
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (viewerRef.current) {
+        viewerRef.current.resize();
+        viewerRef.current.render();
+      }
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsFullscreen(false);
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFullscreen]);
 
   useEffect(() => () => {
     viewerRef.current?.clear();
@@ -268,25 +309,12 @@ export default function RunStructurePreview({
     setIsSpinning(next);
   };
 
+  const toggleFullscreen = () => {
+    setIsFullscreen((prev) => !prev);
+  };
+
   return (
-    <section className="run-preview" aria-label="运行前结构预览">
-      <div className="run-preview-toolbar" aria-label="3D 视图工具">
-        <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大结构">
-          <MagnifyingGlassPlus size={18} />
-        </button>
-        <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小结构">
-          <MagnifyingGlassMinus size={18} />
-        </button>
-        <button type="button" onClick={() => renderScene(true)} title="适应窗口" aria-label="让结构适应窗口">
-          <ArrowsOut size={18} />
-        </button>
-        <button type="button" onClick={() => renderScene(true)} title="重置视图" aria-label="重置 3D 视图">
-          <ArrowClockwise size={18} />
-        </button>
-        <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label={isSpinning ? "停止自动旋转" : "开始自动旋转"}>
-          {isSpinning ? <Pause size={18} /> : <Play size={18} />}
-        </button>
-      </div>
+    <section className={`run-preview ${isFullscreen ? "is-fullscreen" : ""}`} aria-label="运行前结构预览">
       <div
         className="run-preview-canvas"
         data-wheel-bound={wheelBinding || undefined}
@@ -298,12 +326,104 @@ export default function RunStructurePreview({
             : "受体、配体和搜索范围三维视图；滚轮缩放"
         }
       />
-      <div className="run-preview-legend" aria-live="polite">
-        <span><i className="run-preview-dot receptor" />受体</span>
-        <span><i className="run-preview-dot ligand" />配体</span>
-        <span><Cube aria-hidden="true" size={14} />搜索范围</span>
-        <strong>{message}</strong>
-      </div>
+
+      {isFullscreen ? (
+        <div className="run-preview-fullscreen-controls">
+          <div className="fullscreen-toggles">
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowReceptor(!showReceptor)}
+              title={showReceptor ? "隐藏受体" : "显示受体"}
+              aria-pressed={showReceptor}
+            >
+              <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
+              受体
+            </button>
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowLigand(!showLigand)}
+              title={showLigand ? "隐藏配体" : "显示配体"}
+              aria-pressed={showLigand}
+            >
+              <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
+              配体
+            </button>
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowBox(!showBox)}
+              title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
+              aria-pressed={showBox}
+            >
+              <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
+              搜索范围
+            </button>
+          </div>
+          <div className="fullscreen-actions">
+            <button type="button" onClick={() => renderScene(true)} className="secondary-button compact-btn">
+              适应视图
+            </button>
+            <button type="button" onClick={toggleFullscreen} className="primary-button compact-btn fullscreen-close-btn">
+              <CornersIn size={14} /> 关闭全屏
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="run-preview-toolbar" aria-label="3D 视图工具">
+            <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大结构">
+              <MagnifyingGlassPlus size={18} />
+            </button>
+            <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小结构">
+              <MagnifyingGlassMinus size={18} />
+            </button>
+            <button type="button" onClick={() => renderScene(true)} title="适应窗口" aria-label="让结构适应窗口">
+              <ArrowsOut size={18} />
+            </button>
+            <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label={isSpinning ? "停止自动旋转" : "开始自动旋转"}>
+              {isSpinning ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <button type="button" onClick={toggleFullscreen} title="全屏查看" aria-label="全屏查看">
+              <CornersOut size={18} />
+            </button>
+          </div>
+          <div className="run-preview-legend" aria-live="polite">
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowReceptor(!showReceptor)}
+              title={showReceptor ? "隐藏受体" : "显示受体"}
+              aria-pressed={showReceptor}
+            >
+              <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
+              受体
+            </button>
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowLigand(!showLigand)}
+              title={showLigand ? "隐藏配体" : "显示配体"}
+              aria-pressed={showLigand}
+            >
+              <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
+              配体
+            </button>
+            <button
+              type="button"
+              className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
+              onClick={() => setShowBox(!showBox)}
+              title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
+              aria-pressed={showBox}
+            >
+              <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
+              搜索范围
+            </button>
+            <strong>{message}</strong>
+          </div>
+        </>
+      )}
     </section>
   );
 }

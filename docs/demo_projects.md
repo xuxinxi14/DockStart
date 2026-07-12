@@ -1,6 +1,6 @@
 # DockStart Demo Projects
 
-DockStart V0.9.4 的示例流程由 `resources/examples/` 提供。示例项目只用于学习 DockStart 操作流程，不用于药效判断、真实 docking 解释、课程或论文中的科学证据。
+DockStart V0.9.5 的示例流程由 `resources/examples/` 提供。示例项目只用于学习 DockStart 操作流程，不用于药效判断、真实 docking 解释、课程或论文中的科学证据。
 
 每个示例目录必须包含 `manifest.json`。前端示例卡片从 manifest 读取标题、说明、标签、所需工具、入口步骤和按钮文案，不在前端代码里硬编码示例信息。
 

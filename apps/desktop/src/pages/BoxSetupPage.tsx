@@ -12,7 +12,6 @@ type BoxSetupPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
-  onOpenViewer: (project: DockStartProject) => void;
   onOpenVinaParams: (project: DockStartProject) => void;
 };
 
@@ -65,7 +64,6 @@ export default function BoxSetupPage({
   project: initialProject,
   onBack,
   onProjectChange,
-  onOpenViewer,
   onOpenVinaParams,
 }: BoxSetupPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
@@ -152,10 +150,7 @@ export default function BoxSetupPage({
         titleId="box-setup-title"
         description="编辑 docking box 的中心和尺寸，单位为 Å。"
         actions={
-          <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
-          <ActionButton onClick={() => onOpenViewer(project)}>在 3D 中查看</ActionButton>
-          </>
         }
       />
 

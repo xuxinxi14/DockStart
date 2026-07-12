@@ -22,7 +22,6 @@ type PreparationPageProps = {
   project: DockStartProject;
   onBack: () => void;
   onOpenImportPdbqt: (project: DockStartProject) => void;
-  onOpenViewer: (project: DockStartProject) => void;
   onOpenBoxSetup: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
@@ -92,7 +91,6 @@ export default function PreparationPage({
   project: initialProject,
   onBack,
   onOpenImportPdbqt,
-  onOpenViewer,
   onOpenBoxSetup,
   onProjectChange,
 }: PreparationPageProps) {
@@ -355,7 +353,6 @@ export default function PreparationPage({
               </div>
               <div className="button-row end">
                 <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
-                <ActionButton onClick={() => onOpenViewer(project)}>打开 3D 查看</ActionButton>
                 <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
                   进入设置搜索范围
                 </ActionButton>

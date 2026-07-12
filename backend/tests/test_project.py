@@ -1420,7 +1420,7 @@ class ProjectTests(unittest.TestCase):
             metadata = response["metadata"]
             self.assertEqual(metadata["stage"], "prepared")
             self.assertEqual(metadata["progress"]["percent"], 0)
-            self.assertEqual(metadata["app_version"], "0.9.4")
+            self.assertEqual(metadata["app_version"], "0.9.5")
             self.assertEqual(metadata["vina_source"], "auto")
             self.assertEqual(len(metadata["input_sha256"]["receptor"]), 64)
             self.assertEqual(len(metadata["input_sha256"]["ligand"]), 64)

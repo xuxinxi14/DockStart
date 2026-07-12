@@ -18,7 +18,7 @@ import SettingsPage from "./pages/SettingsPage";
 import StructureFetchPage from "./pages/StructureFetchPage";
 import ToolCheckPage from "./pages/ToolCheckPage";
 const ToolchainStatusPage = lazy(() => import("./pages/ToolchainStatusPage"));
-const ViewerPage = lazy(() => import("./pages/ViewerPage"));
+
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
@@ -36,7 +36,6 @@ export default function App() {
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
   const [projectRevision, setProjectRevision] = useState(0);
-  const [viewerRequest, setViewerRequest] = useState<{ runId: string; mode: number | null; returnPage: PageId } | null>(null);
   const committedProjectKeyRef = useRef("");
 
   const commitProject = useCallback((project: DockStartProject) => {
@@ -100,9 +99,6 @@ export default function App() {
   function navigateTo(page: PageId, options?: NavigateOptions) {
     if (page === "project-create") {
       setProjectStartMode(options?.startMode ?? "basic");
-    }
-    if (page === "viewer") {
-      setViewerRequest(null);
     }
     setCurrentPage(page);
   }
@@ -185,10 +181,6 @@ export default function App() {
             commitProject(project);
             navigateTo("import-pdbqt");
           }}
-          onOpenViewer={(project) => {
-            commitProject(project);
-            navigateTo("viewer");
-          }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
             navigateTo("box-setup");
@@ -210,10 +202,6 @@ export default function App() {
             commitProject(project);
             navigateTo("box-setup");
           }}
-          onOpenViewer={(project) => {
-            commitProject(project);
-            navigateTo("viewer");
-          }}
           onProjectChange={commitProject}
         />
       );
@@ -225,10 +213,6 @@ export default function App() {
           project={currentProject}
           onBack={() => navigateTo("import-pdbqt")}
           onProjectChange={commitProject}
-          onOpenViewer={(project) => {
-            commitProject(project);
-            navigateTo("viewer");
-          }}
           onOpenVinaParams={(project) => {
             commitProject(project);
             navigateTo("vina-param");
@@ -272,10 +256,6 @@ export default function App() {
           onBack={() => navigateTo("vina-config")}
           onNavigate={navigateTo}
           onProjectChange={commitProject}
-          onOpenViewer={() => {
-            setViewerRequest({ runId: "", mode: null, returnPage: "run-prepare" });
-            setCurrentPage("viewer");
-          }}
           onOpenRunExecute={(project, runId) => {
             commitProject(project);
             setCurrentRunId(runId);
@@ -317,11 +297,6 @@ export default function App() {
           runId={currentRunId}
           onBack={() => navigateTo("run-execute")}
           onProjectChange={commitProject}
-          onOpenViewer={(project, requestedRunId, mode) => {
-            commitProject(project);
-            setViewerRequest({ runId: requestedRunId, mode: mode ?? null, returnPage: "result" });
-            setCurrentPage("viewer");
-          }}
           onOpenReportPage={(project, runId) => {
             commitProject(project);
             setCurrentRunId(runId);
@@ -335,17 +310,7 @@ export default function App() {
       return <RunRequiredPage project={currentProject} requestedPage="result" onNavigate={navigateTo} />;
     }
 
-    if (currentPage === "viewer" && currentProject) {
-      return (
-        <ViewerPage
-          project={currentProject}
-          onBack={() => navigateTo(viewerRequest?.returnPage ?? "preparation")}
-          onProjectChange={commitProject}
-          initialRunId={viewerRequest?.runId}
-          initialMode={viewerRequest?.mode}
-        />
-      );
-    }
+
 
     if (currentPage === "report" && currentProject && currentRunId) {
       return (

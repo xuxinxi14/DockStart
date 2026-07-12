@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { X } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -11,12 +12,13 @@ import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
 
+const PoseStructurePreview = lazy(() => import("../components/PoseStructurePreview"));
+
 type ResultPageProps = {
   project: DockStartProject;
   runId: string;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
-  onOpenViewer: (project: DockStartProject, runId: string, mode?: number) => void;
   onOpenReportPage: (project: DockStartProject, runId: string) => void;
 };
 
@@ -69,10 +71,10 @@ export default function ResultPage({
   runId,
   onBack,
   onProjectChange,
-  onOpenViewer,
   onOpenReportPage,
 }: ResultPageProps) {
   const [project, setProject] = useState(initialProject);
+  const [viewerMode, setViewerMode] = useState<number | null>(null);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [scores, setScores] = useState<ScoreRow[]>([]);
   const [logFile, setLogFile] = useState("");
@@ -85,6 +87,8 @@ export default function ResultPage({
   const [isBusy, setIsBusy] = useState(false);
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
+  const closeViewerButtonRef = useRef<HTMLButtonElement | null>(null);
+  const viewerTriggerRef = useRef<HTMLElement | null>(null);
 
   const status = metadataString(metadata, "status") || "unknown";
   const canAnalyze = status === "finished" && !isBusy;
@@ -95,6 +99,35 @@ export default function ResultPage({
   const displayedAnalyzedAt = analyzedAt || metadataString(metadata, "analyzed_at");
   const displayedReportFile = metadataString(metadata, "report_file") || metadataString(metadata, "project_report_file");
   const reportReady = Boolean(displayedReportFile);
+
+  const openPoseViewer = (mode: number, trigger: HTMLElement) => {
+    viewerTriggerRef.current = trigger;
+    setViewerMode(mode);
+  };
+
+  const closePoseViewer = useCallback(() => {
+    setViewerMode(null);
+    window.setTimeout(() => viewerTriggerRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    if (viewerMode === null) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closePoseViewer();
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", handleKeyDown);
+    closeViewerButtonRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closePoseViewer, viewerMode]);
+
+  useEffect(() => {
+    setViewerMode(null);
+  }, [runId]);
 
   const applyResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string) => {
@@ -256,7 +289,12 @@ export default function ResultPage({
                   {isBusy ? "处理中..." : "解析 scores"}
                 </ActionButton>
                 <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
-                <ActionButton disabled={status !== "finished"} onClick={() => onOpenViewer(project, runId, scores[0]?.mode)}>查看构象</ActionButton>
+                <ActionButton
+                  disabled={status !== "finished" || !scores.length}
+                  onClick={(event) => openPoseViewer(scores[0].mode, event.currentTarget)}
+                >
+                  查看构象
+                </ActionButton>
                 <ActionButton disabled={!(scores.length > 0 || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
                   {reportReady ? "查看实验记录" : "导出实验记录"}
                 </ActionButton>
@@ -281,7 +319,15 @@ export default function ResultPage({
                           <td>{formatScoreValue(score.affinity_kcal_mol)}</td>
                           <td>{formatScoreValue(score.rmsd_lb)}</td>
                           <td>{formatScoreValue(score.rmsd_ub)}</td>
-                          <td><button className="text-button inline" type="button" onClick={() => onOpenViewer(project, runId, score.mode)}>打开 mode {score.mode}</button></td>
+                          <td>
+                            <button
+                              className="text-button inline"
+                              type="button"
+                              onClick={(event) => openPoseViewer(score.mode, event.currentTarget)}
+                            >
+                              打开 mode {score.mode}
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -356,7 +402,7 @@ export default function ResultPage({
           <RightRailSection title="下一步">
             <p>
               {reportReady
-                ? "查看已生成的 Markdown 实验记录，或进入 3D 工作台复核构象。"
+                ? "查看已生成的 Markdown 实验记录，或点击列表复核 3D 构象。"
                 : scores.length > 0 || displayedScoresFile
                   ? "导出 Markdown 实验记录。"
                   : "先解析 scores.csv。"}
@@ -364,6 +410,65 @@ export default function ResultPage({
           </RightRailSection>
         </RightRail>
       </BodyGrid>
+
+      {viewerMode !== null ? (
+        <div
+          className="pose-viewer-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pose-viewer-modal-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePoseViewer();
+          }}
+        >
+          <div className="pose-viewer-modal-content">
+            <header className="pose-viewer-modal-header">
+              <h2 id="pose-viewer-modal-title">
+                对接构象 3D 查看 <small>({runId} · Mode {viewerMode})</small>
+              </h2>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={closePoseViewer}
+                ref={closeViewerButtonRef}
+                aria-label="关闭弹窗"
+              >
+                <X size={20} />
+              </button>
+            </header>
+
+            <div className="pose-viewer-modal-body">
+              <Suspense fallback={<div className="run-preview-loading">正在加载 3D 构象查看器…</div>}>
+                <PoseStructurePreview
+                  projectDir={project.project_dir}
+                  runId={runId}
+                  mode={viewerMode}
+                />
+              </Suspense>
+
+              <div className="pose-viewer-modal-sidebar">
+                <h3>构象列表 (affinity)</h3>
+                <div className="pose-viewer-modal-list">
+                  {scores.map((score) => (
+                    <button
+                      key={score.mode}
+                      type="button"
+                      className={`pose-viewer-modal-row ${viewerMode === score.mode ? "is-selected" : ""}`}
+                      onClick={() => setViewerMode(score.mode)}
+                    >
+                      <strong>Mode {score.mode}</strong>
+                      <span>{formatScoreValue(score.affinity_kcal_mol)} kcal/mol</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="pose-viewer-modal-note">
+                  图例可在视图下方点击切换受体和构象显示。
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PageShell>
   );
 }
