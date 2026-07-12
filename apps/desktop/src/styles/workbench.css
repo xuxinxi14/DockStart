@@ -12,10 +12,10 @@
   display: grid;
   grid-template-areas:
     "stage controls"
-    "inspector inspector";
-  grid-template-columns: minmax(0, 1fr) minmax(318px, 344px);
+    "inspector controls";
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 420px);
   gap: var(--ds-space-3);
-  align-items: start;
+  align-items: stretch;
   min-width: 0;
 }
 
@@ -39,7 +39,8 @@
 
 .viewer-control-column {
   grid-area: controls;
-  max-height: calc(var(--viewer-canvas-height) + 66px);
+  height: 100%;
+  max-height: calc(var(--viewer-canvas-height) + 260px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -47,8 +48,10 @@
 
 .viewer-inspector-column {
   grid-area: inspector;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(220px, 0.8fr) minmax(360px, 1.45fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
+  padding: var(--ds-space-2.5);
+  gap: var(--ds-space-2.5);
 }
 
 .viewer-stage {
@@ -56,12 +59,20 @@
 }
 
 .viewer-control-column .section-card,
-.viewer-inspector-column .section-card,
 .viewer-status-region .command-result-panel {
   min-width: 0;
   border-color: var(--ds-border-default);
   background: var(--ds-surface-panel);
   padding: var(--ds-space-3);
+  box-shadow: var(--ds-shadow-raised);
+}
+
+.viewer-inspector-column .section-card,
+.viewer-inspector-column .command-result-panel {
+  min-width: 0;
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-panel);
+  padding: var(--ds-space-2.5);
   box-shadow: var(--ds-shadow-raised);
 }
 
@@ -539,13 +550,14 @@
 
 .viewer-file-status-row strong {
   color: var(--ds-text-primary);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .viewer-file-status-row span:not(.status-badge) {
   color: var(--ds-text-muted);
   font-family: var(--ds-font-mono);
-  font-size: 9px;
+  font-size: 10px;
   overflow-wrap: anywhere;
 }
 
@@ -630,20 +642,26 @@
 
 .viewer-inspector-column .tool-meta {
   display: grid;
-  gap: var(--ds-space-2);
+  gap: var(--ds-space-1.5);
 }
 
 .viewer-inspector-column .tool-meta > div {
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
+  grid-template-columns: 68px minmax(0, 1fr);
   gap: var(--ds-space-2);
   align-items: start;
 }
 
-.viewer-inspector-column .tool-meta dt,
-.viewer-inspector-column .tool-meta dd {
+.viewer-inspector-column .tool-meta dt {
   min-width: 0;
   font-size: 11px;
+  font-weight: 700;
+  color: var(--ds-text-muted);
+}
+
+.viewer-inspector-column .tool-meta dd {
+  min-width: 0;
+  font-size: 12.5px;
 }
 
 .viewer-inspector-column .tool-meta dd,
