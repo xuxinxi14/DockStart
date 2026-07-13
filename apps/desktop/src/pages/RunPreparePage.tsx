@@ -9,7 +9,6 @@ import {
   FloppyDisk,
   FolderOpen,
   HardDrives,
-  MouseScroll,
   Play,
   SpinnerGap,
   Stop,
@@ -18,6 +17,7 @@ import {
 } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import RunBoxInspector, { type RunBoxFieldKey, type RunBoxWheelStep } from "../components/RunBoxInspector";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { PageId } from "../navigation/pages";
@@ -43,24 +43,7 @@ type RunPreparePageProps = {
 type RunActionMode = "full" | "prepare" | "config";
 type BoxForm = Record<keyof DockStartProject["box"], string>;
 type VinaForm = Record<keyof DockStartProject["vina"], string>;
-type BoxFieldKey = keyof DockStartProject["box"];
-type BoxWheelStep = 0.1 | 1 | 5;
 const minBoxDimension = 0.1;
-
-const boxFields: Array<{ key: keyof DockStartProject["box"]; label: string }> = [
-  { key: "center_x", label: "中心 X" },
-  { key: "center_y", label: "中心 Y" },
-  { key: "center_z", label: "中心 Z" },
-  { key: "size_x", label: "尺寸 X" },
-  { key: "size_y", label: "尺寸 Y" },
-  { key: "size_z", label: "尺寸 Z" },
-];
-
-const boxWheelSteps: Array<{ value: BoxWheelStep; label: string }> = [
-  { value: 0.1, label: "细调" },
-  { value: 1, label: "常规" },
-  { value: 5, label: "快速" },
-];
 
 const vinaFields: Array<{ key: keyof DockStartProject["vina"]; label: string; hint: string }> = [
   { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议从 8 开始" },
@@ -216,8 +199,8 @@ export default function RunPreparePage({
   const [isBusy, setIsBusy] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
-  const [boxWheelBinding, setBoxWheelBinding] = useState<BoxFieldKey | null>(null);
-  const [boxWheelStep, setBoxWheelStep] = useState<BoxWheelStep>(0.1);
+  const [boxWheelBinding, setBoxWheelBinding] = useState<RunBoxFieldKey | null>(null);
+  const [boxWheelStep, setBoxWheelStep] = useState<RunBoxWheelStep>(0.1);
   const pollRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
@@ -542,71 +525,32 @@ export default function RunPreparePage({
                   refreshKey={previewRevision}
                   wheelBinding={isBusy ? null : boxWheelBinding}
                   onWheelAdjust={adjustBoundBoxField}
+                  fullscreenInspector={(
+                    <RunBoxInspector
+                      boxForm={boxForm}
+                      volume={volume}
+                      wheelBinding={boxWheelBinding}
+                      wheelStep={boxWheelStep}
+                      disabled={isBusy}
+                      idPrefix="run-box-fullscreen"
+                      className="run-box-inspector-fullscreen"
+                      onFieldChange={updateBoxField}
+                      onWheelBindingChange={setBoxWheelBinding}
+                      onWheelStepChange={setBoxWheelStep}
+                    />
+                  )}
                 />
               </Suspense>
-              <aside className="run-box-inspector" aria-label="搜索范围参数">
-                <div className="run-inspector-title">
-                  <div>
-                    <span>Docking box</span>
-                    <strong>{volume.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} Å³</strong>
-                  </div>
-                  <StatusBadge tone={volume > 27000 ? "warning" : "ok"}>{volume > 27000 ? "范围偏大" : "范围可用"}</StatusBadge>
-                </div>
-                <div className="run-box-wheel-toolbar">
-                  <div className="run-box-step-group" aria-label="滚轮调整步进">
-                    {boxWheelSteps.map((step) => (
-                      <button
-                        type="button"
-                        key={step.value}
-                        disabled={isBusy}
-                        className={boxWheelStep === step.value ? "is-active" : ""}
-                        aria-pressed={boxWheelStep === step.value}
-                        onClick={() => setBoxWheelStep(step.value)}
-                      >
-                        {step.label}<small>{step.value} Å</small>
-                      </button>
-                    ))}
-                  </div>
-                  <p className={boxWheelBinding ? "is-bound" : ""} aria-live="polite">
-                    <MouseScroll aria-hidden="true" size={15} />
-                    {boxWheelBinding
-                      ? `滚轮调整${boxFields.find((field) => field.key === boxWheelBinding)?.label ?? boxWheelBinding}`
-                      : "未绑定时滚轮缩放视图"}
-                  </p>
-                </div>
-                <div className="run-box-fields">
-                  {boxFields.map((field) => {
-                    const invalid = !Number.isFinite(Number(boxForm[field.key])) || (field.key.startsWith("size_") && Number(boxForm[field.key]) <= 0);
-                    const isBound = boxWheelBinding === field.key;
-                    return (
-                      <div key={field.key} className={`run-box-field ${invalid ? "is-invalid" : ""} ${isBound ? "is-bound" : ""}`.trim()}>
-                        <div className="run-box-field-heading">
-                          <label htmlFor={`run-box-${field.key}`}>{field.label} <small>Å</small></label>
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            aria-pressed={isBound}
-                            aria-label={`${isBound ? "解除" : "绑定"}${field.label}的鼠标滚轮调整`}
-                            onClick={() => setBoxWheelBinding((current) => current === field.key ? null : field.key)}
-                          >
-                            <MouseScroll aria-hidden="true" size={13} />
-                            {isBound ? "已绑定" : "绑定"}
-                          </button>
-                        </div>
-                        <input
-                          id={`run-box-${field.key}`}
-                          disabled={isBusy}
-                          value={boxForm[field.key]}
-                          inputMode="decimal"
-                          onChange={(event) => updateBoxField(field.key, event.target.value)}
-                          aria-invalid={invalid}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-                <p>搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋。</p>
-              </aside>
+              <RunBoxInspector
+                boxForm={boxForm}
+                volume={volume}
+                wheelBinding={boxWheelBinding}
+                wheelStep={boxWheelStep}
+                disabled={isBusy}
+                onFieldChange={updateBoxField}
+                onWheelBindingChange={setBoxWheelBinding}
+                onWheelStepChange={setBoxWheelStep}
+              />
             </div>
           </section>
 

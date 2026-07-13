@@ -4,50 +4,51 @@
   /* Theme primitives: color literals live here and nowhere else in the UI. */
   --ds-color-transparent: rgba(0, 0, 0, 0);
 
-  /* V0.9.6 deep-blue workspace: lighter than the result-analysis mock while
-     preserving the same low-glare instrument-console hierarchy. */
-  --ds-bg-app: #082139;
-  --ds-bg-workspace: #0B2944;
-  --ds-surface-panel: #10324F;
-  --ds-surface-raised: #153A58;
-  --ds-surface-input: #193F5E;
-  --ds-surface-hover: #1B4666;
-  --ds-surface-selected: #1A4C70;
+  /* Deep-blue workspace with explicit luminance steps. Background, panel,
+     raised card and inset control must remain visibly distinct at a glance. */
+  --ds-bg-app: #04182A;
+  --ds-bg-workspace: #061D32;
+  --ds-surface-panel: #0D304D;
+  --ds-surface-raised: #174563;
+  --ds-surface-input: #0A2A45;
+  --ds-surface-hover: #1D5578;
+  --ds-surface-selected: #1D628A;
 
   /* Deep structural surfaces. */
-  --ds-nav-bg: #041B30;
-  --ds-topbar-bg: #051D34;
-  --ds-statusbar-bg: #03182B;
-  --ds-rail-bg: #0C3150;
-  --ds-rail-bg-hover: #123D61;
-  --ds-viewer-bg: #071F35;
-  --ds-viewer-bg-raised: #0D304E;
-  --ds-viewer-bg-soft: #17496F;
+  --ds-nav-bg: #021426;
+  --ds-topbar-bg: #03182B;
+  --ds-statusbar-bg: #011120;
+  --ds-rail-bg: #092B47;
+  --ds-rail-bg-hover: #154666;
+  --ds-viewer-bg: #031A2D;
+  --ds-viewer-bg-raised: #0A3452;
+  --ds-viewer-bg-soft: #175174;
 
   /* Borders and dividers. */
-  --ds-border-strong: #54728B;
-  --ds-border-default: #3C5C76;
-  --ds-border-subtle: #2B4B64;
-  --ds-divider: #31516A;
-  --ds-rail-border: rgba(122, 164, 198, 0.22);
-  --ds-rail-divider: rgba(255, 255, 255, 0.10);
-  --ds-on-dark-border-subtle: rgba(169, 199, 225, 0.16);
-  --ds-on-dark-border-default: rgba(169, 199, 225, 0.22);
-  --ds-on-dark-border-strong: rgba(122, 164, 198, 0.38);
-  --ds-viewer-border: rgba(164, 194, 219, 0.34);
+  --ds-border-strong: #6C8EA7;
+  --ds-border-default: #4A718D;
+  --ds-border-subtle: #345870;
+  --ds-divider: #41677F;
+  --ds-rail-border: rgba(144, 190, 224, 0.38);
+  --ds-rail-divider: rgba(220, 237, 250, 0.16);
+  --ds-on-dark-border-subtle: rgba(190, 218, 239, 0.22);
+  --ds-on-dark-border-default: rgba(190, 218, 239, 0.32);
+  --ds-on-dark-border-strong: rgba(144, 190, 224, 0.52);
+  --ds-viewer-border: rgba(177, 211, 237, 0.50);
+  --ds-window-border: #345B76;
 
   /* Workspace text now sits on deep-blue surfaces. */
-  --ds-text-strong: #F4F7FA;
-  --ds-text-primary: #E2EAF1;
-  --ds-text-secondary: #B9C8D5;
-  --ds-text-muted: #91A7BA;
-  --ds-text-disabled: #6E8396;
+  --ds-text-strong: #FFFFFF;
+  --ds-text-primary: #EDF4F9;
+  --ds-text-secondary: #CAD9E5;
+  --ds-text-muted: #A6BACB;
+  --ds-text-disabled: #7F96A8;
 
   /* Deep-surface text. */
-  --ds-text-on-dark: #F4F7FA;
-  --ds-text-on-dark-secondary: #C2CFDB;
-  --ds-text-on-dark-muted: #8FA4B7;
-  --ds-text-on-dark-accent: #9AC8ED;
+  --ds-text-on-dark: #FFFFFF;
+  --ds-text-on-dark-secondary: #D1DDE7;
+  --ds-text-on-dark-muted: #A5BACB;
+  --ds-text-on-dark-accent: #A8D9FA;
 
   /* Brand hierarchy. */
   --ds-brand: #1E6EA8;
@@ -111,10 +112,10 @@
 
   /* Shadows remain quiet; borders carry most of the hierarchy. */
   --ds-shadow-none: none;
-  --ds-shadow-soft: 0 1px 3px rgba(1, 12, 24, 0.22);
-  --ds-shadow-panel: 0 1px 2px rgba(1, 12, 24, 0.22), 0 10px 28px rgba(1, 12, 24, 0.16);
-  --ds-shadow-raised: 0 1px 3px rgba(1, 12, 24, 0.2);
-  --ds-shadow-rail: 0 10px 28px rgba(2, 19, 36, 0.18);
+  --ds-shadow-soft: 0 1px 4px rgba(0, 8, 18, 0.34);
+  --ds-shadow-panel: 0 2px 5px rgba(0, 8, 18, 0.34), 0 14px 34px rgba(0, 8, 18, 0.22);
+  --ds-shadow-raised: 0 2px 6px rgba(0, 8, 18, 0.28);
+  --ds-shadow-rail: 0 12px 32px rgba(0, 8, 18, 0.28);
   --ds-shadow-viewer: 0 12px 28px rgba(2, 19, 36, 0.18);
   --ds-shadow-brand: 0 2px 6px rgba(18, 69, 109, 0.18);
 
@@ -202,4 +203,91 @@
   --ds-shadow-border: var(--ds-shadow-soft);
   --ds-space-8: var(--ds-space-6);
   --ds-space-12: var(--ds-space-7);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Cool laboratory daylight: blue-white canvas, white primary panels and
+     clearly separated blue raised surfaces. The instrument chrome and 3D
+     viewport remain deep navy to protect molecular contrast. */
+  --ds-bg-app: #D5E7F2;
+  --ds-bg-workspace: #EAF4F9;
+  --ds-surface-panel: #F8FCFE;
+  --ds-surface-raised: #D8EAF4;
+  --ds-surface-input: #F9FCFE;
+  --ds-surface-hover: #C7E0EE;
+  --ds-surface-selected: #B5D6E9;
+
+  --ds-border-strong: #7699AF;
+  --ds-border-default: #96B4C7;
+  --ds-border-subtle: #BDD2DF;
+  --ds-divider: #A7C1D1;
+  --ds-window-border: #7598AE;
+
+  --ds-text-strong: #071F32;
+  --ds-text-primary: #17384F;
+  --ds-text-secondary: #47677C;
+  --ds-text-muted: #647F91;
+  --ds-text-disabled: #8A9FAC;
+
+  --ds-brand: #14638F;
+  --ds-brand-hover: #0E527A;
+  --ds-brand-active: #0A4568;
+  --ds-brand-soft: #D2E7F3;
+  --ds-brand-border: #4F89AC;
+  --ds-brand-selection: rgba(20, 99, 143, 0.17);
+
+  --ds-molecule: #176B70;
+  --ds-molecule-soft: #DDF0F0;
+  --ds-molecule-border: #72A9AD;
+  --ds-vina: #514B9B;
+  --ds-vina-soft: #E5E3F6;
+
+  --ds-success: #25794E;
+  --ds-success-text: #155E38;
+  --ds-success-soft: #DDEFE5;
+  --ds-success-border: #79B593;
+  --ds-warning: #A36116;
+  --ds-warning-text: #76420A;
+  --ds-warning-soft: #F5E7D1;
+  --ds-warning-border: #D1A66B;
+  --ds-danger: #A23E44;
+  --ds-danger-text: #852F35;
+  --ds-danger-soft: #F4DFE1;
+  --ds-danger-border: #D49A9E;
+  --ds-info: #246B98;
+  --ds-info-text: #164F74;
+  --ds-info-soft: #DCECF6;
+  --ds-info-border: #7EAAC5;
+  --ds-neutral-soft: #E4EDF3;
+  --ds-neutral-border: #9CB2C0;
+
+  --ds-code-bg: #09233A;
+  --ds-code-text: #F6FAFD;
+  --ds-focus-outline: #1B6F9D;
+  --ds-focus-ring: rgba(27, 111, 157, 0.20);
+  --ds-focus-ring-strong: rgba(27, 111, 157, 0.36);
+  --ds-scrollbar-on-light: #7898AB;
+
+  --ds-shadow-soft: 0 1px 3px rgba(34, 72, 96, 0.16);
+  --ds-shadow-panel: 0 2px 5px rgba(34, 72, 96, 0.15), 0 12px 30px rgba(34, 72, 96, 0.09);
+  --ds-shadow-raised: 0 2px 5px rgba(34, 72, 96, 0.14);
+
+  --ds-bg-subtle: #D7E9F3;
+  --ds-bg-panel: var(--ds-surface-panel);
+  --ds-bg-panel-soft: var(--ds-surface-raised);
+  --ds-bg-elevated: var(--ds-surface-panel);
+  --ds-navy-soft: var(--ds-brand-soft);
+  --ds-text-faint: var(--ds-text-disabled);
+  --ds-accent: #0D5D88;
+  --ds-accent-hover: #08496D;
+  --ds-accent-soft: var(--ds-brand-soft);
+  --ds-accent-border: var(--ds-brand-border);
+  --ds-background: var(--ds-bg-workspace);
+  --ds-background-subtle: var(--ds-bg-subtle);
+  --ds-surface: var(--ds-surface-panel);
+  --ds-surface-elevated: var(--ds-surface-raised);
+  --ds-surface-inset: var(--ds-surface-input);
+  --ds-border: var(--ds-border-default);
 }

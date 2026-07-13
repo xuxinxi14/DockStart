@@ -90,4 +90,24 @@ The focused comparisons cover typography hierarchy, tab and control spacing, the
 - Revisit compact row density only after collecting screenshots from longer real project names and larger receptor/ligand files.
 - Fine-tune 3D camera defaults later with representative scientific datasets rather than changing the toy demo to make screenshots look fuller.
 
+## Final v0.9.6 Corrective Pass
+
+- User evidence:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c033b7a9-d0e6-4a95-a5f9-8e258beff618.png`
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-257fb25a-4cdc-440f-9721-62a1afe454ce.png`
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-6cb049aa-6a6e-4b20-9a6d-83fec6d4d639.png`
+- Rendered implementation evidence:
+  - `E:\DockStart\.codex-ui-audit\v096-dark-custom-titlebar.png`
+  - `E:\DockStart\.codex-ui-audit\v096-light-theme.png`
+  - `E:\DockStart\.codex-ui-audit\contrast-fullscreen-box.png`
+  - `E:\DockStart\.codex-ui-audit\contrast-fullscreen-box-axes-hidden.png`
+- Verified in the real Tauri desktop runtime at 1200 x 800:
+  - native gray title decoration removed and replaced by an integrated draggable command bar;
+  - new DockStart artwork loaded in the application shell;
+  - dark/light theme state persisted through a Tauri rebuild;
+  - sidebar brand and command bar both measured 60 px high;
+  - sidebar footer and workspace status bar shared the same top coordinate;
+  - full-screen Box values and wheel binding stayed synchronized with the normal inspector;
+  - axis visibility toggled in both run and result viewers without runtime errors.
+
 final result: passed

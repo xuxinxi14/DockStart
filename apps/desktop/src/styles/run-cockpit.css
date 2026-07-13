@@ -186,6 +186,14 @@
   color: var(--ds-text-on-dark);
 }
 
+.run-preview-toolbar button.is-active,
+.run-preview-toolbar button[aria-pressed="true"] {
+  border-color: var(--ds-brand-on-dark);
+  background: var(--ds-surface-selected);
+  color: var(--ds-text-on-dark);
+  box-shadow: inset 0 0 0 1px var(--ds-brand-border-on-dark);
+}
+
 .run-preview-legend {
   position: absolute;
   z-index: 2;
@@ -1096,6 +1104,48 @@
   min-height: 100%;
 }
 
+.run-preview.is-fullscreen.has-fullscreen-inspector .run-preview-canvas {
+  right: 322px;
+  width: auto;
+}
+
+.run-preview.is-fullscreen .run-preview-toolbar {
+  z-index: 14;
+  top: 20px;
+  left: 20px;
+  border-color: var(--ds-on-dark-border-strong);
+  background: rgba(3, 24, 43, 0.94);
+}
+
+.run-box-inspector-fullscreen {
+  position: absolute;
+  z-index: 13;
+  top: 20px;
+  right: 20px;
+  bottom: 20px;
+  width: 282px;
+  overflow: auto;
+  border: 1px solid var(--ds-on-dark-border-strong);
+  border-radius: var(--ds-radius-lg);
+  background: rgba(13, 48, 77, 0.97);
+  box-shadow: var(--ds-shadow-viewer);
+  scrollbar-color: var(--ds-scrollbar-on-dark) transparent;
+}
+
+.run-box-inspector-fullscreen .run-box-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.run-box-inspector-fullscreen .run-box-field,
+.run-box-inspector-fullscreen .run-box-step-group button {
+  background: var(--ds-surface-input);
+}
+
+.run-box-inspector-fullscreen .run-box-field.is-bound,
+.run-box-inspector-fullscreen .run-box-step-group button.is-active {
+  background: var(--ds-surface-selected);
+}
+
 .run-preview-fullscreen-controls {
   position: absolute;
   z-index: 10;
@@ -1111,6 +1161,10 @@
   backdrop-filter: blur(10px);
   padding: var(--ds-space-control) var(--ds-space-4);
   box-shadow: var(--ds-shadow-viewer);
+}
+
+.run-preview.is-fullscreen.has-fullscreen-inspector .run-preview-fullscreen-controls {
+  left: calc((100vw - 322px) / 2);
 }
 
 .fullscreen-toggles {
@@ -1166,6 +1220,21 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+@media (max-width: 960px) {
+  .run-preview.is-fullscreen.has-fullscreen-inspector .run-preview-canvas {
+    right: 286px;
+  }
+
+  .run-box-inspector-fullscreen {
+    right: 12px;
+    width: 262px;
+  }
+
+  .run-preview.is-fullscreen.has-fullscreen-inspector .run-preview-fullscreen-controls {
+    left: calc((100vw - 286px) / 2);
+  }
 }
 
 /* -------------------------------------------------------------

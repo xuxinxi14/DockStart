@@ -7,6 +7,11 @@
 - Redesigned Structure Preparation with explicit PDBQT/raw modes, aligned receptor and ligand rows, contextual file checks, and live local 3D previews.
 - Refined the Docking Workbench to keep Box editing, Vina parameters, preflight checks, and a persistent run action in one continuous console.
 - Replaced the result pose modal with an integrated result-analysis workspace containing the 3D pose viewer, ranked modes, score ledger, output files, and report actions.
+- Added high-contrast dark and light-blue themes with a persistent title-bar switch, while keeping 3D molecular canvases on deep instrument surfaces.
+- Replaced the native gray Windows frame with an integrated draggable DockStart title bar and working minimize, maximize/restore, and close controls.
+- Replaced the legacy brand artwork across the application shell, browser metadata, executable, taskbar, MSI, and NSIS icon resources.
+- Added coordinate-axis visibility controls to run and result 3D viewers, and kept the full Box adjustment console available while the run viewer is expanded.
+- Aligned the top command-bar divider and bottom status-bar divider across the sidebar and workspace.
 - Lazy-loaded 3D viewers, avoided repeated receptor reads while switching poses, and cleared stale result state when changing runs.
 - Corrected the Windows release capability profile so the Full bundled Python runtime and its RDKit/Meeko packages are reported accurately.
 - Kept the scientific and runtime scope unchanged: no Vina algorithm change, interaction analysis, pocket prediction, PLIP/ProLIF/Open Babel/MGLTools integration, or drug-efficacy judgment was added.

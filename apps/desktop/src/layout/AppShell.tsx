@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FolderSimple, Monitor } from "@phosphor-icons/react";
 import type { DockStartProject } from "../types";
 import { appVersion, pageTitles, type NavigateHandler, type PageId } from "../navigation/pages";
@@ -16,6 +16,12 @@ type AppShellProps = {
   children: ReactNode;
 };
 
+export type ThemeMode = "dark" | "light";
+
+function readInitialTheme(): ThemeMode {
+  return window.localStorage.getItem("dockstart-theme") === "light" ? "light" : "dark";
+}
+
 export default function AppShell({
   currentPage,
   project,
@@ -25,6 +31,13 @@ export default function AppShell({
   children,
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem("dockstart-theme", theme);
+  }, [theme]);
 
   return (
     <div className={`dockstart-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`.trim()}>
@@ -42,6 +55,8 @@ export default function AppShell({
           currentPage={currentPage}
           project={project}
           workflowSummary={workflowSummary}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")}
           onNavigate={onNavigate}
         />
         <main className="app-content" data-layout="app-content" id="main-content" tabIndex={-1}>{children}</main>

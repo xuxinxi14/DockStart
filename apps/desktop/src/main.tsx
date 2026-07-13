@@ -10,6 +10,10 @@ import "./styles/instrument-console.css";
 import "./styles/run-cockpit.css";
 import "./styles/workspace-console.css";
 
+const savedTheme = window.localStorage.getItem("dockstart-theme");
+document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";
+document.documentElement.style.colorScheme = savedTheme === "light" ? "light" : "dark";
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

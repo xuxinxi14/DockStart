@@ -75,6 +75,7 @@ summary:focus-visible {
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+  border: 1px solid var(--ds-window-border);
   background: var(--ds-nav-bg);
   transition: grid-template-columns 180ms ease;
 }
@@ -87,7 +88,7 @@ summary:focus-visible {
   display: grid;
   grid-template-rows: var(--ds-topbar-height) minmax(0, 1fr) var(--ds-statusbar-height);
   min-width: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   background: var(--ds-bg-workspace);
 }
@@ -96,7 +97,7 @@ summary:focus-visible {
   position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   border: 0;
   border-right: 1px solid var(--ds-on-dark-border-subtle);
@@ -110,6 +111,7 @@ summary:focus-visible {
   align-items: center;
   gap: 11px;
   min-height: var(--ds-topbar-height);
+  height: var(--ds-topbar-height);
   margin: 0;
   border-bottom: 1px solid var(--ds-on-dark-border-subtle);
   padding: 9px 16px;
@@ -119,6 +121,8 @@ summary:focus-visible {
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
+  border-radius: 9px;
+  object-fit: contain;
 }
 
 .sidebar-brand-copy {
@@ -276,9 +280,10 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 48px;
+  min-height: var(--ds-statusbar-height);
+  height: var(--ds-statusbar-height);
   border-top: 1px solid var(--ds-on-dark-border-subtle);
-  padding: 7px 12px;
+  padding: 3px 8px;
 }
 
 .sidebar-version {
@@ -289,8 +294,8 @@ summary:focus-visible {
 
 .sidebar-collapse-button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
   place-items: center;
   border: 1px solid var(--ds-on-dark-border-default);
   border-radius: 7px;
@@ -357,12 +362,14 @@ summary:focus-visible {
   align-items: center;
   gap: 18px;
   min-height: var(--ds-topbar-height);
+  height: var(--ds-topbar-height);
   border: 0;
   border-bottom: 1px solid var(--ds-on-dark-border-subtle);
   background: var(--ds-topbar-bg);
   color: var(--ds-text-on-dark);
-  padding: 0 18px;
+  padding: 0 0 0 18px;
   box-shadow: none;
+  user-select: none;
 }
 
 .topbar-context {
@@ -455,6 +462,15 @@ summary:focus-visible {
   gap: 3px;
 }
 
+.topbar-end {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
+}
+
 .topbar-actions button {
   display: inline-flex;
   align-items: center;
@@ -476,17 +492,95 @@ summary:focus-visible {
   color: var(--ds-text-on-dark);
 }
 
+.topbar-theme-toggle {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 7px;
+  background: var(--ds-on-dark-surface);
+  color: var(--ds-text-on-dark-secondary);
+  padding: 0;
+  cursor: pointer;
+}
+
+.topbar-theme-toggle:hover,
+.topbar-theme-toggle:focus-visible,
+.topbar-theme-toggle[aria-pressed="true"] {
+  border-color: var(--ds-brand-border-on-dark);
+  background: var(--ds-brand-hover-on-dark);
+  color: var(--ds-text-on-dark);
+}
+
+.window-controls {
+  display: grid;
+  align-self: stretch;
+  grid-template-columns: repeat(3, 44px);
+  height: 100%;
+  margin-left: 4px;
+  border-left: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.window-controls button {
+  display: grid;
+  width: 44px;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ds-text-on-dark-secondary);
+  padding: 0;
+  cursor: default;
+}
+
+.window-controls button:hover,
+.window-controls button:focus-visible {
+  background: var(--ds-on-dark-hover);
+  color: var(--ds-text-on-dark);
+}
+
+.window-controls .window-close-button:hover,
+.window-controls .window-close-button:focus-visible {
+  background: #C42B3A;
+  color: #FFFFFF;
+}
+
 .app-statusbar {
   display: grid;
   grid-template-columns: minmax(180px, 1.5fr) minmax(170px, 0.8fr) auto auto;
   align-items: center;
   gap: 16px;
   min-width: 0;
+  min-height: var(--ds-statusbar-height);
+  height: var(--ds-statusbar-height);
   border-top: 1px solid var(--ds-on-dark-border-subtle);
   background: var(--ds-statusbar-bg);
   color: var(--ds-text-on-dark-muted);
   padding: 0 14px;
   font-size: 11px;
+}
+
+:root[data-theme="light"] .secondary-button,
+:root[data-theme="light"] .text-button,
+:root[data-theme="light"] .right-rail a,
+:root[data-theme="light"] .main-panel a {
+  color: var(--ds-brand);
+}
+
+:root[data-theme="light"] .right-rail .secondary-button,
+:root[data-theme="light"] .right-rail .text-button,
+:root[data-theme="light"] .right-rail a,
+:root[data-theme="light"] .run-preview .secondary-button,
+:root[data-theme="light"] .run-preview .text-button {
+  color: var(--ds-text-on-dark-accent);
+}
+
+:root[data-theme="light"] .mode-tabs button.active,
+:root[data-theme="light"] .primary-button {
+  color: #FFFFFF;
 }
 
 .app-statusbar > span {
@@ -1398,12 +1492,12 @@ pre,
   .dockstart-shell,
   .dockstart-shell.sidebar-collapsed {
     grid-template-columns: var(--ds-sidebar-collapsed-width) minmax(0, 1fr);
-    min-height: 100vh;
+    min-height: 100%;
   }
 
   .dockstart-workspace,
   .app-sidebar {
-    min-height: 100vh;
+    min-height: 100%;
   }
 
   .sidebar-brand-copy,
@@ -1467,7 +1561,8 @@ pre,
 @media (max-width: 720px) {
   .app-topbar {
     grid-template-columns: minmax(0, 1fr) auto;
-    padding-inline: 10px;
+    padding-left: 10px;
+    padding-right: 0;
   }
 
   .topbar-workspace-label,

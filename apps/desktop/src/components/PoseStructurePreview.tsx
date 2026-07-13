@@ -6,6 +6,7 @@ import {
   MagnifyingGlassPlus,
   Pause,
   Play,
+  Crosshair,
 } from "@phosphor-icons/react";
 import * as $3Dmol from "3dmol";
 import type { ViewerStructureResult } from "../types";
@@ -38,6 +39,7 @@ export default function PoseStructurePreview({
   const [isSpinning, setIsSpinning] = useState(false);
   const [showReceptor, setShowReceptor] = useState(true);
   const [showPose, setShowPose] = useState(true);
+  const [showAxes, setShowAxes] = useState(true);
 
   const ensureViewer = useCallback(() => {
     if (viewerRef.current) return viewerRef.current;
@@ -66,7 +68,7 @@ export default function PoseStructurePreview({
       model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
     }
 
-    addOrientationAxes(viewer, null);
+    if (showAxes) addOrientationAxes(viewer, null);
 
     if (previousView) {
       (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
@@ -74,7 +76,7 @@ export default function PoseStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [ensureViewer, receptor, pose, showReceptor, showPose]);
+  }, [ensureViewer, receptor, pose, showReceptor, showPose, showAxes]);
 
   useEffect(() => {
     const viewer = ensureViewer();
@@ -129,7 +131,7 @@ export default function PoseStructurePreview({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "3D 场景渲染失败");
     }
-  }, [renderScene, receptor, pose, showReceptor, showPose]);
+  }, [renderScene, receptor, pose, showReceptor, showPose, showAxes]);
 
   useEffect(() => () => {
     viewerRef.current?.clear();
@@ -164,6 +166,16 @@ export default function PoseStructurePreview({
         </button>
         <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label="旋转">
           {isSpinning ? <Pause size={18} /> : <Play size={18} />}
+        </button>
+        <button
+          type="button"
+          className={showAxes ? "is-active" : ""}
+          onClick={() => setShowAxes((current) => !current)}
+          title={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
+          aria-label={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
+          aria-pressed={showAxes}
+        >
+          <Crosshair size={18} />
         </button>
       </div>
       <div

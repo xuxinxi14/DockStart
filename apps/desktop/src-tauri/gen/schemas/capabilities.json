@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"DockStart 默认权限：核心能力 + 原生文件/目录选择对话框（tauri-plugin-dialog）。","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
+{"default":{"identifier":"default","description":"DockStart 默认权限：核心能力 + 原生文件/目录选择对话框（tauri-plugin-dialog）。","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-minimize","core:window:allow-start-dragging","core:window:allow-toggle-maximize","dialog:default"]}}

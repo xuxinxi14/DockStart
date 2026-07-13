@@ -123,9 +123,9 @@ export default function Sidebar({
 
   return (
     <aside className="app-sidebar" aria-label="DockStart 主导航">
-      <div className="sidebar-brand">
-        <img alt="" aria-hidden="true" className="sidebar-brand-mark" src="/dockstart-icon.svg" />
-        <span className="sidebar-brand-copy">
+      <div className="sidebar-brand" data-tauri-drag-region>
+        <img alt="" aria-hidden="true" className="sidebar-brand-mark" src="/dockstart-icon.png" />
+        <span className="sidebar-brand-copy" data-tauri-drag-region>
           <strong>DockStart</strong>
           <small>分子对接工作台</small>
         </span>
