@@ -1043,13 +1043,7 @@ fn run_python_module(
     module: &str,
     args: &[String],
 ) -> Result<String, String> {
-    let mut command = Command::new(python);
-    command
-        .arg("-m")
-        .arg(module)
-        .args(args)
-        .current_dir(backend_dir)
-        .env("PYTHONIOENCODING", "utf-8");
+    let mut command = build_python_module_command(backend_dir, python, module, args);
 
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -1063,6 +1057,28 @@ fn run_python_module(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
+}
+
+fn build_python_module_command(
+    backend_dir: &Path,
+    python: &str,
+    module: &str,
+    args: &[String],
+) -> Command {
+    let mut command = Command::new(python);
+    command
+        .arg("-B")
+        .arg("-m")
+        .arg(module)
+        .args(args)
+        .current_dir(backend_dir)
+        .env("PYTHONIOENCODING", "utf-8")
+        // `-B` protects the immediate backend interpreter. The environment
+        // variable is inherited by Python probes launched from the backend,
+        // so neither the packaged backend nor the bundled standard library is
+        // mutated with __pycache__ directories after installation.
+        .env("PYTHONDONTWRITEBYTECODE", "1");
+    command
 }
 
 fn python_candidates(backend_dir: &Path) -> Vec<String> {
@@ -1361,6 +1377,52 @@ mod tests {
     // invalidate each other's generation while the Rust test harness runs
     // test functions in parallel.
     static BACKEND_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn backend_python_commands_disable_bytecode_writes() {
+        let backend_dir = Path::new("backend-dir");
+        let args = vec!["status".to_string(), "project with space".to_string()];
+        let command = build_python_module_command(
+            backend_dir,
+            "bundled-python.exe",
+            "dockstart_core.project",
+            &args,
+        );
+
+        let command_args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            command_args,
+            vec![
+                "-B",
+                "-m",
+                "dockstart_core.project",
+                "status",
+                "project with space",
+            ],
+        );
+        assert_eq!(command.get_current_dir(), Some(backend_dir));
+
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|item| item.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            environment.get("PYTHONIOENCODING"),
+            Some(&Some("utf-8".to_string())),
+        );
+        assert_eq!(
+            environment.get("PYTHONDONTWRITEBYTECODE"),
+            Some(&Some("1".to_string())),
+        );
+    }
 
     #[test]
     fn cached_backend_reads_coalesce_concurrent_identical_requests() {

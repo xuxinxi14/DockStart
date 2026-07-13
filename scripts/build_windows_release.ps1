@@ -286,9 +286,13 @@ else {
 
     $artifactRecords = foreach ($artifact in @($expectedMsi, $expectedNsis)) {
         $item = Get-Item -LiteralPath $artifact
+        $repoPrefix = $repoRoot.TrimEnd('\') + '\'
+        if (-not $item.FullName.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Release artifact is outside the repository: $($item.FullName)"
+        }
         [ordered]@{
             "name" = $item.Name
-            "path" = $item.FullName
+            "path" = $item.FullName.Substring($repoPrefix.Length).Replace('\', '/')
             "size_bytes" = $item.Length
             "sha256" = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         }
