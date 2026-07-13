@@ -207,7 +207,7 @@ foreach ($relativePath in $requiredStageFiles) {
     }
 }
 
-$profile = [ordered]@{
+$artifactProfile = [ordered]@{
     "app_version" = $appVersion
     "build_type" = "basic_distributable"
     "release_profile" = "basic_stable"
@@ -229,7 +229,7 @@ $profile = [ordered]@{
         "No bundled conda environment"
     )
 }
-$profile.GetEnumerator() | ForEach-Object {
+$artifactProfile.GetEnumerator() | ForEach-Object {
     if ($_.Value -is [array]) {
         Write-Host "$($_.Key): $($_.Value -join '; ')"
     }
@@ -238,7 +238,7 @@ $profile.GetEnumerator() | ForEach-Object {
     }
 }
 $profilePath = Join-Path $stageRoot "artifact-profile.json"
-$profile | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $profilePath -Encoding UTF8
+$artifactProfile | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $profilePath -Encoding UTF8
 
 Invoke-Checked "Python unittest" "python" @("-m", "unittest", "discover", "-s", "backend/tests") $repoRoot
 Invoke-Checked "npm run build" "npm.cmd" @("run", "build") $desktopDir
