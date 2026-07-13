@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowRight,
+  CaretDown,
   CheckCircle,
   Clock,
   Cpu,
@@ -49,6 +50,18 @@ type RunActionMode = "full" | "prepare" | "config";
 type BoxForm = Record<keyof DockStartProject["box"], string>;
 type VinaForm = Record<keyof DockStartProject["vina"], string>;
 const minBoxDimension = 0.1;
+
+const runActionLabels: Record<RunActionMode, string> = {
+  full: "开始对接",
+  prepare: "创建运行记录",
+  config: "生成配置",
+};
+
+const runActionDescriptions: Record<RunActionMode, string> = {
+  full: "完整流程：运行、解析、报告",
+  prepare: "仅创建可复现运行记录",
+  config: "仅保存并生成配置",
+};
 
 const vinaFields: Array<{ key: keyof DockStartProject["vina"]; label: string; hint: string }> = [
   { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议从 8 开始" },
@@ -681,18 +694,30 @@ export default function RunPreparePage({
                 ) : null}
               </div>
               <div className="run-primary-action">
-                <label>
-                  <span>执行方式</span>
-                  <select value={actionMode} disabled={isBusy} onChange={(event) => setActionMode(event.target.value as RunActionMode)}>
-                    <option value="full">完整流程：运行、解析、报告</option>
-                    <option value="prepare">仅创建可复现运行记录</option>
-                    <option value="config">仅保存并生成配置</option>
-                  </select>
-                </label>
-                <ActionButton variant="primary" disabled={isBusy || !formIsValid || !preflight?.ready} onClick={() => void runWorkflow()}>
-                  {isBusy ? <SpinnerGap className="run-monitor-spinner" size={18} /> : <Play size={18} weight="fill" />}
-                  {isBusy ? stageText : actionMode === "full" ? "开始对接" : actionMode === "prepare" ? "创建运行记录" : "生成配置"}
-                </ActionButton>
+                <div className="run-split-action" role="group" aria-label="对接执行操作">
+                  <ActionButton
+                    className="run-split-action-main"
+                    variant="primary"
+                    disabled={isBusy || !formIsValid || !preflight?.ready}
+                    onClick={() => void runWorkflow()}
+                  >
+                    {isBusy ? <SpinnerGap className="run-monitor-spinner" size={18} /> : <Play size={18} weight="fill" />}
+                    {isBusy ? "运行中…" : runActionLabels[actionMode]}
+                  </ActionButton>
+                  <span className="run-split-action-selector" title={runActionDescriptions[actionMode]}>
+                    <select
+                      aria-label="选择执行方式"
+                      value={actionMode}
+                      disabled={isBusy}
+                      onChange={(event) => setActionMode(event.target.value as RunActionMode)}
+                    >
+                      <option value="full">{runActionDescriptions.full}</option>
+                      <option value="prepare">{runActionDescriptions.prepare}</option>
+                      <option value="config">{runActionDescriptions.config}</option>
+                    </select>
+                    <CaretDown aria-hidden="true" size={15} weight="bold" />
+                  </span>
+                </div>
               </div>
             </div>
             {message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{message}</p> : null}

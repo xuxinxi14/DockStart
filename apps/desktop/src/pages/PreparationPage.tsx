@@ -302,7 +302,7 @@ export default function PreparationPage({
             </>
           )}
 
-          <AdvancedDetails summary="查看详情">
+          <AdvancedDetails className="preparation-target-details" summary="查看详情">
             <dl className="meta-list">
               <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, isReceptor ? project.receptor.raw_file : project.ligand.raw_file)}</code></dd></div>
               <div><dt>准备方法</dt><dd>{prep?.method ?? "外部或手动导入"}</dd></div>

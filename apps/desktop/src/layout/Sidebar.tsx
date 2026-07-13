@@ -153,7 +153,7 @@ export default function Sidebar({
                     disabled={disabled}
                     key={item.id}
                     onClick={() => onNavigate(target)}
-                    title={requiresProjectBlocked ? "创建项目后启用" : item.description}
+                    title={`${itemLabel}：${requiresProjectBlocked ? "创建项目后启用" : item.description}`}
                     type="button"
                   >
                     <span className="sidebar-nav-icon"><NavigationIcon page={item.id} /></span>

@@ -615,7 +615,7 @@ export default function ProjectCreatePage({
 
           {startMode === "demo" ? (
             <RightRailSection title="复制到">
-              <div className="form-panel compact-project-open-form">
+              <div className="compact-project-open-form demo-destination-form">
                 <div className="form-field" data-layout="form-row">
                   <label htmlFor="demo-base-dir">工作区目录</label>
                   <PathInput

@@ -347,6 +347,23 @@ summary:focus-visible {
   padding: 0;
 }
 
+.sidebar-collapsed .sidebar-nav-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar-collapsed .sidebar-nav-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar-collapsed .sidebar-brand-mark {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+  border-radius: 10px;
+}
+
 .sidebar-collapsed .sidebar-footer {
   justify-content: center;
   padding-inline: 8px;
@@ -1284,7 +1301,10 @@ pre,
 .start-route-grid {
   grid-template-columns: 1fr;
   gap: 0;
-  border-block: 1px solid var(--ds-border-subtle);
+  overflow: hidden;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 8px;
+  background: var(--ds-surface-panel);
 }
 
 .start-route-card {
@@ -1293,8 +1313,8 @@ pre,
   border: 0;
   border-bottom: 1px solid var(--ds-border-subtle);
   border-radius: 0;
-  background: var(--ds-color-transparent);
-  padding: 15px 4px;
+  background: var(--ds-surface-panel);
+  padding: 15px 16px;
 }
 
 .start-route-card:last-child {
@@ -1535,6 +1555,23 @@ pre,
   .sidebar-footer {
     justify-content: center;
     padding-inline: 8px;
+  }
+
+  .sidebar-nav-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .sidebar-nav-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .sidebar-brand-mark {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+    border-radius: 10px;
   }
 
   .page-body-grid,

@@ -23,6 +23,21 @@
   --ds-viewer-bg: #031A2D;
   --ds-viewer-bg-raised: #0A3452;
   --ds-viewer-bg-soft: #175174;
+  --ds-viewer-surface-input: #0A2A45;
+  --ds-viewer-text: #FFFFFF;
+  --ds-viewer-text-secondary: #D1DDE7;
+  --ds-viewer-text-muted: #A5BACB;
+  --ds-viewer-text-accent: #A8D9FA;
+  --ds-viewer-border-subtle: rgba(190, 218, 239, 0.22);
+  --ds-viewer-border-default: rgba(190, 218, 239, 0.32);
+  --ds-viewer-border-strong: rgba(144, 190, 224, 0.52);
+  --ds-viewer-brand: #79BFF0;
+  --ds-viewer-brand-selection: rgba(31, 102, 159, 0.72);
+  --ds-viewer-brand-hover: rgba(57, 118, 167, 0.24);
+  --ds-viewer-brand-border: rgba(103, 161, 207, 0.42);
+  --ds-viewer-success: #70C695;
+  --ds-viewer-warning: #D8A35F;
+  --ds-viewer-danger: #DF8E91;
 
   /* Borders and dividers. */
   --ds-border-strong: #6C8EA7;
@@ -208,28 +223,35 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  /* Cool laboratory daylight: blue-white canvas, white primary panels and
-     clearly separated blue raised surfaces. The instrument chrome and 3D
-     viewport remain deep navy to protect molecular contrast. */
-  --ds-bg-app: #D5E7F2;
-  --ds-bg-workspace: #EAF4F9;
-  --ds-surface-panel: #F8FCFE;
-  --ds-surface-raised: #D8EAF4;
+  /* Cool laboratory daylight: all application chrome becomes light. Only
+     scientific 3D canvases retain the deep viewer palette above. */
+  --ds-bg-app: #DCECF5;
+  --ds-bg-workspace: #EDF6FA;
+  --ds-surface-panel: #FBFDFE;
+  --ds-surface-raised: #DDECF4;
   --ds-surface-input: #F9FCFE;
   --ds-surface-hover: #C7E0EE;
   --ds-surface-selected: #B5D6E9;
+
+  --ds-nav-bg: #DCECF5;
+  --ds-topbar-bg: #F7FBFD;
+  --ds-statusbar-bg: #DCECF5;
+  --ds-rail-bg: #F3F9FC;
+  --ds-rail-bg-hover: #D8EAF4;
 
   --ds-border-strong: #7699AF;
   --ds-border-default: #96B4C7;
   --ds-border-subtle: #BDD2DF;
   --ds-divider: #A7C1D1;
+  --ds-rail-border: #91B1C5;
+  --ds-rail-divider: #BFD5E2;
   --ds-window-border: #7598AE;
 
   --ds-text-strong: #071F32;
   --ds-text-primary: #17384F;
-  --ds-text-secondary: #47677C;
-  --ds-text-muted: #647F91;
-  --ds-text-disabled: #8A9FAC;
+  --ds-text-secondary: #355C74;
+  --ds-text-muted: #456579;
+  --ds-text-disabled: #657F91;
 
   --ds-brand: #14638F;
   --ds-brand-hover: #0E527A;
@@ -244,7 +266,7 @@
   --ds-vina: #514B9B;
   --ds-vina-soft: #E5E3F6;
 
-  --ds-success: #25794E;
+  --ds-success: #1F7146;
   --ds-success-text: #155E38;
   --ds-success-soft: #DDEFE5;
   --ds-success-border: #79B593;

@@ -34,6 +34,13 @@ export default function AppShell({
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
 
   useEffect(() => {
+    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+
+    document.addEventListener("contextmenu", preventContextMenu, true);
+    return () => document.removeEventListener("contextmenu", preventContextMenu, true);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem("dockstart-theme", theme);

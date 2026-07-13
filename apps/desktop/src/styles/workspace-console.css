@@ -66,7 +66,7 @@
 .task-card code,
 .metric-card code,
 .file-card code {
-  color: var(--ds-text-on-dark-secondary);
+  color: var(--ds-text-secondary);
 }
 
 .status-badge,
@@ -81,11 +81,15 @@
 }
 
 .preparation-workspace-page > .mode-tabs {
-  width: min(420px, 100%);
+  width: fit-content;
+  max-width: 100%;
   justify-self: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   border-radius: 7px;
   background: var(--ds-surface-panel);
+}
+
+.preparation-workspace-page > .mode-tabs button {
+  flex: 0 0 auto;
 }
 
 .preparation-workspace-layout {
@@ -234,14 +238,52 @@
   font-size: 11px;
 }
 
-.preparation-target-actions .advanced-details {
+.preparation-target-actions .preparation-target-details {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 7px;
   border-color: var(--ds-on-dark-border-default);
   background: var(--ds-on-dark-surface-muted);
+  padding: 0;
 }
 
-.preparation-target-actions .advanced-details summary,
-.preparation-target-actions .advanced-details dt,
-.preparation-target-actions .advanced-details dd {
+.preparation-target-actions .preparation-target-details summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  list-style: none;
+  padding: 8px 10px;
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.preparation-target-actions .preparation-target-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.preparation-target-actions .preparation-target-details summary::before {
+  content: "›";
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 140ms ease;
+}
+
+.preparation-target-actions .preparation-target-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.preparation-target-actions .preparation-target-details .advanced-details-content {
+  margin-top: 0;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+  padding: 10px;
+}
+
+.preparation-target-actions .preparation-target-details dt,
+.preparation-target-actions .preparation-target-details dd {
   color: var(--ds-text-on-dark-secondary);
 }
 
@@ -859,4 +901,137 @@
   .result-pose-viewer * {
     scroll-behavior: auto !important;
   }
+}
+
+/* Complete daylight theme. Application chrome and inspectors become light;
+   only genuine molecular viewers keep the deep scientific viewport palette. */
+:root[data-theme="light"] :is(
+  .app-sidebar,
+  .app-topbar,
+  .app-statusbar,
+  .right-rail,
+  .preparation-stage-panel,
+  .run-preview-grid > .run-box-inspector,
+  .run-preflight-rail,
+  .result-analysis-rail
+) {
+  --ds-text-on-dark: var(--ds-text-primary);
+  --ds-text-on-dark-secondary: var(--ds-text-secondary);
+  --ds-text-on-dark-muted: var(--ds-text-muted);
+  --ds-text-on-dark-accent: var(--ds-brand);
+  --ds-brand-on-dark: var(--ds-brand);
+  --ds-brand-selection: var(--ds-surface-selected);
+  --ds-brand-hover-on-dark: var(--ds-brand-soft);
+  --ds-brand-border-on-dark: var(--ds-brand-border);
+  --ds-success-on-dark: var(--ds-success);
+  --ds-warning-on-dark: var(--ds-warning);
+  --ds-danger-on-dark: var(--ds-danger);
+  --ds-on-dark-border-subtle: var(--ds-border-subtle);
+  --ds-on-dark-border-default: var(--ds-border-default);
+  --ds-on-dark-border-strong: var(--ds-border-strong);
+  --ds-on-dark-surface: var(--ds-surface-input);
+  --ds-on-dark-surface-muted: var(--ds-surface-raised);
+  --ds-on-dark-hover: var(--ds-surface-hover);
+  --ds-scrollbar-on-dark: var(--ds-scrollbar-on-light);
+}
+
+:root[data-theme="light"] :is(
+  .run-preview,
+  .structure-mini-preview,
+  .result-pose-workbench
+) {
+  --ds-text-strong: var(--ds-viewer-text);
+  --ds-text-primary: var(--ds-viewer-text);
+  --ds-text-secondary: var(--ds-viewer-text-secondary);
+  --ds-text-muted: var(--ds-viewer-text-muted);
+  --ds-text-disabled: var(--ds-viewer-text-muted);
+  --ds-text-on-dark: var(--ds-viewer-text);
+  --ds-text-on-dark-secondary: var(--ds-viewer-text-secondary);
+  --ds-text-on-dark-muted: var(--ds-viewer-text-muted);
+  --ds-text-on-dark-accent: var(--ds-viewer-text-accent);
+  --ds-surface-panel: var(--ds-viewer-bg-raised);
+  --ds-surface-raised: var(--ds-viewer-bg-soft);
+  --ds-surface-input: var(--ds-viewer-surface-input);
+  --ds-surface-hover: var(--ds-viewer-bg-soft);
+  --ds-surface-selected: var(--ds-viewer-bg-soft);
+  --ds-border-subtle: var(--ds-viewer-border-subtle);
+  --ds-border-default: var(--ds-viewer-border-default);
+  --ds-border-strong: var(--ds-viewer-border-strong);
+  --ds-on-dark-border-subtle: var(--ds-viewer-border-subtle);
+  --ds-on-dark-border-default: var(--ds-viewer-border-default);
+  --ds-on-dark-border-strong: var(--ds-viewer-border-strong);
+  --ds-brand-on-dark: var(--ds-viewer-brand);
+  --ds-brand-selection: var(--ds-viewer-brand-selection);
+  --ds-brand-hover-on-dark: var(--ds-viewer-brand-hover);
+  --ds-brand-border-on-dark: var(--ds-viewer-brand-border);
+  --ds-success-on-dark: var(--ds-viewer-success);
+  --ds-warning-on-dark: var(--ds-viewer-warning);
+  --ds-danger-on-dark: var(--ds-viewer-danger);
+  --ds-on-dark-surface: var(--ds-viewer-bg-raised);
+  --ds-on-dark-surface-muted: var(--ds-viewer-surface-input);
+  --ds-on-dark-hover: var(--ds-viewer-brand-hover);
+  --ds-topbar-bg: var(--ds-viewer-bg-raised);
+}
+
+:root[data-theme="light"] .preparation-stage-panel {
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-panel);
+}
+
+:root[data-theme="light"] .preparation-target-row {
+  border-bottom-color: var(--ds-border-default);
+}
+
+:root[data-theme="light"] .run-preview-grid > .run-box-inspector,
+:root[data-theme="light"] .run-preflight-rail,
+:root[data-theme="light"] .result-analysis-rail {
+  border-color: var(--ds-rail-border);
+  background: var(--ds-rail-bg);
+}
+
+:root[data-theme="light"] .text-button:hover:not(:disabled) {
+  background: var(--ds-surface-hover);
+  color: var(--ds-brand-hover);
+}
+
+:root[data-theme="light"] .skip-link {
+  background: var(--ds-brand-active);
+  color: var(--ds-viewer-text);
+}
+
+:root[data-theme="light"] .run-preview .text-button:hover:not(:disabled) {
+  background: var(--ds-viewer-brand-hover);
+  color: var(--ds-viewer-text-accent);
+}
+
+:root[data-theme="light"] :is(
+  .run-cockpit-header > div:first-child > span,
+  .run-cockpit-kicker,
+  .run-box-wheel-toolbar > p.is-bound,
+  .run-ledger-row > button,
+  .result-run-strip > div
+) {
+  color: var(--ds-brand);
+}
+
+:root[data-theme="light"] .result-tabs button:hover,
+:root[data-theme="light"] .result-tabs button.active {
+  border-bottom-color: var(--ds-brand);
+  color: var(--ds-brand-active);
+}
+
+:root[data-theme="light"] .run-box-step-group button.is-active,
+:root[data-theme="light"] .run-box-display-segment button.is-active {
+  border-color: var(--ds-brand);
+  color: var(--ds-brand-active);
+}
+
+:root[data-theme="light"] .scores-table th,
+:root[data-theme="light"] table th {
+  background: var(--ds-surface-selected);
+  color: var(--ds-text-primary);
+}
+
+:root[data-theme="light"] button:disabled {
+  opacity: 0.72;
 }
