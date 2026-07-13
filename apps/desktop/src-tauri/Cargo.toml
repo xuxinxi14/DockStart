@@ -2,7 +2,7 @@
 name = "dockstart-desktop"
 version = "0.10.0"
 description = "DockStart desktop shell"
-authors = ["DockStart contributors"]
+authors = ["XinXi Xu"]
 license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.77.2"
