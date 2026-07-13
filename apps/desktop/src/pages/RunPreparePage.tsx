@@ -17,7 +17,12 @@ import {
 } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
-import RunBoxInspector, { type RunBoxFieldKey, type RunBoxWheelStep } from "../components/RunBoxInspector";
+import RunBoxInspector, {
+  type RunAxisSpacing,
+  type RunBoxFieldKey,
+  type RunBoxLineThickness,
+  type RunBoxWheelStep,
+} from "../components/RunBoxInspector";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { PageId } from "../navigation/pages";
@@ -201,6 +206,8 @@ export default function RunPreparePage({
   const [previewRevision, setPreviewRevision] = useState(0);
   const [boxWheelBinding, setBoxWheelBinding] = useState<RunBoxFieldKey | null>(null);
   const [boxWheelStep, setBoxWheelStep] = useState<RunBoxWheelStep>(0.1);
+  const [boxLineThickness, setBoxLineThickness] = useState<RunBoxLineThickness>("standard");
+  const [axisSpacing, setAxisSpacing] = useState<RunAxisSpacing>("standard");
   const pollRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
@@ -525,18 +532,24 @@ export default function RunPreparePage({
                   refreshKey={previewRevision}
                   wheelBinding={isBusy ? null : boxWheelBinding}
                   onWheelAdjust={adjustBoundBoxField}
+                  boxLineThickness={boxLineThickness}
+                  axisSpacing={axisSpacing}
                   fullscreenInspector={(
                     <RunBoxInspector
                       boxForm={boxForm}
                       volume={volume}
                       wheelBinding={boxWheelBinding}
                       wheelStep={boxWheelStep}
+                      boxLineThickness={boxLineThickness}
+                      axisSpacing={axisSpacing}
                       disabled={isBusy}
                       idPrefix="run-box-fullscreen"
                       className="run-box-inspector-fullscreen"
                       onFieldChange={updateBoxField}
                       onWheelBindingChange={setBoxWheelBinding}
                       onWheelStepChange={setBoxWheelStep}
+                      onBoxLineThicknessChange={setBoxLineThickness}
+                      onAxisSpacingChange={setAxisSpacing}
                     />
                   )}
                 />
@@ -546,10 +559,14 @@ export default function RunPreparePage({
                 volume={volume}
                 wheelBinding={boxWheelBinding}
                 wheelStep={boxWheelStep}
+                boxLineThickness={boxLineThickness}
+                axisSpacing={axisSpacing}
                 disabled={isBusy}
                 onFieldChange={updateBoxField}
                 onWheelBindingChange={setBoxWheelBinding}
                 onWheelStepChange={setBoxWheelStep}
+                onBoxLineThicknessChange={setBoxLineThickness}
+                onAxisSpacingChange={setAxisSpacing}
               />
             </div>
           </section>

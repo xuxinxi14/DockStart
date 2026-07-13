@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import { SpinnerGap } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
-import type { NavigateOptions, PageId, StartMode } from "./navigation/pages";
+import { normalizeNavigationPage, type NavigateOptions, type PageId, type StartMode } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import HelpPage from "./pages/HelpPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
@@ -44,6 +44,14 @@ export default function App() {
     if (committedProjectKeyRef.current === nextKey) return;
     committedProjectKeyRef.current = nextKey;
     setProjectRevision((revision) => revision + 1);
+  }, []);
+
+  const commitWorkflowStatus = useCallback((status: ProjectWorkflowStatusResponse | null) => {
+    setWorkflowStatus(status);
+    const latestRunId = status?.latest_run?.run_id;
+    if (typeof latestRunId === "string" && latestRunId) {
+      setCurrentRunId(latestRunId);
+    }
   }, []);
 
   useEffect(() => {
@@ -97,10 +105,11 @@ export default function App() {
   }, [currentProject?.project_dir, projectRevision]);
 
   function navigateTo(page: PageId, options?: NavigateOptions) {
-    if (page === "project-create") {
+    const destination = normalizeNavigationPage(page);
+    if (destination === "project-create") {
       setProjectStartMode(options?.startMode ?? "basic");
     }
-    setCurrentPage(page);
+    setCurrentPage(destination);
   }
 
   function renderPage() {
@@ -110,7 +119,7 @@ export default function App() {
           project={currentProject}
           onNavigate={navigateTo}
           onProjectChange={commitProject}
-          onWorkflowChange={setWorkflowStatus}
+          onWorkflowChange={commitWorkflowStatus}
         />
       );
     }
@@ -183,7 +192,7 @@ export default function App() {
           }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
-            navigateTo("box-setup");
+            navigateTo("run-prepare");
           }}
         />
       );
@@ -200,7 +209,7 @@ export default function App() {
           }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
-            navigateTo("box-setup");
+            navigateTo("run-prepare");
           }}
           onProjectChange={commitProject}
         />
@@ -332,7 +341,7 @@ export default function App() {
         project={currentProject}
         onNavigate={navigateTo}
         onProjectChange={commitProject}
-        onWorkflowChange={setWorkflowStatus}
+        onWorkflowChange={commitWorkflowStatus}
       />
     );
   }

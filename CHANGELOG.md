@@ -11,7 +11,10 @@
 - Replaced the native gray Windows frame with an integrated draggable DockStart title bar and working minimize, maximize/restore, and close controls.
 - Replaced the legacy brand artwork across the application shell, browser metadata, executable, taskbar, MSI, and NSIS icon resources.
 - Added coordinate-axis visibility controls to run and result 3D viewers, and kept the full Box adjustment console available while the run viewer is expanded.
+- Added Box-line thickness and XYZ-axis spacing controls to the run viewer, synchronized them between normal and expanded views, and reordered Box fields into X/Y/Z center-size pairs.
+- Routed the retired Box/Vina/config wizard entry points into the consolidated Docking Workbench and synchronized the latest completed run when reopening an existing project.
 - Aligned the top command-bar divider and bottom status-bar divider across the sidebar and workspace.
+- Aligned the persistent docking action bar with the workbench content edges and corrected the result-rail scientific disclaimer so it no longer overflows or clips text.
 - Lazy-loaded 3D viewers, avoided repeated receptor reads while switching poses, and cleared stale result state when changing runs.
 - Corrected the Windows release capability profile so the Full bundled Python runtime and its RDKit/Meeko packages are reported accurately.
 - Kept the scientific and runtime scope unchanged: no Vina algorithm change, interaction analysis, pocket prediction, PLIP/ProLIF/Open Babel/MGLTools integration, or drug-efficacy judgment was added.

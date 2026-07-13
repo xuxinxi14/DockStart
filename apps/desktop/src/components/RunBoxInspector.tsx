@@ -4,26 +4,32 @@ import StatusBadge from "./StatusBadge";
 
 export type RunBoxFieldKey = keyof DockStartProject["box"];
 export type RunBoxWheelStep = 0.1 | 1 | 5;
+export type RunBoxLineThickness = "thin" | "standard" | "bold";
+export type RunAxisSpacing = "compact" | "standard" | "wide";
 
 type RunBoxInspectorProps = {
   boxForm: Record<RunBoxFieldKey, string>;
   volume: number;
   wheelBinding: RunBoxFieldKey | null;
   wheelStep: RunBoxWheelStep;
+  boxLineThickness: RunBoxLineThickness;
+  axisSpacing: RunAxisSpacing;
   disabled?: boolean;
   idPrefix?: string;
   className?: string;
   onFieldChange: (key: RunBoxFieldKey, value: string) => void;
   onWheelBindingChange: (key: RunBoxFieldKey | null) => void;
   onWheelStepChange: (step: RunBoxWheelStep) => void;
+  onBoxLineThicknessChange: (value: RunBoxLineThickness) => void;
+  onAxisSpacingChange: (value: RunAxisSpacing) => void;
 };
 
 const boxFields: Array<{ key: RunBoxFieldKey; label: string }> = [
   { key: "center_x", label: "中心 X" },
-  { key: "center_y", label: "中心 Y" },
-  { key: "center_z", label: "中心 Z" },
   { key: "size_x", label: "尺寸 X" },
+  { key: "center_y", label: "中心 Y" },
   { key: "size_y", label: "尺寸 Y" },
+  { key: "center_z", label: "中心 Z" },
   { key: "size_z", label: "尺寸 Z" },
 ];
 
@@ -31,6 +37,18 @@ const boxWheelSteps: Array<{ value: RunBoxWheelStep; label: string }> = [
   { value: 0.1, label: "细调" },
   { value: 1, label: "常规" },
   { value: 5, label: "快速" },
+];
+
+const boxLineOptions: Array<{ value: RunBoxLineThickness; label: string }> = [
+  { value: "thin", label: "细" },
+  { value: "standard", label: "标准" },
+  { value: "bold", label: "粗" },
+];
+
+const axisSpacingOptions: Array<{ value: RunAxisSpacing; label: string }> = [
+  { value: "compact", label: "紧凑" },
+  { value: "standard", label: "标准" },
+  { value: "wide", label: "展开" },
 ];
 
 export const runBoxFieldLabels: Record<RunBoxFieldKey, string> = Object.fromEntries(
@@ -42,12 +60,16 @@ export default function RunBoxInspector({
   volume,
   wheelBinding,
   wheelStep,
+  boxLineThickness,
+  axisSpacing,
   disabled = false,
   idPrefix = "run-box",
   className = "",
   onFieldChange,
   onWheelBindingChange,
   onWheelStepChange,
+  onBoxLineThicknessChange,
+  onAxisSpacingChange,
 }: RunBoxInspectorProps) {
   return (
     <aside className={`run-box-inspector ${className}`.trim()} aria-label="搜索范围参数">
@@ -80,6 +102,43 @@ export default function RunBoxInspector({
           <MouseScroll aria-hidden="true" size={15} />
           {wheelBinding ? `滚轮调整${runBoxFieldLabels[wheelBinding]}` : "未绑定时滚轮缩放视图"}
         </p>
+      </div>
+
+      <div className="run-box-display-controls" aria-label="三维显示清晰度">
+        <div>
+          <span>Box 线条</span>
+          <div className="run-box-display-segment">
+            {boxLineOptions.map((option) => (
+              <button
+                type="button"
+                key={option.value}
+                disabled={disabled}
+                className={boxLineThickness === option.value ? "is-active" : ""}
+                aria-pressed={boxLineThickness === option.value}
+                onClick={() => onBoxLineThicknessChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <span>坐标轴间距</span>
+          <div className="run-box-display-segment">
+            {axisSpacingOptions.map((option) => (
+              <button
+                type="button"
+                key={option.value}
+                disabled={disabled}
+                className={axisSpacing === option.value ? "is-active" : ""}
+                aria-pressed={axisSpacing === option.value}
+                onClick={() => onAxisSpacingChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="run-box-fields">

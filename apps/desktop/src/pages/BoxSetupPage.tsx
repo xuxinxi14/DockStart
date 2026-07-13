@@ -19,10 +19,10 @@ type BoxFormState = Record<keyof DockStartProject["box"], string>;
 
 const boxFields: Array<{ key: keyof DockStartProject["box"]; label: string }> = [
   { key: "center_x", label: "中心 X" },
-  { key: "center_y", label: "中心 Y" },
-  { key: "center_z", label: "中心 Z" },
   { key: "size_x", label: "尺寸 X" },
+  { key: "center_y", label: "中心 Y" },
   { key: "size_y", label: "尺寸 Y" },
+  { key: "center_z", label: "中心 Z" },
   { key: "size_z", label: "尺寸 Z" },
 ];
 

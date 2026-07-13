@@ -377,18 +377,25 @@
 }
 
 .run-action-bar {
+  --run-action-sidebar: var(--ds-sidebar-width);
+  --run-content-padding: clamp(16px, 2vw, 28px);
+  --run-scrollbar-reserve: 10px;
+  --run-action-gutter: max(
+    var(--run-content-padding),
+    calc((100vw - var(--run-action-sidebar) - var(--ds-content-wide) - var(--run-scrollbar-reserve)) / 2)
+  );
   position: fixed;
   z-index: 30;
-  right: 0;
+  right: calc(var(--run-action-gutter) + var(--run-scrollbar-reserve) + 1px);
   bottom: var(--ds-statusbar-height);
-  left: var(--ds-sidebar-width);
+  left: calc(var(--run-action-sidebar) + var(--run-action-gutter) + 1px);
   background: var(--ds-surface-panel);
-  padding-inline: clamp(20px, 4vw, 64px);
-  transition: left 180ms ease;
+  padding-inline: 20px;
+  transition: right 180ms ease, left 180ms ease;
 }
 
 .sidebar-collapsed .run-action-bar {
-  left: var(--ds-sidebar-collapsed-width);
+  --run-action-sidebar: var(--ds-sidebar-collapsed-width);
 }
 
 /* Integrated result analysis */
@@ -730,10 +737,13 @@
 }
 
 .result-analysis-rail .scientific-disclaimer {
+  align-self: stretch;
+  width: auto;
   margin: auto 14px 14px;
   border-color: var(--ds-warning-border);
   background: var(--ds-warning-soft);
   color: var(--ds-warning-text);
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 1240px) {
@@ -786,7 +796,7 @@
 
 @media (max-width: 980px) {
   .run-action-bar {
-    left: var(--ds-sidebar-collapsed-width);
+    --run-action-sidebar: var(--ds-sidebar-collapsed-width);
   }
 }
 

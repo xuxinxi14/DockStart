@@ -5,10 +5,12 @@ import type { BoxVisualizationPayload } from "../types";
 export function addOrientationAxes(
   viewer: ReturnType<typeof $3Dmol.createViewer>,
   visualization: BoxVisualizationPayload | null,
+  spacingScale = 1,
 ): void {
-  const axisLength = visualization
-    ? Math.max(3, Math.min(8, Math.max(visualization.size_x, visualization.size_y, visualization.size_z) * 0.18))
+  const baseAxisLength = visualization
+    ? Math.max(3, Math.min(12, Math.max(visualization.size_x, visualization.size_y, visualization.size_z) * 0.18))
     : 4;
+  const axisLength = baseAxisLength * Math.max(0.7, Math.min(2.2, spacingScale));
   const origin = visualization
     ? {
         x: visualization.min.x - axisLength * 0.35,
@@ -33,7 +35,7 @@ export function addOrientationAxes(
     });
     viewer.addLabel(axis.label, {
       position: axis.end,
-      fontSize: 13,
+      fontSize: Math.max(13, Math.min(18, Math.round(12 + spacingScale * 2))),
       fontColor: axis.color,
       backgroundColor: "#061d33",
       backgroundOpacity: 0.88,

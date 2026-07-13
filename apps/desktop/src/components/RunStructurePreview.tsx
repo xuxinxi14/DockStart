@@ -14,7 +14,12 @@ import {
 import * as $3Dmol from "3dmol";
 import type { BoxVisualizationPayload, DockStartProject, ViewerStructureResult } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
-import { runBoxFieldLabels, type RunBoxFieldKey } from "./RunBoxInspector";
+import {
+  runBoxFieldLabels,
+  type RunAxisSpacing,
+  type RunBoxFieldKey,
+  type RunBoxLineThickness,
+} from "./RunBoxInspector";
 
 type RunStructurePreviewProps = {
   projectDir: string;
@@ -23,6 +28,8 @@ type RunStructurePreviewProps = {
   wheelBinding?: RunBoxFieldKey | null;
   onWheelAdjust?: (direction: 1 | -1) => void;
   fullscreenInspector?: ReactNode;
+  boxLineThickness?: RunBoxLineThickness;
+  axisSpacing?: RunAxisSpacing;
 };
 
 type PreviewStructures = {
@@ -70,7 +77,23 @@ function buildBoxVisualization(box: DockStartProject["box"]): BoxVisualizationPa
   };
 }
 
-function addBoxOverlay(viewer: ReturnType<typeof $3Dmol.createViewer>, box: BoxVisualizationPayload): void {
+const boxLineRadii: Record<RunBoxLineThickness, number> = {
+  thin: 0.08,
+  standard: 0.17,
+  bold: 0.32,
+};
+
+const axisSpacingScales: Record<RunAxisSpacing, number> = {
+  compact: 0.85,
+  standard: 1.35,
+  wide: 2.1,
+};
+
+function addBoxOverlay(
+  viewer: ReturnType<typeof $3Dmol.createViewer>,
+  box: BoxVisualizationPayload,
+  lineThickness: RunBoxLineThickness,
+): void {
   const target = viewer as unknown as {
     addBox: (spec: Record<string, unknown>) => void;
     addCylinder?: (spec: Record<string, unknown>) => void;
@@ -85,7 +108,7 @@ function addBoxOverlay(viewer: ReturnType<typeof $3Dmol.createViewer>, box: BoxV
     target.addCylinder?.({
       start: box.corners[from],
       end: box.corners[to],
-      radius: 0.07,
+      radius: boxLineRadii[lineThickness],
       color: "#f0a23b",
       fromCap: 1,
       toCap: 1,
@@ -101,6 +124,8 @@ export default function RunStructurePreview({
   wheelBinding = null,
   onWheelAdjust,
   fullscreenInspector,
+  boxLineThickness = "standard",
+  axisSpacing = "standard",
 }: RunStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
@@ -150,17 +175,17 @@ export default function RunStructurePreview({
     // 条件渲染 Box
     const boxVisualization = buildBoxVisualization(boxRef.current);
     if (showBox && boxVisualization) {
-      addBoxOverlay(viewer, boxVisualization);
+      addBoxOverlay(viewer, boxVisualization, boxLineThickness);
     }
 
-    if (showAxes) addOrientationAxes(viewer, boxVisualization);
+    if (showAxes) addOrientationAxes(viewer, boxVisualization, axisSpacingScales[axisSpacing]);
     if (previousView) {
       (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
     } else {
       viewer.zoomTo();
     }
     viewer.render();
-  }, [ensureViewer, structures, showReceptor, showLigand, showBox, showAxes]);
+  }, [ensureViewer, structures, showReceptor, showLigand, showBox, showAxes, boxLineThickness, axisSpacing]);
 
   const refreshBoxOverlay = useCallback(() => {
     const viewer = ensureViewer();
@@ -168,10 +193,10 @@ export default function RunStructurePreview({
     (viewer as unknown as { removeAllShapes?: () => void }).removeAllShapes?.();
     (viewer as unknown as { removeAllLabels?: () => void }).removeAllLabels?.();
     const boxVisualization = buildBoxVisualization(boxRef.current);
-    if (showBox && boxVisualization) addBoxOverlay(viewer, boxVisualization);
-    if (showAxes) addOrientationAxes(viewer, boxVisualization);
+    if (showBox && boxVisualization) addBoxOverlay(viewer, boxVisualization, boxLineThickness);
+    if (showAxes) addOrientationAxes(viewer, boxVisualization, axisSpacingScales[axisSpacing]);
     viewer.render();
-  }, [ensureViewer, showBox, showAxes]);
+  }, [ensureViewer, showBox, showAxes, boxLineThickness, axisSpacing]);
 
   useEffect(() => {
     const viewer = ensureViewer();

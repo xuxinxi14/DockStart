@@ -127,7 +127,7 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
       title: "3 设置搜索范围",
       state: workflow?.box?.status === "ok" ? "已完成" : "可进行",
       text: "搜索范围中心与尺寸",
-      target: "box-setup",
+      target: "run-prepare",
     },
     {
       title: "4 运行对接",

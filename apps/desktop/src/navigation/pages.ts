@@ -93,3 +93,15 @@ export function resolveNavigationTarget(item: NavigationItem, hasProject: boolea
   }
   return item.id;
 }
+
+/**
+ * V0.9.5 consolidated the former Box, Vina-parameter and config wizard pages
+ * into the docking console. Keep the legacy ids as compatibility inputs, but
+ * never send a normal user flow back to the retired screens.
+ */
+export function normalizeNavigationPage(page: PageId): PageId {
+  if (page === "box-setup" || page === "vina-param" || page === "vina-config") {
+    return "run-prepare";
+  }
+  return page;
+}
