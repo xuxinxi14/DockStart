@@ -1,10 +1,19 @@
 param(
-    [ValidateSet("Basic")]
+    [ValidateSet("Basic", "Assisted")]
     [string]$Profile = "Basic",
     [switch]$SkipTauriBuild
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Profile -eq "Assisted") {
+    $assistedArguments = @()
+    if ($SkipTauriBuild) {
+        $assistedArguments += "-SkipTauriBuild"
+    }
+    & (Join-Path $PSScriptRoot "build_windows_assisted_release.ps1") @assistedArguments
+    exit $LASTEXITCODE
+}
 
 function Write-Step {
     param([string]$Message)
@@ -191,6 +200,15 @@ $requiredStageFiles = @(
     "backend\dockstart_core\project.py",
     "frontend\package.json",
     "resources\licenses\AutoDock-Vina_LICENSE.txt",
+    "resources\licenses\DockStart-Apache-2.0.txt",
+    "resources\licenses\3Dmol_LICENSE.txt",
+    "resources\licenses\React_LICENSE.txt",
+    "resources\licenses\React-DOM_LICENSE.txt",
+    "resources\licenses\Phosphor-Icons_LICENSE.txt",
+    "resources\licenses\Tauri_LICENSE_APACHE-2.0.txt",
+    "resources\licenses\Tauri_LICENSE_MIT.txt",
+    "resources\licenses\Tauri-plugin-dialog_LICENSE.spdx",
+    "resources\licenses\Serde_LICENSE-MIT.txt",
     "resources\licenses\Python_LICENSE.txt",
     "resources\licenses\THIRD_PARTY_NOTICES.md",
     "resources\examples\basic_pdbqt\manifest.json",
@@ -268,8 +286,16 @@ else {
 
     Write-Step "Validate release artifacts"
     $bundleDir = Join-Path $releaseDir "bundle"
-    $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
-    $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
+    $tauriMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
+    $tauriNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
+    $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_Basic_x64_en-US.msi"
+    $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_Basic_x64-setup.exe"
+    foreach ($rename in @(@($tauriMsi, $expectedMsi), @($tauriNsis, $expectedNsis))) {
+        if (-not (Test-Path -LiteralPath $rename[0] -PathType Leaf)) {
+            throw "Expected Tauri release artifact is missing: $($rename[0])"
+        }
+        Move-Item -LiteralPath $rename[0] -Destination $rename[1]
+    }
     foreach ($artifact in @($expectedMsi, $expectedNsis)) {
         if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "Expected release artifact is missing: $artifact"
@@ -284,7 +310,23 @@ else {
         throw "Release bundle contains unexpected or stale installer artifacts."
     }
 
-    $artifactRecords = foreach ($artifact in @($expectedMsi, $expectedNsis)) {
+    $artifactArchiveRoot = Join-Path $repoRoot ".release\artifacts"
+    $profileArtifactDir = Join-Path $artifactArchiveRoot "$appVersion\basic"
+    $archivePrefix = [IO.Path]::GetFullPath($artifactArchiveRoot).TrimEnd('\') + '\'
+    $profileArtifactFull = [IO.Path]::GetFullPath($profileArtifactDir)
+    if (-not $profileArtifactFull.StartsWith($archivePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to archive Basic artifacts outside .release/artifacts: $profileArtifactFull"
+    }
+    if (Test-Path -LiteralPath $profileArtifactFull) {
+        Remove-Item -LiteralPath $profileArtifactFull -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $profileArtifactFull -Force | Out-Null
+    $archivedMsi = Join-Path $profileArtifactFull (Split-Path -Leaf $expectedMsi)
+    $archivedNsis = Join-Path $profileArtifactFull (Split-Path -Leaf $expectedNsis)
+    Copy-Item -LiteralPath $expectedMsi -Destination $archivedMsi
+    Copy-Item -LiteralPath $expectedNsis -Destination $archivedNsis
+
+    $artifactRecords = foreach ($artifact in @($archivedMsi, $archivedNsis)) {
         $item = Get-Item -LiteralPath $artifact
         $repoPrefix = $repoRoot.TrimEnd('\') + '\'
         if (-not $item.FullName.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -307,6 +349,7 @@ else {
     $artifactManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
     $artifactManifest | ConvertTo-Json -Depth 6
     Write-Host "Artifact manifest: $artifactManifestPath"
+    Write-Host "Archived artifacts: $profileArtifactFull"
 }
 
 Write-Step "Done"

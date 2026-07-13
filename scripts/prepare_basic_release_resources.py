@@ -13,6 +13,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+try:  # Direct script execution: ``python scripts/prepare_basic_release_resources.py``.
+    from dependency_license_bundle import BOM_FILENAME, generate_dependency_license_bundle
+except ModuleNotFoundError:  # Import through tests/tools from the repository root.
+    from scripts.dependency_license_bundle import BOM_FILENAME, generate_dependency_license_bundle
+
 
 TOP_LEVEL_RUNTIME_PATTERNS = (
     "python.exe",
@@ -50,7 +55,7 @@ def _ignore_runtime_items(_directory: str, names: list[str]) -> set[str]:
     ignored: set[str] = set()
     for name in names:
         lowered = name.lower()
-        if lowered in {"site-packages", "__pycache__"}:
+        if lowered in {"site-packages", "__pycache__", "ensurepip"}:
             ignored.add(name)
         elif lowered.endswith((".pyc", ".pyo")):
             ignored.add(name)
@@ -190,6 +195,7 @@ def prepare_basic_release_resources(
     target_root: str | Path | None = None,
     *,
     validate_runtime: bool = True,
+    generate_dependency_licenses: bool = True,
     prepared_at: str | None = None,
 ) -> dict[str, Any]:
     root = Path(repo_root).expanduser().resolve()
@@ -206,11 +212,39 @@ def prepare_basic_release_resources(
     source_manifest = _read_json(source_resources / "toolchain_manifest.json")
     source_vina = source_resources / "vina" / "vina.exe"
     source_python = source_resources / "python"
+    source_python_exe = source_python / "python.exe"
+    source_bundled_vina = source_manifest.get("bundled_vina")
+    source_bundled_python = source_manifest.get("bundled_python")
+    if not isinstance(source_bundled_vina, dict) or not isinstance(source_bundled_python, dict):
+        raise BasicReleasePreparationError(
+            "Source toolchain manifest must pin bundled_vina and bundled_python.",
+        )
     if not source_vina.is_file():
         raise BasicReleasePreparationError(f"Bundled AutoDock Vina is missing: {source_vina}")
+    if not source_python_exe.is_file():
+        raise BasicReleasePreparationError(f"Bundled backend Python is missing: {source_python_exe}")
+    expected_vina_sha = str(source_bundled_vina.get("sha256") or "").lower()
+    expected_python_sha = str(source_bundled_python.get("sha256") or "").lower()
+    if len(expected_vina_sha) != 64 or _sha256(source_vina) != expected_vina_sha:
+        raise BasicReleasePreparationError(
+            "Bundled AutoDock Vina does not match the committed toolchain manifest SHA256.",
+        )
+    if len(expected_python_sha) != 64 or _sha256(source_python_exe) != expected_python_sha:
+        raise BasicReleasePreparationError(
+            "Bundled backend Python does not match the committed toolchain manifest SHA256.",
+        )
 
     _copy_tree(source_resources / "vina", target / "vina")
     _copy_tree(source_resources / "licenses", target / "licenses")
+    dockstart_license = root / "LICENSE"
+    if not dockstart_license.is_file():
+        raise BasicReleasePreparationError(f"DockStart root LICENSE is missing: {dockstart_license}")
+    shutil.copy2(dockstart_license, target / "licenses" / "DockStart-Apache-2.0.txt")
+    dependency_bom = (
+        generate_dependency_license_bundle(root, target / "licenses" / "dependencies")
+        if generate_dependency_licenses
+        else None
+    )
     _copy_tree(source_resources / "examples", target / "examples")
     _copy_minimal_python(source_python, target / "python")
     _copy_tree(root / "backend" / "adapters", stage_root / "backend" / "adapters", runtime_tree=True)
@@ -223,30 +257,38 @@ def prepare_basic_release_resources(
     frontend_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(root / "apps" / "desktop" / "package.json", frontend_dir / "package.json")
 
-    required_stage_files = (
+    required_stage_files = [
         target / "licenses" / "AutoDock-Vina_LICENSE.txt",
         target / "licenses" / "Python_LICENSE.txt",
+        target / "licenses" / "DockStart-Apache-2.0.txt",
+        target / "licenses" / "3Dmol_LICENSE.txt",
+        target / "licenses" / "React_LICENSE.txt",
+        target / "licenses" / "React-DOM_LICENSE.txt",
+        target / "licenses" / "Phosphor-Icons_LICENSE.txt",
+        target / "licenses" / "Tauri_LICENSE_APACHE-2.0.txt",
+        target / "licenses" / "Tauri_LICENSE_MIT.txt",
+        target / "licenses" / "Tauri-plugin-dialog_LICENSE.spdx",
+        target / "licenses" / "Serde_LICENSE-MIT.txt",
         target / "licenses" / "THIRD_PARTY_NOTICES.md",
         target / "examples" / "basic_pdbqt" / "manifest.json",
         target / "examples" / "basic_pdbqt" / "project.json",
         target / "examples" / "basic_pdbqt" / "receptor.pdbqt",
         target / "examples" / "basic_pdbqt" / "ligand.pdbqt",
-    )
+    ]
+    if generate_dependency_licenses:
+        required_stage_files.append(target / "licenses" / "dependencies" / BOM_FILENAME)
     missing_stage_files = [str(path) for path in required_stage_files if not path.is_file() or path.stat().st_size <= 0]
     if missing_stage_files:
         raise BasicReleasePreparationError(
             "Basic release resources are incomplete: " + ", ".join(missing_stage_files),
         )
 
-    source_bundled_vina = source_manifest.get("bundled_vina")
-    if not isinstance(source_bundled_vina, dict):
-        source_bundled_vina = {}
-    source_bundled_python = source_manifest.get("bundled_python")
-    if not isinstance(source_bundled_python, dict):
-        source_bundled_python = {}
-
     stage_vina = target / "vina" / "vina.exe"
     stage_python = target / "python" / "python.exe"
+    if (target / "python" / "Lib" / "ensurepip").exists():
+        raise BasicReleasePreparationError(
+            "Basic runtime must exclude ensurepip and its bundled pip/setuptools wheels.",
+        )
     vina_version = _vina_version(stage_vina, str(source_bundled_vina.get("version") or ""))
     python_version = _python_version(stage_python, str(source_bundled_python.get("version") or ""))
     timestamp = prepared_at or datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -307,9 +349,17 @@ def prepare_basic_release_resources(
             },
         },
         "licenses": {
+            "dockstart": "resources/licenses/DockStart-Apache-2.0.txt",
             "autodock_vina": "resources/licenses/AutoDock-Vina_LICENSE.txt",
             "python": "resources/licenses/Python_LICENSE.txt",
+            "serde": "resources/licenses/Serde_LICENSE-MIT.txt",
+            "phosphor_icons": "resources/licenses/Phosphor-Icons_LICENSE.txt",
             "third_party_notices": "resources/licenses/THIRD_PARTY_NOTICES.md",
+            "dependency_bom": (
+                "resources/licenses/dependencies/THIRD_PARTY_DEPENDENCIES.json"
+                if generate_dependency_licenses
+                else None
+            ),
         },
     }
     manifest_path = target / "toolchain_manifest.json"
@@ -331,6 +381,7 @@ def prepare_basic_release_resources(
         "vina_version": vina_version,
         "excluded_packages": list(EXCLUDED_BASIC_PACKAGES),
         "runtime_probe": runtime_probe,
+        "dependency_license_counts": dependency_bom.get("counts") if dependency_bom else None,
         "file_count": file_count,
         "size_bytes": size_bytes,
     }

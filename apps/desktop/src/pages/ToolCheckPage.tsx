@@ -72,9 +72,10 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
   const [results, setResults] = useState<ToolCheckResult[]>([]);
   const [isChecking, setIsChecking] = useState(false);
 
-  const runCheck = useCallback(async () => {
+  const runCheck = useCallback(async (force = false) => {
     setIsChecking(true);
     try {
+      if (force) await invoke<string>("refresh_runtime_cache");
       const rawPayload = await invoke<string>("check_tools");
       const parsed = JSON.parse(rawPayload);
       if (!Array.isArray(parsed)) {
@@ -89,7 +90,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
   }, []);
 
   useEffect(() => {
-    void runCheck();
+    void runCheck(false);
   }, [runCheck]);
 
   const detectedCount = results.filter((tool) => tool.status === "ok").length;
@@ -109,7 +110,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
         actions={
           <>
             <ActionButton onClick={onOpenSettings}>配置工具路径</ActionButton>
-            <ActionButton variant="primary" onClick={() => void runCheck()} disabled={isChecking}>
+            <ActionButton variant="primary" onClick={() => void runCheck(true)} disabled={isChecking}>
               {isChecking ? "检测中..." : "重新检测"}
             </ActionButton>
           </>
@@ -232,7 +233,7 @@ export default function ToolCheckPage({ onOpenSettings }: ToolCheckPageProps) {
           </RightRailSection>
 
           <RightRailSection title="修复顺序">
-            <p>先配置 Vina 或 Python 的可执行文件路径，再重新检测。RDKit / Meeko 缺失只影响自动准备流程。</p>
+            <p>先重新检测随附 Vina 与 Assisted Python；仍不可用时再配置外部路径。RDKit / Meeko 缺失只影响自动准备。</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

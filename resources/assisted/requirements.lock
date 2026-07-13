@@ -1,0 +1,12 @@
+# DockStart Assisted Stable; Windows x86_64, CPython 3.11 only.
+# The stage builder does not resolve dependencies. Every wheel must match
+# SOURCE_MANIFEST.json by filename and SHA256 before extraction.
+meeko==0.7.1 --hash=sha256:e50f5fdb9f94f44e6ee20616936cf033be9c93c7825bd69493a9cd9a3c5dc28d
+rdkit==2026.3.3 --hash=sha256:41ac83ad336b8aaf47b5bf5f2c36796b45957e97acecc1f9d5dcbc8235c6bfbe
+numpy==1.26.4 --hash=sha256:cd25bcecc4974d09257ffcd1f098ee778f7834c3ad767fe5db785be9a4aa9cb2
+scipy==1.17.1 --hash=sha256:d30e57c72013c2a4fe441c2fcb8e77b14e152ad48b5464858e07e2ad9fbfceff
+gemmi==0.7.5 --hash=sha256:06cb44f4e3657b7e3a2b23cd40b67a8e7b5d00bfb92ea94cb4060bd47ba50df6
+pillow==12.2.0 --hash=sha256:6e6b2a0c538fc200b38ff9eb6628228b77908c319a005815f2dde585a0664b60
+tqdm==4.67.1 --hash=sha256:26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2
+tomli==2.2.1 --hash=sha256:cb55c73c5f4408779d0cf3eef9f762b9c9f147a77de7b258bef0a5628adc85cc
+colorama==0.4.6 --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6

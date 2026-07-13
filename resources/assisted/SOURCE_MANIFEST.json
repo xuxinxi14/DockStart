@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "profile": "assisted_stable",
+  "platform": "windows-x86_64",
+  "python": {
+    "required_series": "3.11",
+    "validated_version": "3.11.15",
+    "abi": "cp311",
+    "source_runtime": "resources/python",
+    "source_manifest": "resources/toolchain_manifest.json",
+    "origin": "locally prepared CPython runtime recorded by resources/toolchain_manifest.json; not claimed as a python.org Windows binary artifact",
+    "license": "Python Software Foundation License",
+    "expected_executable_sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
+    "expected_base_runtime": {
+      "sha256": "a7119521149057b8d0d224ab62dd9ad0ed1acd9bd658295149490c725b7f3ec5",
+      "file_count": 823,
+      "size_bytes": 36796447,
+      "scope": "minimal CPython runtime after ensurepip/site-packages/Scripts exclusion and Assisted README override, before pinned wheel extraction"
+    }
+  },
+  "vina": {
+    "validated_version": "1.2.7",
+    "source_binary": "resources/vina/vina.exe",
+    "source_manifest": "resources/toolchain_manifest.json",
+    "origin": "locally verified AutoDock Vina 1.2.7 release artifact recorded by resources/toolchain_manifest.json",
+    "license": "Apache-2.0",
+    "expected_executable_sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+  },
+  "packages": [
+    {
+      "name": "meeko",
+      "version": "0.7.1",
+      "filename": "meeko-0.7.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/cb/c8/19f80438c2f285a109a42fde50a41ec7c06d7dfd257954da8d9c4e17677d/meeko-0.7.1-py3-none-any.whl",
+      "sha256": "e50f5fdb9f94f44e6ee20616936cf033be9c93c7825bd69493a9cd9a3c5dc28d",
+      "upstream": "https://github.com/forlilab/Meeko",
+      "license": "LGPL-2.1 (wheel classifier: LGPLv2+)",
+      "license_members": ["meeko-0.7.1.dist-info/licenses/LICENSE"],
+      "role": "PDBQT preparation"
+    },
+    {
+      "name": "rdkit",
+      "version": "2026.3.3",
+      "filename": "rdkit-2026.3.3-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/c3/1d/b04460859c12e1a8eac261c63ea39e958d2cfa84cc06cc8a295dde7150f5/rdkit-2026.3.3-cp311-cp311-win_amd64.whl",
+      "sha256": "41ac83ad336b8aaf47b5bf5f2c36796b45957e97acecc1f9d5dcbc8235c6bfbe",
+      "upstream": "https://www.rdkit.org/",
+      "license": "BSD-3-Clause",
+      "license_members": ["rdkit-2026.3.3.dist-info/LICENSE.md"],
+      "role": "ligand structure parsing"
+    },
+    {
+      "name": "numpy",
+      "version": "1.26.4",
+      "filename": "numpy-1.26.4-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/3f/6b/5610004206cf7f8e7ad91c5a85a8c71b2f2f8051a0c0c4d5916b76d6cbb2/numpy-1.26.4-cp311-cp311-win_amd64.whl",
+      "sha256": "cd25bcecc4974d09257ffcd1f098ee778f7834c3ad767fe5db785be9a4aa9cb2",
+      "license": "BSD-3-Clause and bundled runtime notices",
+      "license_members": ["numpy-1.26.4.dist-info/LICENSE.txt"],
+      "role": "scientific runtime dependency"
+    },
+    {
+      "name": "scipy",
+      "version": "1.17.1",
+      "filename": "scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/95/da/0d1df507cf574b3f224ccc3d45244c9a1d732c81dcb26b1e8a766ae271a8/scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "sha256": "d30e57c72013c2a4fe441c2fcb8e77b14e152ad48b5464858e07e2ad9fbfceff",
+      "license": "BSD-3-Clause and bundled runtime notices",
+      "license_members": ["scipy-1.17.1.dist-info/LICENSE.txt"],
+      "role": "Meeko spatial dependency"
+    },
+    {
+      "name": "gemmi",
+      "version": "0.7.5",
+      "filename": "gemmi-0.7.5-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/b9/5e/62402bf021183bc6122cb01b8f1be17cac67545713fb30f888f59357a782/gemmi-0.7.5-cp311-cp311-win_amd64.whl",
+      "sha256": "06cb44f4e3657b7e3a2b23cd40b67a8e7b5d00bfb92ea94cb4060bd47ba50df6",
+      "upstream": "https://github.com/project-gemmi/gemmi",
+      "license": "MPL-2.0",
+      "license_members": ["gemmi-0.7.5.dist-info/licenses/LICENSE.txt"],
+      "role": "Meeko receptor chemistry dependency"
+    },
+    {
+      "name": "pillow",
+      "version": "12.2.0",
+      "filename": "pillow-12.2.0-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/69/42/836b6f3cd7f3e5fa10a1f1a5420447c17966044c8fbf589cc0452d5502db/pillow-12.2.0-cp311-cp311-win_amd64.whl",
+      "sha256": "6e6b2a0c538fc200b38ff9eb6628228b77908c319a005815f2dde585a0664b60",
+      "license": "MIT-CMU",
+      "license_members": ["pillow-12.2.0.dist-info/licenses/LICENSE"],
+      "role": "RDKit wheel dependency"
+    },
+    {
+      "name": "tqdm",
+      "version": "4.67.1",
+      "filename": "tqdm-4.67.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl",
+      "sha256": "26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2",
+      "upstream": "https://github.com/tqdm/tqdm",
+      "license": "MPL-2.0 AND MIT",
+      "license_members": ["tqdm-4.67.1.dist-info/LICENCE"],
+      "role": "progress utility"
+    },
+    {
+      "name": "tomli",
+      "version": "2.2.1",
+      "filename": "tomli-2.2.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/6e/c2/61d3e0f47e2b74ef40a68b9e6ad5984f6241a942f7cd3bbfbdbd03861ea9/tomli-2.2.1-py3-none-any.whl",
+      "sha256": "cb55c73c5f4408779d0cf3eef9f762b9c9f147a77de7b258bef0a5628adc85cc",
+      "license": "MIT",
+      "license_members": ["tomli-2.2.1.dist-info/LICENSE"],
+      "role": "TOML compatibility fallback"
+    },
+    {
+      "name": "colorama",
+      "version": "0.4.6",
+      "filename": "colorama-0.4.6-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "license": "BSD-3-Clause",
+      "license_members": ["colorama-0.4.6.dist-info/licenses/LICENSE.txt"],
+      "role": "tqdm Windows dependency"
+    }
+  ],
+  "source_archives": [
+    {
+      "name": "meeko",
+      "version": "0.7.1",
+      "filename": "meeko-0.7.1.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/46/9d/342bc5d09ba070496738e6b7dd37e2918ea8264df3a99bb1ed8a5a464dda/meeko-0.7.1.tar.gz",
+      "sha256": "e3f4ca3a66db17a95d75905fa7a1bfb73971d2f16ec52eb68e5226bafe120b2d",
+      "reason": "LGPL complete corresponding source for the bundled version"
+    },
+    {
+      "name": "gemmi",
+      "version": "0.7.5",
+      "filename": "gemmi-0.7.5.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/60/38/a79d9e672b837ceefa7da1921c33b10479362603c4c6370bc004d69558d6/gemmi-0.7.5.tar.gz",
+      "sha256": "3328f26c8a8a0ef6a7fc8bb28e167818e324e4239dd4197d6b6066ae2b6315fe",
+      "reason": "MPL-2.0 source availability for the bundled version"
+    },
+    {
+      "name": "tqdm",
+      "version": "4.67.1",
+      "filename": "tqdm-4.67.1.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz",
+      "sha256": "f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2",
+      "reason": "Source and dual-license provenance for the bundled version"
+    }
+  ]
+}

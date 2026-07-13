@@ -2,15 +2,29 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
+import os
 import re
+import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from adapters import meeko_adapter, rdkit_adapter
-from dockstart_core.project import _error, _project_from_dict, load_project, save_project
+from adapters import meeko_adapter, rdkit_adapter, vina_adapter
+from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
+from dockstart_core.project import (
+    _error,
+    _preparation_target_lock,
+    _project_from_dict,
+    _project_lock,
+    _read_and_migrate_project_unlocked,
+    _write_project_json_unlocked,
+    load_project,
+    save_project,
+)
 from dockstart_core.preparation_models import (
     ALLOWED_PREPARATION_TARGETS,
     PreparationTarget,
@@ -31,6 +45,10 @@ RECEPTOR_PREPARATION_STDERR = Path("prepared", "logs", "receptor_stderr.txt")
 RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.json")
 PREPARATION_RECORD_ROOT = Path("preparation")
 PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
+
+
+class PreparationPathError(RuntimeError):
+    """Raised when a preparation path can escape through a reparse point."""
 
 
 def _now_iso() -> str:
@@ -75,7 +93,21 @@ def _file_status(project_path: Path, relative_file: str, key: str, name: str) ->
             "message": f"{name} 尚未记录。",
         }
 
-    path = project_path / value
+    try:
+        path = _safe_project_path(project_path, Path(value))
+    except PreparationPathError as exc:
+        return {
+            "key": key,
+            "name": name,
+            "path": value,
+            "absolute_path": "",
+            "exists": False,
+            "is_file": False,
+            "size": 0,
+            "non_empty": False,
+            "status": "error",
+            "message": f"{name} 路径不安全：{exc}",
+        }
     exists = path.exists()
     is_file = path.is_file()
     size = path.stat().st_size if exists and is_file else 0
@@ -107,9 +139,47 @@ def _file_status(project_path: Path, relative_file: str, key: str, name: str) ->
     }
 
 
+def _is_reparse_or_symlink(path: Path) -> bool:
+    try:
+        details = os.lstat(path)
+    except OSError:
+        return False
+    attributes = int(getattr(details, "st_file_attributes", 0) or 0)
+    return stat.S_ISLNK(details.st_mode) or bool(
+        attributes & int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0) or 0),
+    )
+
+
+def _safe_project_path(project_path: Path, value: Path, *, allow_missing: bool = True) -> Path:
+    """Return a lexical project-local path with no symlink/reparse components."""
+
+    project_root = project_path.expanduser().resolve(strict=True)
+    supplied = value.expanduser()
+    candidate = supplied if supplied.is_absolute() else project_root / supplied
+    lexical = Path(os.path.abspath(candidate))
+    try:
+        relative = lexical.relative_to(project_root)
+    except ValueError as exc:
+        raise PreparationPathError(f"路径越出项目目录：{value}") from exc
+
+    current = project_root
+    for part in relative.parts:
+        current = current / part
+        if os.path.lexists(current) and _is_reparse_or_symlink(current):
+            raise PreparationPathError(f"路径包含符号链接、junction 或 reparse point：{current}")
+
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(project_root)
+    except ValueError as exc:
+        raise PreparationPathError(f"路径重解析到项目目录外：{value}") from exc
+    if not allow_missing and not lexical.exists():
+        raise PreparationPathError(f"路径不存在：{lexical}")
+    return lexical
+
+
 def _project_file_path(project_path: Path, value: str) -> Path:
-    path = Path(str(value or ""))
-    return path if path.is_absolute() else project_path / path
+    return _safe_project_path(project_path, Path(str(value or "")))
 
 
 def _relative_path(path: Path, project_path: Path) -> str:
@@ -120,12 +190,42 @@ def _relative_path(path: Path, project_path: Path) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(path, payload)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_if_readable(path: Path) -> tuple[str, str]:
+    try:
+        return (_sha256_file(path), "") if path.is_file() else ("", "")
+    except OSError as exc:
+        return "", str(exc)
+
+
+def _file_size_if_readable(path: Path) -> int:
+    try:
+        return path.stat().st_size if path.is_file() else 0
+    except OSError:
+        return 0
 
 
 def _preparation_record_dir(project_path: Path, prep_id: str) -> Path:
-    return project_path / PREPARATION_RECORD_ROOT / prep_id
+    return _safe_project_path(project_path, PREPARATION_RECORD_ROOT / prep_id)
+
+
+def _ensure_preparation_directories(project_path: Path) -> None:
+    for relative in (PREPARATION_RECORD_ROOT, Path("prepared")):
+        directory = _safe_project_path(project_path, relative)
+        directory.mkdir(parents=True, exist_ok=True)
+        checked = _safe_project_path(project_path, relative, allow_missing=False)
+        if not checked.is_dir():
+            raise PreparationPathError(f"preparation 路径不是普通目录：{checked}")
 
 
 def _validate_prep_id_for_target(target: PreparationTarget, prep_id: str) -> dict[str, Any] | None:
@@ -145,11 +245,13 @@ def get_next_preparation_id(project_dir: str, target: str) -> str:
     if normalized_target is None:
         raise ValueError("preparation target must be receptor or ligand")
 
-    project_path = Path(project_dir).expanduser()
-    root = project_path / PREPARATION_RECORD_ROOT
+    project_path = Path(project_dir).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
+    root = _safe_project_path(project_path, PREPARATION_RECORD_ROOT, allow_missing=False)
     max_index = 0
     if root.is_dir():
         for child in root.iterdir():
+            _safe_project_path(project_path, PREPARATION_RECORD_ROOT / child.name, allow_missing=False)
             if not child.is_dir():
                 continue
             match = PREPARATION_ID_PATTERN.match(child.name)
@@ -174,6 +276,7 @@ def _make_preparation_record_paths(project_path: Path, prep_id: str) -> dict[str
 
 
 def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
+    path = _safe_project_path(project_path, path)
     exists = path.exists()
     is_file = path.is_file()
     size = path.stat().st_size if exists and is_file else 0
@@ -182,6 +285,7 @@ def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
         if exists and is_file
         else ""
     )
+    sha256, sha256_error = _sha256_if_readable(path)
     return {
         "path": _relative_path(path, project_path),
         "absolute_path": str(path.resolve()) if exists else str(path),
@@ -189,6 +293,8 @@ def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
         "is_file": is_file,
         "size": size,
         "non_empty": size > 0,
+        "sha256": sha256,
+        "sha256_error": sha256_error,
         "modified_at": modified_at,
     }
 
@@ -211,6 +317,22 @@ def _build_preparation_metadata(
     python_tool = tools.get("python", {}) if isinstance(tools, dict) else {}
     rdkit_tool = tools.get("rdkit", {}) if isinstance(tools, dict) else {}
     meeko_tool = tools.get("meeko", {}) if isinstance(tools, dict) else {}
+    python_path = Path(str(python_tool.get("path") or "")).expanduser()
+    python_snapshot = built.get("python_executable_snapshot")
+    if not isinstance(python_snapshot, dict):
+        python_exists = python_path.is_file()
+        python_sha256, python_sha256_error = _sha256_if_readable(python_path)
+        python_snapshot = {
+            "path": str(python_path),
+            "exists": python_exists,
+            "size_bytes": _file_size_if_readable(python_path) if python_exists else 0,
+            "sha256": python_sha256,
+            "sha256_error": python_sha256_error,
+            "captured_at": _now_iso(),
+        }
+        # Reuse the exact launch-time observation at finalization.  Rehashing
+        # the path later could silently attribute replacement bytes to a run.
+        built["python_executable_snapshot"] = python_snapshot
     return {
         "prep_id": prep_id,
         "target": target,
@@ -221,15 +343,48 @@ def _build_preparation_metadata(
         "finished_at": finished_at,
         "python_path": str(python_tool.get("path") or ""),
         "python_source": str(python_tool.get("source") or "unknown"),
+        "python_sha256": str(python_snapshot.get("sha256") or ""),
+        "python_sha256_error": str(python_snapshot.get("sha256_error") or ""),
+        "python_size_bytes": int(python_snapshot.get("size_bytes") or 0),
+        "python_executable_snapshot": dict(python_snapshot),
         "rdkit_version": str(rdkit_tool.get("version") or ""),
         "meeko_version": str(meeko_tool.get("version") or ""),
         "input_file": built.get("input_file", ""),
         "output_file": built.get("output_file", ""),
+        "candidate_output_file": built.get("candidate_output_file", ""),
         "command": built.get("command", []),
+        "executor_pid": built.get("executor_pid"),
+        "executor_executable": built.get("executor_executable", ""),
+        "executor_identity": built.get("executor_identity"),
         "exit_code": exit_code,
         "warnings": warnings or [],
         "error": error,
     }
+
+
+def _attach_executor_identity(built: dict[str, Any]) -> None:
+    """Record the backend process that owns a running preparation task."""
+
+    executor_pid = os.getpid()
+    identity = vina_adapter.get_process_identity(executor_pid)
+    built["executor_pid"] = executor_pid
+    built["executor_identity"] = identity
+    built["executor_executable"] = str((identity or {}).get("executable_path") or "")
+
+
+def _publish_candidate_output(candidate: Path, destination: Path, project_path: Path | None = None) -> None:
+    """Validate and atomically publish a generated text PDBQT candidate."""
+
+    if project_path is not None:
+        candidate = _safe_project_path(project_path, candidate, allow_missing=False)
+        destination = _safe_project_path(project_path, destination)
+
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        raise RuntimeError("Meeko 没有生成非空的 PDBQT 候选文件。")
+    text = candidate.read_text(encoding="utf-8", errors="strict")
+    if not text.strip():
+        raise RuntimeError("Meeko 生成的 PDBQT 候选文件只包含空白内容。")
+    atomic_write_text(destination, text)
 
 
 def _project_error_payload(
@@ -254,6 +409,431 @@ def _project_error_payload(
         "warnings": warnings or [],
         "message": message,
     }
+
+
+def _preparation_busy_error(project: Any, target: PreparationTarget) -> dict[str, Any] | None:
+    prep = getattr(project.preparation, target)
+    if prep.status != "running":
+        return None
+
+    active = False
+    detail = "项目仍记录为 running，等待恢复检查确认执行器状态。"
+    prep_id = str(prep.prep_id or project.latest_preparation.get(target) or "")
+    if PREPARATION_ID_PATTERN.match(prep_id):
+        try:
+            metadata_path = _safe_project_path(
+                Path(project.project_dir),
+                PREPARATION_RECORD_ROOT / prep_id / "metadata.json",
+                allow_missing=False,
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(metadata, dict):
+                pid = metadata.get("executor_pid")
+                if isinstance(pid, int) and pid > 0:
+                    verification = vina_adapter.verify_process_identity(
+                        pid,
+                        str(metadata.get("executor_executable") or ""),
+                        metadata.get("executor_identity") if isinstance(metadata.get("executor_identity"), dict) else None,
+                    )
+                    active = bool(verification.get("ok"))
+                    detail = str(verification.get("message") or detail)
+        except (OSError, ValueError, json.JSONDecodeError, PreparationPathError):
+            pass
+
+    return _project_error_payload(
+        project,
+        "PREPARATION_ALREADY_RUNNING",
+        f"{target} 已有准备任务正在运行，未启动重复任务。",
+        raw_error=f"prep_id={prep_id or 'unknown'}; active={active}; {detail}",
+        suggestion="请等待当前任务完成；若应用曾异常退出，请先触发项目恢复检查。",
+    )
+
+
+def _check_preparation_available(project_path: Path, target: PreparationTarget) -> dict[str, Any] | None:
+    with _project_lock(project_path):
+        data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+        project = _project_from_dict(data, project_path)
+        return _preparation_busy_error(project, target)
+
+
+def _claim_preparation(
+    project_path: Path,
+    target: PreparationTarget,
+    prep_id: str,
+    built: dict[str, Any],
+    *,
+    method: str,
+    created_at: str,
+    started_at: str,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Claim one target while the caller holds its cross-process lock."""
+
+    _ensure_preparation_directories(project_path)
+    _attach_executor_identity(built)
+    command_path = _safe_project_path(project_path, Path(built["command_file"]))
+    input_snapshot_path = _safe_project_path(project_path, Path(built["input_snapshot_file"]))
+    metadata_path = _safe_project_path(project_path, Path(built["metadata_file"]))
+    input_path = _safe_project_path(project_path, Path(built["input_path"]), allow_missing=False)
+
+    # Create the audit record before publishing the running claim.  A crash can
+    # therefore never leave project.json pointing to a record that did not
+    # exist at claim time.
+    _write_json(command_path, {"prep_id": prep_id, "target": target, "command": built["command"]})
+    warnings = list(built.get("warnings", []))
+    _write_json(
+        input_snapshot_path,
+        {
+            "prep_id": prep_id,
+            "target": target,
+            "input_file": built["input_file"],
+            "input": _file_snapshot(input_path, project_path),
+            "tools": built.get("tools", {}),
+            "warnings": warnings,
+        },
+    )
+    _write_json(
+        metadata_path,
+        _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="running",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=None,
+            built=built,
+            warnings=warnings,
+        ),
+    )
+
+    with _project_lock(project_path):
+        data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+        project = _project_from_dict(data, project_path)
+        busy = _preparation_busy_error(project, target)
+        if busy:
+            rejected = _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="interrupted",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                built=built,
+                warnings=warnings,
+                error=copy.deepcopy(busy.get("error")) if isinstance(busy.get("error"), dict) else None,
+            )
+            rejected["published"] = False
+            rejected["claim_rejected"] = True
+            _write_json(metadata_path, rejected)
+            return None, busy
+
+        prep = getattr(project.preparation, target)
+        prep.prep_id = prep_id
+        prep.status = "running"
+        prep.method = method
+        prep.input_file = str(built["input_file"])
+        prep.output_file = f"prepared/{target}.pdbqt"
+        prep.started_at = started_at
+        prep.finished_at = None
+        prep.python_path = str(built["tools"]["python"].get("path", ""))
+        prep.python_source = str(built["tools"]["python"].get("source", "unknown"))
+        prep.rdkit_available = target == "ligand" and built["tools"]["rdkit"].get("status") == "ok"
+        prep.meeko_available = built["tools"]["meeko"].get("status") == "ok"
+        prep.command = list(built["command"])
+        prep.stdout_file = str(built["stdout_file"])
+        prep.stderr_file = str(built["stderr_file"])
+        prep.log_file = str(built["log_file"])
+        prep.metadata_file = str(built["metadata_file"])
+        prep.command_file = str(built["command_file"])
+        prep.input_snapshot_file = str(built["input_snapshot_file"])
+        prep.output_check_file = str(built["output_check_file"])
+        prep.exit_code = None
+        prep.error = None
+        prep.warnings = warnings
+        project.latest_preparation[target] = prep_id
+        project.updated_at = _now_iso()
+        project.revision += 1
+        _write_project_json_unlocked(project_path, project)
+        return project, None
+
+
+def _restore_previous_output(destination: Path, previous: bytes | None) -> str:
+    try:
+        if previous is None:
+            destination.unlink(missing_ok=True)
+        else:
+            atomic_write_bytes(destination, previous)
+        return ""
+    except OSError as exc:
+        return str(exc)
+
+
+def _finalize_preparation(
+    project_path: Path,
+    target: PreparationTarget,
+    prep_id: str,
+    built: dict[str, Any],
+    *,
+    method: str,
+    created_at: str,
+    started_at: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any]:
+    """Finalize only if ``prep_id`` still owns the target claim."""
+
+    stdout_path = _safe_project_path(project_path, Path(built["stdout_file"]))
+    stderr_path = _safe_project_path(project_path, Path(built["stderr_file"]))
+    metadata_path = _safe_project_path(project_path, Path(built["metadata_file"]))
+    output_check_path = _safe_project_path(project_path, Path(built["output_check_file"]))
+    candidate_output_path = _safe_project_path(project_path, Path(built["candidate_output_path"]))
+    output_path = _safe_project_path(project_path, Path(built["output_path"]))
+    atomic_write_text(stdout_path, stdout)
+    atomic_write_text(stderr_path, stderr)
+
+    finished_at = _now_iso()
+    candidate_ok = candidate_output_path.is_file() and candidate_output_path.stat().st_size > 0
+    publication_error = ""
+    restore_error = ""
+    published = False
+    ownership_lost = False
+    current_project: Any | None = None
+    error: dict[str, Any] | None = None
+
+    with _preparation_target_lock(project_path, target):
+        with _project_lock(project_path):
+            data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+            current_project = _project_from_dict(data, project_path)
+            current_prep = getattr(current_project.preparation, target)
+            owns_target = (
+                current_project.latest_preparation.get(target) == prep_id
+                and current_prep.prep_id == prep_id
+                and current_prep.status == "running"
+            )
+            if not owns_target:
+                ownership_lost = True
+                error = {
+                    "code": "PREPARATION_OWNERSHIP_LOST",
+                    "message": f"{target} 准备任务已被更新的任务取代，候选输出未发布。",
+                    "raw_error": (
+                        f"prep_id={prep_id}; latest={current_project.latest_preparation.get(target)}; "
+                        f"current={current_prep.prep_id}:{current_prep.status}"
+                    ),
+                    "suggestion": "请查看最新 preparation 记录；旧任务的候选文件仅保留用于审计。",
+                }
+            else:
+                previous_output = output_path.read_bytes() if output_path.is_file() else None
+                if exit_code == 0 and candidate_ok:
+                    try:
+                        _publish_candidate_output(candidate_output_path, output_path, project_path)
+                        published = True
+                    except Exception as exc:  # noqa: BLE001 - preserve previous output below.
+                        publication_error = str(exc)
+
+                output_ok = published and output_path.is_file() and output_path.stat().st_size > 0
+                success = exit_code == 0 and candidate_ok and output_ok
+                if success:
+                    current_prep.status = "finished"
+                    current_prep.error = None
+                    getattr(current_project, target).file = f"prepared/{target}.pdbqt"
+                else:
+                    current_prep.status = "failed"
+                    raw_error = publication_error or stderr or stdout or (
+                        "输出 PDBQT 不存在或为空。" if exit_code == 0 else ""
+                    )
+                    error = {
+                        "code": f"{target.upper()}_PREPARATION_FAILED",
+                        "message": f"{target} PDBQT 自动准备失败，请查看 stderr 和日志。",
+                        "raw_error": raw_error,
+                        "suggestion": (
+                            "请确认 RDKit/Meeko 版本、输入结构和配体准备能力。"
+                            if target == "ligand"
+                            else "请确认 Meeko receptor 模块、输入结构完整性和准备选项。"
+                        ),
+                    }
+                    current_prep.error = error
+                current_prep.finished_at = finished_at
+                current_prep.exit_code = exit_code
+                current_project.updated_at = _now_iso()
+                current_project.revision += 1
+                try:
+                    _write_project_json_unlocked(project_path, current_project)
+                except Exception as exc:  # noqa: BLE001 - rollback published bytes.
+                    if published:
+                        restore_error = _restore_previous_output(output_path, previous_output)
+                        published = False
+                    publication_error = str(exc)
+                    if restore_error:
+                        publication_error += f"; rollback failed: {restore_error}"
+                    error = {
+                        "code": "PREPARATION_PROJECT_COMMIT_FAILED",
+                        "message": "准备输出已拒绝提交，因为 project.json 更新失败。",
+                        "raw_error": publication_error,
+                        "suggestion": "请确认项目目录可写；旧 prepared 文件已尽力恢复。",
+                    }
+
+        final_status = "interrupted" if ownership_lost else (
+            "finished" if published and not error else "failed"
+        )
+        output_ok = published and output_path.is_file() and output_path.stat().st_size > 0
+        output_check = {
+            "prep_id": prep_id,
+            "target": target,
+            "output_file": f"prepared/{target}.pdbqt",
+            "candidate_output": _file_snapshot(candidate_output_path, project_path),
+            "output": _file_snapshot(output_path, project_path),
+            "exit_code": exit_code,
+            "published": published,
+            "ownership_lost": ownership_lost,
+            "publication_error": publication_error,
+            "restore_error": restore_error,
+            "success": final_status == "finished",
+        }
+        _write_json(output_check_path, output_check)
+        metadata_payload = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status=final_status,
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=finished_at,
+            built=built,
+            exit_code=exit_code,
+            warnings=list(built.get("warnings", [])),
+            error=error,
+        )
+        metadata_payload.update(
+            {
+                "stdout_file": built["stdout_file"],
+                "stderr_file": built["stderr_file"],
+                "command_file": built["command_file"],
+                "input_snapshot_file": built["input_snapshot_file"],
+                "output_check_file": built["output_check_file"],
+                "output_exists": output_path.is_file(),
+                "output_non_empty": output_ok,
+                "published": published,
+                "ownership_lost": ownership_lost,
+                "candidate_output": _file_snapshot(candidate_output_path, project_path),
+                "output": _file_snapshot(output_path, project_path),
+                "stdout": _file_snapshot(stdout_path, project_path),
+                "stderr": _file_snapshot(stderr_path, project_path),
+            },
+        )
+        _write_json(metadata_path, metadata_payload)
+
+    return {
+        "success": final_status == "finished",
+        "status": final_status,
+        "project": current_project,
+        "error": error,
+        "finished_at": finished_at,
+        "exit_code": exit_code,
+        "published": published,
+        "ownership_lost": ownership_lost,
+    }
+
+
+def _prepare_target_pdbqt(
+    project_dir: str,
+    target: PreparationTarget,
+    *,
+    overwrite: bool,
+    method: str,
+    builder: Any,
+) -> dict[str, Any]:
+    project_path = Path(project_dir).expanduser().resolve()
+    try:
+        with _preparation_target_lock(project_path, target):
+            _ensure_preparation_directories(project_path)
+            busy = _check_preparation_available(project_path, target)
+            if busy:
+                return busy
+            prep_id = get_next_preparation_id(str(project_path), target)
+            built = builder(str(project_path), overwrite=overwrite, prep_id=prep_id)
+            if not built.get("ok"):
+                return built
+            created_at = _now_iso()
+            started_at = _now_iso()
+            claimed, claim_error = _claim_preparation(
+                project_path,
+                target,
+                prep_id,
+                built,
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+            )
+            if claim_error:
+                return claim_error
+            assert claimed is not None
+
+        try:
+            completed = meeko_adapter.run_preparation_command(built["command"], cwd=project_path)
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            exit_code = int(completed.returncode)
+        except Exception as exc:  # noqa: BLE001 - structured preparation failure.
+            stdout = ""
+            stderr = str(exc)
+            exit_code = -1
+
+        finalized = _finalize_preparation(
+            project_path,
+            target,
+            prep_id,
+            built,
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        payload = get_preparation_status(str(project_path))
+        success = bool(finalized["success"])
+        if finalized["ownership_lost"]:
+            message = f"{target} 准备任务已失去所有权，候选输出未发布。"
+        elif success:
+            message = (
+                "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"
+                if target == "ligand"
+                else "receptor PDBQT 自动准备完成。请继续人工检查受体结构、金属离子、水分子、辅因子和质子化状态。"
+            )
+        else:
+            message = f"{target} PDBQT 自动准备失败。"
+        payload.update(
+            {
+                "ok": success,
+                "target": target,
+                "prep_id": prep_id,
+                "metadata_file": built["metadata_file"],
+                "output_file": f"prepared/{target}.pdbqt",
+                "stdout_file": built["stdout_file"],
+                "stderr_file": built["stderr_file"],
+                "log_file": built["log_file"],
+                "exit_code": exit_code,
+                "message": message,
+                "error": finalized["error"],
+            },
+        )
+        return payload
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "准备任务路径包含符号链接、junction、reparse point 或越出项目目录，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请恢复项目中的普通 raw/preparation/prepared 目录和文件后重试。",
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the boundary structured.
+        return _error(
+            "PREPARATION_START_ERROR",
+            "启动分子准备任务时发生错误。",
+            raw_error=str(exc),
+            suggestion="请检查项目目录、工具链和 preparation 审计目录后重试。",
+        )
 
 
 def _tool_status() -> dict[str, Any]:
@@ -319,6 +899,9 @@ def validate_preparation_prerequisites(project_dir: str, target: str) -> dict[st
     if project_error:
         return project_error
     assert project is not None
+    busy = _preparation_busy_error(project, normalized_target)
+    if busy:
+        return busy
 
     project_path = Path(project.project_dir).expanduser()
     file_ref = getattr(project, normalized_target)
@@ -391,6 +974,7 @@ def _ligand_preparation_script_text() -> str:
 from __future__ import annotations
 
 import json
+import io
 import sys
 from pathlib import Path
 
@@ -409,13 +993,23 @@ except Exception:
 def read_ligand(path: Path):
     suffix = path.suffix.lower()
     if suffix == ".sdf":
-        supplier = Chem.SDMolSupplier(str(path), sanitize=True, removeHs=False)
+        # Let Python open the path so Windows Unicode/space handling does not
+        # depend on RDKit's C++ filename conversion.
+        supplier = Chem.ForwardSDMolSupplier(
+            io.BytesIO(path.read_bytes()),
+            sanitize=True,
+            removeHs=False,
+        )
         molecules = [mol for mol in supplier if mol is not None]
         if not molecules:
             raise RuntimeError("RDKit 未能从 SDF 中读取到有效分子。")
         return prepare_ligand_for_meeko(molecules[0])
     if suffix == ".mol":
-        molecule = Chem.MolFromMolFile(str(path), sanitize=True, removeHs=False)
+        molecule = Chem.MolFromMolBlock(
+            path.read_text(encoding="utf-8", errors="replace"),
+            sanitize=True,
+            removeHs=False,
+        )
         if molecule is None:
             raise RuntimeError("RDKit 未能从 MOL 文件中读取到有效分子。")
         return prepare_ligand_for_meeko(molecule)
@@ -486,7 +1080,16 @@ def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False)
             suggestion="请先在“下载原始结构文件”页面下载 ligand raw 文件，或手动导入 prepared ligand PDBQT。",
         )
 
-    input_path = _project_file_path(project_path, raw_file)
+    try:
+        input_path = _project_file_path(project_path, raw_file)
+        output_path = _safe_project_path(project_path, Path(LIGAND_PREPARATION_OUTPUT))
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "配体准备路径不安全，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请使用项目内普通 raw/preparation/prepared 目录，移除符号链接或 junction。",
+        )
     input_status = _file_status(project_path, raw_file, "ligand_raw", "配体 raw 文件")
     if input_status["status"] != "ok":
         return _error(
@@ -505,7 +1108,6 @@ def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False)
             suggestion="V0.3.2 优先支持 SDF 和 MOL；MOL2/SMILES 暂不自动准备，请先使用外部工具准备 PDBQT。",
         )
 
-    output_path = project_path / LIGAND_PREPARATION_OUTPUT
     if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
         return _error(
             "LIGAND_PREPARED_FILE_EXISTS",
@@ -569,19 +1171,24 @@ def build_ligand_preparation_command_or_script(
     if not validation.get("ok"):
         return validation
 
-    project_path = Path(validation["project_dir"]).expanduser()
+    project_path = Path(validation["project_dir"]).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
     selected_prep_id = prep_id or get_next_preparation_id(project_dir, "ligand")
     paths = _make_preparation_record_paths(project_path, selected_prep_id)
     record_dir = paths["record_dir"]
-    record_dir.mkdir(parents=True, exist_ok=False)
+    record_dir.mkdir(exist_ok=False)
+    _safe_project_path(project_path, PREPARATION_RECORD_ROOT / selected_prep_id, allow_missing=False)
     script_path = record_dir / "prepare_ligand_rdkit_meeko.py"
-    script_path.write_text(_ligand_preparation_script_text(), encoding="utf-8")
+    atomic_write_text(script_path, _ligand_preparation_script_text())
+    candidate_output_path = record_dir / "candidate_ligand.pdbqt"
 
     command = [
         validation["tools"]["python"]["path"],
+        "-I",
+        "-B",
         str(script_path),
         validation["input_path"],
-        validation["output_path"],
+        str(candidate_output_path),
     ]
     return {
         **validation,
@@ -589,6 +1196,8 @@ def build_ligand_preparation_command_or_script(
         "record_dir": paths["record_dir_relative"],
         "command": command,
         "script_file": _relative_path(script_path, project_path),
+        "candidate_output_file": _relative_path(candidate_output_path, project_path),
+        "candidate_output_path": str(candidate_output_path),
         "stdout_file": paths["stdout_file"],
         "stderr_file": paths["stderr_file"],
         "log_file": paths["metadata_file"],
@@ -601,173 +1210,13 @@ def build_ligand_preparation_command_or_script(
 
 def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
     _ = options or {}
-    prep_id = get_next_preparation_id(project_dir, "ligand")
-    built = build_ligand_preparation_command_or_script(project_dir, overwrite=overwrite, prep_id=prep_id)
-    if not built.get("ok"):
-        return built
-
-    project, project_error = _load_project_model(project_dir)
-    if project_error:
-        return project_error
-    assert project is not None
-
-    project_path = Path(project.project_dir).expanduser()
-    stdout_path = project_path / built["stdout_file"]
-    stderr_path = project_path / built["stderr_file"]
-    output_path = Path(built["output_path"])
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path = project_path / built["metadata_file"]
-    command_path = project_path / built["command_file"]
-    input_snapshot_path = project_path / built["input_snapshot_file"]
-    output_check_path = project_path / built["output_check_file"]
-
-    prep = project.preparation.ligand
-    created_at = _now_iso()
-    started_at = _now_iso()
-    prep.prep_id = prep_id
-    prep.status = "running"
-    prep.method = "rdkit_meeko"
-    prep.input_file = built["input_file"]
-    prep.output_file = LIGAND_PREPARATION_OUTPUT
-    prep.started_at = started_at
-    prep.finished_at = None
-    prep.python_path = built["tools"]["python"].get("path", "")
-    prep.python_source = built["tools"]["python"].get("source", "unknown")
-    prep.rdkit_available = built["tools"]["rdkit"].get("status") == "ok"
-    prep.meeko_available = built["tools"]["meeko"].get("status") == "ok"
-    prep.command = built["command"]
-    prep.stdout_file = built["stdout_file"]
-    prep.stderr_file = built["stderr_file"]
-    prep.log_file = built["log_file"]
-    prep.metadata_file = built["metadata_file"]
-    prep.command_file = built["command_file"]
-    prep.input_snapshot_file = built["input_snapshot_file"]
-    prep.output_check_file = built["output_check_file"]
-    prep.exit_code = None
-    prep.error = None
-    prep.warnings = list(built.get("warnings", []))
-    project.latest_preparation["ligand"] = prep_id
-    _write_json(command_path, {"prep_id": prep_id, "target": "ligand", "command": built["command"]})
-    _write_json(
-        input_snapshot_path,
-        {
-            "prep_id": prep_id,
-            "target": "ligand",
-            "input_file": built["input_file"],
-            "input": _file_snapshot(Path(built["input_path"]), project_path),
-            "tools": built.get("tools", {}),
-            "warnings": prep.warnings,
-        },
-    )
-    _write_json(
-        metadata_path,
-        _build_preparation_metadata(
-            prep_id=prep_id,
-            target="ligand",
-            status="running",
-            method="rdkit_meeko",
-            created_at=created_at,
-            started_at=started_at,
-            finished_at=None,
-            built=built,
-            warnings=prep.warnings,
-        ),
-    )
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    try:
-        completed = meeko_adapter.run_preparation_command(built["command"], cwd=project_path)
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
-        exit_code = int(completed.returncode)
-    except Exception as exc:  # noqa: BLE001 - return structured preparation failure.
-        stdout = ""
-        stderr = str(exc)
-        exit_code = -1
-
-    stdout_path.write_text(stdout, encoding="utf-8")
-    stderr_path.write_text(stderr, encoding="utf-8")
-
-    finished_at = _now_iso()
-    output_ok = output_path.is_file() and output_path.stat().st_size > 0
-    output_check = {
-        "prep_id": prep_id,
-        "target": "ligand",
-        "output_file": LIGAND_PREPARATION_OUTPUT,
-        "output": _file_snapshot(output_path, project_path),
-        "exit_code": exit_code,
-        "success": exit_code == 0 and output_ok,
-    }
-    _write_json(output_check_path, output_check)
-    success = exit_code == 0 and output_ok
-    if success:
-        prep.status = "finished"
-        prep.error = None
-        project.ligand.file = LIGAND_PREPARATION_OUTPUT
-        message = "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"
-        error = None
-    else:
-        prep.status = "failed"
-        message = "ligand PDBQT 自动准备失败。"
-        raw_error = stderr or stdout or ("输出 PDBQT 不存在或为空。" if exit_code == 0 else "")
-        error = {
-            "code": "LIGAND_PREPARATION_FAILED",
-            "message": "ligand PDBQT 自动准备失败，请查看 stderr 和日志。",
-            "raw_error": raw_error,
-            "suggestion": "请确认 RDKit/Meeko 版本、输入文件格式、配体 3D 构象和 Meeko 配体准备能力。",
-        }
-        prep.error = error
-
-    prep.finished_at = finished_at
-    prep.exit_code = exit_code
-    metadata_payload = _build_preparation_metadata(
-        prep_id=prep_id,
-        target="ligand",
-        status=prep.status,
+    return _prepare_target_pdbqt(
+        project_dir,
+        "ligand",
+        overwrite=overwrite,
         method="rdkit_meeko",
-        created_at=created_at,
-        started_at=started_at,
-        finished_at=finished_at,
-        built=built,
-        exit_code=exit_code,
-        warnings=prep.warnings,
-        error=error,
+        builder=build_ligand_preparation_command_or_script,
     )
-    metadata_payload.update(
-        {
-            "stdout_file": built["stdout_file"],
-            "stderr_file": built["stderr_file"],
-            "command_file": built["command_file"],
-            "input_snapshot_file": built["input_snapshot_file"],
-            "output_check_file": built["output_check_file"],
-            "output_exists": output_path.is_file(),
-            "output_non_empty": output_ok,
-        }
-    )
-    _write_json(metadata_path, metadata_payload)
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    payload = get_preparation_status(project.project_dir)
-    payload.update(
-        {
-            "ok": success,
-            "target": "ligand",
-            "prep_id": prep_id,
-            "metadata_file": built["metadata_file"],
-            "output_file": LIGAND_PREPARATION_OUTPUT,
-            "stdout_file": built["stdout_file"],
-            "stderr_file": built["stderr_file"],
-            "log_file": built["log_file"],
-            "exit_code": exit_code,
-            "message": message,
-            "error": error,
-        }
-    )
-    return payload
 
 
 def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
@@ -786,6 +1235,13 @@ def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
         path = _project_file_path(project_path, relative_file)
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
+    try:
+        stdout = read_optional(stdout_file)
+        stderr = read_optional(stderr_file)
+        log = read_optional(log_file)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "ligand preparation 日志路径不安全。", raw_error=str(exc))
+
     return {
         "ok": True,
         "project_dir": project.project_dir,
@@ -793,9 +1249,9 @@ def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
         "stdout_file": stdout_file,
         "stderr_file": stderr_file,
         "log_file": log_file,
-        "stdout": read_optional(stdout_file),
-        "stderr": read_optional(stderr_file),
-        "log": read_optional(log_file),
+        "stdout": stdout,
+        "stderr": stderr,
+        "log": log,
         "message": "ligand preparation 日志已读取。",
         "error": None,
     }
@@ -816,7 +1272,16 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
             suggestion="请先在“下载原始结构文件”页面下载 receptor raw 文件，或手动导入 prepared receptor PDBQT。",
         )
 
-    input_path = _project_file_path(project_path, raw_file)
+    try:
+        input_path = _project_file_path(project_path, raw_file)
+        output_path = _safe_project_path(project_path, Path(RECEPTOR_PREPARATION_OUTPUT))
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "受体准备路径不安全，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请使用项目内普通 raw/preparation/prepared 目录，移除符号链接或 junction。",
+        )
     input_status = _file_status(project_path, raw_file, "receptor_raw", "受体 raw 文件")
     if input_status["status"] != "ok":
         return _error(
@@ -835,7 +1300,6 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
             suggestion="V0.3.3 优先支持 PDB；CIF 是否可用取决于本机 Meeko。其他格式请先使用外部工具准备 PDBQT。",
         )
 
-    output_path = project_path / RECEPTOR_PREPARATION_OUTPUT
     if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
         return _error(
             "RECEPTOR_PREPARED_FILE_EXISTS",
@@ -851,27 +1315,20 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
     python_tool = tools["python"]
     meeko_tool = tools["meeko"]
     receptor_capability = meeko_tool.get("capabilities", {}).get("receptor_preparation", {})
-    receptor_cli_candidates = receptor_capability.get("cli_candidates_found", [])
-    if not isinstance(receptor_cli_candidates, list):
-        receptor_cli_candidates = []
-    receptor_cli_candidates = [str(item) for item in receptor_cli_candidates if str(item)]
-
     missing: list[str] = []
     if python_tool.get("status") != "ok":
         missing.append("Python")
     if meeko_tool.get("status") != "ok":
         missing.append("Meeko")
     if receptor_capability.get("status") != "ok":
-        missing.append("Meeko receptor preparation capability")
-    if not receptor_cli_candidates:
-        missing.append("mk_prepare_receptor CLI")
+        missing.append("Meeko receptor preparation capability (meeko.cli.mk_prepare_receptor)")
 
     if missing:
         return _error(
             "RECEPTOR_PREPARATION_TOOLS_NOT_READY",
             "受体 PDBQT 自动准备所需工具尚未全部可用或不可确认。",
             raw_error=", ".join(missing),
-            suggestion="请确认 Meeko 已安装且可发现 mk_prepare_receptor CLI。当前版本不使用 MGLTools/Open Babel 兜底。",
+            suggestion="请确认 Meeko 已安装且可导入 receptor preparation 模块。当前版本不使用 MGLTools/Open Babel 兜底。",
         )
 
     warnings = [
@@ -891,7 +1348,7 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
         "output_path": str(output_path),
         "format": suffix,
         "tools": tools,
-        "receptor_cli": receptor_cli_candidates[0],
+        "receptor_module": "meeko.cli.mk_prepare_receptor",
         "overwrite": overwrite,
         "warnings": warnings,
         "message": "受体 PDBQT 自动准备输入检查通过。",
@@ -908,24 +1365,36 @@ def build_receptor_preparation_command_or_script(
     if not validation.get("ok"):
         return validation
 
-    project_path = Path(validation["project_dir"]).expanduser()
+    project_path = Path(validation["project_dir"]).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
     selected_prep_id = prep_id or get_next_preparation_id(project_dir, "receptor")
     paths = _make_preparation_record_paths(project_path, selected_prep_id)
-    paths["record_dir"].mkdir(parents=True, exist_ok=False)
-    cli_path = str(validation["receptor_cli"])
-    output_stem = str((project_path / RECEPTOR_PREPARATION_OUTPUT).with_suffix(""))
+    paths["record_dir"].mkdir(exist_ok=False)
+    _safe_project_path(project_path, PREPARATION_RECORD_ROOT / selected_prep_id, allow_missing=False)
+    candidate_output_path = paths["record_dir"] / "candidate_receptor.pdbqt"
+    output_stem = str(candidate_output_path.with_suffix(""))
     python_path = validation["tools"]["python"]["path"]
     input_flag = "--read_pdb" if str(validation.get("format") or "").lower() == ".pdb" else "-i"
-    if Path(cli_path).suffix.lower() == ".py":
-        command = [python_path, cli_path, input_flag, validation["input_path"], "-o", output_stem, "-p"]
-    else:
-        command = [cli_path, input_flag, validation["input_path"], "-o", output_stem, "-p"]
+    command = [
+        python_path,
+        "-I",
+        "-B",
+        "-m",
+        str(validation["receptor_module"]),
+        input_flag,
+        validation["input_path"],
+        "-o",
+        output_stem,
+        "-p",
+    ]
 
     return {
         **validation,
         "prep_id": selected_prep_id,
         "record_dir": paths["record_dir_relative"],
         "command": command,
+        "candidate_output_file": _relative_path(candidate_output_path, project_path),
+        "candidate_output_path": str(candidate_output_path),
         "stdout_file": paths["stdout_file"],
         "stderr_file": paths["stderr_file"],
         "log_file": paths["metadata_file"],
@@ -938,173 +1407,13 @@ def build_receptor_preparation_command_or_script(
 
 def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
     _ = options or {}
-    prep_id = get_next_preparation_id(project_dir, "receptor")
-    built = build_receptor_preparation_command_or_script(project_dir, overwrite=overwrite, prep_id=prep_id)
-    if not built.get("ok"):
-        return built
-
-    project, project_error = _load_project_model(project_dir)
-    if project_error:
-        return project_error
-    assert project is not None
-
-    project_path = Path(project.project_dir).expanduser()
-    stdout_path = project_path / built["stdout_file"]
-    stderr_path = project_path / built["stderr_file"]
-    output_path = Path(built["output_path"])
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    metadata_path = project_path / built["metadata_file"]
-    command_path = project_path / built["command_file"]
-    input_snapshot_path = project_path / built["input_snapshot_file"]
-    output_check_path = project_path / built["output_check_file"]
-
-    prep = project.preparation.receptor
-    created_at = _now_iso()
-    started_at = _now_iso()
-    prep.prep_id = prep_id
-    prep.status = "running"
-    prep.method = "meeko"
-    prep.input_file = built["input_file"]
-    prep.output_file = RECEPTOR_PREPARATION_OUTPUT
-    prep.started_at = started_at
-    prep.finished_at = None
-    prep.python_path = built["tools"]["python"].get("path", "")
-    prep.python_source = built["tools"]["python"].get("source", "unknown")
-    prep.rdkit_available = False
-    prep.meeko_available = built["tools"]["meeko"].get("status") == "ok"
-    prep.command = built["command"]
-    prep.stdout_file = built["stdout_file"]
-    prep.stderr_file = built["stderr_file"]
-    prep.log_file = built["log_file"]
-    prep.metadata_file = built["metadata_file"]
-    prep.command_file = built["command_file"]
-    prep.input_snapshot_file = built["input_snapshot_file"]
-    prep.output_check_file = built["output_check_file"]
-    prep.exit_code = None
-    prep.error = None
-    prep.warnings = list(built.get("warnings", []))
-    project.latest_preparation["receptor"] = prep_id
-    _write_json(command_path, {"prep_id": prep_id, "target": "receptor", "command": built["command"]})
-    _write_json(
-        input_snapshot_path,
-        {
-            "prep_id": prep_id,
-            "target": "receptor",
-            "input_file": built["input_file"],
-            "input": _file_snapshot(Path(built["input_path"]), project_path),
-            "tools": built.get("tools", {}),
-            "warnings": prep.warnings,
-        },
-    )
-    _write_json(
-        metadata_path,
-        _build_preparation_metadata(
-            prep_id=prep_id,
-            target="receptor",
-            status="running",
-            method="meeko",
-            created_at=created_at,
-            started_at=started_at,
-            finished_at=None,
-            built=built,
-            warnings=prep.warnings,
-        ),
-    )
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    try:
-        completed = meeko_adapter.run_preparation_command(built["command"], cwd=project_path)
-        stdout = completed.stdout or ""
-        stderr = completed.stderr or ""
-        exit_code = int(completed.returncode)
-    except Exception as exc:  # noqa: BLE001 - return structured preparation failure.
-        stdout = ""
-        stderr = str(exc)
-        exit_code = -1
-
-    stdout_path.write_text(stdout, encoding="utf-8")
-    stderr_path.write_text(stderr, encoding="utf-8")
-
-    finished_at = _now_iso()
-    output_ok = output_path.is_file() and output_path.stat().st_size > 0
-    output_check = {
-        "prep_id": prep_id,
-        "target": "receptor",
-        "output_file": RECEPTOR_PREPARATION_OUTPUT,
-        "output": _file_snapshot(output_path, project_path),
-        "exit_code": exit_code,
-        "success": exit_code == 0 and output_ok,
-    }
-    _write_json(output_check_path, output_check)
-    success = exit_code == 0 and output_ok
-    if success:
-        prep.status = "finished"
-        prep.error = None
-        project.receptor.file = RECEPTOR_PREPARATION_OUTPUT
-        message = "receptor PDBQT 自动准备完成。请继续人工检查受体结构、金属离子、水分子、辅因子和质子化状态。"
-        error = None
-    else:
-        prep.status = "failed"
-        message = "receptor PDBQT 自动准备失败。"
-        raw_error = stderr or stdout or ("输出 PDBQT 不存在或为空。" if exit_code == 0 else "")
-        error = {
-            "code": "RECEPTOR_PREPARATION_FAILED",
-            "message": "receptor PDBQT 自动准备失败，请查看 stderr 和日志。",
-            "raw_error": raw_error,
-            "suggestion": "请确认 Meeko receptor CLI、输入文件格式、受体结构完整性和准备选项。",
-        }
-        prep.error = error
-
-    prep.finished_at = finished_at
-    prep.exit_code = exit_code
-    metadata_payload = _build_preparation_metadata(
-        prep_id=prep_id,
-        target="receptor",
-        status=prep.status,
+    return _prepare_target_pdbqt(
+        project_dir,
+        "receptor",
+        overwrite=overwrite,
         method="meeko",
-        created_at=created_at,
-        started_at=started_at,
-        finished_at=finished_at,
-        built=built,
-        exit_code=exit_code,
-        warnings=prep.warnings,
-        error=error,
+        builder=build_receptor_preparation_command_or_script,
     )
-    metadata_payload.update(
-        {
-            "stdout_file": built["stdout_file"],
-            "stderr_file": built["stderr_file"],
-            "command_file": built["command_file"],
-            "input_snapshot_file": built["input_snapshot_file"],
-            "output_check_file": built["output_check_file"],
-            "output_exists": output_path.is_file(),
-            "output_non_empty": output_ok,
-        }
-    )
-    _write_json(metadata_path, metadata_payload)
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    payload = get_preparation_status(project.project_dir)
-    payload.update(
-        {
-            "ok": success,
-            "target": "receptor",
-            "prep_id": prep_id,
-            "metadata_file": built["metadata_file"],
-            "output_file": RECEPTOR_PREPARATION_OUTPUT,
-            "stdout_file": built["stdout_file"],
-            "stderr_file": built["stderr_file"],
-            "log_file": built["log_file"],
-            "exit_code": exit_code,
-            "message": message,
-            "error": error,
-        }
-    )
-    return payload
 
 
 def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
@@ -1123,6 +1432,13 @@ def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
         path = _project_file_path(project_path, relative_file)
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
+    try:
+        stdout = read_optional(stdout_file)
+        stderr = read_optional(stderr_file)
+        log = read_optional(log_file)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "receptor preparation 日志路径不安全。", raw_error=str(exc))
+
     return {
         "ok": True,
         "project_dir": project.project_dir,
@@ -1130,9 +1446,9 @@ def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
         "stdout_file": stdout_file,
         "stderr_file": stderr_file,
         "log_file": log_file,
-        "stdout": read_optional(stdout_file),
-        "stderr": read_optional(stderr_file),
-        "log": read_optional(log_file),
+        "stdout": stdout,
+        "stderr": stderr,
+        "log": log,
         "message": "receptor preparation 日志已读取。",
         "error": None,
     }
@@ -1148,17 +1464,30 @@ def list_preparation_runs(project_dir: str, target: str) -> dict[str, Any]:
         return project_error
     assert project is not None
 
-    project_path = Path(project.project_dir).expanduser()
-    root = project_path / PREPARATION_RECORD_ROOT
+    project_path = Path(project.project_dir).expanduser().resolve()
+    try:
+        root = _safe_project_path(project_path, PREPARATION_RECORD_ROOT)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "preparation 记录目录不安全。", raw_error=str(exc))
     runs: list[dict[str, Any]] = []
     if root.is_dir():
         for child in root.iterdir():
+            try:
+                child = _safe_project_path(project_path, PREPARATION_RECORD_ROOT / child.name, allow_missing=False)
+            except PreparationPathError as exc:
+                return _error("PREPARATION_PATH_UNSAFE", "preparation 记录路径不安全。", raw_error=str(exc))
             if not child.is_dir():
                 continue
             match = PREPARATION_ID_PATTERN.match(child.name)
             if not match or match.group(1) != normalized_target:
                 continue
-            metadata_file = child / "metadata.json"
+            try:
+                metadata_file = _safe_project_path(
+                    project_path,
+                    PREPARATION_RECORD_ROOT / child.name / "metadata.json",
+                )
+            except PreparationPathError as exc:
+                return _error("PREPARATION_PATH_UNSAFE", "preparation metadata 路径不安全。", raw_error=str(exc))
             metadata: dict[str, Any] = {}
             if metadata_file.is_file():
                 try:
@@ -1203,8 +1532,14 @@ def load_preparation_metadata(project_dir: str, target: str, prep_id: str) -> di
         return project_error
     assert project is not None
 
-    project_path = Path(project.project_dir).expanduser()
-    metadata_path = _preparation_record_dir(project_path, prep_id) / "metadata.json"
+    project_path = Path(project.project_dir).expanduser().resolve()
+    try:
+        metadata_path = _safe_project_path(
+            project_path,
+            PREPARATION_RECORD_ROOT / prep_id / "metadata.json",
+        )
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "preparation metadata 路径不安全。", raw_error=str(exc))
     if not metadata_path.is_file():
         return _error(
             "PREPARATION_METADATA_NOT_FOUND",
@@ -1280,17 +1615,28 @@ def reset_preparation_status(project_dir: str, target: str) -> dict[str, Any]:
     if normalized_target is None:
         return _target_error(target)
 
-    project, project_error = _load_project_model(project_dir)
-    if project_error:
-        return project_error
-    assert project is not None
+    project_path = Path(project_dir).expanduser().resolve()
+    try:
+        with _preparation_target_lock(project_path, normalized_target):
+            with _project_lock(project_path):
+                data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+                project = _project_from_dict(data, project_path)
+                busy = _preparation_busy_error(project, normalized_target)
+                if busy:
+                    return busy
+                setattr(project.preparation, normalized_target, default_preparation_result(normalized_target))
+                project.updated_at = _now_iso()
+                project.revision += 1
+                _write_project_json_unlocked(project_path, project)
+    except Exception as exc:  # noqa: BLE001 - return a structured reset error.
+        return _error(
+            "PREPARATION_RESET_ERROR",
+            "重置 preparation 状态时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认项目目录可写且没有正在运行的同类型准备任务。",
+        )
 
-    setattr(project.preparation, normalized_target, default_preparation_result(normalized_target))
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    payload = get_preparation_status(project.project_dir)
+    payload = get_preparation_status(str(project_path))
     payload["target"] = normalized_target
     payload["message"] = "准备状态已重置。prepared PDBQT 文件不会被删除。"
     return payload

@@ -431,6 +431,27 @@ export type RunHistoryItem = {
   stage: string;
 };
 
+export type ProjectRunGuardItem = {
+  run_id: string;
+  status: string;
+  stage: string;
+  process_active: boolean;
+  executor_active: boolean;
+  can_cancel: boolean;
+  registry_task_id: string;
+  registry_status: string;
+  message: string;
+};
+
+export type ProjectRunGuardPayload = {
+  ok: boolean;
+  blocked: boolean;
+  project_dir: string;
+  active_runs: ProjectRunGuardItem[];
+  message: string;
+  error: string;
+};
+
 export type RunPreflightResponse = {
   ok: boolean;
   ready: boolean;
@@ -477,6 +498,7 @@ export type RunPreflightResponse = {
   next_run_id: string;
   command_preview: string;
   run_history: RunHistoryItem[];
+  active_run_guard?: ProjectRunGuardPayload;
   message: string;
   error?: {
     code: string;

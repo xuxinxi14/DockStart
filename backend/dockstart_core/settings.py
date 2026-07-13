@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dockstart_core.persistence import atomic_write_text
+
 SETTINGS_ENV_VAR = "DOCKSTART_SETTINGS_PATH"
 
 
@@ -75,10 +77,9 @@ def load_settings() -> DockStartSettings:
 
 def save_settings(settings: DockStartSettings) -> DockStartSettings:
     settings_path = get_settings_path()
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
+    atomic_write_text(
+        settings_path,
         json.dumps(settings.to_dict(), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
     )
     return settings
 

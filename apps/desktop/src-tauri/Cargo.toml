@@ -1,8 +1,9 @@
 [package]
 name = "dockstart-desktop"
-version = "0.9.7"
+version = "0.10.0"
 description = "DockStart desktop shell"
 authors = ["DockStart contributors"]
+license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -10,5 +11,7 @@ rust-version = "1.77.2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

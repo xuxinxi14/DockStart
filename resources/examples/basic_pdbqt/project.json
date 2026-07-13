@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
+  "revision": 0,
   "project_name": "basic_pdbqt",
   "created_at": "2026-06-29T00:00:00+00:00",
   "updated_at": "2026-06-29T00:00:00+00:00",

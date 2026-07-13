@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle, FileArrowUp, FolderOpen, Info, Wrench } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
@@ -13,10 +13,16 @@ import type {
   PreparationStatusResponse,
   PreparationTarget,
   PreparationToolCapabilityResult,
-  PreparationToolStatusResponse,
   RunFileStatus,
   ToolCheckResult,
 } from "../types";
+import {
+  cancelQueuedBackgroundTask,
+  findActiveBackgroundTask,
+  startPreparationTask,
+  waitForBackgroundTask,
+  type BackgroundTaskStatus,
+} from "../utils/backgroundTasks";
 
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
 
@@ -45,10 +51,6 @@ function parsePreparationResponse(rawPayload: string): PreparationStatusResponse
     message: parsed.message,
     error: parsed.error,
   };
-}
-
-function parsePreparationToolStatusResponse(rawPayload: string): PreparationToolStatusResponse {
-  return JSON.parse(rawPayload) as PreparationToolStatusResponse;
 }
 
 function statusLabel(status: string | undefined): string {
@@ -109,24 +111,103 @@ export default function PreparationPage({
     initialProject.receptor.file && initialProject.ligand.file ? "existing" : "raw",
   );
   const [previewRevision, setPreviewRevision] = useState(0);
+  const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
+  const activeTaskAbortRef = useRef<AbortController | null>(null);
+  const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
 
   useEffect(() => {
+    const nextIdentity = `${initialProject.receptor.file}|${initialProject.ligand.file}`;
+    if (preparedIdentityRef.current !== nextIdentity) {
+      preparedIdentityRef.current = nextIdentity;
+      setPreviewRevision((revision) => revision + 1);
+    }
     setProject(initialProject);
   }, [initialProject]);
 
+  useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
+
   const applyResponse = useCallback(
-    (next: PreparationStatusResponse, fallbackMessage: string) => {
+    (next: PreparationStatusResponse, fallbackMessage: string, preparationCompleted = false) => {
       setResponse(next);
       if (next.project) {
+        const nextIdentity = `${next.project.receptor.file}|${next.project.ligand.file}`;
+        if (preparationCompleted || preparedIdentityRef.current !== nextIdentity) {
+          preparedIdentityRef.current = nextIdentity;
+          setPreviewRevision((revision) => revision + 1);
+        }
         setProject(next.project);
         onProjectChange(next.project);
-        setPreviewRevision((revision) => revision + 1);
       }
       setMessage(next.message ?? next.error?.message ?? fallbackMessage);
       setRawError(next.error?.raw_error ?? "");
     },
     [onProjectChange],
   );
+
+  const waitForPreparation = useCallback(
+    async (started: BackgroundTaskStatus, target: PreparationTarget, controller: AbortController) => {
+      setActiveTask(started);
+      const completed = await waitForBackgroundTask(
+        started.task_id,
+        (task) => {
+          setActiveTask(task);
+          setMessage(task.progress.message || task.message);
+          if (task.error) setRawError(task.error);
+        },
+        controller.signal,
+      );
+      setActiveTask(completed);
+      if (completed.status === "cancelled") {
+        setMessage("排队中的结构准备任务已取消。");
+        return;
+      }
+      if (!completed.result_json) {
+        throw new Error(completed.error || completed.message || "结构准备后台任务没有返回结果。");
+      }
+      const preparationResult = parsePreparationResponse(completed.result_json);
+      applyResponse(
+        preparationResult,
+        target === "receptor" ? "受体输入已准备。" : "配体输入已准备。",
+        preparationResult.ok,
+      );
+    },
+    [applyResponse],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    let resumedTaskId = "";
+    const reconnect = async () => {
+      try {
+        const existing = await findActiveBackgroundTask(initialProject.project_dir, { kind: "preparation" });
+        if (!existing || disposed) return;
+        resumedTaskId = existing.task_id;
+        activeTaskAbortRef.current?.abort();
+        activeTaskAbortRef.current = controller;
+        setIsBusy(true);
+        setMessage("检测到未完成的结构准备任务，正在恢复进度显示。");
+        await waitForPreparation(existing, existing.target === "receptor" ? "receptor" : "ligand", controller);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) {
+          setMessage("无法恢复结构准备任务状态。");
+          setRawError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!disposed) {
+          setActiveTask((current) => (current?.task_id === resumedTaskId ? null : current));
+          setIsBusy(false);
+        }
+        if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      }
+    };
+    void reconnect();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [initialProject.project_dir, waitForPreparation]);
 
   const reloadStatus = useCallback(async () => {
     setIsBusy(true);
@@ -135,15 +216,6 @@ export default function PreparationPage({
         projectDir: project.project_dir,
       });
       const parsed = parsePreparationResponse(rawPayload);
-      try {
-        const rawToolPayload = await invoke<string>("get_preparation_tool_status", {
-          projectDir: project.project_dir,
-        });
-        const toolStatus = parsePreparationToolStatusResponse(rawToolPayload);
-        parsed.tools = toolStatus.tools ?? parsed.tools;
-      } catch {
-        // Keep best-effort preparation status.
-      }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
       setMessage("无法读取准备状态。");
@@ -194,17 +266,43 @@ export default function PreparationPage({
   const prepareTarget = async (target: PreparationTarget) => {
     setIsBusy(true);
     setRawError("");
+    activeTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    let taskId = "";
+    activeTaskAbortRef.current = controller;
     try {
-      const rawPayload = await invoke<string>(target === "receptor" ? "prepare_receptor_pdbqt" : "prepare_ligand_pdbqt", {
-        projectDir: project.project_dir,
-        overwrite: target === "receptor" ? overwriteReceptor : overwriteLigand,
-      });
-      applyResponse(parsePreparationResponse(rawPayload), target === "receptor" ? "受体输入已准备。" : "配体输入已准备。");
+      const started = await startPreparationTask(
+        project.project_dir,
+        target,
+        target === "receptor" ? overwriteReceptor : overwriteLigand,
+      );
+      taskId = started.task_id;
+      setMessage(started.deduplicated ? "同一准备任务已在运行，正在接收其进度。" : "准备任务已进入后台队列。界面可以继续响应。" );
+      await waitForPreparation(started, target, controller);
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage(target === "receptor" ? "无法准备受体输入。" : "无法准备配体输入。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      setActiveTask((current) => (current?.task_id === taskId ? null : current));
       setIsBusy(false);
+    }
+  };
+
+  const cancelQueuedPreparation = async () => {
+    if (!activeTask || activeTask.status !== "queued") return;
+    try {
+      const cancelled = await cancelQueuedBackgroundTask(activeTask.task_id);
+      setActiveTask(cancelled);
+      setMessage(
+        cancelled.status === "cancelled"
+          ? (cancelled.message || "排队中的结构准备任务已取消。")
+          : "任务已经开始执行，不能再从队列取消。",
+      );
+    } catch (error) {
+      setMessage("无法取消排队中的结构准备任务。");
+      setRawError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -238,6 +336,7 @@ export default function PreparationPage({
   const files = response?.files;
   const tools = response?.tools;
   const readyForBox = Boolean(project.receptor.file && project.ligand.file);
+  const interactionBusy = isBusy || activeTask?.status === "queued" || activeTask?.status === "running";
 
   const renderStructureRow = (target: PreparationTarget, prep: PreparationResult | undefined) => {
     const isReceptor = target === "receptor";
@@ -280,10 +379,10 @@ export default function PreparationPage({
 
           {mode === "existing" ? (
             <>
-              <ActionButton variant="primary" disabled={isBusy} onClick={() => onOpenImportPdbqt(project)}>
+              <ActionButton variant="primary" disabled={interactionBusy} onClick={() => onOpenImportPdbqt(project)}>
                 <FolderOpen aria-hidden="true" size={16} /> 选择文件
               </ActionButton>
-              <ActionButton disabled={isBusy} onClick={() => void validateTarget(target)}>检查文件</ActionButton>
+              <ActionButton disabled={interactionBusy} onClick={() => void validateTarget(target)}>检查文件</ActionButton>
             </>
           ) : (
             <>
@@ -295,10 +394,10 @@ export default function PreparationPage({
                 />
                 覆盖已有 PDBQT
               </label>
-              <ActionButton variant="primary" disabled={isBusy} onClick={() => void prepareTarget(target)}>
+              <ActionButton variant="primary" disabled={interactionBusy} onClick={() => void prepareTarget(target)}>
                 {isReceptor ? "准备受体输入" : "准备配体输入"}
               </ActionButton>
-              <ActionButton disabled={isBusy} onClick={() => void validateTarget(target)}>检查条件</ActionButton>
+              <ActionButton disabled={interactionBusy} onClick={() => void validateTarget(target)}>检查条件</ActionButton>
             </>
           )}
 
@@ -309,8 +408,8 @@ export default function PreparationPage({
               <div><dt>日志</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
             </dl>
             <div className="button-row">
-              <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={isBusy}>读取日志</ActionButton>
-              <ActionButton variant="text" onClick={() => void resetTarget(target)} disabled={isBusy}>重置状态</ActionButton>
+              <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={interactionBusy}>读取日志</ActionButton>
+              <ActionButton variant="text" onClick={() => void resetTarget(target)} disabled={interactionBusy}>重置状态</ActionButton>
             </div>
           </AdvancedDetails>
         </div>
@@ -325,7 +424,14 @@ export default function PreparationPage({
         title="结构准备"
         titleId="preparation-title"
         description="导入或准备受体与配体 PDBQT 文件，为 AutoDock Vina 对接做好准备。"
-        actions={<ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>刷新状态</ActionButton>}
+        actions={(
+          <>
+            {activeTask?.status === "queued" ? (
+              <ActionButton onClick={() => void cancelQueuedPreparation()}>取消排队</ActionButton>
+            ) : null}
+            <ActionButton onClick={() => void reloadStatus()} disabled={interactionBusy}>刷新状态</ActionButton>
+          </>
+        )}
       />
 
       <ModeTabs
@@ -369,7 +475,7 @@ export default function PreparationPage({
           <footer className="preparation-action-bar">
             <p>自动准备结果仍需人工检查质子化、电荷、构象和缺失残基。</p>
             <div>
-              <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>保存并检查</ActionButton>
+              <ActionButton onClick={() => void reloadStatus()} disabled={interactionBusy}>保存并检查</ActionButton>
               <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
                 继续设置搜索范围
               </ActionButton>

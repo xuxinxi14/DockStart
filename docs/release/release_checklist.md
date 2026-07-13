@@ -1,109 +1,76 @@
 # Release Checklist
 
-DockStart 发布前必须逐项检查。v0.9.7 当前目标是 Windows Basic Stable 打包和稳定性验收，不新增科学功能。
+DockStart v0.10.0 的目标是稳定交付 Basic Stable 与 Assisted Stable，不扩展新的 docking
+算法或科学结论能力。
 
-## Git And Version
+## Git 与版本
 
-- 当前分支是 `main`。
-- `git status --short` 干净。
-- 版本号一致：
-  - `backend/dockstart_core/__init__.py`
-  - `apps/desktop/package.json`
-  - `apps/desktop/package-lock.json`
-  - `apps/desktop/src-tauri/Cargo.toml`
-  - `apps/desktop/src-tauri/Cargo.lock`
-  - `apps/desktop/src-tauri/tauri.conf.json`
-  - `apps/desktop/src/navigation/pages.ts`
-- 正式公开发布时 tag 已创建并推送；本地候选验收不冒充已发布。
+- 当前分支为 `main`，`git status --short` 干净；
+- 以下七处版本均为 `0.10.0`：后端 `__init__.py`、`package.json`、
+  `package-lock.json`、`Cargo.toml`、`Cargo.lock`、`tauri.conf.json`、`pages.ts`；
+- 本地候选验收不冒充 GitHub Release；只有明确发布时才创建并推送 tag；
+- 安装包、`.release/`、`dist/`、`target/`、runtime 二进制和真实 docking 输出不提交 Git。
 
-## Validation Commands
+## 通用质量门禁
 
 ```powershell
 python -m unittest discover -s backend/tests
+
 Push-Location apps/desktop
 npm run build
 Pop-Location
+
 cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-如果执行安装包构建，还需要记录：
+- 项目配置迁移、原子写入、revision 冲突、准备任务并发和崩溃恢复测试通过；
+- 工具链缓存显式重检、后台队列、取消、任务重连和路径边界测试通过；
+- 3Dmol 为动态 chunk，普通页面首屏不应加载它；
+- 无新增未记录依赖，第三方 notice 与许可证文件随两个 profile 一起打包。
+
+## Basic Stable
 
 ```powershell
-scripts\build_windows_release.ps1 -Profile Basic
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Basic
 ```
 
-安装包产物路径和大小应记录到当前版本 build report，例如：
+- `.release/basic/` 从空目录白名单生成；
+- 包含 Vina、后端 Python、许可证和示例；
+- 不存在 `site-packages`、`Scripts`、RDKit、Meeko、`__pycache__`、`.pyc` 或 `.pyo`；
+- `verify_basic_release.py` 在打包布局完成两次真实 Vina 运行、结果与报告回归。
 
-```text
-docs/release/v0_9_7_build_report.md
-```
-
-如只验证发布脚本的检查段：
+## Assisted Stable
 
 ```powershell
-scripts\build_windows_release.ps1 -Profile Basic -SkipTauriBuild
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Assisted
 ```
 
-## Toolchain
+- wheelhouse 中每个 artifact 与 `resources/assisted/SOURCE_MANIFEST.json` 的文件名、URL、
+  版本和 SHA256 一致；构建过程不联网、不解析浮动依赖；
+- Meeko/RDKit 仍是独立、可替换的普通 Python 包；
+- Meeko、Gemmi、tqdm 对应版本源码与全部运行时许可证/notices 随包；
+- `development`、`post-package`、`post-install` 三道门禁全部为 `passed`；
+- `artifact-manifest.json` 的 `publishable` 为 `true`；使用
+  `-SkipPostInstallGate` 生成的开发产物不得发布。
 
-- bundled Vina 状态已检查。
-- backend-only bundled Python runtime 状态已检查。
-- `.release/basic/` 从空目录生成，且不存在 `site-packages`、`Scripts`、RDKit、Meeko、`__pycache__` 或 Python bytecode。
-- `resources/examples/basic_pdbqt` 已由打包后真实 Vina 闭环验证两次。
-- 用户配置 Python/RDKit/Meeko 路径说明清楚。
-- DockStart 不自动安装 RDKit/Meeko。
-- `resources/toolchain_manifest.json` 未损坏。
-- 第三方许可证说明已更新。
+## 安装与 GUI 验收
 
-## Artifacts
+- NSIS 被真实安装到隔离目录，从安装目录运行完整 Assisted 流程后静默卸载，无安装目录、
+  bundled Python 或卸载注册记录残留；
+- MSI/NSIS 文件名只包含当前版本，大小和 SHA256 记录到 `v0_10_0_build_report.md`；
+- 启动实际桌面端，完成“打开 Assisted 示例 → 准备受体/配体 → 设置 Box/Vina 参数 →
+  开始对接 → 查看结果与报告 → 重启再打开”；
+- 验证工具链页默认使用 bundled fallback，显式重检会失效缓存；
+- 验证页面切换不会重复启动 Python 或重复加载 3D 模型；
+- 验证任务进行中关闭/重开页面可重连，应用进程异常退出后历史 run 能被标记恢复；
+- 浅色/暗色、窗口默认尺寸、禁用文本选择与右键等既有 GUI 回归仍正常。
 
-确认没有误提交：
+## 发布文案边界
 
-- installer `.msi` / `.exe`
-- release installer 文件名模式，例如 `DockStart_*_x64-setup.exe`
-- `dist/`
-- `target/`
-- `node_modules/`
-- `__pycache__/`
-- `dockstart_settings.json`
-- `python.exe`
-- `Lib/`
-- `DLLs/`
-- `Scripts/`
-- `site-packages/`
-- conda env
-- 真实 docking 输出
-- 大型 raw/downloaded structures
-- 第三方源码 zip
-
-## Packaged And Installed Smoke
-
-- `scripts/verify_basic_release.py` 已对 `target/release` 通过。
-- MSI 与 NSIS 文件名只包含当前版本，SHA256 已记录。
-- 公开发布前已在无开发版 Python、无 PATH Vina、断网的干净 Windows 中分别验证 MSI 与 NSIS。
-- GUI 已验证“打开 Basic 示例 → 运行 → 结果 → 报告 → 重启再打开”。
-- 升级安装不会把旧 RDKit/Meeko 文件残留到 v0.9.7 Basic runtime。
-
-## GitHub Release Materials
-
-- `docs/release/github_release_template.md` 已更新。
-- `docs/release/release_artifact_profile.md` 已更新。
-- 安装包 SHA256 可用 `scripts/hash_release_artifacts.py` 生成。
-- Release notes 明确列出 included / not included / known limitations。
-- Release notes 明确 Basic Mode / Assisted Mode / Demo Mode 的可用条件。
-- Release notes 不得暗示无需任何外部条件即可自动准备所有分子。
-- Checksums 发布前已经替换占位符。
-
-## Product Boundaries
-
-发布说明必须明确：
-
-- 没有新增科学功能；
-- 没有接入 PLIP/ProLIF；
-- 没有相互作用分析；
-- 没有药效判断；
-- 没有 pocket prediction；
-- 没有分子动力学；
-- 没有修改 AutoDock Vina 算法或 scoring function；
-- 没有使用外部 CDN；
-- 没有关闭 SSL 校验。
+- 明确 Basic 与 Assisted 的不同能力，不把后端 Python 等同于 preparation 工具链；
+- 明确自动准备仍需人工检查，docking score 不能证明真实结合或药效；
+- 明确不含 PLIP/ProLIF、Open Babel/MGLTools、相互作用分析、pocket prediction、
+  分子动力学、批量筛选或 scoring function 修改；
+- 许可证分析属于工程记录，不构成正式法律意见。

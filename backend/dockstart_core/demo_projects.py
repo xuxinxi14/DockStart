@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from dockstart_core.project import load_project
+from dockstart_core.persistence import atomic_write_text
+from dockstart_core.project import CURRENT_PROJECT_SCHEMA_VERSION, load_project
 from dockstart_core.toolchain_paths import get_resources_dir
 
 DEMO_DISCLAIMER = "示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。"
@@ -213,6 +214,8 @@ def _update_project_json_for_copy(project_json: Path, target_dir: Path, summary:
     now = _now_iso()
     data["project_name"] = target_dir.name
     data["project_dir"] = str(target_dir)
+    data["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
+    data["revision"] = 0
     data["updated_at"] = now
     data.setdefault("created_at", now)
 
@@ -227,7 +230,7 @@ def _update_project_json_for_copy(project_json: Path, target_dir: Path, summary:
         },
     )
     data["demo"] = demo
-    project_json.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(project_json, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def create_demo_project(destination_dir: str, demo_type: str) -> dict[str, Any]:

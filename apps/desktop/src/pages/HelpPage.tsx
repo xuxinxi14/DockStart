@@ -42,7 +42,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
                 </article>
                 <article>
                   <strong>只有 PDB / SDF</strong>
-                  <p>需要配置带 RDKit 和 Meeko 的 Python 环境。缺少这些工具时，只有自动准备会不可用。</p>
+                  <p>Assisted Stable 已随附 RDKit/Meeko，可直接尝试自动准备；兼容的用户配置 Python 仍会优先使用。</p>
                 </article>
                 <article>
                   <strong>先看示例</strong>
@@ -84,7 +84,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
                 </article>
                 <article>
                   <strong>RDKit / Meeko 缺失</strong>
-                  <p>自动准备 PDBQT 需要可用 Python 环境。</p>
+                  <p>先重新检测 Assisted 随附工具链。Basic profile 或自定义工作流才需要另行配置兼容 Python。</p>
                 </article>
                 <article>
                   <strong>raw 不能运行</strong>
@@ -105,15 +105,15 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
                 </article>
                 <article>
                   <strong>自动准备缺依赖</strong>
-                  <p>RDKit/Meeko 缺失只影响 Assisted Mode。推荐用独立 conda 环境，不要污染系统 Python。</p>
+                  <p>先重检随附工具链；如果使用 Basic profile 或需要替换版本，再配置独立 conda 环境。</p>
                 </article>
                 <article>
                   <strong>Microsoft Store Python</strong>
-                  <p>不建议作为 RDKit/Meeko 工具链。请创建 dockstart-rdkit-meeko 环境后配置该环境的 python.exe。</p>
+                  <p>不建议作为自定义 RDKit/Meeko 工具链。可继续使用 Assisted 随附 runtime，或配置独立 conda 环境。</p>
                 </article>
                 <article>
-                  <strong>不会自动安装</strong>
-                  <p>DockStart 只给出修复建议和可复制命令，是否执行由用户自己确认。</p>
+                  <strong>不会联网改环境</strong>
+                  <p>Assisted 的固定工具链随安装包提供；应用运行时不会下载包、修改系统 Python 或自动执行修复命令。</p>
                 </article>
               </div>
             </SectionCard>

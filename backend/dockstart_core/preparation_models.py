@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-PreparationStatus = Literal["not_started", "checking", "ready", "running", "finished", "failed"]
+PreparationStatus = Literal["not_started", "checking", "ready", "running", "finished", "failed", "interrupted"]
 PreparationTarget = Literal["receptor", "ligand"]
 PreparationMethod = Literal["meeko", "rdkit_meeko", "external_manual"]
 
@@ -16,6 +16,7 @@ ALLOWED_PREPARATION_STATUSES: set[str] = {
     "running",
     "finished",
     "failed",
+    "interrupted",
 }
 ALLOWED_PREPARATION_TARGETS: set[str] = {"receptor", "ligand"}
 ALLOWED_PREPARATION_METHODS: set[str] = {"meeko", "rdkit_meeko", "external_manual"}

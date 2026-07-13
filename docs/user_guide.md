@@ -1,16 +1,16 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何从已有 PDBQT 文件完成 MVP 流程，并说明 V0.2 raw workflow 与 V0.3 preparation 入口。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何在 v0.10.0 Basic/Assisted Stable 中完成最小对接流程。
 
 ## 选择使用模式
 
 DockStart V0.8 开始把入口分成三种模式：
 
 - **Basic Mode：已有 PDBQT**。你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径。
-- **Assisted Mode：从 raw 文件准备 PDBQT**。你只有 PDB/CIF/SDF/MOL 等原始结构文件，需要配置 Python + RDKit + Meeko，DockStart 才能尝试自动准备 PDBQT。
+- **Assisted Mode：从 raw 文件准备 PDBQT**。你只有 PDB/CIF/SDF/MOL 等原始结构文件；Assisted Stable 已随附固定 Python + RDKit + Meeko，可离线尝试自动准备 PDBQT。兼容的用户配置 Python 仍优先。
 - **Demo Mode：先看示例流程**。用于第一次体验软件流程。示例只用于流程演示，不用于科研结论。
 
-如果 RDKit/Meeko 缺失，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
+如果随附或用户配置的 RDKit/Meeko 检测失败，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
 
 V0.8.1 之后，侧边工作流会把“导入 PDBQT”作为独立步骤显示。你可以跳过 raw 下载和自动准备，直接从 Basic Mode 进入 Box、Vina 参数、配置和运行流程。
 
@@ -27,7 +27,7 @@ V0.8.3 之后，首次启动向导会先问你想怎么开始：
 - 我只有 PDB/SDF：先检查 Python/RDKit/Meeko 是否可用；
 - 我只是想先看示例：复制示例项目理解流程。
 
-向导会列出当前缺什么和下一步建议，但不会自动安装 Vina、RDKit 或 Meeko。
+向导会列出当前缺什么和下一步建议。Assisted 的固定工具链随安装包提供；应用运行时不会联网安装包或修改系统 Python。
 
 V0.8.4 之后，如果工具链缺失，可以在工具链页查看“修复建议”。这些建议会区分 Vina、Python/RDKit/Meeko 和 Microsoft Store Python 等问题，并提供手动步骤；DockStart 不会自动安装工具或修改系统 PATH。详细说明见 [toolchain_repair_guide.md](toolchain_repair_guide.md)。
 
@@ -585,4 +585,4 @@ V0.5.9 进行了一轮真实前端可用性验收和小修：
 - Meeko 是否可导入；
 - 下一步建议是配置 Vina、配置 Python 工具链，还是创建项目。
 
-工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。DockStart 仍不会自动安装 RDKit/Meeko，也不会自动修改系统 PATH。
+工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。v0.10.0 Assisted 已随附 RDKit/Meeko fallback；DockStart 运行时不会联网安装包，也不会自动修改系统 PATH。

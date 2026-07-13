@@ -1,5 +1,8 @@
 # DockStart Release Strategy
 
+> 本文保留 V0.6 阶段的策略演进记录。当前 v0.10.0 双 profile 与强制发布门禁以
+> `release_artifact_profile.md`、`windows_packaging.md` 和 `assisted_stable.md` 为准。
+
 本文档定义 DockStart V0.6 起的发布类型、工具链分发边界和许可证策略。V0.6 的目标是让 Windows 打包、安装后首次检查和 GitHub Release 准备可复现，而不是新增 docking 科学功能。
 
 ## Release Types
@@ -74,4 +77,3 @@ V0.6 只聚焦发布工程：
 - RDKit 和 Meeko 当前优先作为用户配置 Python 环境中的依赖，不在 V0.6 默认内置。
 - Open Babel、MGLTools、PLIP 当前不内置，不进入 V0.6 安装包。
 - 任何工具链状态都不能被解释为科学验证或药效判断。
-

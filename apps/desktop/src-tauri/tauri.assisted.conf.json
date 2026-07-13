@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../../.release/assisted/backend/adapters/": "backend/adapters/",
+      "../../../.release/assisted/backend/dockstart_core/": "backend/dockstart_core/",
+      "../../../.release/assisted/frontend/package.json": "frontend/package.json",
+      "../../../.release/assisted/resources/": "resources/"
+    }
+  }
+}

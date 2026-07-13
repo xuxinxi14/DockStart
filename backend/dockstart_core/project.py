@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import copy
 import hashlib
+import io
 import json
 import math
 import os
@@ -23,6 +25,7 @@ from typing import Any, Iterator
 
 from adapters import vina_adapter
 from dockstart_core import __version__
+from dockstart_core.persistence import atomic_write_text as _atomic_write_text
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
 from dockstart_core.settings import load_settings
 
@@ -37,6 +40,17 @@ SCORES_CSV_FIELDS = ("mode", "affinity_kcal_mol", "rmsd_lb", "rmsd_ub")
 DOCKING_SCORE_DISCLAIMER = "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
 RUN_REPORT_FILE = "docking_report.md"
 PROJECT_REPORT_FILE = Path("reports", "docking_report.md").as_posix()
+CURRENT_PROJECT_SCHEMA_VERSION = 1
+
+
+class ProjectSchemaError(ValueError):
+    """Raised when a project document cannot be safely migrated."""
+
+    def __init__(self, code: str, message: str, *, raw_error: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.raw_error = raw_error
 
 
 @dataclass
@@ -80,6 +94,8 @@ class DockStartProject:
     created_at: str
     updated_at: str
     project_dir: str
+    schema_version: int = CURRENT_PROJECT_SCHEMA_VERSION
+    revision: int = 0
     receptor: ProjectFileRef = field(default_factory=ProjectFileRef)
     ligand: ProjectFileRef = field(default_factory=ProjectFileRef)
     box: BoxSettings = field(default_factory=BoxSettings)
@@ -88,9 +104,27 @@ class DockStartProject:
     preparation: PreparationState = field(default_factory=PreparationState)
     latest_preparation: dict[str, str] = field(default_factory=lambda: {"receptor": "", "ligand": ""})
     runs: list[dict[str, Any]] = field(default_factory=list)
+    preserved_data: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = copy.deepcopy(self.preserved_data)
+        known = {
+            "schema_version": self.schema_version,
+            "revision": self.revision,
+            "project_name": self.project_name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "project_dir": self.project_dir,
+            "receptor": asdict(self.receptor),
+            "ligand": asdict(self.ligand),
+            "box": asdict(self.box),
+            "vina": asdict(self.vina),
+            "config": asdict(self.config),
+            "preparation": self.preparation.to_dict(),
+            "latest_preparation": copy.deepcopy(self.latest_preparation),
+            "runs": copy.deepcopy(self.runs),
+        }
+        return _deep_overlay(payload, known)
 
 
 def _now_iso() -> str:
@@ -172,41 +206,133 @@ def _project_lock(project_dir: str | Path) -> Iterator[None]:
         yield
 
 
-def _atomic_write_text(path: Path, payload: str) -> None:
-    """Durably replace a UTF-8 text file without exposing partial JSON."""
+def _preparation_target_lock_path(project_dir: str | Path, target: str) -> Path:
+    """Return the project-local cross-process lock for one preparation target."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
+    normalized = str(target or "").strip().lower()
+    if normalized not in {"receptor", "ligand"}:
+        raise RuntimeError(f"preparation target 无效：{target}")
+    project_root = Path(project_dir).expanduser().resolve()
+    return project_root / f".preparation-{normalized}.lock"
+
+
+@contextmanager
+def _preparation_target_lock(project_dir: str | Path, target: str) -> Iterator[None]:
+    """Serialize claim/finalize/recovery transactions for one target."""
+
+    with _exclusive_file_lock(_preparation_target_lock_path(project_dir, target)):
+        yield
+
+
+def _deep_overlay(base: Any, updates: Any) -> Any:
+    """Overlay known fields while retaining unknown nested project fields."""
+
+    if isinstance(base, dict) and isinstance(updates, dict):
+        merged = copy.deepcopy(base)
+        for key, value in updates.items():
+            merged[key] = _deep_overlay(merged.get(key), value)
+        return merged
+    return copy.deepcopy(updates)
+
+
+def _coerce_non_negative_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ProjectSchemaError(
+            "PROJECT_SCHEMA_INVALID",
+            f"project.json 的 {field_name} 必须是非负整数。",
+            raw_error=repr(value),
+        )
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="",
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            dir=path.parent,
-            delete=False,
-        ) as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-            temporary_path = Path(handle.name)
-        last_error: OSError | None = None
-        for attempt in range(6):
-            try:
-                os.replace(temporary_path, path)
-                last_error = None
-                break
-            except PermissionError as exc:
-                last_error = exc
-                if attempt == 5:
-                    break
-                time.sleep(0.02 * (attempt + 1))
-        if last_error is not None:
-            raise last_error
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink(missing_ok=True)
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ProjectSchemaError(
+            "PROJECT_SCHEMA_INVALID",
+            f"project.json 的 {field_name} 必须是非负整数。",
+            raw_error=str(exc),
+        ) from exc
+    if parsed < 0 or str(value).strip() not in {str(parsed), f"{parsed}.0"}:
+        raise ProjectSchemaError(
+            "PROJECT_SCHEMA_INVALID",
+            f"project.json 的 {field_name} 必须是非负整数。",
+            raw_error=repr(value),
+        )
+    return parsed
+
+
+def migrate_project_data(data: dict[str, Any]) -> tuple[dict[str, Any], bool, int]:
+    """Migrate a project document to the current schema without data loss.
+
+    Returns ``(migrated, changed, source_version)``.  Unknown keys are retained
+    verbatim; known fields are normalized later by :func:`_project_from_dict`.
+    """
+
+    migrated = copy.deepcopy(data)
+    raw_version = migrated.get("schema_version")
+    source_version = 0 if raw_version in (None, "") else _coerce_non_negative_int(
+        raw_version,
+        field_name="schema_version",
+    )
+    if source_version > CURRENT_PROJECT_SCHEMA_VERSION:
+        raise ProjectSchemaError(
+            "PROJECT_SCHEMA_VERSION_UNSUPPORTED",
+            "project.json 来自更高版本的 DockStart，当前版本不会改写该项目。",
+            raw_error=(
+                f"project schema_version={source_version}; "
+                f"supported={CURRENT_PROJECT_SCHEMA_VERSION}"
+            ),
+        )
+
+    changed = source_version != CURRENT_PROJECT_SCHEMA_VERSION
+    if source_version == 0:
+        migrated.setdefault("revision", 0)
+        migrated.setdefault("preparation", {})
+        migrated.setdefault("latest_preparation", {"receptor": "", "ligand": ""})
+        migrated.setdefault("config", {})
+        migrated.setdefault("runs", [])
+        migrated["schema_version"] = 1
+
+    revision = _coerce_non_negative_int(migrated.get("revision", 0), field_name="revision")
+    if migrated.get("revision") != revision:
+        migrated["revision"] = revision
+        changed = True
+    return migrated, changed, source_version
+
+
+def _migration_backup_path(project_root: Path, source_version: int) -> Path:
+    base = project_root / f"project.json.schema-v{source_version}.bak"
+    if not base.exists():
+        return base
+    for index in range(1, 1000):
+        candidate = base.with_name(f"{base.name}.{index}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError("无法为 project.json 迁移备份分配安全文件名。")
+
+
+def _read_and_migrate_project_unlocked(
+    project_root: Path,
+    *,
+    persist_migration: bool,
+) -> tuple[dict[str, Any], bool, Path | None]:
+    project_json = _project_json_path(project_root)
+    original_text = project_json.read_text(encoding="utf-8")
+    data = json.loads(original_text)
+    if not isinstance(data, dict):
+        raise ProjectSchemaError("PROJECT_JSON_INVALID", "project.json 格式不是 JSON 对象。")
+    migrated, changed, source_version = migrate_project_data(data)
+    # Migration must not persist a partially understood document.  Parse every
+    # known field first so malformed numeric/settings data leaves the original
+    # project.json byte-for-byte untouched.
+    _project_from_dict(migrated, project_root)
+    backup_path: Path | None = None
+    if changed and persist_migration:
+        backup_path = _migration_backup_path(project_root, source_version)
+        _atomic_write_text(backup_path, original_text)
+        _atomic_write_text(
+            project_json,
+            json.dumps(migrated, ensure_ascii=False, indent=2) + "\n",
+        )
+    return migrated, changed, backup_path
 
 
 def _write_project_json_unlocked(project_root: Path, project: DockStartProject) -> None:
@@ -239,6 +365,7 @@ def _value_or_default(data: dict[str, Any], key: str, default: Any) -> Any:
 
 
 def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartProject:
+    data, _, _ = migrate_project_data(data)
     receptor = data.get("receptor") if isinstance(data.get("receptor"), dict) else {}
     ligand = data.get("ligand") if isinstance(data.get("ligand"), dict) else {}
     box = data.get("box") if isinstance(data.get("box"), dict) else {}
@@ -247,17 +374,18 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
     preparation = data.get("preparation") if isinstance(data.get("preparation"), dict) else {}
     latest_preparation = data.get("latest_preparation") if isinstance(data.get("latest_preparation"), dict) else {}
     runs = data.get("runs") if isinstance(data.get("runs"), list) else []
-    stored_project_dir = str(data.get("project_dir", "") or "").strip()
-    if stored_project_dir and Path(stored_project_dir).expanduser().is_absolute():
-        project_dir = stored_project_dir
-    else:
-        project_dir = str(fallback_dir)
+    # The directory explicitly opened by the caller is authoritative.  The
+    # stored value is historical display data only and may point to another
+    # machine, drive letter, or the pre-copy location of this project.
+    project_dir = str(fallback_dir.expanduser().resolve())
 
     return DockStartProject(
         project_name=str(data.get("project_name", fallback_dir.name) or fallback_dir.name),
         created_at=str(data.get("created_at", "") or _now_iso()),
         updated_at=str(data.get("updated_at", "") or _now_iso()),
         project_dir=project_dir,
+        schema_version=CURRENT_PROJECT_SCHEMA_VERSION,
+        revision=_coerce_non_negative_int(data.get("revision", 0), field_name="revision"),
         receptor=ProjectFileRef(
             source=str(receptor.get("source", "") or ""),
             source_id=str(receptor.get("source_id", "") or ""),
@@ -299,6 +427,7 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
             "ligand": str(latest_preparation.get("ligand", "") or ""),
         },
         runs=runs,
+        preserved_data=copy.deepcopy(data),
     )
 
 
@@ -332,18 +461,42 @@ def save_project(project: DockStartProject) -> dict[str, Any]:
                         "project.json 不能是符号链接或重解析到其他位置。",
                         raw_error=str(project_json),
                     )
-                current_data = json.loads(project_json.read_text(encoding="utf-8"))
-                current_updated_at = str(current_data.get("updated_at") or "") if isinstance(current_data, dict) else ""
-                if current_updated_at and project.updated_at and current_updated_at != project.updated_at:
+                current_data, _, _ = _read_and_migrate_project_unlocked(
+                    project_dir,
+                    persist_migration=True,
+                )
+                current_revision = _coerce_non_negative_int(
+                    current_data.get("revision", 0),
+                    field_name="revision",
+                )
+                if current_revision != project.revision:
                     return _error(
                         "PROJECT_SAVE_CONFLICT",
                         "project.json 已被其他操作更新，本次保存已拒绝以避免覆盖新数据。",
-                        raw_error=f"expected updated_at={project.updated_at}; current updated_at={current_updated_at}",
+                        raw_error=f"expected revision={project.revision}; current revision={current_revision}",
                         suggestion="请重新读取项目后再提交本次修改。",
                     )
+            else:
+                current_revision = 0
+                if project.revision not in {0, current_revision}:
+                    return _error(
+                        "PROJECT_SAVE_CONFLICT",
+                        "project.json 尚不存在，但内存项目 revision 不是初始值，已拒绝写入。",
+                        raw_error=f"expected revision=0; project revision={project.revision}",
+                    )
             project.updated_at = _now_iso()
+            project.schema_version = CURRENT_PROJECT_SCHEMA_VERSION
+            project.revision = current_revision + 1
             _write_project_json_unlocked(project_dir, project)
+            project.preserved_data = copy.deepcopy(project.to_dict())
         return _success(project, "项目已保存。")
+    except ProjectSchemaError as exc:
+        return _error(
+            exc.code,
+            exc.message,
+            exc.raw_error,
+            "请使用创建该项目的 DockStart 版本打开，或先复制项目后再迁移。",
+        )
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "PROJECT_SAVE_ERROR",
@@ -416,12 +569,27 @@ def load_project(project_dir: str) -> dict[str, Any]:
                 raw_error=str(project_json),
                 suggestion="请恢复项目根目录中的普通 project.json 文件。",
             )
-        data = json.loads(project_json.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return _error("PROJECT_JSON_INVALID", "project.json 格式不是 JSON 对象。")
-
+        with _project_lock(path):
+            data, migrated, backup_path = _read_and_migrate_project_unlocked(
+                path,
+                persist_migration=True,
+            )
         project = _project_from_dict(data, path)
-        return _success(project, "项目读取成功。")
+        warnings = []
+        message = "项目读取成功。"
+        if migrated:
+            message = "项目已迁移到当前数据格式并完成读取。"
+            warnings.append(
+                f"迁移前 project.json 已备份到 {backup_path.name if backup_path else '备份文件'}。",
+            )
+        return _success(project, message, warnings)
+    except ProjectSchemaError as exc:
+        return _error(
+            exc.code,
+            exc.message,
+            exc.raw_error,
+            "请使用兼容版本打开该项目；DockStart 未改写原文件。",
+        )
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "PROJECT_LOAD_ERROR",
@@ -1061,7 +1229,7 @@ def generate_vina_config(project_dir: str) -> dict[str, Any]:
         config_relative = "configs/vina_config.txt"
         config_path = Path(project.project_dir).expanduser() / "configs" / "vina_config.txt"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(preview["config_text"], encoding="utf-8")
+        _atomic_write_text(config_path, preview["config_text"])
 
         generated_at = _now_iso()
         project.config.vina_config_file = config_relative
@@ -1128,6 +1296,71 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _hash_snapshot(path: Path, relative_path: str = "") -> dict[str, Any]:
+    """Return an auditable file snapshot, including hashes for empty files."""
+
+    hash_error = ""
+    try:
+        exists = path.is_file()
+        size_bytes = path.stat().st_size if exists else 0
+        sha256 = _sha256_file(path) if exists else ""
+    except OSError as exc:
+        exists = False
+        size_bytes = 0
+        sha256 = ""
+        hash_error = str(exc)
+    return {
+        "relative_path": Path(relative_path).as_posix() if relative_path else "",
+        "absolute_path": str(path),
+        "exists": exists,
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+        "hash_error": hash_error,
+    }
+
+
+def _tool_hash_snapshot(path_value: str) -> dict[str, Any]:
+    path = Path(path_value).expanduser() if path_value else Path()
+    try:
+        is_file = bool(path_value and path.is_file())
+    except OSError:
+        is_file = False
+    if is_file:
+        try:
+            path = path.resolve(strict=True)
+        except OSError:
+            pass
+        return _hash_snapshot(path)
+    return {
+        "relative_path": "",
+        "absolute_path": str(path_value or ""),
+        "exists": False,
+        "size_bytes": 0,
+        "sha256": "",
+    }
+
+
+def _with_artifact_hashes(
+    metadata: dict[str, Any],
+    snapshots: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    artifacts = dict(metadata.get("artifacts") or {}) if isinstance(metadata.get("artifacts"), dict) else {}
+    for key, snapshot in snapshots.items():
+        existing = artifacts.get(key) if isinstance(artifacts.get(key), dict) else {}
+        # A verified hash is historical provenance.  Never replace it during a
+        # later recovery/analysis pass with bytes observed at a different time.
+        if re.fullmatch(r"[0-9a-fA-F]{64}", str(existing.get("sha256") or "")):
+            continue
+        artifacts[key] = copy.deepcopy(snapshot)
+    metadata["artifacts"] = artifacts
+    metadata["artifact_sha256"] = {
+        key: str(value.get("sha256") or "")
+        for key, value in artifacts.items()
+        if isinstance(value, dict)
+    }
+    return metadata
 
 
 def _parse_pdbqt_stats(path: Path, relative_path: str, *, ligand: bool = False) -> dict[str, Any]:
@@ -1390,7 +1623,7 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
         if blocking and message not in blockers:
             blockers.append(message)
 
-    loaded = load_project(project_dir)
+    loaded = recover_project_state(project_dir)
     if not loaded.get("ok"):
         error = loaded.get("error") or {}
         message = str(error.get("message") or "没有找到可读取的 DockStart 项目。")
@@ -2004,7 +2237,7 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
         config_snapshot_path = project_root / config_snapshot_file
         shutil.copyfile(receptor_path, receptor_snapshot_path)
         shutil.copyfile(ligand_path, ligand_snapshot_path)
-        config_snapshot_path.write_text(_build_run_snapshot_config(project, run_id), encoding="utf-8", newline="")
+        _atomic_write_text(config_snapshot_path, _build_run_snapshot_config(project, run_id))
         receptor_snapshot = _parse_pdbqt_stats(receptor_snapshot_path, receptor_snapshot_file)
         receptor_snapshot["source_relative_path"] = Path(project.receptor.file).as_posix()
         ligand_snapshot = _parse_pdbqt_stats(ligand_snapshot_path, ligand_snapshot_file, ligand=True)
@@ -2012,6 +2245,7 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
         config_sha256 = _sha256_file(config_snapshot_path)
         system_snapshot = _system_snapshot()
         vina_source = str((prerequisites.get("vina") or {}).get("source") or "unknown")
+        vina_binary = _tool_hash_snapshot(str(prerequisites.get("vina_path") or ""))
 
         metadata = {
             "run_id": run_id,
@@ -2032,7 +2266,10 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                 "version": prerequisites.get("vina_version", ""),
                 "path": prerequisites.get("vina_path", ""),
                 "source": vina_source,
+                "sha256": vina_binary["sha256"],
+                "size_bytes": vina_binary["size_bytes"],
             },
+            "vina_sha256": vina_binary["sha256"],
             "system": system_snapshot,
             "command": command,
             "config_file": Path(config_file).as_posix(),
@@ -2061,8 +2298,9 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             "exit_code": None,
             "best_affinity": None,
         }
+        _with_artifact_hashes(metadata, {"vina_binary_prepared": vina_binary})
 
-        (run_dir / "command_preview.txt").write_text(_format_command_preview(command) + "\n", encoding="utf-8")
+        _atomic_write_text(run_dir / "command_preview.txt", _format_command_preview(command) + "\n")
         _write_run_metadata(project.project_dir, run_id, metadata)
 
         project.runs.append(
@@ -2194,7 +2432,7 @@ def _workflow_viewer_status(
 
 
 def get_project_workflow_status(project_dir: str) -> dict[str, Any]:
-    loaded = load_project(project_dir)
+    loaded = recover_project_state(project_dir)
     if not loaded.get("ok"):
         return loaded
 
@@ -2365,13 +2603,7 @@ def _cancel_marker_path(project_dir: str | Path, run_id: str) -> Path:
 
 def _create_cancel_marker(project_dir: str | Path, run_id: str, requested_at: str) -> None:
     marker = _cancel_marker_path(project_dir, run_id)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    temporary = marker.with_name(f".{marker.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    try:
-        temporary.write_text(requested_at + "\n", encoding="utf-8")
-        os.replace(temporary, marker)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _atomic_write_text(marker, requested_at + "\n")
 
 
 @contextmanager
@@ -2730,13 +2962,14 @@ def export_scores_csv(project_dir: str, run_id: str, scores: list[dict[str, Any]
     assert project_scores_path is not None
 
     try:
+        buffer = io.StringIO(newline="")
+        writer = csv.DictWriter(buffer, fieldnames=SCORES_CSV_FIELDS)
+        writer.writeheader()
+        for score in scores:
+            writer.writerow({field: score[field] for field in SCORES_CSV_FIELDS})
+        csv_payload = buffer.getvalue()
         for target_path in (run_scores_path, project_scores_path):
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with target_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=SCORES_CSV_FIELDS)
-                writer.writeheader()
-                for score in scores:
-                    writer.writerow({field: score[field] for field in SCORES_CSV_FIELDS})
+            _atomic_write_text(target_path, csv_payload)
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "SCORES_CSV_WRITE_ERROR",
@@ -2887,24 +3120,30 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
 
     analyzed_at = _now_iso()
     best_affinity = parsed_scores[0]["affinity_kcal_mol"]
-    metadata.update(
-        {
-            "best_affinity": best_affinity,
-            "scores_file": exported["scores_file"],
-            "project_scores_file": exported["project_scores_file"],
-            "analyzed_at": analyzed_at,
-        },
-    )
-
-    try:
-        _write_run_metadata(project_dir, run_id, metadata)
-    except Exception as exc:  # noqa: BLE001 - return structured errors.
-        return _error(
-            "RUN_METADATA_WRITE_ERROR",
-            "写入 metadata.json 时发生错误。",
-            raw_error=str(exc),
-            suggestion="请确认 run 目录可以写入。",
+    project_path = Path(project_dir).expanduser().resolve()
+    scores_artifacts = {
+        "scores": _hash_snapshot(project_path / exported["scores_file"], exported["scores_file"]),
+        "project_scores": _hash_snapshot(
+            project_path / exported["project_scores_file"],
+            exported["project_scores_file"],
+        ),
+    }
+    def merge_analysis(current: dict[str, Any]) -> dict[str, Any]:
+        current.update(
+            {
+                "best_affinity": best_affinity,
+                "scores_file": exported["scores_file"],
+                "project_scores_file": exported["project_scores_file"],
+                "analyzed_at": analyzed_at,
+            },
         )
+        _with_artifact_hashes(current, scores_artifacts)
+        return current
+
+    metadata, metadata_error = _update_run_metadata_transaction(project_dir, run_id, merge_analysis)
+    if metadata_error:
+        return metadata_error
+    assert metadata is not None
 
     project_update = update_project_run_summary(
         project_dir,
@@ -3228,8 +3467,7 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
 
     try:
         for target_path in (project_report_path, run_report_path):
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(built["report_text"], encoding="utf-8")
+            _atomic_write_text(target_path, built["report_text"])
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "MARKDOWN_REPORT_WRITE_ERROR",
@@ -3239,23 +3477,26 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         )
 
     reported_at = _now_iso()
-    metadata = dict(built["metadata"])
-    metadata.update(
-        {
-            "report_file": run_report_file,
-            "project_report_file": project_report_file,
-            "reported_at": reported_at,
-        },
-    )
-    try:
-        _write_run_metadata(project_dir, run_id, metadata)
-    except Exception as exc:  # noqa: BLE001 - return structured errors.
-        return _error(
-            "RUN_METADATA_WRITE_ERROR",
-            "写入 metadata.json 时发生错误。",
-            raw_error=str(exc),
-            suggestion="请确认 run 目录可以写入。",
+    report_artifacts = {
+        "report": _hash_snapshot(run_report_path, run_report_file),
+        "project_report": _hash_snapshot(project_report_path, project_report_file),
+    }
+
+    def merge_report(current: dict[str, Any]) -> dict[str, Any]:
+        current.update(
+            {
+                "report_file": run_report_file,
+                "project_report_file": project_report_file,
+                "reported_at": reported_at,
+            },
         )
+        _with_artifact_hashes(current, report_artifacts)
+        return current
+
+    metadata, metadata_error = _update_run_metadata_transaction(project_dir, run_id, merge_report)
+    if metadata_error:
+        return metadata_error
+    assert metadata is not None
 
     project_update = update_project_run_summary(
         project_dir,
@@ -3330,9 +3571,10 @@ def update_project_run_summary(project_dir: str, run_id: str, patch: dict[str, A
                     "project.json 不能是符号链接或重解析到其他位置。",
                     raw_error=str(project_json),
                 )
-            data = json.loads(project_json.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                return _error("PROJECT_JSON_INVALID", "project.json 格式不是 JSON 对象。")
+            data, _, _ = _read_and_migrate_project_unlocked(
+                project_root,
+                persist_migration=True,
+            )
             project = _project_from_dict(data, project_root)
             project.project_dir = str(project_root)
             matched = False
@@ -3350,6 +3592,7 @@ def update_project_run_summary(project_dir: str, run_id: str, patch: dict[str, A
                 )
 
             project.updated_at = _now_iso()
+            project.revision += 1
             _write_project_json_unlocked(project_root, project)
         return {
             "ok": True,
@@ -3809,6 +4052,456 @@ def get_run_runtime_status(project_dir: str, run_id: str) -> dict[str, Any]:
     }
 
 
+_RUN_SUMMARY_KEYS = (
+    "status",
+    "stage",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+    "exit_code",
+    "best_affinity",
+    "output_file",
+    "log_file",
+    "scores_file",
+    "analyzed_at",
+    "report_file",
+    "project_report_file",
+    "reported_at",
+)
+
+
+def _run_summary_from_metadata(run_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "run_id": run_id,
+        "metadata_file": _metadata_relative_path(run_id),
+    }
+    for key in _RUN_SUMMARY_KEYS:
+        if key in metadata:
+            summary[key] = copy.deepcopy(metadata[key])
+    return summary
+
+
+def _recover_run_metadata(project_root: Path, run_id: str) -> tuple[dict[str, Any] | None, bool, dict[str, Any] | None]:
+    metadata, error = _read_run_metadata(str(project_root), run_id)
+    if error or metadata is None:
+        return None, False, error
+    changed = False
+    if str(metadata.get("status") or "") == "running":
+        elapsed = _duration_seconds(metadata.get("started_at"))
+        launch_grace = (
+            str(metadata.get("stage") or "") == "starting"
+            and not isinstance(metadata.get("pid"), int)
+            and isinstance(elapsed, (int, float))
+            and elapsed < 10
+        )
+        first_child = _verify_metadata_process(
+            metadata,
+            pid_key="pid",
+            executable_key="trusted_executable",
+            identity_key="process_identity",
+        )
+        first_executor = _verify_metadata_process(
+            metadata,
+            pid_key="executor_pid",
+            executable_key="executor_executable",
+            identity_key="executor_identity",
+        )
+        if not launch_grace and not first_child.get("ok") and not first_executor.get("ok"):
+            finished_at = _now_iso()
+
+            def interrupt_dead_run(current: dict[str, Any]) -> dict[str, Any]:
+                if current.get("status") != "running":
+                    return current
+                child_now = _verify_metadata_process(
+                    current,
+                    pid_key="pid",
+                    executable_key="trusted_executable",
+                    identity_key="process_identity",
+                )
+                executor_now = _verify_metadata_process(
+                    current,
+                    pid_key="executor_pid",
+                    executable_key="executor_executable",
+                    identity_key="executor_identity",
+                )
+                if child_now.get("ok") or executor_now.get("ok"):
+                    return current
+                current.update(
+                    {
+                        "status": "interrupted",
+                        "stage": "interrupted",
+                        "finished_at": finished_at,
+                        "duration_seconds": _duration_seconds(current.get("started_at"), finished_at),
+                        "progress": {
+                            "percent": int((current.get("progress") or {}).get("percent") or 0),
+                            "message": "DockStart 恢复检查确认 Vina 与执行器均已退出。",
+                        },
+                        "error_message": "应用或运行进程异常退出，本次 run 已标记为 interrupted。",
+                    },
+                )
+                current.pop("process_missing_since", None)
+                return current
+
+            recovered, transaction_error = _update_run_metadata_transaction(
+                str(project_root),
+                run_id,
+                interrupt_dead_run,
+            )
+            if transaction_error:
+                return metadata, False, transaction_error
+            assert recovered is not None
+            changed = recovered != metadata
+            metadata = recovered
+
+    if str(metadata.get("status") or "") in {"finished", "failed", "cancelled", "interrupted"}:
+        artifact_paths = {
+            "out": ("out.pdbqt", Path("runs", run_id, "out.pdbqt").as_posix()),
+            "log": ("log.txt", Path("runs", run_id, "log.txt").as_posix()),
+            "stdout": ("stdout.txt", Path("runs", run_id, "stdout.txt").as_posix()),
+            "stderr": ("stderr.txt", Path("runs", run_id, "stderr.txt").as_posix()),
+        }
+        snapshots: dict[str, dict[str, Any]] = {}
+        existing_artifacts = metadata.get("artifacts") if isinstance(metadata.get("artifacts"), dict) else {}
+        for key, (filename, relative) in artifact_paths.items():
+            existing = existing_artifacts.get(key) if isinstance(existing_artifacts.get(key), dict) else {}
+            if re.fullmatch(r"[0-9a-fA-F]{64}", str(existing.get("sha256") or "")):
+                continue
+            path, path_error = _safe_fixed_run_artifact(project_root, run_id, filename)
+            if path is not None and not path_error:
+                snapshots[key] = _hash_snapshot(path, relative)
+        vina_path = str(
+            (metadata.get("execution_vina") or {}).get("path")
+            if isinstance(metadata.get("execution_vina"), dict)
+            else metadata.get("vina_path") or ""
+        )
+        existing_vina = (
+            existing_artifacts.get("vina_binary_executed")
+            if isinstance(existing_artifacts.get("vina_binary_executed"), dict)
+            else {}
+        )
+        if vina_path and not re.fullmatch(r"[0-9a-fA-F]{64}", str(existing_vina.get("sha256") or "")):
+            # Hashing the executable currently found at this path cannot prove
+            # which bytes executed for a historical run.  Record the gap
+            # explicitly instead of manufacturing false provenance.
+            snapshots["vina_binary_executed"] = {
+                **copy.deepcopy(existing_vina),
+                "absolute_path": str(existing_vina.get("absolute_path") or vina_path),
+                "sha256": "",
+                "verification_status": "unknown",
+                "backfilled_unverified": True,
+                "message": "历史 run 未记录执行时 Vina 哈希，当前文件不能用于回填。",
+            }
+
+        if not snapshots:
+            return metadata, changed, None
+
+        def enrich_artifacts(current: dict[str, Any]) -> dict[str, Any]:
+            _with_artifact_hashes(current, snapshots)
+            return current
+
+        enriched, transaction_error = _update_run_metadata_transaction(
+            str(project_root),
+            run_id,
+            enrich_artifacts,
+        )
+        if transaction_error:
+            return metadata, changed, transaction_error
+        assert enriched is not None
+        changed = changed or enriched != metadata
+        metadata = enriched
+    return metadata, changed, None
+
+
+def _safe_preparation_metadata_path(
+    project_root: Path,
+    prep_id: str,
+    *,
+    create_record: bool = False,
+) -> Path | None:
+    """Resolve a preparation metadata path without following reparse dirs."""
+
+    if not PREPARATION_ID_PATTERN_COMPAT.match(prep_id):
+        return None
+    preparation_root = project_root / "preparation"
+    record_root = preparation_root / prep_id
+    metadata_path = record_root / "metadata.json"
+    try:
+        if create_record:
+            preparation_root.mkdir(exist_ok=True)
+            record_root.mkdir(exist_ok=True)
+        for candidate, expect_dir in ((preparation_root, True), (record_root, True)):
+            if not candidate.exists():
+                return None
+            resolved = candidate.resolve(strict=True)
+            if candidate.is_symlink() or resolved != candidate.absolute():
+                return None
+            if expect_dir and not resolved.is_dir():
+                return None
+        if metadata_path.exists():
+            if not metadata_path.is_file():
+                return None
+            if metadata_path.is_symlink() or metadata_path.resolve(strict=True) != metadata_path.absolute():
+                return None
+        elif not create_record:
+            return None
+    except OSError:
+        return None
+    return metadata_path
+
+
+def _recover_preparation_state(
+    project_root: Path,
+    project: DockStartProject,
+) -> tuple[list[str], bool]:
+    """Recover preparation state with target serialization and a miss grace."""
+
+    recovered: list[str] = []
+    project_changed = False
+    for target in ("receptor", "ligand"):
+        with _preparation_target_lock(project_root, target):
+            # Re-read after acquiring the same target lock used by claim and
+            # final publication.  The caller's earlier project snapshot may be
+            # stale by the time recovery reaches this target.
+            with _project_lock(project_root):
+                data, _, _ = _read_and_migrate_project_unlocked(project_root, persist_migration=True)
+                authoritative = _project_from_dict(data, project_root)
+            prep = getattr(authoritative.preparation, target)
+            if prep.status != "running":
+                continue
+
+            prep_id = str(prep.prep_id or authoritative.latest_preparation.get(target) or "")
+            metadata_path = _safe_preparation_metadata_path(project_root, prep_id, create_record=True)
+            metadata: dict[str, Any] = {}
+            if metadata_path is not None:
+                try:
+                    candidate = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    if isinstance(candidate, dict):
+                        metadata = candidate
+                except (OSError, json.JSONDecodeError):
+                    metadata = {}
+
+            metadata_status = str(metadata.get("status") or "")
+            if metadata_status in {"finished", "failed", "interrupted"}:
+                safe_terminal = metadata_status != "finished"
+                if metadata_status == "finished":
+                    output_file = str(metadata.get("output_file") or f"prepared/{target}.pdbqt")
+                    relative_output = Path(output_file)
+                    expected_output = metadata.get("output") if isinstance(metadata.get("output"), dict) else {}
+                    expected_hash = str(expected_output.get("sha256") or "")
+                    try:
+                        if relative_output.is_absolute():
+                            raise ValueError("prepared output 必须是项目内相对路径")
+                        output_path = (project_root / relative_output).absolute()
+                        output_path.relative_to(project_root)
+                        safe_terminal = (
+                            output_path.is_file()
+                            and not output_path.is_symlink()
+                            and output_path.resolve(strict=True) == output_path
+                            and output_path.stat().st_size > 0
+                            and bool(re.fullmatch(r"[0-9a-fA-F]{64}", expected_hash))
+                            and _sha256_file(output_path).lower() == expected_hash.lower()
+                        )
+                    except (OSError, ValueError):
+                        safe_terminal = False
+                if safe_terminal:
+                    prep.status = metadata_status  # type: ignore[assignment]
+                    prep.finished_at = str(metadata.get("finished_at") or "") or None
+                    prep.exit_code = metadata.get("exit_code") if isinstance(metadata.get("exit_code"), int) else None
+                    prep.error = copy.deepcopy(metadata.get("error")) if isinstance(metadata.get("error"), dict) else None
+                    setattr(project.preparation, target, copy.deepcopy(prep))
+                    project.latest_preparation[target] = authoritative.latest_preparation.get(target, prep_id)
+                    if metadata_status == "finished":
+                        getattr(project, target).file = str(
+                            metadata.get("output_file") or f"prepared/{target}.pdbqt",
+                        )
+                    project_changed = True
+                    recovered.append(prep_id or target)
+                    continue
+
+            verification = _verify_metadata_process(
+                metadata,
+                pid_key="executor_pid",
+                executable_key="executor_executable",
+                identity_key="executor_identity",
+            )
+            if verification.get("ok"):
+                if metadata_path is not None and metadata.get("process_missing_since"):
+                    metadata.pop("process_missing_since", None)
+                    _atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+                continue
+
+            missing_since = str(metadata.get("process_missing_since") or "")
+            if not missing_since:
+                if metadata_path is not None:
+                    if not metadata:
+                        metadata = {
+                            "prep_id": prep_id,
+                            "target": target,
+                            "status": "running",
+                            "output_file": f"prepared/{target}.pdbqt",
+                        }
+                    metadata["process_missing_since"] = _now_iso()
+                    metadata["process_missing_probe"] = str(verification.get("message") or "执行器身份不可验证。")
+                    _atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+                # A single missing observation is not enough to kill a task.
+                continue
+
+            missing_seconds = _duration_seconds(missing_since)
+            if not isinstance(missing_seconds, (int, float)) or missing_seconds < 2.0:
+                continue
+            verification_again = _verify_metadata_process(
+                metadata,
+                pid_key="executor_pid",
+                executable_key="executor_executable",
+                identity_key="executor_identity",
+            )
+            if verification_again.get("ok"):
+                if metadata_path is not None:
+                    metadata.pop("process_missing_since", None)
+                    metadata.pop("process_missing_probe", None)
+                    _atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+                continue
+
+            finished_at = _now_iso()
+            prep.status = "interrupted"
+            prep.finished_at = finished_at
+            prep.exit_code = None
+            prep.error = {
+                "code": "PREPARATION_INTERRUPTED",
+                "message": f"{target} 自动准备执行器连续不可验证，本次记录已恢复为 interrupted。",
+                "raw_error": str(verification_again.get("message") or "缺少可验证的执行器进程。"),
+                "suggestion": "请查看 preparation 记录后重新准备；DockStart 未采用候选输出。",
+            }
+            setattr(project.preparation, target, copy.deepcopy(prep))
+            project.latest_preparation[target] = authoritative.latest_preparation.get(target, prep_id)
+            project_changed = True
+            recovered.append(prep_id or target)
+            if metadata_path is not None and metadata:
+                metadata.update(
+                    {
+                        "status": "interrupted",
+                        "finished_at": finished_at,
+                        "exit_code": None,
+                        "error": copy.deepcopy(prep.error),
+                        "published": False,
+                    },
+                )
+                metadata.pop("process_missing_since", None)
+                metadata.pop("process_missing_probe", None)
+                _atomic_write_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2) + "\n")
+    return recovered, project_changed
+
+
+# Kept local to avoid a circular import from preparation.py.
+PREPARATION_ID_PATTERN_COMPAT = re.compile(r"^(receptor|ligand)_(\d{3,})$")
+
+
+def recover_project_state(project_dir: str) -> dict[str, Any]:
+    """Reconcile crash leftovers with authoritative run/preparation metadata."""
+
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        return loaded
+    project_root = Path(project_dir).expanduser().resolve()
+    project = _project_from_dict(loaded["project"], project_root)
+    recovered_runs: list[str] = []
+    recovery_errors: list[dict[str, Any]] = []
+    metadata_by_run: dict[str, dict[str, Any]] = {}
+
+    run_ids: set[str] = {
+        str(item.get("run_id"))
+        for item in project.runs
+        if isinstance(item, dict) and RUN_ID_PATTERN.match(str(item.get("run_id") or ""))
+    }
+    runs_dir = project_root / "runs"
+    if runs_dir.is_dir() and not runs_dir.is_symlink():
+        run_ids.update(
+            child.name
+            for child in runs_dir.iterdir()
+            if child.is_dir() and not child.is_symlink() and RUN_ID_PATTERN.match(child.name)
+        )
+    for run_id in sorted(run_ids):
+        metadata, changed, error = _recover_run_metadata(project_root, run_id)
+        if error:
+            error_detail = error.get("error") or {"message": f"{run_id} 恢复失败。"}
+            if str(error_detail.get("code") or "") != "RUN_METADATA_NOT_FOUND":
+                recovery_errors.append(error_detail)
+            continue
+        if metadata is None:
+            continue
+        metadata_by_run[run_id] = metadata
+        if changed:
+            recovered_runs.append(run_id)
+
+    recovered_preparations, preparation_changed = _recover_preparation_state(project_root, project)
+
+    try:
+        with _project_lock(project_root):
+            data, _, _ = _read_and_migrate_project_unlocked(project_root, persist_migration=True)
+            latest = _project_from_dict(data, project_root)
+            summaries = {
+                str(item.get("run_id")): item
+                for item in latest.runs
+                if isinstance(item, dict) and item.get("run_id")
+            }
+            project_changed = False
+            for run_id, metadata in metadata_by_run.items():
+                authoritative = _run_summary_from_metadata(run_id, metadata)
+                summary = summaries.get(run_id)
+                if summary is None:
+                    latest.runs.append(authoritative)
+                    summaries[run_id] = authoritative
+                    project_changed = True
+                else:
+                    for key, value in authoritative.items():
+                        if summary.get(key) != value:
+                            summary[key] = copy.deepcopy(value)
+                            project_changed = True
+
+            if preparation_changed:
+                for target in ("receptor", "ligand"):
+                    recovered_prep = getattr(project.preparation, target)
+                    current_prep = getattr(latest.preparation, target)
+                    if (
+                        recovered_prep.status in {"finished", "failed", "interrupted"}
+                        and current_prep.status == "running"
+                        and current_prep.prep_id == recovered_prep.prep_id
+                    ):
+                        setattr(latest.preparation, target, recovered_prep)
+                        if recovered_prep.status == "finished":
+                            getattr(latest, target).file = getattr(project, target).file
+                        project_changed = True
+
+            if project_changed:
+                latest.updated_at = _now_iso()
+                latest.revision += 1
+                _write_project_json_unlocked(project_root, latest)
+            project = latest
+    except Exception as exc:  # noqa: BLE001 - recovery must remain structured.
+        return _error(
+            "PROJECT_RECOVERY_WRITE_ERROR",
+            "恢复运行状态时无法更新 project.json。",
+            raw_error=str(exc),
+            suggestion="请确认项目目录可写，并保留现有 run/preparation 审计文件。",
+        )
+
+    return {
+        "ok": not recovery_errors,
+        "project_dir": str(project_root),
+        "project": project.to_dict(),
+        "recovered_runs": sorted(set(recovered_runs)),
+        "recovered_preparations": recovered_preparations,
+        "recovery_errors": recovery_errors,
+        "message": (
+            "项目恢复检查完成，已收敛中断记录。"
+            if recovered_runs or recovered_preparations
+            else "项目恢复检查完成，未发现需要收敛的记录。"
+        ),
+        "error": recovery_errors[0] if recovery_errors else None,
+    }
+
+
 def cancel_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     metadata, error = _read_run_metadata(project_dir, run_id)
     if error:
@@ -4078,6 +4771,7 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             detection.raw_error,
             "请在设置页修复 Vina 路径后重新执行。",
         )
+    execution_vina_binary = _tool_hash_snapshot(detection.path)
 
     project_path = Path(project_dir).expanduser().resolve()
     stdout_file = str(prerequisites["stdout_file"])
@@ -4126,6 +4820,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
                     "path": detection.path,
                     "version": detection.version,
                     "source": detection.source,
+                    "sha256": execution_vina_binary["sha256"],
+                    "size_bytes": execution_vina_binary["size_bytes"],
                 },
                 "stdout_file": stdout_file,
                 "stderr_file": stderr_file,
@@ -4258,9 +4954,51 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     finished_at = _now_iso()
     output_ok = output_path.is_file() and output_path.stat().st_size > 0
     cancel_requested = _cancel_marker_path(project_dir, run_id).exists()
+    execution_vina_binary_after = _tool_hash_snapshot(detection.path)
+    start_vina_hash = str(execution_vina_binary.get("sha256") or "")
+    end_vina_hash = str(execution_vina_binary_after.get("sha256") or "")
+    vina_hashes_comparable = bool(
+        re.fullmatch(r"[0-9a-fA-F]{64}", start_vina_hash)
+        and re.fullmatch(r"[0-9a-fA-F]{64}", end_vina_hash)
+    )
+    vina_hash_match: bool | None = (
+        start_vina_hash.lower() == end_vina_hash.lower()
+        if vina_hashes_comparable
+        else None
+    )
+    vina_integrity_warning = ""
+    if vina_hash_match is False:
+        vina_integrity_warning = "Vina 可执行文件在本次运行期间发生变化；本次结果需要人工复核。"
+    elif vina_hash_match is None:
+        vina_integrity_warning = "无法在运行结束时重新验证 Vina 可执行文件哈希；本次工具溯源不完整。"
+    run_artifacts = {
+        "vina_binary_executed": execution_vina_binary,
+        "vina_binary_observed_after_execution": execution_vina_binary_after,
+        "out": _hash_snapshot(output_path, output_file),
+        "log": _hash_snapshot(log_path, log_file),
+        "stdout": _hash_snapshot(stdout_path, stdout_file),
+        "stderr": _hash_snapshot(stderr_path, stderr_file),
+    }
 
     def finalize(current: dict[str, Any]) -> dict[str, Any]:
+        current["vina_binary_integrity"] = {
+            "start_sha256": start_vina_hash,
+            "end_sha256": end_vina_hash,
+            "match": vina_hash_match,
+            "checked_at": finished_at,
+        }
+        if vina_integrity_warning:
+            warnings = list(current.get("warnings") or []) if isinstance(current.get("warnings"), list) else []
+            if vina_integrity_warning not in warnings:
+                warnings.append(vina_integrity_warning)
+            current["warnings"] = warnings
         if str(current.get("status") or "") in {"finished", "failed", "cancelled", "interrupted"}:
+            _with_artifact_hashes(current, run_artifacts)
+            current["output_sha256"] = {
+                key: str(snapshot.get("sha256") or "")
+                for key, snapshot in run_artifacts.items()
+                if key not in {"vina_binary_executed", "vina_binary_observed_after_execution"}
+            }
             return current
         if current.get("status") != "running":
             return current
@@ -4304,6 +5042,12 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             current["error_message"] = error_message
         else:
             current.pop("error_message", None)
+        _with_artifact_hashes(current, run_artifacts)
+        current["output_sha256"] = {
+            key: str(snapshot.get("sha256") or "")
+            for key, snapshot in run_artifacts.items()
+            if key not in {"vina_binary_executed", "vina_binary_observed_after_execution"}
+        }
         return current
 
     final_metadata, transaction_error = _update_run_metadata_transaction(project_dir, run_id, finalize)
@@ -4376,7 +5120,14 @@ def main() -> None:
         if len(sys.argv) < 3:
             _print_json(_error("PROJECT_LOAD_ARGS", "读取项目需要 project_dir 参数。"))
             return
-        _print_json(load_project(sys.argv[2]))
+        _print_json(recover_project_state(sys.argv[2]))
+        return
+
+    if command == "recover-project":
+        if len(sys.argv) < 3:
+            _print_json(_error("PROJECT_RECOVERY_ARGS", "恢复项目状态需要 project_dir 参数。"))
+            return
+        _print_json(recover_project_state(sys.argv[2]))
         return
 
     if command == "import-receptor":

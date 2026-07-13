@@ -1,13 +1,16 @@
 {
   "name": "dockstart-desktop",
   "private": true,
-  "version": "0.9.7",
+  "version": "0.10.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
     "prepare:basic-resources": "python ../../scripts/prepare_basic_release_resources.py --repo-root ../..",
+    "prepare:assisted-resources": "python ../../scripts/prepare_assisted_release_resources.py --repo-root ../..",
     "build:desktop": "npm run prepare:basic-resources && tauri build --config src-tauri/tauri.basic.conf.json",
+    "build:desktop:assisted": "npm run prepare:assisted-resources && tauri build --config src-tauri/tauri.assisted.conf.json",
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "tauri": "tauri"
   },

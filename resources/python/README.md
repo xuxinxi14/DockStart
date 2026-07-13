@@ -3,11 +3,12 @@
 `resources/python/` 是 DockStart 本地构建输入目录。真实 `python.exe`、`Lib/`、
 `DLLs/`、`Scripts/` 与 `site-packages/` 均由 `.gitignore` 排除，不随源码仓库提交。
 
-DockStart v0.9.7 Basic Stable 的安装包只分发运行 Python 后端所需的精简 CPython：
+DockStart v0.10.0 Basic Stable 的安装包只分发运行 Python 后端所需的精简 CPython：
 
 - 包含 `python.exe`、标准库和运行所需 DLL；
 - 不包含 `Lib/site-packages/`；
 - 不包含 `Scripts/`；
+- 不包含 `Lib/ensurepip` 及其内嵌的 pip/setuptools wheel；
 - 不包含 RDKit、Meeko、NumPy、SciPy、ProDy 或其命令行工具。
 
 发布时必须通过：
@@ -32,6 +33,10 @@ Assisted Mode 的准备工具链解析优先级为：
 configured > bundled > current_environment
 ```
 
-因此 v0.9.7 Basic Stable 中，如果用户需要从 PDB/SDF 自动准备 PDBQT，仍需在
+因此 v0.10.0 Basic Stable 中，如果用户需要从 PDB/SDF 自动准备 PDBQT，仍需在
 设置页配置包含 RDKit 与 Meeko 的独立 Python 环境。缺少这些包不会阻止已有
 PDBQT 的 Basic Mode。
+
+v0.10.0 Assisted Stable 使用单独的 `.release/assisted/` 白名单 stage，从固定离线
+wheelhouse 装配普通目录形式、可替换的 RDKit/Meeko 工具链；它不会直接复制此目录中
+可能存在的可变 `site-packages`。

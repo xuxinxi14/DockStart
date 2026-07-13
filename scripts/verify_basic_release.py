@@ -14,6 +14,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+try:  # Direct script execution from the scripts directory.
+    from dependency_license_bundle import DependencyLicenseBundleError, verify_dependency_license_bundle
+except ModuleNotFoundError:  # Import through tests/tools from the repository root.
+    from scripts.dependency_license_bundle import DependencyLicenseBundleError, verify_dependency_license_bundle
+
 
 class BasicReleaseVerificationError(RuntimeError):
     """Raised when a packaged Basic release fails its acceptance gate."""
@@ -76,6 +81,27 @@ def _verify_runtime_boundary(python_exe: Path, resources_dir: Path) -> dict[str,
         raise BasicReleaseVerificationError("Packaged manifest is not the basic_stable profile.")
     if manifest.get("includes_bundled_rdkit") is not False or manifest.get("includes_bundled_meeko") is not False:
         raise BasicReleaseVerificationError("Packaged manifest incorrectly claims RDKit/Meeko are bundled.")
+    for filename in (
+        "DockStart-Apache-2.0.txt",
+        "AutoDock-Vina_LICENSE.txt",
+        "Python_LICENSE.txt",
+        "3Dmol_LICENSE.txt",
+        "React_LICENSE.txt",
+        "React-DOM_LICENSE.txt",
+        "Phosphor-Icons_LICENSE.txt",
+        "Tauri_LICENSE_APACHE-2.0.txt",
+        "Tauri_LICENSE_MIT.txt",
+        "Tauri-plugin-dialog_LICENSE.spdx",
+        "Serde_LICENSE-MIT.txt",
+        "THIRD_PARTY_NOTICES.md",
+    ):
+        _require_file(resources_dir / "licenses" / filename, f"Packaged license {filename}")
+    if (resources_dir / "python" / "Lib" / "ensurepip").exists():
+        raise BasicReleaseVerificationError("Basic package contains untracked ensurepip wheels.")
+    try:
+        dependency_licenses = verify_dependency_license_bundle(resources_dir / "licenses" / "dependencies")
+    except DependencyLicenseBundleError as exc:
+        raise BasicReleaseVerificationError(f"Packaged dependency license bundle is invalid: {exc}") from exc
 
     probe = (
         "import importlib.util,json,pathlib,subprocess,datetime;"
@@ -99,7 +125,11 @@ def _verify_runtime_boundary(python_exe: Path, resources_dir: Path) -> dict[str,
         raise BasicReleaseVerificationError(
             "Basic package contains preparation packages that must remain external: " + ", ".join(unexpected),
         )
-    return {"manifest_profile": manifest.get("release_profile"), "scientific_modules": modules}
+    return {
+        "manifest_profile": manifest.get("release_profile"),
+        "scientific_modules": modules,
+        "dependency_licenses": dependency_licenses,
+    }
 
 
 def verify_basic_release(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
@@ -7,6 +7,12 @@ import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection }
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RawStructureStatus, RunFileStatus } from "../types";
+import {
+  startPdbFetchTask,
+  startPubchemFetchTask,
+  waitForBackgroundTask,
+  type BackgroundTaskStatus,
+} from "../utils/backgroundTasks";
 
 type StructureFetchPageProps = {
   project: DockStartProject;
@@ -89,6 +95,9 @@ export default function StructureFetchPage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const activeTaskAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
 
   useEffect(() => {
     setProject(initialProject);
@@ -134,24 +143,44 @@ export default function StructureFetchPage({
     void reloadStatus();
   }, [reloadStatus]);
 
+  const waitForFetchTask = useCallback(
+    async (started: BackgroundTaskStatus, controller: AbortController) => waitForBackgroundTask(
+      started.task_id,
+      (task) => {
+        setMessage(task.progress.message || task.message);
+        if (task.error) setRawError(task.error);
+      },
+      controller.signal,
+    ),
+    [],
+  );
+
   const fetchPdb = async () => {
     setIsBusy(true);
     setMessage("");
     setRawError("");
+    activeTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeTaskAbortRef.current = controller;
     try {
-      const rawPayload = await invoke<string>("fetch_pdb_structure", {
-        projectDir: project.project_dir,
-        pdbId,
-        format: pdbFormat,
-        overwrite: overwritePdb,
-      });
-      const response = parseProjectResponse(rawPayload);
+      const started = await startPdbFetchTask(project.project_dir, pdbId, pdbFormat, overwritePdb);
+      const completed = await waitForFetchTask(started, controller);
+      if (completed.status === "cancelled") {
+        setMessage("受体结构获取任务已取消。");
+        return;
+      }
+      if (completed.status === "failed" || !completed.result_json) {
+        throw new Error(completed.error || completed.message || "受体结构获取任务没有返回结果。");
+      }
+      const response = parseProjectResponse(completed.result_json);
       applyProjectResponse(response, "受体原始结构已下载。");
       if (response.ok) await reloadStatus();
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage("无法下载 RCSB 受体结构。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
       setIsBusy(false);
     }
   };
@@ -160,21 +189,34 @@ export default function StructureFetchPage({
     setIsBusy(true);
     setMessage("");
     setRawError("");
+    activeTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeTaskAbortRef.current = controller;
     try {
-      const rawPayload = await invoke<string>("fetch_pubchem_ligand", {
-        projectDir: project.project_dir,
-        query: pubchemQuery,
-        queryType: pubchemQueryType,
-        format: "sdf",
-        overwrite: overwritePubchem,
-      });
-      const response = parseProjectResponse(rawPayload);
+      const started = await startPubchemFetchTask(
+        project.project_dir,
+        pubchemQuery,
+        pubchemQueryType,
+        "sdf",
+        overwritePubchem,
+      );
+      const completed = await waitForFetchTask(started, controller);
+      if (completed.status === "cancelled") {
+        setMessage("配体结构获取任务已取消。");
+        return;
+      }
+      if (completed.status === "failed" || !completed.result_json) {
+        throw new Error(completed.error || completed.message || "配体结构获取任务没有返回结果。");
+      }
+      const response = parseProjectResponse(completed.result_json);
       applyProjectResponse(response, "配体原始结构已下载。");
       if (response.ok) await reloadStatus();
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage("无法下载 PubChem 配体结构。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
       setIsBusy(false);
     }
   };

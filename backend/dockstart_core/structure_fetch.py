@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from dockstart_core.persistence import atomic_write_bytes
 from dockstart_core.project import _error, _now_iso, _project_from_dict, _success, load_project, save_project
 
 PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
@@ -151,8 +151,7 @@ def _write_raw_file(target_path: Path, data: bytes, overwrite: bool) -> dict[str
             raw_error=str(target_path),
             suggestion="如需重新下载，请开启 overwrite。",
         )
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_bytes(data)
+    atomic_write_bytes(target_path, data)
     return {"ok": True, "path": str(target_path), "error": None}
 
 
@@ -228,7 +227,7 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
 
     try:
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target_path)
+        atomic_write_bytes(target_path, source.read_bytes())
         file_ref = project.receptor if is_receptor else project.ligand
         file_ref.source = "local_file"
         file_ref.source_id = source.name

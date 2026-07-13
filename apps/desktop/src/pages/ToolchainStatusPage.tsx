@@ -170,22 +170,77 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
   };
 }
 
-function normalizeRepairResponse(rawPayload: string): ToolchainRepairSuggestionsResponse {
-  const parsed = JSON.parse(rawPayload) as Partial<ToolchainRepairSuggestionsResponse>;
+function buildRepairFromStatus(status: ToolchainStatusResponse): ToolchainRepairSuggestionsResponse {
+  const suggestions: ToolchainRepairSuggestion[] = [];
+  if (status.active_vina?.status !== "ok") {
+    suggestions.push({
+      issue: "vina_missing",
+      severity: "error",
+      affected_mode: "Basic Mode / Assisted Mode",
+      explanation: "DockStart 没有检测到可用 AutoDock Vina，因此无法执行真实 docking。",
+      recommended_fix: "准备 AutoDock Vina，并在设置页填写 vina.exe 路径；完整发行包则应先核验随附 Vina。",
+      documentation_link: "docs/toolchain_repair_guide.md",
+      copyable_commands: ["vina --version"],
+      manual_steps: [
+        "确认本机或发行包已有 AutoDock Vina。",
+        "在命令行运行 vina --version 或 vina.exe --version 验证。",
+        "必要时在 DockStart 设置页填写 vina.exe 的完整路径。",
+        "回到工具链页点击“重新检测”。",
+      ],
+    });
+  }
+
+  const pythonReady = status.resolved_python?.status === "ok";
+  const rdkitReady = status.rdkit_for_python?.status === "ok";
+  const meekoReady = status.meeko_for_python?.status === "ok";
+  if (!pythonReady || !rdkitReady || !meekoReady) {
+    const missing = [
+      !pythonReady ? "Python" : "",
+      !rdkitReady ? "RDKit" : "",
+      !meekoReady ? "Meeko" : "",
+    ].filter(Boolean);
+    suggestions.push({
+      issue: "python_rdkit_meeko_incomplete",
+      severity: "warning",
+      affected_mode: "Assisted Mode",
+      explanation: `自动准备 PDBQT 需要可用 Python + RDKit + Meeko；当前缺少或未检测通过：${missing.join("、")}。`,
+      recommended_fix: "优先使用发行包随附工具链；开发环境可配置独立 Python 工具链。",
+      documentation_link: "docs/toolchain_repair_guide.md",
+      copyable_commands: [
+        "python -c \"import rdkit, meeko; print('RDKit/Meeko ok')\"",
+      ],
+      manual_steps: [
+        "先确认当前 Python 路径是否来自 DockStart 完整发行包或独立工具链。",
+        "确认 rdkit 和 meeko 可以从该 Python import。",
+        "必要时在 DockStart 设置页填写替代 Python 的完整路径。",
+        "回到工具链页点击“重新检测”。",
+      ],
+    });
+  }
+
+  const pythonPath = status.resolved_python?.path.replace(/\//g, "\\").toLowerCase() ?? "";
+  if (pythonPath.includes("windowsapps") || pythonPath.includes("pythonsoftwarefoundation")) {
+    suggestions.push({
+      issue: "microsoft_store_python_not_recommended",
+      severity: "warning",
+      affected_mode: "Assisted Mode",
+      explanation: "当前 Python 看起来来自 Microsoft Store；该环境的包管理和路径行为不适合作为稳定的 RDKit/Meeko 工具链。",
+      recommended_fix: "改用 DockStart 随附工具链或独立 Python 环境，并在设置页配置其 python.exe。",
+      documentation_link: "docs/toolchain_repair_guide.md",
+      copyable_commands: [],
+      manual_steps: [
+        "不要把 RDKit/Meeko 安装进 Microsoft Store Python。",
+        "选择 DockStart 随附 Python 或创建独立工具链。",
+        "把目标环境的 python.exe 填入 DockStart 设置页。",
+      ],
+    });
+  }
+
   return {
-    ok: Boolean(parsed.ok),
-    suggestions: (parsed.suggestions ?? []).map((item) => ({
-      issue: item.issue ?? "unknown",
-      severity: item.severity ?? "info",
-      affected_mode: item.affected_mode ?? "未知模式",
-      explanation: item.explanation ?? "",
-      recommended_fix: item.recommended_fix ?? "",
-      documentation_link: item.documentation_link ?? "docs/toolchain_repair_guide.md",
-      copyable_commands: item.copyable_commands ?? [],
-      manual_steps: item.manual_steps ?? [],
-    })),
-    message: parsed.message ?? "",
-    error: parsed.error ?? null,
+    ok: status.ok,
+    suggestions,
+    message: suggestions.length ? "工具链修复建议已由本次检测结果生成。" : "当前没有需要修复的关键工具链问题。",
+    error: status.error ?? null,
   };
 }
 
@@ -394,15 +449,14 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
   const [isDiagnosticLoading, setIsDiagnosticLoading] = useState(false);
   const [copyMessage, setCopyMessage] = useState("");
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (force = false) => {
     setIsLoading(true);
     try {
-      const [rawPayload, repairPayload] = await Promise.all([
-        invoke<string>("get_toolchain_status"),
-        invoke<string>("get_toolchain_repair_suggestions"),
-      ]);
-      setStatus(normalizeResponse(rawPayload));
-      setRepair(normalizeRepairResponse(repairPayload));
+      if (force) await invoke<string>("refresh_runtime_cache");
+      const rawPayload = await invoke<string>("get_toolchain_status");
+      const nextStatus = normalizeResponse(rawPayload);
+      setStatus(nextStatus);
+      setRepair(buildRepairFromStatus(nextStatus));
     } catch (error) {
       setStatus(buildFrontendError(error));
       setRepair(buildFrontendRepairError(error));
@@ -412,7 +466,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
   }, []);
 
   useEffect(() => {
-    void loadStatus();
+    void loadStatus(false);
   }, [loadStatus]);
 
   const copyPythonPath = async () => {
@@ -501,7 +555,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           {onOpenSettings ? (
             <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
           ) : null}
-          <button className="primary-button" type="button" onClick={loadStatus} disabled={isLoading}>
+          <button className="primary-button" type="button" onClick={() => void loadStatus(true)} disabled={isLoading}>
             {isLoading ? "检测中..." : "重新检测"}
           </button>
           </>
@@ -605,14 +659,22 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 </button>
               </div>
               {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
-              <p className="placeholder-note">DockStart 只检测和调用已有环境，不自动安装 RDKit 或 Meeko。</p>
+              <p className="placeholder-note">
+                {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
+                  ? "Assisted Stable 已随附固定 RDKit/Meeko；兼容的用户配置 Python 仍优先。运行时不会联网改环境。"
+                  : "当前 profile 不随附 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。"}
+              </p>
             </article>
 
             <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
                 <div>
                   <h2>随附资源</h2>
-                  <p>Basic 包随附 Vina 与 DockStart 后端 Python；后端 Python 不代表包含 RDKit/Meeko。</p>
+                  <p>
+                    {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
+                      ? "Assisted 包随附 Vina，以及独立、可替换的 RDKit/Meeko Python runtime。"
+                      : "Basic 包随附 Vina 与 DockStart 后端 Python；后端 Python 不代表包含 RDKit/Meeko。"}
+                  </p>
                 </div>
                 <span className={`status-badge ${packageStatusClass(status.bundled_vina.package_status)}`}>
                   {packageStatusText[status.bundled_vina.package_status]}

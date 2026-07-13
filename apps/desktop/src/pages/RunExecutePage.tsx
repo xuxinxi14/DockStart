@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
@@ -8,7 +8,14 @@ import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
-import type { DockStartProject, ProjectResponse, RunFileStatus } from "../types";
+import type { DockStartProject, ProjectResponse, RunFileStatus, RunRuntimeStatusResponse } from "../types";
+import {
+  cancelQueuedBackgroundTask,
+  findActiveBackgroundTask,
+  startVinaRunTask,
+  waitForBackgroundTask,
+  type BackgroundTaskStatus,
+} from "../utils/backgroundTasks";
 
 type RunExecutePageProps = {
   project: DockStartProject;
@@ -23,7 +30,7 @@ const runStatusText: Record<string, string> = {
   running: "进行中",
   finished: "已完成",
   failed: "失败",
-  cancelled: "失败",
+  cancelled: "已取消",
   unknown: "需检查",
 };
 
@@ -37,7 +44,8 @@ const fileStatusText: Record<RunFileStatus["status"], string> = {
 function toneForRun(status: string): "ok" | "warning" | "error" | "muted" | "info" {
   if (status === "finished" || status === "prepared") return "ok";
   if (status === "running") return "info";
-  if (status === "failed" || status === "cancelled") return "error";
+  if (status === "failed") return "error";
+  if (status === "cancelled") return "warning";
   return "muted";
 }
 
@@ -98,12 +106,18 @@ export default function RunExecutePage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
+  const activeTaskAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
 
   const status = metadataString(metadata, "status") || "unknown";
   const exitCode = metadataNumber(metadata, "exit_code");
   const command = useMemo(() => metadataCommand(metadata), [metadata]);
   const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "命令记录为空。";
-  const canExecute = status === "prepared" && !isBusy;
+  const taskIsActive = activeTask?.status === "queued" || activeTask?.status === "running";
+  const runIsActive = taskIsActive || status === "running";
+  const canExecute = status === "prepared" && !isBusy && !runIsActive;
   const disabledReason = status === "prepared" ? "" : `当前状态为 ${runStatusText[status] ?? status}。`;
 
   const applyResponse = useCallback(
@@ -128,34 +142,165 @@ export default function RunExecutePage({
         projectDir: initialProject.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "运行状态已刷新。");
+      const response = parseProjectResponse(rawPayload);
+      applyResponse(response, "运行状态已刷新。");
+      if (metadataString(response.metadata ?? null, "status") === "running") {
+        const runtimePayload = await invoke<string>("get_run_runtime_status", {
+          projectDir: initialProject.project_dir,
+          runId,
+        });
+        const runtime = JSON.parse(runtimePayload) as RunRuntimeStatusResponse;
+        if (runtime.project) {
+          setProject(runtime.project);
+          onProjectChange(runtime.project);
+        }
+        if (runtime.metadata) setMetadata(runtime.metadata);
+        setMessage(runtime.message || "已重新核验未完成运行的进程状态。");
+        setRawError(runtime.error?.raw_error || runtime.error?.suggestion || "");
+      }
     } catch (error) {
       setMessage("无法读取运行状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
-  }, [applyResponse, initialProject.project_dir, runId]);
+  }, [applyResponse, initialProject.project_dir, onProjectChange, runId]);
+
+  const waitForVinaTask = useCallback(
+    async (started: BackgroundTaskStatus, controller: AbortController) => {
+      setActiveTask(started);
+      const completed = await waitForBackgroundTask(
+        started.task_id,
+        (task) => {
+          setActiveTask(task);
+          setMessage(task.progress.message || task.message);
+          setMetadata((current) => {
+            const currentStage = metadataString(current, "stage");
+            const observedStage = task.stage === "cancel_pending" ? "cancelling" : task.stage;
+            const nextStage = (currentStage === "cancelling" && (observedStage === "starting" || observedStage === "running"))
+              ? currentStage
+              : observedStage;
+            return {
+              ...(current ?? {}),
+              status: task.status === "queued" ? "prepared" : task.status,
+              stage: nextStage,
+            };
+          });
+          if (task.error) setRawError(task.error);
+        },
+        controller.signal,
+      );
+      setActiveTask(completed);
+      return completed;
+    },
+    [],
+  );
 
   useEffect(() => {
     void reloadRun();
   }, [reloadRun]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    let resumedTaskId = "";
+    const reconnect = async () => {
+      try {
+        const existing = await findActiveBackgroundTask(initialProject.project_dir, { runId, kind: "vina" });
+        if (!existing || disposed) return;
+        resumedTaskId = existing.task_id;
+        activeTaskAbortRef.current?.abort();
+        activeTaskAbortRef.current = controller;
+        setIsBusy(true);
+        setMessage("检测到该 run 仍在后台执行，正在恢复进度显示。");
+        const completed = await waitForVinaTask(existing, controller);
+        if (disposed) return;
+        if (completed.result_json) {
+          applyResponse(parseProjectResponse(completed.result_json), "对接运行已结束。");
+        } else {
+          await reloadRun();
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) {
+          setMessage("无法恢复后台 Vina 任务状态。");
+          setRawError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!disposed) {
+          setActiveTask((current) => (current?.task_id === resumedTaskId ? null : current));
+          setIsBusy(false);
+        }
+        if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      }
+    };
+    void reconnect();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [applyResponse, initialProject.project_dir, reloadRun, runId, waitForVinaTask]);
+
   const executeRun = async () => {
     setIsBusy(true);
     setMessage("");
     setRawError("");
+    activeTaskAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeTaskAbortRef.current = controller;
     try {
-      const rawPayload = await invoke<string>("execute_prepared_vina_run", {
-        projectDir: project.project_dir,
-        runId,
-      });
-      applyResponse(parseProjectResponse(rawPayload), "对接运行已完成。");
+      const started = await startVinaRunTask(project.project_dir, runId);
+      setMessage(started.deduplicated ? "该 run 已在后台执行，正在接收进度。" : "Vina 任务已进入后台队列。");
+      const completed = await waitForVinaTask(started, controller);
+      if (completed.status === "cancelled") {
+        setMessage("Vina 任务已取消，已有日志仍保留在运行目录中。");
+        await reloadRun();
+        return;
+      }
+      if (!completed.result_json) {
+        throw new Error(completed.error || completed.message || "Vina 后台任务没有返回执行结果。");
+      }
+      applyResponse(parseProjectResponse(completed.result_json), "对接运行已完成。");
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage("无法执行 AutoDock Vina。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      setActiveTask((current) => (current?.task_id ? null : current));
       setIsBusy(false);
+    }
+  };
+
+  const cancelRun = async () => {
+    if (!runIsActive) return;
+    try {
+      if (activeTask?.status === "queued") {
+        const cancelled = await cancelQueuedBackgroundTask(activeTask.task_id);
+        setActiveTask(cancelled);
+        if (cancelled.status === "cancelled") {
+          setMessage("Vina 任务尚未启动，已从后台队列取消。");
+          return;
+        }
+      }
+      const payload = await invoke<string>("cancel_vina_run", {
+        projectDir: project.project_dir,
+        runId,
+      });
+      const parsed = JSON.parse(payload) as Partial<ProjectResponse>;
+      if (!parsed.ok) {
+        setMessage(parsed.error?.message || "取消请求失败，后台运行仍会继续。");
+        setRawError(parsed.error?.raw_error || parsed.error?.suggestion || "");
+        return;
+      }
+      if (parsed.project) {
+        setProject(parsed.project);
+        onProjectChange(parsed.project);
+      }
+      if (parsed.metadata) setMetadata(parsed.metadata);
+      setMessage(parsed.message || "取消请求已发送，正在等待 Vina 安全退出。");
+    } catch (error) {
+      setRawError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -201,11 +346,22 @@ export default function RunExecutePage({
               </WarningCallout>
             ) : null}
 
+            {status === "running" && !taskIsActive ? (
+              <WarningCallout title="已恢复未完成运行">
+                <p>该 run 的磁盘记录仍为 running，但当前窗口没有原后台任务内存。你可以刷新状态、等待外部 Vina 结束，或使用下方按钮安全取消；DockStart 不会并发启动第二个 run。</p>
+              </WarningCallout>
+            ) : null}
+
             <SectionCard title="执行">
               <div className="button-row">
                 <ActionButton variant="primary" disabled={!canExecute} onClick={() => void executeRun()}>
                   {isBusy ? "执行中..." : "开始对接"}
                 </ActionButton>
+                {runIsActive ? (
+                  <ActionButton variant="secondary" onClick={() => void cancelRun()}>
+                    {activeTask?.status === "queued" ? "取消排队" : "终止运行"}
+                  </ActionButton>
+                ) : null}
               </div>
               <AdvancedDetails summary="命令与运行文件">
                 <pre>{commandPreview}</pre>

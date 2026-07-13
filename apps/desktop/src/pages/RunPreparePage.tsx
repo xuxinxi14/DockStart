@@ -34,6 +34,13 @@ import type {
   RunPreflightResponse,
   RunRuntimeStatusResponse,
 } from "../types";
+import {
+  cancelQueuedBackgroundTask,
+  findActiveBackgroundTask,
+  startVinaRunTask,
+  waitForBackgroundTask,
+  type BackgroundTaskStatus,
+} from "../utils/backgroundTasks";
 
 const RunStructurePreview = lazy(() => import("../components/RunStructurePreview"));
 
@@ -79,6 +86,7 @@ const stageLabels: Record<string, string> = {
   starting: "启动 Vina",
   running: "AutoDock Vina 正在搜索构象",
   cancelling: "正在终止运行",
+  cancel_pending: "等待安全取消",
   cancelled: "已取消",
   analyzing: "解析评分",
   reporting: "导出实验记录",
@@ -86,6 +94,14 @@ const stageLabels: Record<string, string> = {
   failed: "运行失败",
   interrupted: "运行已中断",
 };
+
+function monotonicRunStage(current: string, observed: string): string {
+  const next = observed === "cancel_pending" ? "cancelling" : observed;
+  if ((current === "cancelling" || current === "cancel_pending") && (next === "starting" || next === "running")) {
+    return "cancelling";
+  }
+  return next || current;
+}
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
   return JSON.parse(rawPayload) as ProjectResponse;
@@ -216,24 +232,22 @@ export default function RunPreparePage({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
-  const [previewRevision, setPreviewRevision] = useState(0);
+  const [activeBackgroundTask, setActiveBackgroundTask] = useState<BackgroundTaskStatus | null>(null);
   const [boxWheelBinding, setBoxWheelBinding] = useState<RunBoxFieldKey | null>(null);
   const [boxWheelStep, setBoxWheelStep] = useState<RunBoxWheelStep>(0.1);
   const [boxLineThickness, setBoxLineThickness] = useState<RunBoxLineThickness>("standard");
   const [axisSpacing, setAxisSpacing] = useState<RunAxisSpacing>("standard");
-  const pollRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
   const preflightRequestRef = useRef(0);
-  const pollGenerationRef = useRef(0);
-  const pollInFlightRef = useRef(false);
+  const activeTaskAbortRef = useRef<AbortController | null>(null);
 
   const parsedBox = useMemo(() => parseBoxForm(boxForm), [boxForm]);
   const parsedVina = useMemo(() => parseVinaForm(vinaForm), [vinaForm]);
   const formIsValid = Boolean(parsedBox && parsedVina);
   const displayBox = parsedBox ?? project.box;
   const volume = displayBox.size_x * displayBox.size_y * displayBox.size_z;
-  const running = stage === "starting" || stage === "running" || stage === "cancelling";
+  const running = stage === "starting" || stage === "running" || stage === "cancelling" || stage === "cancel_pending";
   const progress = runtime?.progress?.percent ?? (stage === "finished" ? 100 : 0);
 
   const commitProject = useCallback((nextProject: DockStartProject, syncForms = false) => {
@@ -260,6 +274,27 @@ export default function RunPreparePage({
       if (parsed.project) commitProject(parsed.project, syncForms && !dirtyRef.current);
       setMessage(parsed.message || (parsed.ready ? "运行前检查通过。" : "请先处理阻塞项。"));
       setRawError(parsed.error?.raw_error ?? "");
+      const guardedRun = parsed.active_run_guard?.active_runs?.[0];
+      if (parsed.active_run_guard?.blocked && guardedRun?.run_id) {
+        setActiveRunId(guardedRun.run_id);
+        setStage((current) => monotonicRunStage(current, guardedRun.stage || "running"));
+        try {
+          const runtimePayload = await invoke<string>("get_run_runtime_status", {
+            projectDir: initialProject.project_dir,
+            runId: guardedRun.run_id,
+          });
+          if (mountedRef.current && requestId === preflightRequestRef.current) {
+            const recoveredRuntime = parseRuntime(runtimePayload);
+            setRuntime(recoveredRuntime);
+            setStage((current) => monotonicRunStage(current, recoveredRuntime.stage || guardedRun.stage));
+            if (recoveredRuntime.project) commitProject(recoveredRuntime.project);
+          }
+        } catch (error) {
+          if (mountedRef.current && requestId === preflightRequestRef.current) {
+            setRawError(error instanceof Error ? error.message : String(error));
+          }
+        }
+      }
       return parsed;
     } catch (error) {
       if (!mountedRef.current || requestId !== preflightRequestRef.current) return null;
@@ -277,14 +312,118 @@ export default function RunPreparePage({
     return () => {
       mountedRef.current = false;
       preflightRequestRef.current += 1;
-      pollGenerationRef.current += 1;
-      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+      activeTaskAbortRef.current?.abort();
     };
   }, []);
 
   useEffect(() => {
     void refreshPreflight(true);
   }, [refreshPreflight]);
+
+  const waitForVinaBackgroundTask = useCallback(
+    async (
+      startedTask: BackgroundTaskStatus,
+      projectDir: string,
+      runId: string,
+      controller: AbortController,
+    ) => {
+      setActiveBackgroundTask(startedTask);
+      return waitForBackgroundTask(
+        startedTask.task_id,
+        (task) => {
+          if (!mountedRef.current) return;
+          setActiveBackgroundTask(task);
+          const taskStage = task.stage === "queued" ? "starting" : task.stage;
+          setStage((current) => monotonicRunStage(current, taskStage));
+          setMessage(task.progress.message || task.message);
+          setRuntime((current) => ({
+            ok: task.status !== "failed",
+            project_dir: projectDir,
+            project: null,
+            run_id: runId,
+            metadata: current?.metadata ?? null,
+            progress: task.progress,
+            stage: taskStage,
+            elapsed_seconds: task.elapsed_seconds,
+            stdout_tail: task.stdout_tail || current?.stdout_tail || "",
+            stderr_tail: task.stderr_tail || current?.stderr_tail || "",
+            log_tail: task.log_tail || current?.log_tail || "",
+            message: task.message,
+            error: task.error
+              ? { code: "BACKGROUND_TASK_ERROR", message: task.message, raw_error: task.error, suggestion: "请查看运行日志。" }
+              : null,
+          }));
+        },
+        controller.signal,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    let resumedTaskId = "";
+    const reconnect = async () => {
+      try {
+        const existing = await findActiveBackgroundTask(initialProject.project_dir, { kind: "vina" });
+        if (!existing || disposed || !existing.run_id) return;
+        resumedTaskId = existing.task_id;
+        activeTaskAbortRef.current?.abort();
+        activeTaskAbortRef.current = controller;
+        setActiveRunId(existing.run_id);
+        setStage(existing.status === "queued" ? "starting" : "running");
+        setIsBusy(true);
+        setMessage(`${existing.run_id} 仍在后台执行，已恢复进度显示。`);
+        const completed = await waitForVinaBackgroundTask(
+          existing,
+          initialProject.project_dir,
+          existing.run_id,
+          controller,
+        );
+        if (disposed) return;
+        setActiveBackgroundTask(completed);
+        if (completed.status === "cancelled") {
+          setStage("cancelled");
+          setMessage(`${existing.run_id} 已取消，现有日志已保留。`);
+          return;
+        }
+        if (completed.status === "failed") {
+          setStage("failed");
+          setMessage(completed.message || `${existing.run_id} 运行失败。`);
+          setRawError(completed.error);
+          return;
+        }
+        const finalPayload = await invoke<string>("get_run_runtime_status", {
+          projectDir: initialProject.project_dir,
+          runId: existing.run_id,
+        });
+        const finalRuntime = parseRuntime(finalPayload);
+        setRuntime(finalRuntime);
+        if (finalRuntime.project) commitProject(finalRuntime.project);
+        setStage(finalRuntime.stage || "finished");
+        setMessage(finalRuntime.message || `${existing.run_id} 后台运行已结束，可打开运行详情继续处理结果。`);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) {
+          setStage("failed");
+          setMessage("无法恢复后台 Vina 任务状态。");
+          setRawError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (!disposed) {
+          setActiveBackgroundTask((current) => (current?.task_id === resumedTaskId ? null : current));
+          setIsBusy(false);
+        }
+        if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      }
+    };
+    void reconnect();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [commitProject, initialProject.project_dir, waitForVinaBackgroundTask]);
 
   const updateBoxField = (key: keyof BoxForm, value: string) => {
     setBoxForm((current) => ({ ...current, [key]: value }));
@@ -335,29 +474,9 @@ export default function RunPreparePage({
     if (!vinaResponse.ok || !vinaResponse.project) throw new Error(vinaResponse.error?.message ?? "Vina 参数保存失败。");
     const nextProject = projectFromResponse(vinaResponse, boxResponse.project);
     commitProject(nextProject, true);
-    setPreviewRevision((value) => value + 1);
     if (announce) setMessage("搜索范围与 Vina 参数已保存。正在重新检查…");
     return nextProject;
   }, [boxForm, commitProject, project.project_dir, vinaForm]);
-
-  const pollRuntime = useCallback(async (runId: string, generation: number, force = false) => {
-    if (!force && (pollInFlightRef.current || generation !== pollGenerationRef.current)) return;
-    pollInFlightRef.current = true;
-    try {
-      const payload = await invoke<string>("get_run_runtime_status", { projectDir: project.project_dir, runId });
-      if (!mountedRef.current || generation !== pollGenerationRef.current) return;
-      const parsed = parseRuntime(payload);
-      setRuntime(parsed);
-      if (parsed.stage) setStage(parsed.stage);
-      if (!parsed.ok && parsed.error) setRawError(parsed.error.raw_error || parsed.error.message);
-    } catch (error) {
-      if (mountedRef.current && generation === pollGenerationRef.current) {
-        setRawError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      pollInFlightRef.current = false;
-    }
-  }, [project.project_dir]);
 
   const runWorkflow = async () => {
     if (!preflight?.ready || !formIsValid || isBusy) return;
@@ -403,20 +522,37 @@ export default function RunPreparePage({
       const runId = prepareResponse.run_id;
       setStage("starting");
       setMessage(`${runId} 正在启动 AutoDock Vina…`);
-      const executionPromise = invoke<string>("execute_prepared_vina_run", {
-        projectDir: preparedProject.project_dir,
+      activeTaskAbortRef.current?.abort();
+      const taskController = new AbortController();
+      activeTaskAbortRef.current = taskController;
+      const startedTask = await startVinaRunTask(preparedProject.project_dir, runId);
+      setActiveBackgroundTask(startedTask);
+      if (startedTask.deduplicated) setMessage(`${runId} 已在后台运行，正在重新接收进度事件。`);
+      const completedTask = await waitForVinaBackgroundTask(
+        startedTask,
+        preparedProject.project_dir,
         runId,
-      });
-      const pollGeneration = ++pollGenerationRef.current;
-      pollRef.current = window.setInterval(() => void pollRuntime(runId, pollGeneration), 500);
-      const executePayload = await executionPromise;
-      const finalPollGeneration = ++pollGenerationRef.current;
-      if (pollRef.current !== null) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
+        taskController,
+      );
+      setActiveBackgroundTask(completedTask);
+      if (activeTaskAbortRef.current === taskController) activeTaskAbortRef.current = null;
+      if (completedTask.status === "cancelled") {
+        setStage("cancelled");
+        setMessage(`${runId} 已安全取消，已保留取消前日志。`);
+        return;
       }
+      if (!completedTask.result_json) {
+        throw new Error(completedTask.error || completedTask.message || "Vina 后台任务没有返回执行结果。");
+      }
+      const executePayload = completedTask.result_json;
       const executeResponse = parseProjectResponse(executePayload);
-      if (mountedRef.current) await pollRuntime(runId, finalPollGeneration, true);
+      if (mountedRef.current) {
+        const finalRuntimePayload = await invoke<string>("get_run_runtime_status", {
+          projectDir: preparedProject.project_dir,
+          runId,
+        });
+        setRuntime(parseRuntime(finalRuntimePayload));
+      }
       const executedProject = projectFromResponse(executeResponse, preparedProject);
       if (executeResponse.project) commitProject(executeResponse.project);
       const runStatus = String(executeResponse.metadata?.status ?? "");
@@ -454,21 +590,32 @@ export default function RunPreparePage({
       setMessage(`${runId} 已完成：Vina 执行、评分解析和实验记录导出全部成功。`);
       await refreshPreflight();
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       if (stage !== "cancelled") setStage("failed");
       setMessage(error instanceof Error ? error.message : "完整对接流程未能完成。");
       setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
     } finally {
-      if (pollRef.current !== null) {
-        window.clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      pollGenerationRef.current += 1;
+      setActiveBackgroundTask(null);
       setIsBusy(false);
     }
   };
 
   const cancelRun = async () => {
     if (!activeRunId || !running) return;
+    if (activeBackgroundTask?.status === "queued") {
+      try {
+        const cancelled = await cancelQueuedBackgroundTask(activeBackgroundTask.task_id);
+        setActiveBackgroundTask(cancelled);
+        if (cancelled.status === "cancelled") {
+          setStage("cancelled");
+          setMessage(`${activeRunId} 尚未启动，已从后台队列取消。`);
+          return;
+        }
+      } catch (error) {
+        setRawError(error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
     setStage("cancelling");
     setMessage(`正在终止 ${activeRunId}…`);
     try {
@@ -509,6 +656,8 @@ export default function RunPreparePage({
   const receptor = preflight?.input_stats?.receptor;
   const ligand = preflight?.input_stats?.ligand;
   const history = preflight?.run_history ?? [];
+  const activeRunGuard = preflight?.active_run_guard;
+  const guardedRun = activeRunGuard?.active_runs?.[0];
   const latestCompletedRun = activeRunId || history.find((run) => run.status === "finished")?.run_id || "";
   const stageText = stageLabels[stage] ?? stage;
 
@@ -542,7 +691,6 @@ export default function RunPreparePage({
                 <RunStructurePreview
                   projectDir={project.project_dir}
                   box={displayBox}
-                  refreshKey={previewRevision}
                   wheelBinding={isBusy ? null : boxWheelBinding}
                   onWheelAdjust={adjustBoundBoxField}
                   boxLineThickness={boxLineThickness}
@@ -656,6 +804,25 @@ export default function RunPreparePage({
               </WarningCallout>
             ) : null}
 
+            {activeRunGuard?.blocked ? (
+              <WarningCallout title={guardedRun ? "已有未完成的 Vina 运行" : "暂时无法确认运行恢复状态"}>
+                <p>{activeRunGuard.message}</p>
+                {activeRunGuard.error ? <small>{activeRunGuard.error}</small> : null}
+                {guardedRun ? (
+                  <div className="button-row">
+                    <ActionButton variant="secondary" onClick={() => onOpenRunExecute(project, guardedRun.run_id)}>
+                      打开 {guardedRun.run_id} 详情
+                    </ActionButton>
+                    {guardedRun.can_cancel ? (
+                      <ActionButton variant="secondary" onClick={() => void cancelRun()}>
+                        <Stop size={15} weight="fill" /> 安全取消
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                ) : null}
+              </WarningCallout>
+            ) : null}
+
             {runtime || running || stage === "finished" || stage === "failed" || stage === "cancelled" ? (
               <section className={`run-monitor run-monitor-${stage}`} aria-live="polite">
                 <div className="run-monitor-heading">
@@ -687,7 +854,7 @@ export default function RunPreparePage({
                   <FloppyDisk size={16} /> 保存并重新检查
                 </ActionButton>
                 {activeRunId && stage !== "finished" ? (
-                  <ActionButton variant="text" disabled={running} onClick={() => onOpenRunExecute(project, activeRunId)}>打开运行详情</ActionButton>
+                  <ActionButton variant="text" onClick={() => onOpenRunExecute(project, activeRunId)}>打开运行详情</ActionButton>
                 ) : null}
                 {latestCompletedRun && stage === "finished" ? (
                   <ActionButton variant="text" onClick={() => onOpenResultPage(project, latestCompletedRun)}>查看本次结果</ActionButton>

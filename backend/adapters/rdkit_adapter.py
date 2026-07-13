@@ -28,6 +28,8 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
 
     command = [
         python_executable,
+        "-I",
+        "-B",
         "-c",
         "import rdkit; print(getattr(rdkit, '__version__', ''))",
     ]
@@ -149,10 +151,10 @@ $$$$
 except Exception as exc:
     payload["raw_error"] = str(exc)
 
-print(json.dumps(payload, ensure_ascii=False))
+print(json.dumps(payload, ensure_ascii=True))
 '''
 
-    command = [python_executable, "-c", probe_script]
+    command = [python_executable, "-I", "-B", "-c", probe_script]
     try:
         completed = subprocess.run(
             command,

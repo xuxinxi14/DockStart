@@ -80,6 +80,7 @@ class PreparationToolCapabilityTests(unittest.TestCase):
         command = run_mock.call_args.args[0]
         self.assertIsInstance(command, list)
         self.assertEqual(command[0], str(python_path))
+        self.assertEqual(command[1:3], ["-I", "-B"])
 
     def test_meeko_capabilities_mock_python_success_with_unknown_preparation_api(self) -> None:
         payload = {

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.10.0
+
+- Added a separate Assisted Stable distribution with a pinned, offline, replaceable CPython 3.11 runtime containing Meeko 0.7.1, RDKit 2026.3.3, and their verified dependencies; Basic Stable remains available without the scientific Python stack.
+- Added real PDB receptor and SDF/MOL ligand preparation through isolated `python -I -B` Meeko entry points, including Windows paths containing Chinese characters and spaces.
+- Added project schema migration, revision-based concurrent-write protection, crash recovery, atomic artifact publication, and SHA256 provenance for inputs, outputs, reports, and tool binaries.
+- Added runtime-fingerprint caching, background task events, bounded scientific-task concurrency, and explicit cache invalidation so page navigation no longer repeatedly cold-starts Python and Meeko.
+- Kept 3Dmol outside the initial application chunk and updated molecular layers incrementally while preserving camera state across visibility and pose changes.
+- Added deterministic wheel/source manifests, corresponding source archives, third-party licenses, and separate development-layout, packaged-layout, and installed-layout release gates.
+- Kept the scientific boundary unchanged: automatic preparation still requires human review, and docking scores cannot replace experimental validation.
+
 ## v0.9.7
 
 - Established the Basic Stable release profile with bundled AutoDock Vina and a backend-only Python runtime for the existing-PDBQT workflow.

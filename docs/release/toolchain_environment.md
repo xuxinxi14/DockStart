@@ -1,5 +1,8 @@
 # RDKit / Meeko Toolchain Environment
 
+> 本文仍适用于用户自管工具链。v0.10.0 Assisted Stable 已额外随附固定、可替换的
+> RDKit/Meeko runtime；解析优先级仍是 configured → bundled → current environment。
+
 DockStart V0.6 不自动安装 RDKit 或 Meeko，也不提交 conda 环境。本页说明推荐的可复现工具链环境。
 
 ## Recommended Environment
@@ -108,4 +111,3 @@ conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setup
 ## Scientific Boundary
 
 RDKit/Meeko 环境可用只说明 DockStart 能调用工具链。自动生成的 PDBQT 仍需要用户检查质子化、电荷、构象、缺失残基、水、金属、辅因子和链选择等问题。它不代表真实结合、药效、安全性或临床价值。
-

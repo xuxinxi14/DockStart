@@ -1,6 +1,6 @@
 # DockStart Toolchain Runtime
 
-本文档说明 DockStart Full 工具链中 Python runtime 的当前设计和边界。当前版本已经具备 Python runtime 解析、manifest 检查、状态展示，以及在用户已有 RDKit/Meeko 环境可用时尝试 V0.3 ligand/receptor PDBQT 自动准备的后端能力。
+本文档说明 DockStart Python runtime 的设计和边界。v0.10.0 Basic Stable 随附精简后端 runtime；Assisted Stable 额外随附固定、独立、可替换的 RDKit/Meeko 工具链，并保留用户配置优先级。
 
 ## 为什么需要 Python runtime
 
@@ -34,15 +34,15 @@ preparation toolchain Python 的解析优先级为：
 configured > bundled > current_environment
 ```
 
-这样用户在设置页配置了带 RDKit/Meeko 的 conda Python 后，DockStart 会优先用该环境做 RDKit/Meeko 检测和 PDBQT 自动准备；轻量 bundled Python 不会覆盖用户配置的科学工具链环境。
+这样用户在设置页配置了兼容的 RDKit/Meeko Python 后，DockStart 会优先用该环境；未配置时，Assisted 使用随附工具链，Basic 则继续要求外部环境或已有 PDBQT。
 
 来源含义：
 
-- `bundled`：DockStart Full 资源目录中的 `resources/python/python.exe`。
+- `bundled`：当前安装 profile 的 `resources/python/python.exe`；Basic 仅含后端，Assisted 含固定准备工具链。
 - `configured`：用户在设置页中配置的 Python 路径。
 - `current_environment`：当前运行 DockStart 后端的 Python 环境。
 
-V0.9 Basic 分发包可以内置轻量 Python runtime 用于运行 DockStart 后端，但它默认不包含 RDKit/Meeko。Assisted Mode 仍推荐用户配置独立 conda 环境。
+v0.10.0 Basic 分发包的轻量 Python 只运行 DockStart 后端，不含 RDKit/Meeko。Assisted Stable 已提供离线 fallback；独立 conda 环境只在用户需要替换版本或自管工具链时推荐。
 
 ## 推荐的 RDKit/Meeko conda 环境
 

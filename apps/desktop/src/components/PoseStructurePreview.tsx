@@ -8,9 +8,14 @@ import {
   Play,
   Crosshair,
 } from "@phosphor-icons/react";
-import * as $3Dmol from "3dmol";
 import type { ViewerStructureResult } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
+import {
+  load3Dmol,
+  structureFingerprint,
+  type ThreeDmolModel,
+  type ThreeDmolViewer,
+} from "./threeDmolLoader";
 
 type PoseStructurePreviewProps = {
   projectDir: string;
@@ -32,7 +37,16 @@ export default function PoseStructurePreview({
   className = "",
 }: PoseStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
+  const viewerRef = useRef<ThreeDmolViewer | null>(null);
+  const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
+  const receptorModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
+  const poseModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
+  const hasFitRef = useRef(false);
+  const identityRef = useRef("");
+  const sceneGenerationRef = useRef(0);
+  const receptorLoadGenerationRef = useRef(0);
+  const poseLoadGenerationRef = useRef(0);
+  const loadedPoseModeRef = useRef<number | null>(null);
   const [receptor, setReceptor] = useState<ViewerStructureResult | null>(null);
   const [pose, setPose] = useState<ViewerStructureResult | null>(null);
   const [message, setMessage] = useState("正在加载结构与构象…");
@@ -41,33 +55,62 @@ export default function PoseStructurePreview({
   const [showPose, setShowPose] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
 
-  const ensureViewer = useCallback(() => {
+  const ensureViewer = useCallback(async () => {
     if (viewerRef.current) return viewerRef.current;
     if (!containerRef.current) return null;
-    const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
-    viewerRef.current = $3Dmol.createViewer(containerRef.current, { backgroundColor: background || "#061c31" });
-    return viewerRef.current;
+    if (!viewerInitRef.current) {
+      const container = containerRef.current;
+      viewerInitRef.current = load3Dmol().then(($3Dmol) => {
+        if (!container.isConnected) return null;
+        const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
+        viewerRef.current = $3Dmol.createViewer(container, { backgroundColor: background || "#061c31" });
+        return viewerRef.current;
+      });
+    }
+    return viewerInitRef.current;
   }, []);
 
-  const renderScene = useCallback((fit = false) => {
-    const viewer = ensureViewer();
-    if (!viewer) return;
+  const renderScene = useCallback(async (fit = false) => {
+    const sceneGeneration = sceneGenerationRef.current;
+    const viewer = await ensureViewer();
+    if (!viewer || sceneGeneration !== sceneGenerationRef.current) return;
     const previousView = fit ? null : (viewer as unknown as { getView?: () => unknown }).getView?.();
-    viewer.clear();
 
-    if (showReceptor && receptor?.ok) {
-      const model = viewer.addModel(receptor.content, receptor.format);
+    const receptorFingerprint = receptor?.ok
+      ? structureFingerprint(receptor.content, receptor.format, `${receptor.relative_path}:${refreshKey}`)
+      : "";
+    if (receptorFingerprint && receptorModelRef.current?.fingerprint !== receptorFingerprint) {
+      if (receptorModelRef.current) viewer.removeModel(receptorModelRef.current.model);
+      const model = viewer.addModel(receptor!.content, receptor!.format);
       model.setStyle({}, {
         cartoon: { color: "spectrum", opacity: 0.74 },
         stick: { radius: 0.1, colorscheme: "Jmol" },
       });
+      receptorModelRef.current = { fingerprint: receptorFingerprint, model };
+    } else if (!receptorFingerprint && receptorModelRef.current) {
+      viewer.removeModel(receptorModelRef.current.model);
+      receptorModelRef.current = null;
     }
+    if (showReceptor) receptorModelRef.current?.model.show();
+    else receptorModelRef.current?.model.hide();
 
-    if (showPose && pose?.ok) {
-      const model = viewer.addModel(pose.content, pose.format);
+    const poseFingerprint = pose?.ok && loadedPoseModeRef.current === mode
+      ? structureFingerprint(pose.content, pose.format, `${runId}:${mode}:${pose.relative_path}:${refreshKey}`)
+      : "";
+    if (poseFingerprint && poseModelRef.current?.fingerprint !== poseFingerprint) {
+      if (poseModelRef.current) viewer.removeModel(poseModelRef.current.model);
+      const model = viewer.addModel(pose!.content, pose!.format);
       model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
+      poseModelRef.current = { fingerprint: poseFingerprint, model };
+    } else if (!poseFingerprint && poseModelRef.current) {
+      viewer.removeModel(poseModelRef.current.model);
+      poseModelRef.current = null;
     }
+    if (showPose) poseModelRef.current?.model.show();
+    else poseModelRef.current?.model.hide();
 
+    viewer.removeAllShapes();
+    viewer.removeAllLabels();
     if (showAxes) addOrientationAxes(viewer, null);
 
     if (previousView) {
@@ -76,27 +119,60 @@ export default function PoseStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [ensureViewer, receptor, pose, showReceptor, showPose, showAxes]);
+  }, [ensureViewer, mode, pose, receptor, refreshKey, runId, showAxes, showPose, showReceptor]);
 
   useEffect(() => {
-    const viewer = ensureViewer();
-    if (!viewer || !containerRef.current) return;
-    const observer = new ResizeObserver(() => {
-      viewer.resize();
-      viewer.render();
+    const identity = `${projectDir}|${runId}`;
+    if (identityRef.current === identity) return;
+    identityRef.current = identity;
+    sceneGenerationRef.current += 1;
+    receptorLoadGenerationRef.current += 1;
+    poseLoadGenerationRef.current += 1;
+    hasFitRef.current = false;
+    loadedPoseModeRef.current = null;
+    setReceptor(null);
+    setPose(null);
+    setMessage("正在加载结构与构象…");
+    setIsSpinning(false);
+    const viewer = viewerRef.current;
+    (viewer as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null)?.spin?.(false);
+    if (viewer && receptorModelRef.current) viewer.removeModel(receptorModelRef.current.model);
+    if (viewer && poseModelRef.current) viewer.removeModel(poseModelRef.current.model);
+    receptorModelRef.current = null;
+    poseModelRef.current = null;
+    viewer?.removeAllShapes();
+    viewer?.removeAllLabels();
+    viewer?.render();
+  }, [projectDir, runId]);
+
+  useEffect(() => {
+    let observer: ResizeObserver | null = null;
+    let cancelled = false;
+    void ensureViewer().then((viewer) => {
+      if (cancelled || !viewer || !containerRef.current) return;
+      observer = new ResizeObserver(() => {
+        viewer.resize();
+        viewer.render();
+      });
+      observer.observe(containerRef.current);
     });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
   }, [ensureViewer]);
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++receptorLoadGenerationRef.current;
     async function loadReceptor() {
       try {
         const payload = await invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "receptor_prepared" });
-        if (!cancelled) setReceptor(parseStructure(payload));
+        if (!cancelled && generation === receptorLoadGenerationRef.current) setReceptor(parseStructure(payload));
       } catch (error) {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "受体加载失败");
+        if (!cancelled && generation === receptorLoadGenerationRef.current) {
+          setMessage(error instanceof Error ? error.message : "受体加载失败");
+        }
       }
     }
     void loadReceptor();
@@ -107,16 +183,30 @@ export default function PoseStructurePreview({
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++poseLoadGenerationRef.current;
+    loadedPoseModeRef.current = null;
+    setPose(null);
     async function loadPose() {
       setMessage(`正在读取 Mode ${mode} 的对接构象…`);
       try {
         const payload = await invoke<string>("load_docking_pose_for_viewer", { projectDir, runId, mode });
-        if (cancelled) return;
+        if (cancelled || generation !== poseLoadGenerationRef.current) return;
         const poseData = parseStructure(payload);
-        setPose(poseData);
-        setMessage(poseData.ok ? `构象 Mode ${mode} 已加载` : "构象文件加载有误，请确认输出文件");
+        const matchesRequestedMode = poseData.ok && (poseData.mode === undefined || poseData.mode === mode);
+        if (matchesRequestedMode) {
+          loadedPoseModeRef.current = mode;
+          setPose(poseData);
+        } else {
+          loadedPoseModeRef.current = null;
+          setPose(null);
+        }
+        setMessage(matchesRequestedMode ? `构象 Mode ${mode} 已加载` : "构象文件与所选 Mode 不匹配，请重新加载");
       } catch (error) {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "构象加载失败");
+        if (!cancelled && generation === poseLoadGenerationRef.current) {
+          loadedPoseModeRef.current = null;
+          setPose(null);
+          setMessage(error instanceof Error ? error.message : "构象加载失败");
+        }
       }
     }
     void loadPose();
@@ -126,16 +216,23 @@ export default function PoseStructurePreview({
   }, [mode, projectDir, refreshKey, runId]);
 
   useEffect(() => {
-    try {
-      renderScene(true);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "3D 场景渲染失败");
-    }
-  }, [renderScene, receptor, pose, showReceptor, showPose, showAxes]);
+    const shouldFit = !hasFitRef.current && Boolean(receptor?.ok || pose?.ok);
+    void renderScene(shouldFit)
+      .then(() => {
+        if (shouldFit) hasFitRef.current = true;
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : "3D 场景渲染失败"));
+  }, [pose, receptor, renderScene]);
 
   useEffect(() => () => {
+    const viewer = viewerRef.current as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null;
+    viewer?.spin?.(false);
     viewerRef.current?.clear();
     viewerRef.current = null;
+    viewerInitRef.current = null;
+    receptorModelRef.current = null;
+    poseModelRef.current = null;
+    loadedPoseModeRef.current = null;
     if (containerRef.current) containerRef.current.replaceChildren();
   }, []);
 
@@ -161,7 +258,7 @@ export default function PoseStructurePreview({
         <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小">
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={() => renderScene(true)} title="适应窗口" aria-label="适应窗口">
+        <button type="button" onClick={() => void renderScene(true)} title="适应窗口" aria-label="适应窗口">
           <ArrowsOut size={18} />
         </button>
         <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label="旋转">

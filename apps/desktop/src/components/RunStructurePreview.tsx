@@ -11,9 +11,14 @@ import {
   CornersIn,
   Crosshair,
 } from "@phosphor-icons/react";
-import * as $3Dmol from "3dmol";
 import type { BoxVisualizationPayload, DockStartProject, ViewerStructureResult } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
+import {
+  load3Dmol,
+  structureFingerprint,
+  type ThreeDmolModel,
+  type ThreeDmolViewer,
+} from "./threeDmolLoader";
 import {
   runBoxFieldLabels,
   type RunAxisSpacing,
@@ -90,7 +95,7 @@ const axisSpacingScales: Record<RunAxisSpacing, number> = {
 };
 
 function addBoxOverlay(
-  viewer: ReturnType<typeof $3Dmol.createViewer>,
+  viewer: ThreeDmolViewer,
   box: BoxVisualizationPayload,
   lineThickness: RunBoxLineThickness,
 ): void {
@@ -128,7 +133,14 @@ export default function RunStructurePreview({
   axisSpacing = "standard",
 }: RunStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const viewerRef = useRef<ReturnType<typeof $3Dmol.createViewer> | null>(null);
+  const viewerRef = useRef<ThreeDmolViewer | null>(null);
+  const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
+  const receptorModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
+  const ligandModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
+  const hasFitRef = useRef(false);
+  const identityRef = useRef("");
+  const sceneGenerationRef = useRef(0);
+  const loadGenerationRef = useRef(0);
   const boxRef = useRef(box);
   const wheelAccumulatorRef = useRef(0);
   const wheelResetRef = useRef<number | null>(null);
@@ -143,36 +155,62 @@ export default function RunStructurePreview({
   const [showAxes, setShowAxes] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const ensureViewer = useCallback(() => {
+  const ensureViewer = useCallback(async () => {
     if (viewerRef.current) return viewerRef.current;
     if (!containerRef.current) return null;
-    const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
-    viewerRef.current = $3Dmol.createViewer(containerRef.current, { backgroundColor: background || "#061c31" });
-    return viewerRef.current;
+    if (!viewerInitRef.current) {
+      const container = containerRef.current;
+      viewerInitRef.current = load3Dmol().then(($3Dmol) => {
+        if (!container.isConnected) return null;
+        const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
+        viewerRef.current = $3Dmol.createViewer(container, { backgroundColor: background || "#061c31" });
+        return viewerRef.current;
+      });
+    }
+    return viewerInitRef.current;
   }, []);
 
-  const renderScene = useCallback((fit = false) => {
-    const viewer = ensureViewer();
-    if (!viewer) return;
+  const renderScene = useCallback(async (fit = false) => {
+    const sceneGeneration = sceneGenerationRef.current;
+    const viewer = await ensureViewer();
+    if (!viewer || sceneGeneration !== sceneGenerationRef.current) return;
     const previousView = fit ? null : (viewer as unknown as { getView?: () => unknown }).getView?.();
-    viewer.clear();
 
-    // 条件渲染受体
-    if (showReceptor && structures.receptor?.ok) {
-      const model = viewer.addModel(structures.receptor.content, structures.receptor.format);
+    const receptorFingerprint = structures.receptor?.ok
+      ? structureFingerprint(structures.receptor.content, structures.receptor.format, `${structures.receptor.relative_path}:${refreshKey}`)
+      : "";
+    if (receptorFingerprint && receptorModelRef.current?.fingerprint !== receptorFingerprint) {
+      if (receptorModelRef.current) viewer.removeModel(receptorModelRef.current.model);
+      const model = viewer.addModel(structures.receptor!.content, structures.receptor!.format);
       model.setStyle({}, {
         cartoon: { color: "spectrum", opacity: 0.74 },
         stick: { radius: 0.1, colorscheme: "Jmol" },
       });
+      receptorModelRef.current = { fingerprint: receptorFingerprint, model };
+    } else if (!receptorFingerprint && receptorModelRef.current) {
+      viewer.removeModel(receptorModelRef.current.model);
+      receptorModelRef.current = null;
     }
+    if (showReceptor) receptorModelRef.current?.model.show();
+    else receptorModelRef.current?.model.hide();
 
-    // 条件渲染配体
-    if (showLigand && structures.ligand?.ok) {
-      const model = viewer.addModel(structures.ligand.content, structures.ligand.format);
+    const ligandFingerprint = structures.ligand?.ok
+      ? structureFingerprint(structures.ligand.content, structures.ligand.format, `${structures.ligand.relative_path}:${refreshKey}`)
+      : "";
+    if (ligandFingerprint && ligandModelRef.current?.fingerprint !== ligandFingerprint) {
+      if (ligandModelRef.current) viewer.removeModel(ligandModelRef.current.model);
+      const model = viewer.addModel(structures.ligand!.content, structures.ligand!.format);
       model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
+      ligandModelRef.current = { fingerprint: ligandFingerprint, model };
+    } else if (!ligandFingerprint && ligandModelRef.current) {
+      viewer.removeModel(ligandModelRef.current.model);
+      ligandModelRef.current = null;
     }
+    if (showLigand) ligandModelRef.current?.model.show();
+    else ligandModelRef.current?.model.hide();
 
-    // 条件渲染 Box
+    viewer.removeAllShapes();
+    viewer.removeAllLabels();
     const boxVisualization = buildBoxVisualization(boxRef.current);
     if (showBox && boxVisualization) {
       addBoxOverlay(viewer, boxVisualization, boxLineThickness);
@@ -185,13 +223,14 @@ export default function RunStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [ensureViewer, structures, showReceptor, showLigand, showBox, showAxes, boxLineThickness, axisSpacing]);
+  }, [axisSpacing, boxLineThickness, ensureViewer, refreshKey, showAxes, showBox, showLigand, showReceptor, structures]);
 
-  const refreshBoxOverlay = useCallback(() => {
-    const viewer = ensureViewer();
-    if (!viewer) return;
-    (viewer as unknown as { removeAllShapes?: () => void }).removeAllShapes?.();
-    (viewer as unknown as { removeAllLabels?: () => void }).removeAllLabels?.();
+  const refreshBoxOverlay = useCallback(async () => {
+    const sceneGeneration = sceneGenerationRef.current;
+    const viewer = await ensureViewer();
+    if (!viewer || sceneGeneration !== sceneGenerationRef.current) return;
+    viewer.removeAllShapes();
+    viewer.removeAllLabels();
     const boxVisualization = buildBoxVisualization(boxRef.current);
     if (showBox && boxVisualization) addBoxOverlay(viewer, boxVisualization, boxLineThickness);
     if (showAxes) addOrientationAxes(viewer, boxVisualization, axisSpacingScales[axisSpacing]);
@@ -199,14 +238,40 @@ export default function RunStructurePreview({
   }, [ensureViewer, showBox, showAxes, boxLineThickness, axisSpacing]);
 
   useEffect(() => {
-    const viewer = ensureViewer();
-    if (!viewer || !containerRef.current) return;
-    const observer = new ResizeObserver(() => {
-      viewer.resize();
-      viewer.render();
+    if (identityRef.current === projectDir) return;
+    identityRef.current = projectDir;
+    sceneGenerationRef.current += 1;
+    loadGenerationRef.current += 1;
+    hasFitRef.current = false;
+    setStructures({ receptor: null, ligand: null });
+    setMessage("正在读取受体、配体与搜索范围…");
+    setIsSpinning(false);
+    const viewer = viewerRef.current;
+    (viewer as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null)?.spin?.(false);
+    if (viewer && receptorModelRef.current) viewer.removeModel(receptorModelRef.current.model);
+    if (viewer && ligandModelRef.current) viewer.removeModel(ligandModelRef.current.model);
+    receptorModelRef.current = null;
+    ligandModelRef.current = null;
+    viewer?.removeAllShapes();
+    viewer?.removeAllLabels();
+    viewer?.render();
+  }, [projectDir]);
+
+  useEffect(() => {
+    let observer: ResizeObserver | null = null;
+    let cancelled = false;
+    void ensureViewer().then((viewer) => {
+      if (cancelled || !viewer || !containerRef.current) return;
+      observer = new ResizeObserver(() => {
+        viewer.resize();
+        viewer.render();
+      });
+      observer.observe(containerRef.current);
     });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
   }, [ensureViewer]);
 
   useEffect(() => {
@@ -243,6 +308,7 @@ export default function RunStructurePreview({
 
   useEffect(() => {
     let cancelled = false;
+    const generation = ++loadGenerationRef.current;
     async function loadPreview() {
       setMessage("正在读取受体、配体与搜索范围…");
       try {
@@ -250,7 +316,7 @@ export default function RunStructurePreview({
           invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "receptor_prepared" }),
           invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "ligand_prepared" }),
         ]);
-        if (cancelled) return;
+        if (cancelled || generation !== loadGenerationRef.current) return;
         const receptor = parseStructure(receptorPayload);
         const ligand = parseStructure(ligandPayload);
         setStructures({ receptor, ligand });
@@ -258,7 +324,9 @@ export default function RunStructurePreview({
         else if (receptor.ok || ligand.ok) setMessage("部分结构可显示；请查看运行前检查");
         else setMessage("尚无可显示的 prepared PDBQT");
       } catch (error) {
-        if (!cancelled) setMessage(error instanceof Error ? error.message : "结构预览加载失败");
+        if (!cancelled && generation === loadGenerationRef.current) {
+          setMessage(error instanceof Error ? error.message : "结构预览加载失败");
+        }
       }
     }
     void loadPreview();
@@ -268,20 +336,20 @@ export default function RunStructurePreview({
   }, [projectDir, refreshKey]);
 
   useEffect(() => {
-    try {
-      renderScene(true);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "3D 场景渲染失败");
-    }
-  }, [renderScene, structures, showReceptor, showLigand, showBox, showAxes]);
+    const shouldFit = !hasFitRef.current && Boolean(structures.receptor?.ok || structures.ligand?.ok);
+    const sceneGeneration = sceneGenerationRef.current;
+    void renderScene(shouldFit)
+      .then(() => {
+        if (shouldFit && sceneGeneration === sceneGenerationRef.current) hasFitRef.current = true;
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : "3D 场景渲染失败"));
+  }, [renderScene, structures]);
 
   useEffect(() => {
     boxRef.current = box;
-    try {
-      refreshBoxOverlay();
-    } catch (error) {
+    void refreshBoxOverlay().catch((error) => {
       setMessage(error instanceof Error ? error.message : "搜索范围预览刷新失败");
-    }
+    });
   }, [box, refreshBoxOverlay]);
 
   // 全屏变化时的自适应调整
@@ -310,8 +378,13 @@ export default function RunStructurePreview({
   }, [isFullscreen]);
 
   useEffect(() => () => {
+    const viewer = viewerRef.current as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null;
+    viewer?.spin?.(false);
     viewerRef.current?.clear();
     viewerRef.current = null;
+    viewerInitRef.current = null;
+    receptorModelRef.current = null;
+    ligandModelRef.current = null;
     if (containerRef.current) containerRef.current.replaceChildren();
   }, []);
 
@@ -356,7 +429,7 @@ export default function RunStructurePreview({
         <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小结构">
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={() => renderScene(true)} title="适应窗口" aria-label="让结构适应窗口">
+        <button type="button" onClick={() => void renderScene(true)} title="适应窗口" aria-label="让结构适应窗口">
           <ArrowsOut size={18} />
         </button>
         <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label={isSpinning ? "停止自动旋转" : "开始自动旋转"}>

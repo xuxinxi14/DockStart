@@ -1,9 +1,9 @@
-import * as $3Dmol from "3dmol";
 import type { BoxVisualizationPayload } from "../types";
+import type { ThreeDmolViewer } from "./threeDmolLoader";
 
 /** Add a model-space XYZ triad near the search box without altering molecular models. */
 export function addOrientationAxes(
-  viewer: ReturnType<typeof $3Dmol.createViewer>,
+  viewer: ThreeDmolViewer,
   visualization: BoxVisualizationPayload | null,
   spacingScale = 1,
 ): void {

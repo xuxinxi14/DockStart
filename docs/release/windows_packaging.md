@@ -1,125 +1,105 @@
 # Windows Packaging
 
-本文档定义 DockStart v0.9.7 Basic Stable 的 Windows 发布门禁。目标是生成可重复、
-能力边界明确的 MSI 与 NSIS 安装包；不是把本机 `resources/python` 的全部内容直接
-复制进安装包。
+本文档定义 DockStart v0.10.0 Windows x86_64 的可重复发布入口。构建脚本只能在干净的
+`main` 分支运行，并从白名单 stage 生成 MSI 与 NSIS；禁止直接把开发目录中的
+`resources/python` 或旧 `target/release` 内容复制进安装包。
 
-## 发布档案
+## Profile 选择
 
-Basic Stable 必须满足：
+Basic Stable：已有 receptor/ligand PDBQT 的最小依赖闭环。
 
-- 随包提供 AutoDock Vina；
-- 随包提供仅用于 DockStart 后端的精简 Python runtime；
-- 不随包提供 `Lib/site-packages`、`Scripts`、RDKit 或 Meeko；
-- 运行时示例唯一来源为 `resources/examples/`；
-- 用户提供 receptor/ligand PDBQT 后，可以离线完成真实 Vina 对接、解析和报告导出；
-- Assisted Mode 保留，但需要用户配置独立 RDKit/Meeko Python 环境。
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Basic
+```
 
-## 可重复资源暂存
+Assisted Stable：额外包含固定、离线、可替换的 RDKit/Meeko 工具链。
 
-源码目录中的真实 Python、Vina 与安装包都由 `.gitignore` 排除。发布时先执行：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Assisted
+```
+
+两个 profile 都随附 Vina、DockStart 后端、许可证和 `resources/examples/`。Basic 的
+Python 仅运行后端且排除 `site-packages`；Assisted 的独立 runtime 包含固定 scientific
+packages，但不包含 conda、ProDy、Open Babel、PLIP 或 MGLTools。
+
+## 可重复资源 stage
+
+Basic：
 
 ```powershell
 python scripts/prepare_basic_release_resources.py --repo-root .
 ```
 
-脚本会删除并重新生成 `.release/basic/`，只暂存：
+输出 `.release/basic/`，必须无 `site-packages`、`Scripts` 与 Python bytecode。
+
+Assisted：
+
+```powershell
+python scripts/prepare_assisted_release_resources.py --repo-root .
+```
+
+输出 `.release/assisted/`。脚本只读取固定 CPython base runtime 与
+`_external_download/assisted-wheelhouse/`，逐个核对 `SOURCE_MANIFEST.json` 的 SHA256，
+不会联网或调用 pip 解析依赖。维护者只有在有意刷新上游 artifact 时才执行：
+
+```powershell
+python scripts/fetch_assisted_sources.py --repo-root .
+```
+
+wheel、source archive、runtime、stage 与 installer 都被 Git 忽略。
+
+## 构建顺序
+
+发布入口依次执行：
+
+1. 检查 `main`、干净工作树和七处版本一致；
+2. 从空目录生成对应白名单 stage，校验 Vina/Python/package/license SHA256；
+3. 运行 Python 全量测试、前端生产构建、Cargo check/test；
+4. 清理 Tauri release 目录内已验证的旧资源和 bundle；
+5. 用对应 `tauri.basic.conf.json` 或 `tauri.assisted.conf.json` 生成 MSI/NSIS；
+6. 对打包后的 `target/release` 执行真实流程回归；
+7. Assisted 额外真实静默安装 NSIS、从安装目录回归、静默卸载并检查残留；
+8. 只接受当前版本的 MSI/NSIS，生成带大小、SHA256 和门禁状态的 manifest。
+
+`-SkipTauriBuild` 只用于验证打包前门禁，不产生可发布证据。Assisted 的
+`-SkipPostInstallGate` 只生成开发产物，并强制写入 `publishable=false`。
+
+## Assisted 三道强制门禁
+
+- `development`：在 `.release/assisted/` 中，用包含中文与空格的项目路径完成 PDB 受体、
+  SDF 配体准备、Vina 运行、结果解析和报告；禁用网络代理，并验证 configured 优先与 bundled fallback；
+- `post-package`：在 Tauri `target/release/` 资源布局重复完整流程；
+- `post-install`：把 NSIS 安装到 `.release/install-gate/installed/`，从真实安装目录重复流程，
+  然后卸载并确认目录、runtime 与卸载记录均无残留。
+
+安装门禁发现已有 DockStart 安装、运行进程、默认目录或非空隔离目录时必须拒绝运行，
+不能覆盖用户安装。其删除操作只能发生在已校验的 `.release/install-gate/` 内路径。
+
+## 产物
 
 ```text
-.release/basic/
-├─ backend/                 # 仅 Python 源码，无 __pycache__/pyc
-├─ frontend/package.json
-└─ resources/
-   ├─ examples/
-   ├─ licenses/
-   ├─ python/               # 标准库 + DLL，无 site-packages/Scripts
-   ├─ vina/
-   └─ toolchain_manifest.json
+.release/artifacts/<version>/<basic|assisted>/DockStart_<version>_<Basic|Assisted>_x64_en-US.msi
+.release/artifacts/<version>/<basic|assisted>/DockStart_<version>_<Basic|Assisted>_x64-setup.exe
+.release/<profile>/artifact-manifest.json
 ```
 
-`apps/desktop/src-tauri/tauri.conf.json` 不直接复制仓库原始 `resources/`。
-`tauri.basic.conf.json` 只把上述白名单 stage 映射进安装包，避免本地 Full 候选文件或
-旧 `target/release` 内容泄漏到 Basic 包。
+Tauri 原始同名产物在门禁内立即重命名为带 profile 的文件名，避免先后构建时覆盖或让用户
+无法判断安装包能力；随后复制到 profile 隔离的 `.release/artifacts/`，因此下一次构建清理
+`target/release/bundle` 不会删除上一 profile 的候选产物。两个 profile 仍使用同一应用身份，
+不应并行安装。
 
-## 权威构建命令
+Assisted 的 manifest 只有在三道门禁均通过时才可写 `publishable=true`。最终发布报告必须
+记录精确路径、大小、SHA256、运行命令和门禁结果。
 
-在 `main` 分支、干净工作树中运行：
+## 安装状态之外的验证
 
-```powershell
-scripts/build_windows_release.ps1 -Profile Basic
-```
+自动安装门禁覆盖 NSIS 的实际资源布局与卸载安全，但不能替代以下人工/独立验证：
 
-脚本按顺序执行：
+- 从真实桌面 GUI 完成一次 Assisted 流程并重启重开项目；
+- 对 MSI 做独立全新安装/卸载烟雾测试；
+- 在无开发版 Python、无 PATH Vina、断网的干净 Windows 上复验；
+- 从上一稳定版升级，确认没有旧 scientific runtime 残留；
+- 确认卸载不会删除用户项目目录。
 
-1. 检查分支、干净工作树和七处版本号；
-2. 从空目录生成 Basic stage；
-3. 硬断言 Vina/Python/许可证/运行时示例存在；
-4. 硬断言 RDKit、Meeko、`site-packages`、`Scripts` 和 Python bytecode 不存在；
-5. 校验 Vina/Python SHA256；
-6. 执行后端 unittest、前端构建和 Cargo check；
-7. 安全清理旧的 Tauri release 资源与 bundle；
-8. 使用 Basic Tauri 配置构建 MSI 与 NSIS；
-9. 对 `target/release` 执行真实 Basic Demo 两次运行回归；
-10. 只接受当前版本的两个安装包并生成 SHA256 artifact manifest。
-
-只验证构建前门禁时可运行：
-
-```powershell
-scripts/build_windows_release.ps1 -Profile Basic -SkipTauriBuild
-```
-
-开发者手动构建 Basic 桌面包时使用：
-
-```powershell
-Push-Location apps/desktop
-npm run build:desktop -- --bundles msi,nsis --ci
-Pop-Location
-```
-
-不要直接使用未带 Basic 配置的 `tauri build` 作为发布产物。
-
-## 产物与验证
-
-期望文件：
-
-```text
-apps/desktop/src-tauri/target/release/bundle/msi/DockStart_<version>_x64_en-US.msi
-apps/desktop/src-tauri/target/release/bundle/nsis/DockStart_<version>_x64-setup.exe
-.release/basic/artifact-manifest.json
-```
-
-post-package 回归可以单独重跑：
-
-```powershell
-python scripts/verify_basic_release.py apps/desktop/src-tauri/target/release
-```
-
-该回归使用发布目录中的 Python、Vina、后端和 `resources/examples/basic_pdbqt`，在
-包含中文和空格的临时路径中完成：示例创建、校验、配置生成、run 准备、真实 Vina
-执行、结果解析、pose 读取、报告导出、项目重开和第二次运行。它同时检查运行命令、
-输入 SHA256、时间戳、stdout/stderr/log、scores、报告与科学免责声明。
-
-## 安装态验收
-
-`target/release` 回归是必须门禁，但不能替代干净 Windows 安装验证。公开发布前还应
-分别验证 NSIS 与 MSI：
-
-- 普通用户权限下全新安装；
-- 机器没有开发版 Python、PATH Vina，且断网；
-- 安装目录再次运行 `verify_basic_release.py`；
-- GUI 完成“打开 Basic 示例 → 运行 → 结果 → 报告 → 重启再打开”；
-- 从上一稳定版升级后不存在旧 Meeko/RDKit 残留；
-- 卸载后用户项目目录不被删除。
-
-## 不得提交到 Git
-
-- `.release/`；
-- `apps/desktop/dist/`；
-- `apps/desktop/src-tauri/target/`；
-- `.msi`、安装器 `.exe`；
-- `resources/vina/vina.exe` 与 DLL；
-- `resources/python/python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`；
-- 用户设置、真实 docking 输出和大型 raw 下载文件。
-
-安装包能力说明以 `docs/release/release_artifact_profile.md` 为准，许可证边界以
-`docs/license_notes.md` 和随包 `THIRD_PARTY_NOTICES.md` 为准。
+能力边界以 `release_artifact_profile.md` 为准，许可证边界以 `docs/license_notes.md` 和
+安装包内 `THIRD_PARTY_NOTICES.md` 为准。

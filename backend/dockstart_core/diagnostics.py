@@ -13,6 +13,7 @@ from typing import Any
 from dockstart_core import __version__
 from dockstart_core.capabilities import get_app_capability_profile
 from dockstart_core.demo_projects import list_available_demo_projects
+from dockstart_core.persistence import atomic_write_text
 from dockstart_core.settings import get_settings_path
 from dockstart_core.toolchain import get_toolchain_status
 
@@ -202,7 +203,7 @@ def export_diagnostic_report(output_dir: str | None = None) -> dict[str, Any]:
     target_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = target_dir / f"dockstart_diagnostic_{timestamp}.md"
-    report_path.write_text(_markdown_report(check), encoding="utf-8")
+    atomic_write_text(report_path, _markdown_report(check))
     return {
         "ok": True,
         "report_file": str(report_path),
