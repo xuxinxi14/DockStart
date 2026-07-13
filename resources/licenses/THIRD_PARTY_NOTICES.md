@@ -36,6 +36,11 @@ runtime source/version metadata with the packaged application.
 
 ## Bundled Python Packages
 
+DockStart v0.9.7 Basic Stable does not bundle the packages listed in this
+section. Its packaged Python runtime is backend-only and excludes
+`Lib/site-packages` and `Scripts`. The following notices apply only to a future
+or historical Full package that actually includes those files.
+
 When DockStart Full packages include `resources/python/`, the runtime may also
 include Python packages used for local PDBQT preparation:
 

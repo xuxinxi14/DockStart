@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.7
+
+- Established the Basic Stable release profile with bundled AutoDock Vina and a backend-only Python runtime for the existing-PDBQT workflow.
+- Removed bundled RDKit/Meeko claims from current release materials; Assisted Mode UI and adapters remain available for users who configure a separate Python environment with RDKit and Meeko.
+- Clarified that packaged-resource integrity and Assisted Mode readiness are separate states, and adjusted user-facing labels to avoid presenting one bundled tool as a complete preparation toolchain.
+- Kept the scientific scope unchanged: no preparation algorithm, Vina behavior, score semantics, interaction analysis, pocket prediction, or drug-efficacy judgment was added.
+
 ## v0.9.6
 
 - Rebuilt the application workspace around a lower-glare deep-blue industrial theme, replacing the remaining light work surfaces while preserving readable scientific controls.

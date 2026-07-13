@@ -1,14 +1,17 @@
 {
   "schema_version": 1,
-  "toolchain_name": "DockStart Full",
+  "toolchain_name": "DockStart Basic",
+  "release_profile": "basic_stable",
   "status": "ready",
-  "description": "DockStart 内置工具链目录规范。当前提交建立 Vina 与 Python runtime 的内置路径识别，不随仓库强制提交二进制运行时。",
+  "description": "DockStart Basic 稳定发布边界：随附 AutoDock Vina 与仅用于 DockStart 后端的精简 Python runtime，不随附 RDKit、Meeko 或其科学计算依赖。",
+  "includes_bundled_rdkit": false,
+  "includes_bundled_meeko": false,
   "vina": {
     "exists": true,
     "path": "resources/vina/vina.exe",
     "version": "1.2.7",
     "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
-    "source_label": "local AutoDock Vina 1.2.7 release candidate",
+    "source_label": "local AutoDock Vina 1.2.7 release artifact",
     "prepared_at": "2026-06-29T10:15:56.721579+00:00",
     "dry_run": false
   },
@@ -17,7 +20,7 @@
     "version": "1.2.7",
     "binary_path": "resources/vina/vina.exe",
     "license": "Apache-2.0",
-    "source": "local AutoDock Vina 1.2.7 release candidate",
+    "source": "local AutoDock Vina 1.2.7 release artifact",
     "bundled": true,
     "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
     "prepared_at": "2026-06-29T10:15:56.721579+00:00"
@@ -25,59 +28,14 @@
   "bundled_python": {
     "name": "Python",
     "version": "3.11.15",
+    "role": "backend_runtime",
     "binary_path": "resources/python/python.exe",
     "license": "Python Software Foundation License",
-    "source": "local CPython 3.11.15 runtime release candidate",
+    "source": "local CPython 3.11.15 backend runtime",
     "bundled": true,
+    "includes_site_packages": false,
     "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
-    "prepared_at": "2026-06-29T10:19:08.155892+00:00",
-    "packages": {
-      "rdkit": {
-        "version": "2026.3.3",
-        "license": "BSD-3-Clause",
-        "purpose": "ligand structure reading and preparation support"
-      },
-      "meeko": {
-        "version": "0.7.1",
-        "license": "LGPL-2.1-or-later",
-        "purpose": "PDBQT preparation"
-      },
-      "numpy": {
-        "version": "1.26.4",
-        "license": "BSD-3-Clause",
-        "purpose": "numeric dependency compatible with RDKit/Meeko/SciPy/ProDy"
-      },
-      "scipy": {
-        "version": "1.17.1",
-        "license": "BSD-3-Clause plus bundled runtime notices in wheel metadata",
-        "purpose": "Meeko dependency"
-      },
-      "pillow": {
-        "version": "12.2.0",
-        "license": "MIT-CMU",
-        "purpose": "RDKit wheel dependency"
-      },
-      "gemmi": {
-        "version": "0.7.5",
-        "license": "MPL-2.0",
-        "purpose": "Meeko dependency"
-      },
-      "prody": {
-        "version": "2.4.1",
-        "license": "MIT",
-        "purpose": "Meeko ProDy reader support for receptor preparation"
-      },
-      "biopython": {
-        "version": "1.87",
-        "license": "LicenseRef-Biopython-License-Agreement",
-        "purpose": "ProDy dependency"
-      },
-      "pyparsing": {
-        "version": "3.3.2",
-        "license": "MIT",
-        "purpose": "ProDy dependency"
-      }
-    }
+    "prepared_at": "2026-06-29T10:19:08.155892+00:00"
   },
   "tools": {
     "vina": {
@@ -85,7 +43,7 @@
       "role": "docking_engine",
       "bundled_path": "resources/vina/vina.exe",
       "required_for_mvp_run": true,
-      "bundled_by_default": false,
+      "bundled_by_default": true,
       "license": "Apache-2.0",
       "resolution_priority": [
         "bundled",
@@ -95,10 +53,11 @@
     },
     "python": {
       "name": "Python",
-      "role": "runtime",
+      "role": "backend_runtime",
       "bundled_path": "resources/python/python.exe",
+      "required_for_app_backend": true,
       "required_for_mvp_run": false,
-      "bundled_by_default": false,
+      "bundled_by_default": true,
       "license": "Python Software Foundation License",
       "backend_resolution_priority": [
         "bundled",

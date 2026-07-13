@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-产品定位正在从“外部工具调用器”调整为“开箱即用的一站式分子对接平台”。DockStart Full 的最终目标是分发简单、内置工具链、开箱即用、中文引导，并逐步覆盖分子对接全过程。当前 V0.1 是 Lite MVP，依赖用户已有 PDBQT 和 Vina，只是阶段性实现，不是最终形态。V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检查和 ToolchainStatusPage 展示。V0.2.5 开始 Structure acquisition line，只下载 RCSB PDB / PubChem CID 原始结构并记录来源；V0.2.6 增强 raw 文件状态展示和 raw 记录管理；V0.2.7 增强 RCSB/PubChem raw 来源查询；V0.2.8 增强 raw/prepared 流程 UI 引导；V0.2.9 新增手动 PDBQT 准备指南；V0.2.10 整理 V0.1/V0.2 smoke test 和 release notes；V0.3.0 新增自动准备工作流模型和最小入口；V0.3.1 增强 RDKit/Meeko 能力检测；V0.3.2/V0.3.3 分别实现 ligand 和 receptor 的最小 PDBQT 自动准备；V0.3.4 将 preparation 状态接入现有 config/run 前置检查和下一步建议。当前仍未实现 MOL2/SMILES 自动准备、复杂受体结构修复或 Vina 主流程改造。
+当前 v0.9.7 定位为 Windows Basic Stable：安装包随附 AutoDock Vina 与仅用于 DockStart 后端的精简 Python runtime。用户导入已经准备好的 receptor/ligand PDBQT 后，可以离线完成 Box 设置、Vina 运行、结果解析、构象查看和 Markdown 报告导出。Assisted Mode 的界面、adapter 与最小准备流程继续保留，但本版本不随包提供 RDKit/Meeko；需要该能力时，用户必须配置独立 Python 工具链并人工检查准备结果。当前仍未实现 MOL2/SMILES 自动准备、复杂受体结构修复或 Vina 主流程改造。
 
 本项目不是新的分子对接算法，也不修改 AutoDock Vina 的打分函数或搜索算法。项目重点是：
 
@@ -68,7 +68,7 @@ ViewerAdapter
 
 ### 2.4 外部工具谨慎集成
 
-AutoDock Vina、Meeko、RDKit 可作为核心优先支持对象，但当前 Meeko/RDKit 仍只做 Python import 检测，不做分子准备或处理。DockStart Full 工具链优先级为：
+AutoDock Vina、Meeko、RDKit 可作为核心优先支持对象。当前后端可以在用户配置的 RDKit/Meeko 环境可用时尝试最小 PDBQT 准备，但 v0.9.7 Basic Stable 不内置这些科学 Python 包，也不把自动准备结果视为科学验证。外部工具解析必须遵守 adapter 边界。
 
 ```text
 内置工具 > 用户配置路径 > 系统 PATH

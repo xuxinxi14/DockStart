@@ -1,59 +1,37 @@
-# DockStart Bundled Python Runtime
+# DockStart Basic Backend Python Runtime
 
-This directory is reserved for an optional DockStart Full Python runtime.
+`resources/python/` 是 DockStart 本地构建输入目录。真实 `python.exe`、`Lib/`、
+`DLLs/`、`Scripts/` 与 `site-packages/` 均由 `.gitignore` 排除，不随源码仓库提交。
 
-Current repository state:
+DockStart v0.9.7 Basic Stable 的安装包只分发运行 Python 后端所需的精简 CPython：
 
-- Only this `README.md` is tracked under `resources/python/`.
-- Real runtime files such as `python.exe`, `Lib/`, `DLLs/`, `Scripts/`, and
-  `site-packages/` are ignored by Git.
-- The repository does not include a complete Python runtime.
+- 包含 `python.exe`、标准库和运行所需 DLL；
+- 不包含 `Lib/site-packages/`；
+- 不包含 `Scripts/`；
+- 不包含 RDKit、Meeko、NumPy、SciPy、ProDy 或其命令行工具。
 
-For Full builds, a maintainer may prepare a local, redistributable Python runtime
-and place it here with:
+发布时必须通过：
 
 ```powershell
-python scripts/prepare_bundled_python.py C:\Path\To\Python
+python scripts/prepare_basic_release_resources.py --repo-root .
 ```
 
-The script works only with local files. It:
+该命令会从本地构建输入生成全新的 `.release/basic/` 白名单资源树，过滤
+`site-packages`、`Scripts`、`__pycache__` 与字节码，并执行隔离的标准库探针。
+它不联网、不安装 Python 包，也不修改用户配置。
 
-- copies a local Python runtime or `python.exe`;
-- calculates `python.exe` sha256;
-- runs `python.exe --version` to record the version when possible;
-- updates `resources/toolchain_manifest.json`.
-
-It does not download Python, install Python packages, install RDKit, install
-Meeko, or add RDKit/Meeko molecule-processing functionality.
-
-Expected optional layout:
-
-```text
-resources/python/
-├─ python.exe
-├─ python*.dll
-├─ DLLs/
-├─ Lib/
-├─ Scripts/
-└─ README.md
-```
-
-Large runtime files are ignored by Git. Keep this README and
-`resources/toolchain_manifest.json` tracked.
-
-DockStart uses bundled Python first for the desktop app's backend runtime:
+桌面后端的 Python 解析优先级为：
 
 ```text
 bundled > configured > current_environment
 ```
 
-RDKit/Meeko preparation uses the user-configured Python first:
+Assisted Mode 的准备工具链解析优先级为：
 
 ```text
 configured > bundled > current_environment
 ```
 
-The lightweight runtime prepared here is intended to run DockStart's backend.
-It does not install RDKit or Meeko. Assisted Mode still expects a separate
-configured Python environment with RDKit/Meeko when automatic PDBQT preparation
-is required.
+因此 v0.9.7 Basic Stable 中，如果用户需要从 PDB/SDF 自动准备 PDBQT，仍需在
+设置页配置包含 RDKit 与 Meeko 的独立 Python 环境。缺少这些包不会阻止已有
+PDBQT 的 Basic Mode。

@@ -58,15 +58,15 @@ export default function Topbar({ currentPage, project, workflowSummary, theme, o
       </div>
       <div className="topbar-end">
         <div className="topbar-actions" aria-label="工作区快捷操作">
-          <button onClick={() => onNavigate("project-create")} type="button">
+          <button aria-label="打开项目" title="打开项目" onClick={() => onNavigate("project-create")} type="button">
             <FolderOpen aria-hidden="true" size={18} />
             <span>打开项目</span>
           </button>
-          <button onClick={() => onNavigate("toolchain-status")} type="button">
+          <button aria-label="工具链" title="工具链" onClick={() => onNavigate("toolchain-status")} type="button">
             <Wrench aria-hidden="true" size={18} />
             <span>工具链</span>
           </button>
-          <button onClick={() => onNavigate("help")} type="button">
+          <button aria-label="帮助" title="帮助" onClick={() => onNavigate("help")} type="button">
             <Question aria-hidden="true" size={18} />
             <span>帮助</span>
           </button>

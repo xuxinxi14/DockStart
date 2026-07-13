@@ -80,7 +80,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
               <div className="help-grid">
                 <article>
                   <strong>没有 Vina</strong>
-                  <p>先到工具链页配置 vina.exe。</p>
+                  <p>先到工具链页重新检测随附 Vina；如果随附资源不可用，再配置外部 vina.exe。</p>
                 </article>
                 <article>
                   <strong>RDKit / Meeko 缺失</strong>
@@ -101,7 +101,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
               <div className="help-grid">
                 <article>
                   <strong>Vina 缺失</strong>
-                  <p>Basic Mode 和真实 docking 都需要 AutoDock Vina。先确认 vina --version 可运行，再到设置页填写 vina.exe。</p>
+                  <p>Basic Mode 和真实 docking 都需要 AutoDock Vina。先重新检测随附 Vina；仍不可用时，再到设置页填写外部 vina.exe。</p>
                 </article>
                 <article>
                   <strong>自动准备缺依赖</strong>

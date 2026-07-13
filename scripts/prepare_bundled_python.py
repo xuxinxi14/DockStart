@@ -84,7 +84,7 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.is_file():
         return {
             "schema_version": 1,
-            "toolchain_name": "DockStart Full",
+            "toolchain_name": "DockStart Basic",
             "status": "partial",
             "tools": {},
             "licenses": {},
@@ -198,7 +198,7 @@ def prepare_bundled_python(
     }
     manifest["tools"]["python"] = {
         "name": "Python",
-        "role": "runtime",
+        "role": "backend_runtime",
         "bundled_path": PYTHON_BINARY_RELATIVE.as_posix(),
         "required_for_mvp_run": False,
         "bundled_by_default": False,

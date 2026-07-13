@@ -12,6 +12,7 @@ target/
 *.msix
 *.appinstaller
 DockStart_*_x64-setup.exe
+.release/
 
 # Python caches and virtual environments
 __pycache__/
@@ -30,6 +31,7 @@ dockstart_settings.json
 *.log
 .workbuddy/
 .codex-ui-audit/
+output/playwright/
 
 # Third-party source archives and downloads
 *_master.zip

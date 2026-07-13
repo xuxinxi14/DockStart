@@ -26,7 +26,7 @@ const statusText: Record<ToolStatus, string> = {
 };
 
 const sourceText: Record<ToolSource, string> = {
-  bundled: "DockStart 内置资源",
+  bundled: "随应用提供",
   configured: "用户配置路径",
   auto: "系统自动检测",
   current_environment: "Python 运行环境",
@@ -36,9 +36,9 @@ const sourceText: Record<ToolSource, string> = {
 };
 
 const packageStatusText: Record<NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"], string> = {
-  ready: "可用",
-  incomplete: "待补全",
-  missing: "未发现",
+  ready: "文件校验通过",
+  incomplete: "文件待补全",
+  missing: "未随附",
 };
 
 const severityText: Record<string, string> = {
@@ -611,8 +611,8 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
             <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
                 <div>
-                  <h2>内置资源</h2>
-                  <p>用于 Windows 打包版本的随附 Vina、Python 和许可证资源。</p>
+                  <h2>随附资源</h2>
+                  <p>Basic 包随附 Vina 与 DockStart 后端 Python；后端 Python 不代表包含 RDKit/Meeko。</p>
                 </div>
                 <span className={`status-badge ${packageStatusClass(status.bundled_vina.package_status)}`}>
                   {packageStatusText[status.bundled_vina.package_status]}
@@ -624,7 +624,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <dd>{booleanText(status.bundled_vina.exists)}，{status.bundled_vina.version || "未获取版本"}</dd>
                 </div>
                 <div>
-                  <dt>随附 Python</dt>
+                  <dt>随附 Python（后端）</dt>
                   <dd>{booleanText(status.bundled_python.exists)}，{status.bundled_python.version || "未获取版本"}</dd>
                 </div>
                 <div>

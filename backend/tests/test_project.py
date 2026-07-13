@@ -17,6 +17,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from dockstart_core import __version__  # noqa: E402
 from dockstart_core.project import (  # noqa: E402
     PROJECT_DIRS,
     build_vina_config_text,
@@ -1420,7 +1421,7 @@ class ProjectTests(unittest.TestCase):
             metadata = response["metadata"]
             self.assertEqual(metadata["stage"], "prepared")
             self.assertEqual(metadata["progress"]["percent"], 0)
-            self.assertEqual(metadata["app_version"], "0.9.6")
+            self.assertEqual(metadata["app_version"], __version__)
             self.assertEqual(metadata["vina_source"], "auto")
             self.assertEqual(len(metadata["input_sha256"]["receptor"]), 64)
             self.assertEqual(len(metadata["input_sha256"]["ligand"]), 64)

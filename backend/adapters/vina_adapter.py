@@ -164,7 +164,7 @@ def detect(configured_path: str = "", bundled_path: str = "") -> ToolCheckResult
             name="AutoDock Vina",
             status="missing",
             message=(
-                "未检测到内置 Vina，也未在 PATH 中检测到 vina 或 vina.exe。"
+                "未检测到随应用提供的 Vina，也未在 PATH 中检测到 vina 或 vina.exe。"
                 "请放置 resources/tools/vina/vina.exe、在设置页配置路径，或将 Vina 加入 PATH。"
             ),
             source="missing",

@@ -104,7 +104,7 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.is_file():
         return {
             "schema_version": 1,
-            "toolchain_name": "DockStart Full",
+            "toolchain_name": "DockStart Basic",
             "status": "partial",
             "tools": {},
             "licenses": {},

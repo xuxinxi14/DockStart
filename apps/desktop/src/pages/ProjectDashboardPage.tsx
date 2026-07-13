@@ -377,7 +377,7 @@ export default function ProjectDashboardPage({
                   >
                     <div className="start-route-card-copy">
                       <h3>从原始结构开始</h3>
-                      <p>从 PDB / SDF 准备 Vina 输入文件。</p>
+                      <p>需配置 Python、RDKit / Meeko 后准备 Vina 输入。</p>
                     </div>
                     <span className="secondary-button start-route-button start-route-button-proxy">导入 PDB / SDF</span>
                   </button>

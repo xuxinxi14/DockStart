@@ -126,7 +126,7 @@ def get_bundled_vina_integrity() -> dict[str, Any]:
         "bundled_vina",
         bundled_vina_path,
         "vina.exe",
-        "未发现内置 vina.exe，Full 打包暂时不能使用内置 Vina。",
+        "未发现随应用提供的 vina.exe，Basic 发布包暂时不能运行真实对接。",
     )
 
     license_exists = license_path.is_file()
@@ -154,7 +154,7 @@ def get_bundled_vina_integrity() -> dict[str, Any]:
         "third_party_notices_exists": notices_exists,
         "third_party_notices_has_autodock_vina": notices_has_entry,
         "warnings": warnings,
-        "message": "内置 Vina 打包完整性检查已完成。",
+        "message": "随附 Vina 打包完整性检查已完成。",
     }
 
 
@@ -166,12 +166,12 @@ def validate_bundled_vina_package() -> dict[str, Any]:
         "status": integrity["status"],
         "integrity": integrity,
         "warnings": integrity["warnings"],
-        "message": "内置 Vina 可以用于 Full 打包。" if is_ready else "内置 Vina 尚未满足 Full 打包条件。",
+        "message": "随附 Vina 已满足 Basic 发布条件。" if is_ready else "随附 Vina 尚未满足 Basic 发布条件。",
         "error": None
         if is_ready
         else {
             "code": "BUNDLED_VINA_PACKAGE_INCOMPLETE",
-            "message": "内置 Vina 打包检查未通过。",
+            "message": "随附 Vina 打包检查未通过。",
             "raw_error": "\n".join(integrity["warnings"]),
             "suggestion": "请确认 vina.exe、manifest sha256、AutoDock Vina license 和 THIRD_PARTY_NOTICES.md 均已准备。",
         },
@@ -188,7 +188,7 @@ def get_bundled_python_integrity() -> dict[str, Any]:
     )
     return {
         **integrity,
-        "message": "内置 Python runtime 完整性检查已完成。",
+        "message": "后端 Python runtime 完整性检查已完成。",
     }
 
 
@@ -200,12 +200,12 @@ def validate_bundled_python_package() -> dict[str, Any]:
         "status": integrity["status"],
         "integrity": integrity,
         "warnings": integrity["warnings"],
-        "message": "内置 Python runtime 可以用于 Full 打包。" if is_ready else "内置 Python runtime 尚未满足 Full 打包条件。",
+        "message": "后端 Python runtime 已满足 Basic 发布条件。" if is_ready else "后端 Python runtime 尚未满足 Basic 发布条件。",
         "error": None
         if is_ready
         else {
             "code": "BUNDLED_PYTHON_PACKAGE_INCOMPLETE",
-            "message": "内置 Python runtime 打包检查未通过。",
+            "message": "后端 Python runtime 打包检查未通过。",
             "raw_error": "\n".join(integrity["warnings"]),
             "suggestion": "请确认 python.exe 已放入 resources/python/，并通过 prepare_bundled_python.py 更新 manifest sha256。",
         },
@@ -353,7 +353,7 @@ def get_toolchain_status() -> dict[str, Any]:
             "message": (
                 bundled_vina_detection.message
                 if bundled_vina_detection
-                else "未发现内置 Vina。可将 vina.exe 放置到 resources/vina/ 后重新检测，或在设置页配置外部 Vina。"
+                else "未发现随应用提供的 Vina。请重新安装完整 Basic 包，或在设置页配置外部 Vina。"
             ),
             "raw_error": bundled_vina_detection.raw_error if bundled_vina_detection else "",
             "sha256": bundled_vina_integrity["sha256"],
@@ -369,7 +369,7 @@ def get_toolchain_status() -> dict[str, Any]:
             "message": (
                 bundled_python_detection.message
                 if bundled_python_detection
-                else "未发现内置 Python。将使用用户配置 Python 或当前 Python 环境进行检测。"
+                else "未发现随应用提供的后端 Python。将尝试用户配置 Python 或当前 Python 环境。"
             ),
             "raw_error": bundled_python_detection.raw_error if bundled_python_detection else "",
             "sha256": bundled_python_integrity["sha256"],
@@ -401,7 +401,7 @@ def get_toolchain_status() -> dict[str, Any]:
             "python_dir_exists": python_dir.is_dir(),
         },
         "full_status": full_status,
-        "message": "DockStart 内置工具链状态已读取。",
+        "message": "DockStart 随附资源状态已读取。",
         "error": None,
     }
 

@@ -19,7 +19,7 @@ const statusText: Record<ToolStatus, string> = {
 };
 
 const sourceText: Record<ToolSource, string> = {
-  bundled: "内置工具链",
+  bundled: "随应用提供",
   configured: "用户配置",
   auto: "自动检测",
   current_environment: "Python 运行环境",

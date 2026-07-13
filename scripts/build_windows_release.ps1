@@ -1,4 +1,6 @@
 param(
+    [ValidateSet("Basic")]
+    [string]$Profile = "Basic",
     [switch]$SkipTauriBuild
 )
 
@@ -61,9 +63,43 @@ function Read-RegexVersion {
     return $match.Groups[1].Value
 }
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+function Remove-ReleasePath {
+    param(
+        [string]$ReleaseRoot,
+        [string]$TargetPath
+    )
+    $releaseFull = [IO.Path]::GetFullPath($ReleaseRoot).TrimEnd('\') + '\'
+    $targetFull = [IO.Path]::GetFullPath($TargetPath)
+    if (-not $targetFull.StartsWith($releaseFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to delete a path outside the Tauri release directory: $targetFull"
+    }
+    if (Test-Path -LiteralPath $targetFull) {
+        Write-Host "Remove stale release path: $targetFull"
+        Remove-Item -LiteralPath $targetFull -Recurse -Force
+    }
+}
+
+function Assert-FileHash {
+    param(
+        [string]$Path,
+        [string]$ExpectedSha256,
+        [string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Label is missing: $Path"
+    }
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $ExpectedSha256.ToLowerInvariant()) {
+        throw "$Label sha256 mismatch. Expected $ExpectedSha256, actual $actual"
+    }
+}
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $desktopDir = Join-Path $repoRoot "apps\desktop"
 $tauriDir = Join-Path $desktopDir "src-tauri"
+$releaseDir = Join-Path $tauriDir "target\release"
+$stageRoot = Join-Path $repoRoot ".release\basic"
+$stageResources = Join-Path $stageRoot "resources"
 
 Write-Step "Check branch"
 $branch = (& git -C $repoRoot branch --show-current).Trim()
@@ -93,53 +129,105 @@ if (@($uniqueVersions).Count -ne 1) {
     $versions.GetEnumerator() | ForEach-Object { Write-Host "$($_.Key): $($_.Value)" }
     throw "Version numbers are not consistent."
 }
-Write-Host "Version: $($uniqueVersions[0])"
+$appVersion = [string]$uniqueVersions[0]
+Write-Host "Version: $appVersion"
 
-Write-Step "Release artifact capability profile"
-$resourcesDir = Join-Path $repoRoot "resources"
-$includesBundledVina = (Test-Path -LiteralPath (Join-Path $resourcesDir "vina\vina.exe"))
-$includesBundledPython = (Test-Path -LiteralPath (Join-Path $resourcesDir "python\python.exe"))
-$toolchainManifestPath = Join-Path $resourcesDir "toolchain_manifest.json"
-$toolchainManifest = if (Test-Path -LiteralPath $toolchainManifestPath) {
-    Get-Content -LiteralPath $toolchainManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+Invoke-Checked `
+    "Prepare deterministic Basic release stage" `
+    "python" `
+    @("scripts/prepare_basic_release_resources.py", "--repo-root", $repoRoot) `
+    $repoRoot
+
+Write-Step "Validate Basic release profile"
+$stageManifestPath = Join-Path $stageResources "toolchain_manifest.json"
+if (-not (Test-Path -LiteralPath $stageManifestPath -PathType Leaf)) {
+    throw "Basic stage manifest is missing: $stageManifestPath"
 }
-else {
-    $null
+$stageManifest = Get-Content -LiteralPath $stageManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([string]$stageManifest.release_profile -ne "basic_stable") {
+    throw "Basic stage manifest has an unexpected release_profile."
 }
-$includesBundledRdkit = $includesBundledPython -and
-    ($null -ne $toolchainManifest.bundled_python.packages.rdkit) -and
-    (Test-Path -LiteralPath (Join-Path $resourcesDir "python\Lib\site-packages\rdkit"))
-$includesBundledMeeko = $includesBundledPython -and
-    ($null -ne $toolchainManifest.bundled_python.packages.meeko) -and
-    (Test-Path -LiteralPath (Join-Path $resourcesDir "python\Lib\site-packages\meeko"))
-$includesFullPreparationRuntime = $includesBundledRdkit -and $includesBundledMeeko
-$buildType = if ($includesBundledVina -and $includesFullPreparationRuntime) {
-    "full_toolchain_local_candidate"
+
+$stageVina = Join-Path $stageResources "vina\vina.exe"
+$stagePython = Join-Path $stageResources "python\python.exe"
+$includesBundledVina = Test-Path -LiteralPath $stageVina -PathType Leaf
+$includesBundledPython = Test-Path -LiteralPath $stagePython -PathType Leaf
+$sitePackagesPath = Join-Path $stageResources "python\Lib\site-packages"
+$scriptsPath = Join-Path $stageResources "python\Scripts"
+$includesBundledRdkit = Test-Path -LiteralPath (Join-Path $sitePackagesPath "rdkit")
+$includesBundledMeeko = Test-Path -LiteralPath (Join-Path $sitePackagesPath "meeko")
+$stageBytecode = @(
+    Get-ChildItem -LiteralPath $stageRoot -Recurse -File |
+        Where-Object { $_.Extension -in ".pyc", ".pyo" }
+)
+$stagePycache = @(
+    Get-ChildItem -LiteralPath $stageRoot -Recurse -Directory -Filter "__pycache__"
+)
+
+if (-not $includesBundledVina) {
+    throw "Basic Stable requires bundled AutoDock Vina."
 }
-elseif ($includesBundledVina -and $includesBundledPython) {
-    "basic_distributable"
+if (-not $includesBundledPython) {
+    throw "Basic Stable requires the bundled backend Python runtime."
 }
-else {
-    "lightweight_or_toolchain_assisted"
+if ($includesBundledRdkit -or $includesBundledMeeko -or (Test-Path -LiteralPath $sitePackagesPath)) {
+    throw "Basic Stable must not contain RDKit, Meeko, or Lib/site-packages."
 }
+if (Test-Path -LiteralPath $scriptsPath) {
+    throw "Basic Stable must not contain Python Scripts or Meeko preparation CLIs."
+}
+if ($stageBytecode.Count -gt 0 -or $stagePycache.Count -gt 0) {
+    throw "Basic stage contains generated Python bytecode/cache files."
+}
+if ($stageManifest.includes_bundled_rdkit -ne $false -or $stageManifest.includes_bundled_meeko -ne $false) {
+    throw "Basic manifest must explicitly report RDKit/Meeko as not bundled."
+}
+
+Assert-FileHash $stageVina ([string]$stageManifest.bundled_vina.sha256) "Bundled Vina"
+Assert-FileHash $stagePython ([string]$stageManifest.bundled_python.sha256) "Bundled backend Python"
+
+$requiredStageFiles = @(
+    "backend\adapters\__init__.py",
+    "backend\dockstart_core\project.py",
+    "frontend\package.json",
+    "resources\licenses\AutoDock-Vina_LICENSE.txt",
+    "resources\licenses\Python_LICENSE.txt",
+    "resources\licenses\THIRD_PARTY_NOTICES.md",
+    "resources\examples\basic_pdbqt\manifest.json",
+    "resources\examples\basic_pdbqt\project.json",
+    "resources\examples\basic_pdbqt\receptor.pdbqt",
+    "resources\examples\basic_pdbqt\ligand.pdbqt",
+    "resources\examples\assisted_raw\manifest.json",
+    "resources\examples\viewer_result\manifest.json"
+)
+foreach ($relativePath in $requiredStageFiles) {
+    $path = Join-Path $stageRoot $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Basic release stage is missing: $relativePath"
+    }
+}
+
 $profile = [ordered]@{
-    "app_version" = $uniqueVersions[0]
-    "build_type" = $buildType
-    "includes_bundled_vina" = $includesBundledVina
-    "includes_bundled_python" = $includesBundledPython
-    "includes_bundled_rdkit" = $includesBundledRdkit
-    "includes_bundled_meeko" = $includesBundledMeeko
+    "app_version" = $appVersion
+    "build_type" = "basic_distributable"
+    "release_profile" = "basic_stable"
+    "includes_bundled_vina" = $true
+    "includes_bundled_python" = $true
+    "bundled_python_role" = "backend_runtime"
+    "includes_bundled_rdkit" = $false
+    "includes_bundled_meeko" = $false
     "includes_conda_env" = $false
-    "includes_demo_projects" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_basic_project")) -and (Test-Path -LiteralPath (Join-Path $repoRoot "examples\demo_assisted_project"))
-    "includes_examples" = (Test-Path -LiteralPath (Join-Path $repoRoot "examples"))
+    "includes_demo_projects" = $true
+    "includes_examples" = $true
     "basic_mode_expected" = "Bundled Vina can run Basic Mode when the user provides receptor/ligand PDBQT."
-    "assisted_mode_expected" = if ($includesFullPreparationRuntime) {
-        "The local Full candidate includes bundled Python with RDKit/Meeko; preparation still requires user inspection."
-    }
-    else {
-        "Requires a configured Python environment with RDKit/Meeko."
-    }
-    "known_requirements" = @("No PLIP/ProLIF", "No Open Babel/MGLTools", "No drug efficacy judgment", "No bundled conda environment")
+    "assisted_mode_expected" = "Requires a user-configured Python environment with RDKit/Meeko."
+    "known_requirements" = @(
+        "No bundled RDKit/Meeko",
+        "No PLIP/ProLIF",
+        "No Open Babel/MGLTools",
+        "No drug efficacy judgment",
+        "No bundled conda environment"
+    )
 }
 $profile.GetEnumerator() | ForEach-Object {
     if ($_.Value -is [array]) {
@@ -149,6 +237,8 @@ $profile.GetEnumerator() | ForEach-Object {
         Write-Host "$($_.Key): $($_.Value)"
     }
 }
+$profilePath = Join-Path $stageRoot "artifact-profile.json"
+$profile | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $profilePath -Encoding UTF8
 
 Invoke-Checked "Python unittest" "python" @("-m", "unittest", "discover", "-s", "backend/tests") $repoRoot
 Invoke-Checked "npm run build" "npm.cmd" @("run", "build") $desktopDir
@@ -156,26 +246,67 @@ Invoke-Checked "cargo check" "cargo" @("check", "--manifest-path", "apps/desktop
 
 if ($SkipTauriBuild) {
     Write-Step "Skip Tauri build"
-    Write-Host "Tauri build skipped by -SkipTauriBuild."
+    Write-Host "Tauri build and packaged Basic smoke test skipped by -SkipTauriBuild."
 }
 else {
-    Invoke-Checked "npm run tauri build" "npm.cmd" @("run", "tauri", "build") $desktopDir
-}
+    Write-Step "Clean stale Tauri release resources and bundles"
+    foreach ($relativePath in @("backend", "frontend", "examples", "resources", "bundle", "nsis", "wix")) {
+        Remove-ReleasePath $releaseDir (Join-Path $releaseDir $relativePath)
+    }
 
-Write-Step "Release artifacts"
-$releaseDir = Join-Path $tauriDir "target\release"
-$bundleDir = Join-Path $releaseDir "bundle"
-Write-Host "Release directory: $releaseDir"
-Write-Host "Bundle directory:  $bundleDir"
-if (Test-Path -LiteralPath $bundleDir) {
-    Get-ChildItem -LiteralPath $bundleDir -Recurse -File |
-        Where-Object { $_.Extension -in ".msi", ".exe" } |
-        Select-Object FullName, Length, LastWriteTime |
-        Format-Table -AutoSize
-}
-else {
-    Write-Host "Bundle directory does not exist yet."
+    Invoke-Checked `
+        "Build DockStart Basic desktop installers" `
+        "npm.cmd" `
+        @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.basic.conf.json", "--bundles", "msi,nsis", "--ci") `
+        $desktopDir
+
+    Invoke-Checked `
+        "Post-package Basic docking regression" `
+        "python" `
+        @("scripts/verify_basic_release.py", $releaseDir) `
+        $repoRoot
+
+    Write-Step "Validate release artifacts"
+    $bundleDir = Join-Path $releaseDir "bundle"
+    $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
+    $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
+    foreach ($artifact in @($expectedMsi, $expectedNsis)) {
+        if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+            throw "Expected release artifact is missing: $artifact"
+        }
+    }
+    $allInstallers = @(
+        Get-ChildItem -LiteralPath $bundleDir -Recurse -File |
+            Where-Object { $_.Extension -eq ".msi" -or ($_.Extension -eq ".exe" -and $_.Name -like "*-setup.exe") }
+    )
+    if ($allInstallers.Count -ne 2) {
+        $allInstallers | Select-Object FullName | Format-Table -AutoSize
+        throw "Release bundle contains unexpected or stale installer artifacts."
+    }
+
+    $artifactRecords = foreach ($artifact in @($expectedMsi, $expectedNsis)) {
+        $item = Get-Item -LiteralPath $artifact
+        [ordered]@{
+            "name" = $item.Name
+            "path" = $item.FullName
+            "size_bytes" = $item.Length
+            "sha256" = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    $artifactManifest = [ordered]@{
+        "app_version" = $appVersion
+        "release_profile" = "basic_stable"
+        "generated_at" = (Get-Date).ToUniversalTime().ToString("o")
+        "artifacts" = @($artifactRecords)
+    }
+    $artifactManifestPath = Join-Path $stageRoot "artifact-manifest.json"
+    $artifactManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifest | ConvertTo-Json -Depth 6
+    Write-Host "Artifact manifest: $artifactManifestPath"
 }
 
 Write-Step "Done"
-Write-Host "Do not commit target/, dist/, installers, or bundle outputs."
+Write-Host "Profile: Basic Stable"
+Write-Host "Stage:   $stageRoot"
+Write-Host "Release: $releaseDir"
+Write-Host "Do not commit target/, dist/, installers, .release/, or bundle outputs."

@@ -17,7 +17,7 @@ def _parse_version(output: str) -> str:
 
 
 def _run_version_check(path: Path, source: str, bundled_path: str = "") -> ToolCheckResult:
-    source_label = "内置 Python" if source == "bundled" else "用户配置的 Python"
+    source_label = "随应用提供的 Python" if source == "bundled" else "用户配置的 Python"
     try:
         completed = subprocess.run(
             [str(path), "--version"],
