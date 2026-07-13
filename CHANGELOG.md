@@ -2,6 +2,8 @@
 
 ## v0.10.0
 
+- Set the Cargo/Tauri/npm package author and Windows installer publisher to `XinXi Xu`; regenerated both Basic and Assisted MSI/NSIS artifacts and verified the publisher metadata.
+- Restored the archived Basic Stable installers and validated an isolated NSIS install, two real PDBQT/Vina runs, report export, and a clean uninstall.
 - Added a separate Assisted Stable distribution with a pinned, offline, replaceable CPython 3.11 runtime containing Meeko 0.7.1, RDKit 2026.3.3, and their verified dependencies; Basic Stable remains available without the scientific Python stack.
 - Added real PDB receptor and SDF/MOL ligand preparation through isolated `python -I -B` Meeko entry points, including Windows paths containing Chinese characters and spaces.
 - Added project schema migration, revision-based concurrent-write protection, crash recovery, atomic artifact publication, and SHA256 provenance for inputs, outputs, reports, and tool binaries.

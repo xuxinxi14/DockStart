@@ -4,8 +4,9 @@
 
 ## Build Provenance
 
-- 验收时间：2026-07-14 06:08 +08:00
-- 构建源码提交：`f5f2d69c2b44adadeb25dd6bb1f339617dd768d7`
+- 验收时间：2026-07-14 07:10 +08:00
+- 构建源码提交：`96d6c6b`
+- 安装包作者/Publisher：`XinXi Xu`
 - OS：Microsoft Windows 11 家庭版 中文版 10.0.26200 build 26200
 - Windows PowerShell：5.1.26100.8655
 - Node.js：v24.14.1
@@ -25,7 +26,7 @@
 powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Profile Assisted
 ```
 
-连续流水线退出码为 `0`，总耗时约 785 秒。`.release/assisted/artifact-manifest.json` 的最终状态为：
+连续流水线退出码为 `0`。`.release/assisted/artifact-manifest.json` 的最终状态为：
 
 - `development_gate=passed`
 - `post_package_gate=passed`
@@ -35,7 +36,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Prof
 
 ## Validation Results
 
-- Python：`324` 项后端测试通过；
+- Python：`325` 项后端测试通过；
 - Rust：`13` 项测试通过；
 - Rust 静态检查：`cargo clippy --locked --all-targets -- -D warnings` 通过；
 - Rust 格式检查：`cargo fmt --check` 通过；
@@ -54,8 +55,8 @@ post-install 回归产生的 `run_001` 状态为 `finished`。记录的 affinity
 
 | File | Size | SHA256 | Signature |
 | --- | ---: | --- | --- |
-| `.release/artifacts/0.10.0/assisted/DockStart_0.10.0_Assisted_x64_en-US.msi` | 113,116,382 bytes | `40a38be1ec6ff531d8c4d5c89df2d3cfed53ae5d20abfc24e5376e404f40b5bd` | NotSigned |
-| `.release/artifacts/0.10.0/assisted/DockStart_0.10.0_Assisted_x64-setup.exe` | 73,167,840 bytes | `9920561060a15c0b8e708bab68cf6214d6b5d3815ca868f5a1ffcad900383e0a` | NotSigned |
+| `.release/artifacts/0.10.0/assisted/DockStart_0.10.0_Assisted_x64_en-US.msi` | 113,132,764 bytes | `5a8f74bec929254d1517cb75e5e3380cb6a85a35e5db4089eefd1aa1c138119d` | NotSigned |
+| `.release/artifacts/0.10.0/assisted/DockStart_0.10.0_Assisted_x64-setup.exe` | 73,161,918 bytes | `07121cd5407859b38b3bd4dbe7b17d13ee750e07c32030f3c7b43c386bacf494` | NotSigned |
 
 发布清单保存在忽略目录 `.release/assisted/artifact-manifest.json`。清单中的路径均为仓库相对路径，文件大小和 SHA256 已在构建后再次独立核对。
 
@@ -64,6 +65,7 @@ post-install 回归产生的 `run_001` 状态为 `finished`。记录的 affinity
 本轮以 NSIS 作为正式真实安装门禁：
 
 - 安装方式：NSIS 静默安装到 `.release/install-gate/installed/`；
+- MSI Manufacturer、NSIS Publisher 与安装注册表厂商键均为 `XinXi Xu`；
 - 安装态验证：离线准备、Vina、解析和报告流程通过；
 - 静默卸载退出码：`0`；
 - 安装目录已删除；
