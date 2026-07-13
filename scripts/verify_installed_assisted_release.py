@@ -162,13 +162,29 @@ def _registry_records() -> list[dict[str, str]]:
     return records
 
 
-def _manufacturer_location() -> str:
+def _publisher(repo_root: Path) -> str:
+    config_path = repo_root / "apps" / "desktop" / "src-tauri" / "tauri.conf.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        publisher = str(config["bundle"]["publisher"]).strip()
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise InstalledAssistedGateError(f"Cannot read the Tauri bundle publisher from {config_path}.") from exc
+    if not publisher or "\\" in publisher or "/" in publisher:
+        raise InstalledAssistedGateError("The Tauri bundle publisher is empty or unsafe for a registry key.")
+    return publisher
+
+
+def _manufacturer_registry_path(repo_root: Path) -> str:
+    return rf"Software\{_publisher(repo_root)}\DockStart"
+
+
+def _manufacturer_location(repo_root: Path) -> str:
     if sys.platform != "win32":
         return ""
     import winreg  # pylint: disable=import-outside-toplevel
 
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\dockstart\DockStart") as key:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _manufacturer_registry_path(repo_root)) as key:
             return str(winreg.QueryValue(key, None) or "")
     except OSError:
         return ""
@@ -201,7 +217,7 @@ def _assert_no_existing_installation(paths: GatePaths) -> None:
         raise InstalledAssistedGateError("DockStart is running. Close it before the isolated install gate.")
 
     records = _registry_records()
-    manufacturer = _manufacturer_location()
+    manufacturer = _manufacturer_location(paths.repo_root)
     nonempty_defaults = [str(path) for path in _default_install_directories() if _directory_has_entries(path)]
     if records or manufacturer or nonempty_defaults:
         evidence = {
@@ -279,7 +295,7 @@ def _assert_installed_layout(paths: GatePaths) -> None:
     installed_locations = {
         _normalized_location(record.get("install_location")) for record in _registry_records()
     }
-    manufacturer = _normalized_location(_manufacturer_location())
+    manufacturer = _normalized_location(_manufacturer_location(paths.repo_root))
     if expected not in installed_locations or manufacturer != expected:
         raise InstalledAssistedGateError(
             "NSIS registry provenance does not point to the isolated install directory; refusing to continue.",
@@ -320,15 +336,15 @@ def _run_post_install_verifier(paths: GatePaths) -> dict[str, Any]:
     return payload
 
 
-def _remove_gate_manufacturer_key(install_root: Path) -> bool:
+def _remove_gate_manufacturer_key(repo_root: Path, install_root: Path) -> bool:
     if sys.platform != "win32":
         return False
     import winreg  # pylint: disable=import-outside-toplevel
 
-    if _normalized_location(_manufacturer_location()) != _normalized_location(str(install_root)):
+    if _normalized_location(_manufacturer_location(repo_root)) != _normalized_location(str(install_root)):
         return False
     try:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, r"Software\dockstart\DockStart")
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, _manufacturer_registry_path(repo_root))
     except FileNotFoundError:
         return False
     return True
@@ -374,7 +390,7 @@ def _cleanup_installed_layout(paths: GatePaths) -> dict[str, Any]:
             uninstaller_copy.unlink(missing_ok=True)
         _wait_for_uninstall(paths.install_root)
 
-    manufacturer_key_removed = _remove_gate_manufacturer_key(paths.install_root)
+    manufacturer_key_removed = _remove_gate_manufacturer_key(paths.repo_root, paths.install_root)
     residue = _capture_residue(paths.install_root)
     runtime_residue = (paths.install_root / "resources" / "python").exists()
     uninstall_record_residue = [

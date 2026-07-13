@@ -22,7 +22,19 @@ class InstalledAssistedReleaseGateTests(unittest.TestCase):
         scripts = repo / "scripts"
         scripts.mkdir(parents=True)
         (scripts / "verify_assisted_release.py").write_text("# gate fixture\n", encoding="utf-8")
+        tauri = repo / "apps" / "desktop" / "src-tauri"
+        tauri.mkdir(parents=True)
+        (tauri / "tauri.conf.json").write_text(
+            '{"bundle":{"publisher":"XinXi Xu"}}\n',
+            encoding="utf-8",
+        )
         return repo
+
+    def test_manufacturer_registry_path_uses_tauri_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            repo = self._temporary_repo(Path(temporary_dir))
+            self.assertEqual(MODULE._publisher(repo), "XinXi Xu")
+            self.assertEqual(MODULE._manufacturer_registry_path(repo), r"Software\XinXi Xu\DockStart")
 
     def test_install_root_is_fixed_below_release_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
