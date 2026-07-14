@@ -61,7 +61,7 @@ runtime source/version metadata with the packaged application.
 
 ## Bundled Python Packages
 
-DockStart v0.10.0 has two isolated Windows release profiles. Basic Stable uses a
+DockStart v0.10.2 has two isolated Windows release profiles. Basic Stable uses a
 backend-only Python runtime and excludes `Lib/site-packages` and `Scripts`.
 Assisted Stable adds the following pinned, ordinary-directory Python packages
 for local PDBQT preparation. They are not frozen into `dockstart-desktop.exe`:
@@ -100,7 +100,7 @@ keep their distribution metadata and original license/notices under
 `resources/licenses/python-packages/`. It must also ship the exact upstream
 source archives for Meeko 0.7.1, Gemmi 0.7.5, and tqdm 4.67.1 together with
 `resources/sources/SOURCE_MANIFEST.json`. DockStart does not modify those three
-components in v0.10.0.
+components in v0.10.2.
 
 ## Generated production dependency bundle
 

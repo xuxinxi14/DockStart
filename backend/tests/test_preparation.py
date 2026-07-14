@@ -118,7 +118,7 @@ class PreparationWorkflowModelTests(unittest.TestCase):
             data["ligand"]["raw_file"] = "raw/ligand_2244.sdf"
             project_json.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-            with patch("dockstart_core.preparation._tool_status", return_value=_mock_tools()):
+            with patch("dockstart_core.preparation._tool_status", return_value=_mock_tools()) as mocked:
                 result = validate_preparation_prerequisites(str(project_dir), "ligand")
             updated = json.loads(project_json.read_text(encoding="utf-8"))
 
@@ -127,6 +127,20 @@ class PreparationWorkflowModelTests(unittest.TestCase):
         self.assertEqual(updated["preparation"]["ligand"]["status"], "ready")
         self.assertEqual(updated["preparation"]["ligand"]["input_file"], "raw/ligand_2244.sdf")
         self.assertEqual(updated["preparation"]["ligand"]["output_file"], "prepared/ligand.pdbqt")
+        mocked.assert_called_once()
+
+    def test_get_preparation_status_reuses_supplied_tool_snapshot_without_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            tools = _mock_tools()
+
+            with patch("dockstart_core.preparation._tool_status") as mocked:
+                result = get_preparation_status(str(project_dir), tools_snapshot=tools)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["tools"], tools)
+        self.assertIsNot(result["tools"], tools)
+        mocked.assert_not_called()
 
     def test_reset_preparation_status_does_not_delete_prepared_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -139,15 +153,17 @@ class PreparationWorkflowModelTests(unittest.TestCase):
             data["preparation"]["ligand"]["error"] = {"message": "mock"}
             project_json.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-            with patch("dockstart_core.preparation._tool_status", return_value=_mock_tools()):
+            with patch("dockstart_core.preparation._tool_status") as mocked:
                 result = reset_preparation_status(str(project_dir), "ligand")
             updated = json.loads(project_json.read_text(encoding="utf-8"))
             prepared_exists = prepared.exists()
 
         self.assertTrue(result["ok"], result)
         self.assertTrue(prepared_exists)
+        self.assertIsNone(result["tools"])
         self.assertEqual(updated["preparation"]["ligand"]["status"], "not_started")
         self.assertEqual(updated["preparation"]["ligand"]["output_file"], "prepared/ligand.pdbqt")
+        mocked.assert_not_called()
 
     def test_preparation_status_does_not_call_real_rdkit_or_meeko_when_tool_status_is_mocked(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

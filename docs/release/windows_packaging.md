@@ -1,6 +1,6 @@
 # Windows Packaging
 
-本文档定义 DockStart v0.10.0 Windows x86_64 的可重复发布入口。构建脚本只能在干净的
+本文档定义 DockStart v0.10.2 Windows x86_64 的可重复发布入口。构建脚本只能在干净的
 `main` 分支运行，并从白名单 stage 生成 MSI 与 NSIS；禁止直接把开发目录中的
 `resources/python` 或旧 `target/release` 内容复制进安装包。
 

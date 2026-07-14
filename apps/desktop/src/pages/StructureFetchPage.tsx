@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -88,7 +89,7 @@ export default function StructureFetchPage({
   const [pdbFormat, setPdbFormat] = useState("pdb");
   const [overwritePdb, setOverwritePdb] = useState(false);
   const [deleteReceptorRawFile, setDeleteReceptorRawFile] = useState(false);
-  const [pubchemQueryType, setPubchemQueryType] = useState<"cid" | "name" | "smiles">("cid");
+  const [pubchemQueryType, setPubchemQueryType] = useState<"cid" | "name">("cid");
   const [pubchemQuery, setPubchemQuery] = useState("");
   const [overwritePubchem, setOverwritePubchem] = useState(false);
   const [deleteLigandRawFile, setDeleteLigandRawFile] = useState(false);
@@ -221,6 +222,38 @@ export default function StructureFetchPage({
     }
   };
 
+  const importLocalRaw = async (role: "receptor" | "ligand") => {
+    const isReceptor = role === "receptor";
+    const label = isReceptor ? "受体" : "配体";
+    setMessage("");
+    setRawError("");
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: isReceptor ? "选择受体 PDB / CIF" : "选择配体 SDF / MOL",
+        filters: [isReceptor
+          ? { name: "受体原始结构", extensions: ["pdb", "cif"] }
+          : { name: "配体原始结构", extensions: ["sdf", "mol"] }],
+      });
+      const sourcePath = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
+      if (!sourcePath) return;
+      setIsBusy(true);
+      const rawPayload = await invoke<string>(
+        isReceptor ? "import_receptor_raw_file" : "import_ligand_raw_file",
+        { projectDir: project.project_dir, sourcePath },
+      );
+      const response = parseProjectResponse(rawPayload);
+      applyProjectResponse(response, `${label}原始结构已导入。`);
+      if (response.ok) await reloadStatus();
+    } catch (error) {
+      setMessage(`无法导入${label}原始结构。`);
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const clearRawRecord = async (role: "receptor" | "ligand") => {
     const label = role === "receptor" ? "受体" : "配体";
     const deleteFile = role === "receptor" ? deleteReceptorRawFile : deleteLigandRawFile;
@@ -248,7 +281,6 @@ export default function StructureFetchPage({
   const ligandStatus = ligandRaw ?? findStatus(files, "ligand_raw");
 
   const renderTechnicalDetails = (status: RawStructureStatus | null, fallbackRawFile: string) => (
-    <AdvancedDetails>
       <dl className="meta-list">
         <div>
           <dt>来源</dt>
@@ -275,16 +307,15 @@ export default function StructureFetchPage({
           <dd>{status?.record_consistent ? "一致" : "需检查"}</dd>
         </div>
       </dl>
-    </AdvancedDetails>
   );
 
   return (
     <PageShell labelledBy="structure-fetch-title">
       <PageHero
-        eyebrow="工作流 1"
-        title="获取结构"
+        eyebrow="结构来源 · SOURCE"
+        title="获取或导入原始结构"
         titleId="structure-fetch-title"
-        description="下载受体和配体原始结构文件。raw 文件用于后续准备，不能直接运行 Vina。"
+        description="在线搜索 RCSB / PubChem，或从电脑导入原始结构；完成后再转换为 Vina 使用的 PDBQT。"
         actions={
           <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
@@ -296,8 +327,8 @@ export default function StructureFetchPage({
       <BodyGrid>
         <MainPanel>
           <div className="main-panel-content">
-            <WarningCallout title="raw 不等于 Vina 输入">
-              <p>下载完成后，还需要准备或导入 PDBQT。</p>
+            <WarningCallout title="这里获取的是原始结构，不是最终 PDBQT">
+              <p>下一步会将受体 PDB/CIF 与配体 SDF/MOL 准备并转换为 PDBQT；这不只是修改文件扩展名。</p>
             </WarningCallout>
 
             <div className="two-column-grid">
@@ -308,7 +339,7 @@ export default function StructureFetchPage({
                 </div>
                 <p className="muted-path">{receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}</p>
                 <div className="field-stack">
-                  <label htmlFor="pdb-id">RCSB PDB ID</label>
+                  <label htmlFor="pdb-id">在线搜索：RCSB PDB ID</label>
                   <input id="pdb-id" value={pdbId} onChange={(event) => setPdbId(event.target.value)} placeholder="例如 1HSG" />
                 </div>
                 <div className="field-stack">
@@ -326,15 +357,20 @@ export default function StructureFetchPage({
                   <ActionButton variant="primary" disabled={isBusy || !pdbId.trim()} onClick={() => void fetchPdb()}>
                     下载受体
                   </ActionButton>
-                  <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
-                    清除记录
+                  <ActionButton disabled={isBusy} onClick={() => void importLocalRaw("receptor")}>
+                    从电脑导入 PDB / CIF
                   </ActionButton>
                 </div>
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={deleteReceptorRawFile} onChange={(event) => setDeleteReceptorRawFile(event.target.checked)} />
-                  清除时删除 raw 文件
-                </label>
-                {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
+                <AdvancedDetails summary="管理受体原始结构">
+                  <label className="checkbox-row">
+                    <input type="checkbox" checked={deleteReceptorRawFile} onChange={(event) => setDeleteReceptorRawFile(event.target.checked)} />
+                    清除记录时同时删除项目中的 raw 文件
+                  </label>
+                  <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
+                    清除受体记录
+                  </ActionButton>
+                  {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
+                </AdvancedDetails>
               </article>
 
               <article className="task-card" data-layout="task-card">
@@ -344,15 +380,14 @@ export default function StructureFetchPage({
                 </div>
                 <p className="muted-path">{ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}</p>
                 <div className="field-stack">
-                  <label htmlFor="pubchem-query-type">查询方式</label>
+                  <label htmlFor="pubchem-query-type">在线搜索：PubChem 查询方式</label>
                   <select
                     id="pubchem-query-type"
                     value={pubchemQueryType}
-                    onChange={(event) => setPubchemQueryType(event.target.value as "cid" | "name" | "smiles")}
+                    onChange={(event) => setPubchemQueryType(event.target.value as "cid" | "name")}
                   >
                     <option value="cid">CID</option>
                     <option value="name">名称</option>
-                    <option value="smiles">SMILES（暂未支持）</option>
                   </select>
                 </div>
                 <div className="field-stack">
@@ -361,7 +396,7 @@ export default function StructureFetchPage({
                     id="pubchem-query"
                     value={pubchemQuery}
                     onChange={(event) => setPubchemQuery(event.target.value)}
-                    placeholder={pubchemQueryType === "cid" ? "例如 2244" : pubchemQueryType === "name" ? "例如 aspirin" : "SMILES 当前仅返回提示"}
+                    placeholder={pubchemQueryType === "cid" ? "例如 2244" : "例如 aspirin"}
                   />
                 </div>
                 <label className="checkbox-row">
@@ -372,26 +407,31 @@ export default function StructureFetchPage({
                   <ActionButton variant="primary" disabled={isBusy || !pubchemQuery.trim()} onClick={() => void fetchPubchem()}>
                     下载配体
                   </ActionButton>
-                  <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
-                    清除记录
+                  <ActionButton disabled={isBusy} onClick={() => void importLocalRaw("ligand")}>
+                    从电脑导入 SDF / MOL
                   </ActionButton>
                 </div>
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={deleteLigandRawFile} onChange={(event) => setDeleteLigandRawFile(event.target.checked)} />
-                  清除时删除 raw 文件
-                </label>
-                {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
+                <AdvancedDetails summary="管理配体原始结构">
+                  <label className="checkbox-row">
+                    <input type="checkbox" checked={deleteLigandRawFile} onChange={(event) => setDeleteLigandRawFile(event.target.checked)} />
+                    清除记录时同时删除项目中的 raw 文件
+                  </label>
+                  <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
+                    清除配体记录
+                  </ActionButton>
+                  {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
+                </AdvancedDetails>
               </article>
             </div>
 
             <div className="next-step-strip">
               <div>
-                <strong>下一步：准备 Vina 输入</strong>
-                <p>将 raw 文件准备成 PDBQT，或手动导入已经准备好的 PDBQT。</p>
+                <strong>下一步：转换为 PDBQT</strong>
+                <p>使用 Assisted 工具链转换原始结构，或直接导入已经准备好的 PDBQT。</p>
               </div>
               <div className="button-row end">
                 <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入 PDBQT</ActionButton>
-                <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>进入准备 Vina 输入</ActionButton>
+                <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>开始格式转换</ActionButton>
               </div>
             </div>
 
@@ -400,7 +440,7 @@ export default function StructureFetchPage({
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="raw 状态">
+          <RightRailSection title="原始结构状态">
             <dl className="mode-context-list">
               <div>
                 <dt>受体</dt>
@@ -414,7 +454,7 @@ export default function StructureFetchPage({
           </RightRailSection>
 
           <RightRailSection title="下一步">
-            <p>raw 文件需要准备或导入为 PDBQT 后，才能设置搜索范围和运行 Vina。</p>
+            <p>两个原始结构就绪后，进入“格式转换与 PDBQT 准备”。已有 PDBQT 也可直接导入并跳过转换。</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

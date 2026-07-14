@@ -42,7 +42,7 @@ const startRoutes: StartRoute[] = [
     mode: "basic",
     icon: Database,
     eyebrow: "BASIC STABLE",
-    title: "我已有 PDBQT",
+    title: "已有 PDBQT（直接对接）",
     description: "直接导入受体与配体 PDBQT，设置搜索范围后运行 AutoDock Vina。",
     requirement: "随附 Vina · 不需要 RDKit / Meeko",
     action: "从 PDBQT 开始",
@@ -52,17 +52,17 @@ const startRoutes: StartRoute[] = [
     mode: "assisted",
     icon: Flask,
     eyebrow: "ASSISTED STABLE",
-    title: "我只有原始结构",
-    description: "从受体 PDB/CIF 与配体 SDF/MOL 尝试准备 PDBQT，再进入对接流程。",
+    title: "PDB/CIF + SDF/MOL（准备并转换）",
+    description: "可在线搜索并下载，也可从电脑导入原始结构，再准备并转换为 PDBQT。",
     requirement: "随附 Python 3.11 · RDKit · Meeko",
-    action: "从原始结构开始",
+    action: "选择结构来源",
     tone: "info",
   },
   {
     mode: "demo",
     icon: BookOpenText,
     eyebrow: "DEMO MODE",
-    title: "我想先熟悉流程",
+    title: "示例项目（快速体验）",
     description: "复制内置示例，了解项目、搜索范围、运行记录和结果页面之间的关系。",
     requirement: "仅用于软件操作演示，不用于科研结论",
     action: "打开示例入口",
@@ -77,8 +77,8 @@ const workflowSteps: Array<{
   description: string;
   page: PageId;
 }> = [
-  { index: "01", icon: FolderOpen, title: "输入结构", description: "导入已有 PDBQT，或记录 PDB/CIF/SDF/MOL 原始文件。", page: "project-create" },
-  { index: "02", icon: Wrench, title: "准备 PDBQT", description: "Assisted 尝试格式准备；Basic 可直接跳过。", page: "preparation" },
+  { index: "01", icon: FolderOpen, title: "获取或导入结构", description: "在线搜索 RCSB / PubChem，或从电脑导入支持的结构文件。", page: "structure-fetch" },
+  { index: "02", icon: Wrench, title: "转换为 PDBQT", description: "将受体 PDB/CIF 与配体 SDF/MOL 准备为 Vina 输入；已有 PDBQT 可跳过。", page: "preparation" },
   { index: "03", icon: Cube, title: "设置搜索范围", description: "复核结构，定位 Box，并设置 Vina 参数。", page: "run-prepare" },
   { index: "04", icon: Play, title: "运行对接", description: "保存配置、创建运行记录并执行本地 Vina。", page: "run-prepare" },
   { index: "05", icon: ChartBar, title: "结果与报告", description: "查看构象和评分，导出 CSV 与 Markdown 实验记录。", page: "result" },
@@ -259,7 +259,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <h2>快捷入口</h2>
             <nav className="help-rail-actions" aria-label="帮助快捷入口">
               <button type="button" onClick={() => onNavigate(project ? "home" : "project-create")}><FolderOpen aria-hidden="true" size={17} /><span>{project ? "项目总览" : "创建项目"}</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate(projectTarget(project, "preparation"))}><Wrench aria-hidden="true" size={17} /><span>结构准备</span><ArrowRight aria-hidden="true" size={14} /></button>
+              <button type="button" onClick={() => onNavigate(projectTarget(project, "preparation"))}><Wrench aria-hidden="true" size={17} /><span>格式转换</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate(projectTarget(project, "run-prepare"))}><Cube aria-hidden="true" size={17} /><span>对接工作台</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate(projectTarget(project, "result"))}><ChartBar aria-hidden="true" size={17} /><span>结果与报告</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate("toolchain-status")}><ShieldCheck aria-hidden="true" size={17} /><span>工具链与自检</span><ArrowRight aria-hidden="true" size={14} /></button>

@@ -37,6 +37,9 @@ export function buildWorkflowSteps(
   const ligandRaw = fileOk(workflow?.raw?.ligand?.status);
   const receptorPrepared = fileOk(workflow?.prepared?.receptor?.status);
   const ligandPrepared = fileOk(workflow?.prepared?.ligand?.status);
+  const preparedInputsReady = receptorPrepared && ligandPrepared;
+  const rawInputsReady = receptorRaw && ligandRaw;
+  const rawStageSkipped = preparedInputsReady && !rawInputsReady;
   const configReady = fileOk(workflow?.config?.status);
   const boxReady = workflow?.box?.status === "ok";
   const vinaReady = workflow?.vina?.status === "ok";
@@ -48,7 +51,7 @@ export function buildWorkflowSteps(
 
   const rawStatus: WorkflowStepState = !hasProject
     ? "blocked"
-    : receptorRaw && ligandRaw
+    : preparedInputsReady || rawInputsReady
       ? "done"
       : receptorRaw || ligandRaw
         ? "warning"
@@ -56,13 +59,13 @@ export function buildWorkflowSteps(
 
   const importStatus: WorkflowStepState = !hasProject
     ? "blocked"
-    : receptorPrepared && ligandPrepared
+    : preparedInputsReady
       ? "done"
       : "available";
 
   const preparedStatus: WorkflowStepState = !hasProject
     ? "blocked"
-    : receptorPrepared && ligandPrepared
+    : preparedInputsReady
       ? "done"
       : failedPreparation(workflow)
         ? "failed"
@@ -114,9 +117,25 @@ export function buildWorkflowSteps(
       hasProject ? "查看项目" : "创建项目",
       "project-create",
     ),
-    step("获取原始结构", "可选：下载或管理受体 / 配体 raw 文件。Basic Mode 可以跳过。", rawStatus, "获取结构", "structure-fetch"),
-    step("导入 PDBQT", "Basic Mode：直接导入已有 receptor.pdbqt 和 ligand.pdbqt。", importStatus, "导入 PDBQT", "import-pdbqt"),
-    step("自动准备 PDBQT", "Assisted Mode：把 raw 文件准备为 Vina 可用的 PDBQT。", preparedStatus, "准备 Vina 输入", "preparation"),
+    step(
+      "获取或导入原始结构",
+      rawStageSkipped
+        ? "有效的受体与配体 PDBQT 已就绪，此步骤无需执行。"
+        : "在线搜索 RCSB / PubChem，或导入本地 PDB/CIF、SDF/MOL；已有 PDBQT 可跳过。",
+      rawStatus,
+      rawStageSkipped ? "无需获取" : "选择结构来源",
+      "structure-fetch",
+    ),
+    step("导入已有 PDBQT", "已有 PDBQT：直接导入 receptor.pdbqt 和 ligand.pdbqt。", importStatus, "导入已有 PDBQT", "import-pdbqt"),
+    step(
+      "转换为 PDBQT",
+      rawStageSkipped
+        ? "有效的受体与配体 PDBQT 已就绪，无需重复格式转换。"
+        : "Assisted：把原始结构准备并转换为 Vina 可用的 PDBQT。",
+      preparedStatus,
+      rawStageSkipped ? "无需转换" : "开始格式转换",
+      "preparation",
+    ),
     step(
       "设置搜索范围",
       "设置对接箱体中心与尺寸。",

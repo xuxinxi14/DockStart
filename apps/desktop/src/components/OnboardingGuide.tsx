@@ -23,7 +23,7 @@ type StartChoice = {
 const choices: StartChoice[] = [
   {
     mode: "basic",
-    title: "我已有 PDBQT",
+    title: "已有 PDBQT（直接对接）",
     summary: "直接导入受体和配体 PDBQT，设置 Box 后运行 AutoDock Vina。",
     needs: "需要：AutoDock Vina",
     readyText: "可走最低依赖路径",
@@ -35,8 +35,8 @@ const choices: StartChoice[] = [
   },
   {
     mode: "assisted",
-    title: "我只有 PDB / SDF",
-    summary: "先获取或导入 raw 文件，再用 Python + RDKit + Meeko 尝试准备 PDBQT。",
+    title: "PDB/CIF + SDF/MOL（准备并转换）",
+    summary: "在线搜索或导入原始结构，再用 Python + RDKit + Meeko 准备并转换为 PDBQT。",
     needs: "Assisted 随附：Vina + Python + RDKit + Meeko",
     readyText: "可尝试自动准备",
     blockedText: "缺少自动准备工具链",
@@ -47,7 +47,7 @@ const choices: StartChoice[] = [
   },
   {
     mode: "demo",
-    title: "我想先看示例",
+    title: "示例项目（快速体验）",
     summary: "复制小型示例项目，先理解 DockStart 的文件、步骤和结果页面。",
     needs: "需要：示例项目资源",
     readyText: "可打开示例",

@@ -65,7 +65,12 @@ export default function App() {
     // onWorkflowChange. Starting the same Python module here as well made one
     // home mount fan out into duplicate backend processes (doubled again by
     // StrictMode during development).
-    if (currentPage === "home") return;
+    if (
+      currentPage === "home"
+      || currentPage === "structure-fetch"
+      || currentPage === "preparation"
+      || currentPage === "import-pdbqt"
+    ) return;
 
     let cancelled = false;
     async function refreshWorkflowStatus() {
@@ -100,7 +105,8 @@ export default function App() {
     };
     // currentPage is intentionally not a dependency: navigation alone does
     // not make project data stale. A project revision (or directory change)
-    // is the refresh signal; Home refreshes itself when it mounts.
+    // is the refresh signal; Home and structure-input pages refresh themselves
+    // so they do not fan one action out into duplicate Python status scripts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject?.project_dir, projectRevision]);
 
@@ -166,7 +172,7 @@ export default function App() {
       return (
         <StructureFetchPage
           project={currentProject}
-          onBack={() => navigateTo("project-create")}
+          onBack={() => navigateTo("preparation")}
           onProjectChange={commitProject}
           onOpenImportPdbqt={(project) => {
             commitProject(project);
@@ -202,7 +208,7 @@ export default function App() {
       return (
         <ImportPdbqtPage
           project={currentProject}
-          onBack={() => navigateTo("project-create")}
+          onBack={() => navigateTo("preparation")}
           onOpenStructureFetch={(project) => {
             commitProject(project);
             navigateTo("structure-fetch");

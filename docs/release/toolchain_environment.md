@@ -1,6 +1,6 @@
 # RDKit / Meeko Toolchain Environment
 
-> 本文仍适用于用户自管工具链。v0.10.0 Assisted Stable 已额外随附固定、可替换的
+> 本文仍适用于用户自管工具链。v0.10.2 Assisted Stable 已额外随附固定、可替换的
 > RDKit/Meeko runtime；解析优先级仍是 configured → bundled → current environment。
 
 DockStart V0.6 不自动安装 RDKit 或 Meeko，也不提交 conda 环境。本页说明推荐的可复现工具链环境。

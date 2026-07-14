@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from adapters.meeko_adapter import detect_meeko_capabilities  # noqa: E402
 from adapters.rdkit_adapter import detect_rdkit_capabilities  # noqa: E402
 from dockstart_core.models import ToolCheckResult  # noqa: E402
-from dockstart_core.preparation import get_preparation_tool_status  # noqa: E402
+from dockstart_core.preparation import (  # noqa: E402
+    PREPARATION_TOOLS_SNAPSHOT_ENV_VAR,
+    _tool_status,
+    get_preparation_tool_status,
+)
 from dockstart_core.project import create_project  # noqa: E402
 
 
@@ -29,6 +34,29 @@ def _completed_with_none_output(returncode: int = 1) -> subprocess.CompletedProc
 
 
 class PreparationToolCapabilityTests(unittest.TestCase):
+    def test_tool_status_reuses_host_runtime_snapshot_without_probing(self) -> None:
+        snapshot = {
+            "python": {"status": "ok", "path": "cached-python", "source": "bundled"},
+            "rdkit": {"status": "ok", "version": "cached-rdkit"},
+            "meeko": {"status": "ok", "version": "cached-meeko"},
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {PREPARATION_TOOLS_SNAPSHOT_ENV_VAR: json.dumps(snapshot)},
+                clear=False,
+            ),
+            patch("dockstart_core.preparation.get_resolved_python") as python_mock,
+            patch("adapters.rdkit_adapter.detect_rdkit_capabilities") as rdkit_mock,
+            patch("adapters.meeko_adapter.detect_meeko_capabilities") as meeko_mock,
+        ):
+            result = _tool_status()
+
+        self.assertEqual(result, snapshot)
+        python_mock.assert_not_called()
+        rdkit_mock.assert_not_called()
+        meeko_mock.assert_not_called()
+
     def test_rdkit_capabilities_mock_python_success(self) -> None:
         payload = {
             "import_available": True,

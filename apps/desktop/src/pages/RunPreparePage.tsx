@@ -739,7 +739,7 @@ export default function RunPreparePage({
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
             {isDirty ? "开始时将保存并复核" : preflight?.ready ? "可开始对接" : preflight ? `${preflight.blockers.length} 个阻塞项` : "检查中"}
           </StatusBadge>
-          <ActionButton variant="text" onClick={onBack}>返回结构准备</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>返回格式转换</ActionButton>
         </div>
       </header>
 

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.10.1-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.10.2-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,7 +31,7 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码版本为 **v0.10.1**。最近一次同时覆盖 Basic 与 Assisted、打包目录与真实安装目录的完整验收基线为 **v0.10.0**。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本和校验值为准。
+> 当前源码版本为 **v0.10.2**。v0.10.2 是本轮 Windows 首发候选；在四个安装包完成构建和安装态验收前，最近一次同时覆盖 Basic 与 Assisted、打包目录与真实安装目录的完整验收基线仍为 **v0.10.0**。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
 
 ## 为什么使用 DockStart
 

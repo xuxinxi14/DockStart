@@ -33,7 +33,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.10.1";
+export const appVersion = "0.10.2";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -45,8 +45,8 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "preparation",
     group: "Workflow",
-    label: "结构准备",
-    description: "受体与配体准备",
+    label: "结构获取与转换",
+    description: "在线搜索、导入、转换 PDBQT",
     requiresProject: true,
   },
   {
@@ -71,9 +71,9 @@ export const pageTitles: Record<PageId, string> = {
   "toolchain-status": "配置工具链",
   settings: "工具路径设置",
   "project-create": "创建项目",
-  "structure-fetch": "获取原始结构文件",
-  preparation: "准备 Vina 输入文件",
-  "import-pdbqt": "导入 Vina 输入",
+  "structure-fetch": "获取或导入原始结构",
+  preparation: "格式转换与 PDBQT 准备",
+  "import-pdbqt": "导入已有 PDBQT",
   "box-setup": "设置搜索范围",
   "vina-param": "设置 Vina 参数",
   "vina-config": "生成运行配置",

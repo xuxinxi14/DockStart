@@ -19,8 +19,8 @@ from dockstart_core.project import _error, _now_iso, _project_from_dict, _succes
 PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
 SUPPORTED_PDB_FORMATS = {"pdb", "cif"}
 SUPPORTED_PUBCHEM_FORMATS = {"sdf"}
-SUPPORTED_LOCAL_RECEPTOR_FORMATS = {"pdb", "pdbqt"}
-SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol2", "pdb"}
+SUPPORTED_LOCAL_RECEPTOR_FORMATS = {"pdb", "cif"}
+SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol"}
 DEFAULT_TIMEOUT_SECONDS = 30
 
 Fetcher = Callable[[str, int], bytes]
@@ -155,7 +155,12 @@ def _write_raw_file(target_path: Path, data: bytes, overwrite: bool) -> dict[str
     return {"ok": True, "path": str(target_path), "error": None}
 
 
-def _validate_local_raw_file(source_path: str, supported_formats: set[str], label: str) -> dict[str, Any]:
+def _validate_local_raw_file(
+    source_path: str,
+    supported_formats: set[str],
+    label: str,
+    format_suggestion: str,
+) -> dict[str, Any]:
     file_path = Path(source_path).expanduser()
     if not source_path.strip():
         return _error(
@@ -181,9 +186,9 @@ def _validate_local_raw_file(source_path: str, supported_formats: set[str], labe
     if file_format not in supported_formats:
         return _error(
             "LOCAL_RAW_FORMAT_UNSUPPORTED",
-            f"{label}格式暂不支持。",
+            f"{label}格式暂不支持内置 PDBQT 转换。",
             raw_error=file_path.suffix,
-            suggestion=f"当前支持：{', '.join(sorted(supported_formats))}。",
+            suggestion=format_suggestion,
         )
     if file_path.stat().st_size == 0:
         return _error(
@@ -202,7 +207,12 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
     is_receptor = role == "receptor"
     label = "受体结构" if is_receptor else "配体结构"
     supported_formats = SUPPORTED_LOCAL_RECEPTOR_FORMATS if is_receptor else SUPPORTED_LOCAL_LIGAND_FORMATS
-    validation = _validate_local_raw_file(source_path, supported_formats, label)
+    format_suggestion = (
+        "受体原始结构当前支持 PDB（.pdb）和 mmCIF（.cif）；PDBQT 请使用“已有 PDBQT”导入入口。"
+        if is_receptor
+        else "配体原始结构当前支持 SDF（.sdf）和 MOL（.mol）；MOL2、PDB 与 SMILES 暂不支持内置转换。"
+    )
+    validation = _validate_local_raw_file(source_path, supported_formats, label, format_suggestion)
     if not validation.get("ok"):
         return validation
 
@@ -234,8 +244,7 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
         file_ref.query_type = "local_file"
         file_ref.downloaded_at = _now_iso()
         file_ref.raw_file = relative_file
-        if not file_ref.file:
-            file_ref.file = f"prepared/{role}.pdbqt"
+        _invalidate_prepared_reference(file_ref)
 
         saved = save_project(project)
         if not saved.get("ok"):
@@ -264,6 +273,20 @@ def import_receptor_raw_file(project_dir: str, source_path: str) -> dict[str, An
 
 def import_ligand_raw_file(project_dir: str, source_path: str) -> dict[str, Any]:
     return _import_local_raw_file(project_dir, source_path, "ligand")
+
+
+def _invalidate_prepared_reference(file_ref: Any) -> None:
+    """Mark the prepared input stale after acquiring a new raw structure.
+
+    The current project schema does not record a trustworthy digest link from a
+    raw structure to the PDBQT generated from it.  Therefore an existing PDBQT
+    cannot be assumed to represent newly imported or downloaded raw input.  The
+    file is intentionally left on disk for audit/recovery, while its active
+    project reference is cleared so downstream workflow checks cannot treat it
+    as ready.
+    """
+
+    file_ref.file = ""
 
 
 def _rcsb_url(pdb_id: str, file_format: str) -> str:
@@ -330,8 +353,7 @@ def fetch_pdb_structure(
     project.receptor.query_type = "pdb_id"
     project.receptor.downloaded_at = _now_iso()
     project.receptor.raw_file = relative_file
-    if not project.receptor.file:
-        project.receptor.file = "prepared/receptor.pdbqt"
+    _invalidate_prepared_reference(project.receptor)
 
     saved = save_project(project)
     if not saved.get("ok"):
@@ -418,8 +440,7 @@ def fetch_pubchem_ligand(
     project.ligand.query_type = normalized_query_type
     project.ligand.downloaded_at = _now_iso()
     project.ligand.raw_file = relative_file
-    if not project.ligand.file:
-        project.ligand.file = "prepared/ligand.pdbqt"
+    _invalidate_prepared_reference(project.ligand)
 
     saved = save_project(project)
     if not saved.get("ok"):

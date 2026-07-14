@@ -23,7 +23,7 @@ type ProjectDashboardPageProps = {
   onWorkflowChange?: (workflow: ProjectWorkflowStatusResponse | null) => void;
 };
 
-type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "缺失" | "失败" | "需检查";
+type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "无需" | "缺失" | "失败" | "需检查";
 type StepperState = "not-started" | "active" | "done";
 type FirstRunToolchainSummary = {
   vinaStatus: ToolStatus;
@@ -84,6 +84,10 @@ function statusTone(state: UiState): "ok" | "warning" | "error" | "muted" | "inf
   return "muted";
 }
 
+function isTerminalState(state: UiState): boolean {
+  return state === "已完成" || state === "无需";
+}
+
 function fileState(file?: WorkflowFileStatus): UiState {
   if (file?.status === "ok") return "已完成";
   if (file?.status === "empty" || file?.status === "error") return "需检查";
@@ -109,18 +113,21 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
   const ligandRaw = fileReady(workflow?.raw?.ligand);
   const receptorPrepared = fileReady(workflow?.prepared?.receptor);
   const ligandPrepared = fileReady(workflow?.prepared?.ligand);
+  const preparedInputsReady = receptorPrepared && ligandPrepared;
+  const rawInputsReady = receptorRaw && ligandRaw;
+  const rawStageSkipped = preparedInputsReady && !rawInputsReady;
   const run = runState(workflow);
   return [
     {
       title: "1 获取结构",
-      state: receptorRaw && ligandRaw ? "已完成" : receptorRaw || ligandRaw ? "需检查" : "可进行",
-      text: "受体 / 配体 raw 文件",
+      state: rawStageSkipped ? "无需" : rawInputsReady ? "已完成" : receptorRaw || ligandRaw ? "需检查" : "可进行",
+      text: rawStageSkipped ? "PDBQT 已就绪，跳过原始结构" : "受体 / 配体 raw 文件",
       target: "structure-fetch",
     },
     {
-      title: "2 准备 Vina 输入",
-      state: receptorPrepared && ligandPrepared ? "已完成" : receptorRaw || ligandRaw ? "可进行" : "缺失",
-      text: "prepared receptor / ligand PDBQT",
+      title: "2 转换为 PDBQT",
+      state: preparedInputsReady ? "已完成" : receptorRaw || ligandRaw ? "可进行" : "缺失",
+      text: rawStageSkipped ? "PDBQT 已就绪，无需格式转换" : "prepared receptor / ligand PDBQT",
       target: "preparation",
     },
     {
@@ -145,7 +152,7 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
 }
 
 function nextTarget(workflow: ProjectWorkflowStatusResponse | null): PageId {
-  const row = workflowRows(workflow).find((item) => item.state !== "已完成");
+  const row = workflowRows(workflow).find((item) => !isTerminalState(item.state));
   return row?.target ?? "result";
 }
 
@@ -314,22 +321,51 @@ export default function ProjectDashboardPage({
   const rows = useMemo(() => workflowRows(workflow), [workflow]);
   const nextPage = nextTarget(workflow);
   const artifacts = useMemo(
-    () => [
-      artifact("受体 raw", fileState(workflow?.raw?.receptor), workflow?.raw?.receptor?.path || "未记录"),
-      artifact("配体 raw", fileState(workflow?.raw?.ligand), workflow?.raw?.ligand?.path || "未记录"),
-      artifact("受体 PDBQT", fileState(workflow?.prepared?.receptor), workflow?.prepared?.receptor?.path || "未记录"),
-      artifact("配体 PDBQT", fileState(workflow?.prepared?.ligand), workflow?.prepared?.ligand?.path || "未记录"),
-      artifact(
-        "latest run",
-        runState(workflow),
-        workflow?.latest_run?.run_id ? String(workflow.latest_run.run_id) : "未创建",
-      ),
-      artifact(
-        "report",
-        String(workflow?.latest_run?.status ?? "") === "finished" ? "可进行" : "未开始",
-        String(workflow?.latest_run?.status ?? "") === "finished" ? "可导出实验记录" : "等待结果解析",
-      ),
-    ],
+    () => {
+      const preparedInputsReady = fileReady(workflow?.prepared?.receptor) && fileReady(workflow?.prepared?.ligand);
+      const receptorRawReady = fileReady(workflow?.raw?.receptor);
+      const ligandRawReady = fileReady(workflow?.raw?.ligand);
+      return [
+        artifact(
+          "受体 raw",
+          receptorRawReady
+            ? fileState(workflow?.raw?.receptor)
+            : preparedInputsReady
+              ? "无需"
+              : fileState(workflow?.raw?.receptor),
+          workflow?.raw?.receptor?.path || (preparedInputsReady ? "直接使用 PDBQT" : "未记录"),
+        ),
+        artifact(
+          "配体 raw",
+          ligandRawReady
+            ? fileState(workflow?.raw?.ligand)
+            : preparedInputsReady
+              ? "无需"
+              : fileState(workflow?.raw?.ligand),
+          workflow?.raw?.ligand?.path || (preparedInputsReady ? "直接使用 PDBQT" : "未记录"),
+        ),
+        artifact(
+          "受体 PDBQT",
+          fileState(workflow?.prepared?.receptor),
+          workflow?.prepared?.receptor?.path || "未记录",
+        ),
+        artifact(
+          "配体 PDBQT",
+          fileState(workflow?.prepared?.ligand),
+          workflow?.prepared?.ligand?.path || "未记录",
+        ),
+        artifact(
+          "latest run",
+          runState(workflow),
+          workflow?.latest_run?.run_id ? String(workflow.latest_run.run_id) : "未创建",
+        ),
+        artifact(
+          "report",
+          String(workflow?.latest_run?.status ?? "") === "finished" ? "可进行" : "未开始",
+          String(workflow?.latest_run?.status ?? "") === "finished" ? "可导出实验记录" : "等待结果解析",
+        ),
+      ];
+    },
     [workflow],
   );
 
@@ -363,8 +399,8 @@ export default function ProjectDashboardPage({
                 <div className="start-route-grid">
                   <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "basic" })}>
                     <div className="start-route-card-copy">
-                      <h3>已准备好的对接文件</h3>
-                      <p>已有 PDBQT 格式的受体和配体。</p>
+                      <h3>已有 PDBQT（直接对接）</h3>
+                      <p>导入受体和配体 PDBQT，跳过格式转换。</p>
                     </div>
                     <span className="secondary-button start-route-button start-route-button-proxy">选择 PDBQT 文件</span>
                   </button>
@@ -376,15 +412,15 @@ export default function ProjectDashboardPage({
                     onClick={() => onNavigate("project-create", { startMode: "assisted" })}
                   >
                     <div className="start-route-card-copy">
-                      <h3>从原始结构开始</h3>
-                      <p>Assisted Stable 已随附准备工具链，可直接导入 PDB / SDF。</p>
+                      <h3>PDB/CIF + SDF/MOL（准备并转换）</h3>
+                      <p>在线搜索并下载，或导入本地原始结构，再转换为 PDBQT。</p>
                     </div>
-                    <span className="secondary-button start-route-button start-route-button-proxy">导入 PDB / SDF</span>
+                    <span className="secondary-button start-route-button start-route-button-proxy">选择结构来源</span>
                   </button>
 
                   <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "demo" })}>
                     <div className="start-route-card-copy">
-                      <h3>打开示例流程</h3>
+                      <h3>示例项目（快速体验）</h3>
                       <p>使用内置示例完成一次对接。</p>
                     </div>
                     <span className="secondary-button start-route-button start-route-button-proxy">打开示例</span>
@@ -443,11 +479,11 @@ export default function ProjectDashboardPage({
               <div className="side-rail-help">
                 <p>
                   <strong>已有 receptor.pdbqt 和 ligand.pdbqt？</strong>
-                  <span>选择“已准备好的对接文件”。</span>
+                  <span>选择“已有 PDBQT（直接对接）”。</span>
                 </p>
                 <p>
                   <strong>只有 PDB 或 SDF？</strong>
-                  <span>选择“从原始结构开始”。</span>
+                  <span>选择“PDB/CIF + SDF/MOL（准备并转换）”。</span>
                 </p>
               </div>
             </RightRailSection>

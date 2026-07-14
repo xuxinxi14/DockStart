@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ RECEPTOR_PREPARATION_STDERR = Path("prepared", "logs", "receptor_stderr.txt")
 RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.json")
 PREPARATION_RECORD_ROOT = Path("preparation")
 PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
+PREPARATION_TOOLS_SNAPSHOT_ENV_VAR = "DOCKSTART_PREPARATION_TOOLS_JSON"
 
 
 class PreparationPathError(RuntimeError):
@@ -792,7 +794,11 @@ def _prepare_target_pdbqt(
             stdout=stdout,
             stderr=stderr,
         )
-        payload = get_preparation_status(str(project_path))
+        tools_snapshot = built.get("tools")
+        payload = get_preparation_status(
+            str(project_path),
+            tools_snapshot=tools_snapshot if isinstance(tools_snapshot, Mapping) else None,
+        )
         success = bool(finalized["success"])
         if finalized["ownership_lost"]:
             message = f"{target} 准备任务已失去所有权，候选输出未发布。"
@@ -837,6 +843,24 @@ def _prepare_target_pdbqt(
 
 
 def _tool_status() -> dict[str, Any]:
+    cached_payload = os.environ.get(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR, "").strip()
+    if cached_payload:
+        try:
+            cached_tools = json.loads(cached_payload)
+        except (TypeError, ValueError):
+            cached_tools = None
+        if (
+            isinstance(cached_tools, dict)
+            and isinstance(cached_tools.get("python"), dict)
+            and isinstance(cached_tools.get("rdkit"), dict)
+            and isinstance(cached_tools.get("meeko"), dict)
+        ):
+            # The desktop host keys this snapshot by its runtime fingerprint
+            # and injects it only into the preparation subprocess.  Reusing it
+            # avoids launching the same RDKit/Meeko capability probes for the
+            # receptor and ligand conversions of one session.
+            return copy.deepcopy(cached_tools)
+
     python_result = get_resolved_python()
     rdkit_result = rdkit_adapter.detect_rdkit_capabilities(python_result.path, python_result.source)
     meeko_result = meeko_adapter.detect_meeko_capabilities(python_result.path, python_result.source)
@@ -865,14 +889,21 @@ def get_preparation_tool_status(project_dir: str) -> dict[str, Any]:
     }
 
 
-def get_preparation_status(project_dir: str) -> dict[str, Any]:
+def get_preparation_status(
+    project_dir: str,
+    *,
+    tools_snapshot: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     project, project_error = _load_project_model(project_dir)
     if project_error:
         return project_error
     assert project is not None
 
     project_path = Path(project.project_dir).expanduser()
-    tools = _tool_status()
+    # A validation/preparation command has already paid for the Python/RDKit/
+    # Meeko probes.  Reuse that immutable snapshot instead of starting the
+    # detection scripts a second time merely to assemble the response payload.
+    tools = copy.deepcopy(dict(tools_snapshot)) if tools_snapshot is not None else _tool_status()
     return {
         "ok": True,
         "project_dir": project.project_dir,
@@ -954,7 +985,7 @@ def validate_preparation_prerequisites(project_dir: str, target: str) -> dict[st
     if not save_result.get("ok"):
         return save_result
 
-    payload = get_preparation_status(project.project_dir)
+    payload = get_preparation_status(project.project_dir, tools_snapshot=tools)
     payload["target"] = normalized_target
     payload["ready"] = not missing
     payload["missing_tools"] = missing
@@ -1636,7 +1667,10 @@ def reset_preparation_status(project_dir: str, target: str) -> dict[str, Any]:
             suggestion="请确认项目目录可写且没有正在运行的同类型准备任务。",
         )
 
-    payload = get_preparation_status(str(project_path))
+    # Reset changes only the persisted task state. It must not relaunch the
+    # Python/RDKit/Meeko capability probes merely to rebuild the UI response.
+    payload = get_preparation_status(str(project_path), tools_snapshot={})
+    payload["tools"] = None
     payload["target"] = normalized_target
     payload["message"] = "准备状态已重置。prepared PDBQT 文件不会被删除。"
     return payload

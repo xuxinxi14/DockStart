@@ -1,58 +1,69 @@
-# DockStart v0.10.0 Windows Stable
+# DockStart v0.10.2 Windows x64
 
-DockStart 是基于 AutoDock Vina 的第三方中文分子对接工作台。v0.10.0 将现有最小对接闭环整理为可复现、离线的 Windows GUI，并提供两个隔离的发布 profile：Basic Stable 面向已有 PDBQT 的用户；Assisted Stable 额外随附独立、可替换的 RDKit/Meeko 准备工具链。
+> 发布前检查：把本文中的“待构建后填写 / 待门禁完成后填写”全部替换为真实结果。不得沿用旧版本的大小、SHA256 或验收结论。
 
-安装包作者与 Publisher：`XinXi Xu`。
+DockStart v0.10.2 是计划发布的首个公开稳定版。它把 AutoDock Vina 的本地对接步骤整理为中文桌面工作流，并提供两个不能并行安装的 Windows x64 profile：
 
-## 本版本包含
+- **Basic Stable**：适合已经有 receptor/ligand PDBQT 的用户；
+- **Assisted Stable**：额外随附独立、可替换的 CPython 3.11、RDKit 2026.3.3 与 Meeko 0.7.1，可离线尝试把受体 PDB/CIF 和配体 SDF/MOL 准备并转换为 PDBQT。
 
-- AutoDock Vina 1.2.7、本地项目、对接箱体、Vina 参数、运行、结果表格和 Markdown 报告；
-- 暗色/亮色主题，以及按需加载的 3Dmol 结构工作台；
-- 固定后台任务队列、页面重开任务重连、工具链运行时 hash 缓存与显式重检；
-- 原子项目写入、schema migration、revision 冲突检测和未完成 run 恢复；
-- 输入、输出、配置、日志和工具二进制的 SHA256 provenance；
-- Assisted Stable 随附 CPython 3.11.15、RDKit 2026.3.3、Meeko 0.7.1 及固定依赖；
-- Meeko、Gemmi、tqdm 对应版本的源码包、第三方许可证和来源/SHA256 清单。
+安装包 Author / Publisher：`XinXi Xu`。
 
-## 开箱即用边界
+## v0.10.2 重点改进
 
-- Basic：导入准备好的 receptor/ligand PDBQT 后，可离线完成真实 Vina 流程；
-- Assisted：可离线从 PDB 受体与 SDF/MOL 配体尝试准备 PDBQT，再进入 Vina 流程；
-- 用户配置的兼容 Python 工具链仍优先，随附 runtime 是离线 fallback；
-- Meeko 保持普通 `Lib/site-packages/meeko/` 目录，不冻结进 DockStart 可执行文件。
+- 项目创建入口按实际输入改写为“已有 PDBQT”“PDB/CIF + SDF/MOL”“示例项目”，减少模式名称理解成本；
+- 在线获取受体/配体成为原始结构流程中的常驻入口，可随时返回 RCSB/PubChem 搜索下载；
+- Assisted 流程明确使用“准备并转换为 PDBQT”，并提供直接的受体/配体转换、进度、错误恢复和下一步引导；
+- 减少结构准备页重复启动科学 Python 检测造成的等待，复用已缓存的工具链状态；
+- 保留本地项目、对接箱体、Vina 参数、运行、构象查看、结果表格和 Markdown 报告闭环。
 
-自动准备结果仍需人工检查质子化、电荷、构象、缺失残基、水、金属、辅因子和链选择。Docking score 仅供结构结合趋势参考，不能替代实验验证，也不能证明药效。
+## 下载与选择
 
-## 未包含
+| 文件 | 适用对象 | 大小 | SHA256 | 发布门禁 |
+| --- | --- | ---: | --- | --- |
+| `DockStart_0.10.2_Basic_x64-setup.exe` | 已有 PDBQT，推荐安装方式 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
+| `DockStart_0.10.2_Basic_x64_en-US.msi` | 已有 PDBQT，适合 MSI 部署 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
+| `DockStart_0.10.2_Assisted_x64-setup.exe` | PDB/CIF + SDF/MOL，推荐安装方式 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
+| `DockStart_0.10.2_Assisted_x64_en-US.msi` | PDB/CIF + SDF/MOL，适合 MSI 部署 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
 
-- Open Babel、MGLTools、PLIP、ProLIF；
-- MOL2/SMILES 自动准备和复杂受体结构修复；
-- 相互作用分析、口袋预测、分子动力学、批量虚拟筛选、AI 药效预测；
-- AutoDock Vina 算法或 scoring function 修改；
-- 运行时联网安装 scientific packages。
+Basic 与 Assisted 使用同一个应用身份，**请勿并行安装**。切换 profile 前先正常卸载当前版本；用户项目目录不应放在应用安装目录内。
+
+四个安装包尚未进行 Authenticode 签名。Windows SmartScreen 或企业策略可能显示“未知发布者”；请核对 Release 页面上的文件名和 SHA256，安装包属性中的 Publisher 应为 `XinXi Xu`。
+
+## 联网与离线边界
+
+- 本地项目管理、PDBQT 导入、Assisted 本地格式准备、Box 设置、Vina 对接、结果解析和 Markdown 报告导出不需要联网；
+- 使用 RCSB PDB ID 搜索/下载受体或 PubChem CID/名称搜索/下载配体时需要联网；
+- DockStart 运行时不会联网安装 Python、RDKit、Meeko 或其他科学包，也不会自动修改系统 PATH；
+- 用户配置的兼容 preparation Python 优先于 Assisted 随附工具链。
+
+## 当前支持
+
+| 环节 | 支持格式或能力 |
+| --- | --- |
+| Basic 对接输入 | receptor `.pdbqt`、ligand `.pdbqt` |
+| Assisted 受体原始输入 | `.pdb`、`.cif` |
+| Assisted 配体原始输入 | `.sdf`、`.mol` |
+| 在线获取 | RCSB PDB ID；PubChem CID 或名称 |
+| 结果输出 | docking PDBQT、`scores.csv`、Markdown 实验记录 |
+
+当前不提供 MOL2/SMILES 自动准备、复杂受体修复、pocket prediction、PLIP/ProLIF 相互作用分析、Open Babel/MGLTools 内置、分子动力学、批量虚拟筛选或 AI 药效判断，也不修改 AutoDock Vina 算法或 scoring function。
 
 ## 发布门禁
 
-Assisted 候选已同时通过：
+- Python 测试：待填写；
+- 前端生产构建：待填写；
+- Cargo check/test/clippy：待填写；
+- Basic 打包布局与真实 PDBQT/Vina 流程：待填写；
+- Assisted development / post-package / post-install 三道门禁：待填写；
+- Basic 与 Assisted GUI 人工流程及另一台干净 Windows 设备复验：待填写。
 
-1. development stage 的真实准备、Vina、解析与报告流程；
-2. Tauri post-package 目录的同一流程；
-3. NSIS 真实安装目录的同一流程及静默卸载无残留；
-4. Python、Rust、前端构建与实际 GUI 验收。
+只有完成上述门禁、记录四个文件的真实大小和 SHA256 后，才把本候选标记为正式发布。
 
-`.release/assisted/artifact-manifest.json` 已记录 `release_status=passed` 与 `publishable=true`。
+## 科学与许可证边界
 
-Basic 候选也已通过打包目录回归，并在隔离安装目录中完成两轮真实 PDBQT/Vina 对接和静默卸载检查。
+自动生成 PDBQT 后仍需人工检查质子化、电荷、构象、缺失残基、水、金属、辅因子和链选择。对接箱体必须根据研究问题人工确认。
 
-## Windows x64 产物
+**Docking score 仅供结构结合趋势参考，不能替代实验验证，也不能证明真实结合、药效、安全性或临床价值。**
 
-| 文件 | 大小 | SHA256 |
-| --- | ---: | --- |
-| `DockStart_0.10.0_Basic_x64_en-US.msi` | 23,315,728 bytes | `5d1e85897c6d8335e4dc8f72348f4d2410741a1ce5dcd380b0fd3bb7f7cb3bac` |
-| `DockStart_0.10.0_Basic_x64-setup.exe` | 17,783,221 bytes | `83e0671d54ccccedd5a9b4fd1cb0e3fd019f553cbb107855841cbfe1ce8aaa9e` |
-| `DockStart_0.10.0_Assisted_x64_en-US.msi` | 113,132,764 bytes | `5a8f74bec929254d1517cb75e5e3380cb6a85a35e5db4089eefd1aa1c138119d` |
-| `DockStart_0.10.0_Assisted_x64-setup.exe` | 73,161,918 bytes | `07121cd5407859b38b3bd4dbe7b17d13ee750e07c32030f3c7b43c386bacf494` |
-
-已有 PDBQT 的用户选择 Basic；只有 PDB/SDF/MOL、需要自动准备 PDBQT 的用户选择 Assisted。建议 Windows 用户优先使用对应 profile 的 NSIS `setup.exe`。四个安装包均尚未进行 Authenticode 签名，Windows SmartScreen 或企业策略仍可能显示“未知发布者”。
-
-DockStart 自有代码采用 Apache-2.0；安装包中的第三方组件遵循各自许可证。Meeko 0.7.1 以 LGPL-2.1 条款作为独立可替换组件分发，详见安装包内 `resources/licenses/THIRD_PARTY_NOTICES.md`。以上为工程合规说明，不构成法律意见。
+DockStart 自有代码采用 Apache-2.0；安装包内第三方组件遵循各自许可证。Meeko 0.7.1 以 LGPL-2.1 条款作为独立、可替换组件分发，详见安装包内 `resources/licenses/THIRD_PARTY_NOTICES.md`。许可证说明属于工程记录，不构成法律意见。

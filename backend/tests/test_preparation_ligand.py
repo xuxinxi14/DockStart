@@ -171,7 +171,10 @@ class LigandPreparationTests(unittest.TestCase):
             project_json.write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
 
             with (
-                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch(
+                    "dockstart_core.preparation._tool_status",
+                    return_value=_tool_status()["tools"],
+                ) as tool_probe,
                 patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
             ):
                 result = prepare_ligand_pdbqt(str(project_dir), overwrite=False)
@@ -187,6 +190,7 @@ class LigandPreparationTests(unittest.TestCase):
         self.assertTrue(output_exists)
         self.assertIn("mock stdout", log_result["stdout"])
         self.assertIn('"status": "finished"', log_result["log"])
+        tool_probe.assert_called_once()
 
     def test_prepare_ligand_pdbqt_mock_failure_writes_structured_error(self) -> None:
         def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:

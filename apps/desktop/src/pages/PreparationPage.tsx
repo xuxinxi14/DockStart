@@ -108,9 +108,17 @@ export default function PreparationPage({
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
   const [mode, setMode] = useState<PreparationMode>(
-    initialProject.receptor.file && initialProject.ligand.file ? "existing" : "raw",
+    initialProject.receptor.raw_file
+      || initialProject.ligand.raw_file
+      || !(initialProject.receptor.file && initialProject.ligand.file)
+      ? "raw"
+      : "existing",
   );
-  const [previewRevision, setPreviewRevision] = useState(0);
+  const [previewRevision, setPreviewRevision] = useState<Record<PreparationTarget, number>>({ receptor: 0, ligand: 0 });
+  const [previewRequested, setPreviewRequested] = useState<Record<PreparationTarget, boolean>>({ receptor: false, ligand: false });
+  const [tools, setTools] = useState<PreparationStatusResponse["tools"]>();
+  const [isCheckingTools, setIsCheckingTools] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<PreparationTarget | null>(null);
   const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
   const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
@@ -118,8 +126,12 @@ export default function PreparationPage({
   useEffect(() => {
     const nextIdentity = `${initialProject.receptor.file}|${initialProject.ligand.file}`;
     if (preparedIdentityRef.current !== nextIdentity) {
+      const [previousReceptor, previousLigand] = preparedIdentityRef.current.split("|");
       preparedIdentityRef.current = nextIdentity;
-      setPreviewRevision((revision) => revision + 1);
+      setPreviewRevision((revision) => ({
+        receptor: previousReceptor !== initialProject.receptor.file ? revision.receptor + 1 : revision.receptor,
+        ligand: previousLigand !== initialProject.ligand.file ? revision.ligand + 1 : revision.ligand,
+      }));
     }
     setProject(initialProject);
   }, [initialProject]);
@@ -127,13 +139,24 @@ export default function PreparationPage({
   useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
 
   const applyResponse = useCallback(
-    (next: PreparationStatusResponse, fallbackMessage: string, preparationCompleted = false) => {
+    (next: PreparationStatusResponse, fallbackMessage: string, completedTarget?: PreparationTarget) => {
       setResponse(next);
+      if (next.tools) setTools(next.tools);
       if (next.project) {
         const nextIdentity = `${next.project.receptor.file}|${next.project.ligand.file}`;
-        if (preparationCompleted || preparedIdentityRef.current !== nextIdentity) {
+        if (completedTarget || preparedIdentityRef.current !== nextIdentity) {
+          const [previousReceptor, previousLigand] = preparedIdentityRef.current.split("|");
           preparedIdentityRef.current = nextIdentity;
-          setPreviewRevision((revision) => revision + 1);
+          setPreviewRevision((revision) => ({
+            receptor:
+              completedTarget === "receptor" || previousReceptor !== next.project?.receptor.file
+                ? revision.receptor + 1
+                : revision.receptor,
+            ligand:
+              completedTarget === "ligand" || previousLigand !== next.project?.ligand.file
+                ? revision.ligand + 1
+                : revision.ligand,
+          }));
         }
         setProject(next.project);
         onProjectChange(next.project);
@@ -168,7 +191,7 @@ export default function PreparationPage({
       applyResponse(
         preparationResult,
         target === "receptor" ? "受体输入已准备。" : "配体输入已准备。",
-        preparationResult.ok,
+        preparationResult.ok ? target : undefined,
       );
     },
     [applyResponse],
@@ -229,19 +252,26 @@ export default function PreparationPage({
     void reloadStatus();
   }, [reloadStatus]);
 
-  const validateTarget = async (target: PreparationTarget) => {
-    setIsBusy(true);
+  const checkConversionTools = async () => {
+    setIsCheckingTools(true);
+    setRawError("");
     try {
-      const rawPayload = await invoke<string>("validate_preparation_prerequisites", {
+      const rawPayload = await invoke<string>("get_preparation_tool_status", {
         projectDir: project.project_dir,
-        target,
       });
-      applyResponse(parsePreparationResponse(rawPayload), "准备条件已检查。");
+      const parsed = parsePreparationResponse(rawPayload);
+      if (!parsed.ok) {
+        setMessage(parsed.error?.message ?? "无法检测格式转换工具。");
+        setRawError(parsed.error?.raw_error ?? "");
+        return;
+      }
+      setTools(parsed.tools);
+      setMessage("格式转换工具检测完成；开始转换时仍会复核输入和输出。" );
     } catch (error) {
-      setMessage("无法检查准备条件。");
+      setMessage("无法检测格式转换工具。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      setIsCheckingTools(false);
     }
   };
 
@@ -264,6 +294,7 @@ export default function PreparationPage({
   };
 
   const prepareTarget = async (target: PreparationTarget) => {
+    setPendingTarget(target);
     setIsBusy(true);
     setRawError("");
     activeTaskAbortRef.current?.abort();
@@ -286,6 +317,7 @@ export default function PreparationPage({
     } finally {
       if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
       setActiveTask((current) => (current?.task_id === taskId ? null : current));
+      setPendingTarget(null);
       setIsBusy(false);
     }
   };
@@ -334,9 +366,8 @@ export default function PreparationPage({
   const receptorPrep: PreparationResult | undefined = preparation?.receptor;
   const ligandPrep: PreparationResult | undefined = preparation?.ligand;
   const files = response?.files;
-  const tools = response?.tools;
-  const readyForBox = Boolean(project.receptor.file && project.ligand.file);
-  const interactionBusy = isBusy || activeTask?.status === "queued" || activeTask?.status === "running";
+  const readyForBox = files?.receptor_prepared?.status === "ok" && files?.ligand_prepared?.status === "ok";
+  const interactionBusy = Boolean(pendingTarget || activeTask?.status === "queued" || activeTask?.status === "running");
 
   const renderStructureRow = (target: PreparationTarget, prep: PreparationResult | undefined) => {
     const isReceptor = target === "receptor";
@@ -344,9 +375,17 @@ export default function PreparationPage({
     const rawFile = isReceptor ? files?.receptor_raw : files?.ligand_raw;
     const preparedFile = isReceptor ? files?.receptor_prepared : files?.ligand_prepared;
     const projectFile = isReceptor ? project.receptor.file : project.ligand.file;
-    const displayFile = fileLine(preparedFile, projectFile);
+    const projectRawFile = isReceptor ? project.receptor.raw_file : project.ligand.raw_file;
+    const rawReady = rawFile?.status === "ok";
+    const isReady = preparedFile?.status === "ok";
+    const displayFile = isReady
+      ? fileLine(preparedFile, projectFile)
+      : mode === "raw"
+        ? fileLine(rawFile, projectRawFile)
+        : fileLine(preparedFile, projectFile);
     const fileName = displayFile.split(/[\\/]/).filter(Boolean).pop() || "尚未选择 PDBQT";
-    const isReady = Boolean(projectFile && (preparedFile?.exists ?? true));
+    const preparedSize = preparedFile?.size ?? 0;
+    const shouldLoadPreview = isReady && previewRequested[target];
 
     return (
       <article className="preparation-target-row">
@@ -355,24 +394,47 @@ export default function PreparationPage({
           <div>
             <span>{label}</span>
             <strong>{fileName}</strong>
-            <small>PDBQT</small>
+            <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL") : "等待文件"}</small>
           </div>
         </div>
 
-        <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">正在加载 3D 预览…</div>}>
-          <StructureMiniPreview
-            fileKind={isReceptor ? "receptor_prepared" : "ligand_prepared"}
-            label={label}
-            projectDir={project.project_dir}
-            refreshKey={previewRevision}
-          />
-        </Suspense>
+        {shouldLoadPreview ? (
+          <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">正在加载 3D 预览…</div>}>
+            <StructureMiniPreview
+              fileKind={isReceptor ? "receptor_prepared" : "ligand_prepared"}
+              label={label}
+              projectDir={project.project_dir}
+              refreshKey={previewRevision[target]}
+            />
+          </Suspense>
+        ) : (
+          <div className="structure-mini-preview structure-mini-preview-gate">
+            {isReady ? (
+              <>
+                <strong>3D 预览按需加载</strong>
+                <span>
+                  {preparedSize > 0
+                    ? `文件大小 ${preparedSize.toLocaleString()} B；点击后再初始化查看器，避免进入页面时卡顿。`
+                    : "点击后再初始化查看器，避免进入页面时卡顿。"}
+                </span>
+                <ActionButton onClick={() => setPreviewRequested((current) => ({ ...current, [target]: true }))}>
+                  加载 3D 预览
+                </ActionButton>
+              </>
+            ) : (
+              <>
+                <strong>{mode === "raw" ? "等待转换为 PDBQT" : "等待导入 PDBQT"}</strong>
+                <span>文件就绪后才会初始化 3D 查看器。</span>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="preparation-target-actions">
           <div className={`preparation-file-check ${isReady ? "is-ready" : "is-missing"}`}>
             {isReady ? <CheckCircle aria-hidden="true" size={18} weight="fill" /> : <Info aria-hidden="true" size={18} weight="fill" />}
             <div>
-              <strong>{isReady ? "文件检查通过" : "等待 PDBQT"}</strong>
+              <strong>{isReady ? "PDBQT 已就绪" : rawReady ? "可以开始转换" : "等待原始文件"}</strong>
               <span>{preparedFile?.size ? `${preparedFile.size.toLocaleString()} B` : statusLabel(prep?.status)}</span>
             </div>
           </div>
@@ -382,7 +444,7 @@ export default function PreparationPage({
               <ActionButton variant="primary" disabled={interactionBusy} onClick={() => onOpenImportPdbqt(project)}>
                 <FolderOpen aria-hidden="true" size={16} /> 选择文件
               </ActionButton>
-              <ActionButton disabled={interactionBusy} onClick={() => void validateTarget(target)}>检查文件</ActionButton>
+              <ActionButton disabled={interactionBusy || isBusy} onClick={() => void reloadStatus()}>刷新文件状态</ActionButton>
             </>
           ) : (
             <>
@@ -394,16 +456,15 @@ export default function PreparationPage({
                 />
                 覆盖已有 PDBQT
               </label>
-              <ActionButton variant="primary" disabled={interactionBusy} onClick={() => void prepareTarget(target)}>
-                {isReceptor ? "准备受体输入" : "准备配体输入"}
+              <ActionButton variant="primary" disabled={interactionBusy || !rawReady} onClick={() => void prepareTarget(target)}>
+                {isReceptor ? "转换受体为 PDBQT" : "转换配体为 PDBQT"}
               </ActionButton>
-              <ActionButton disabled={interactionBusy} onClick={() => void validateTarget(target)}>检查条件</ActionButton>
             </>
           )}
 
           <AdvancedDetails className="preparation-target-details" summary="查看详情">
             <dl className="meta-list">
-              <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, isReceptor ? project.receptor.raw_file : project.ligand.raw_file)}</code></dd></div>
+              <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, projectRawFile)}</code></dd></div>
               <div><dt>准备方法</dt><dd>{prep?.method ?? "外部或手动导入"}</dd></div>
               <div><dt>日志</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
             </dl>
@@ -420,28 +481,30 @@ export default function PreparationPage({
   return (
     <PageShell labelledBy="preparation-title" className="preparation-workspace-page">
       <PageHero
-        eyebrow="结构准备 · STRUCTURE PREPARATION"
-        title="结构准备"
+        eyebrow="格式转换 · PDBQT PREPARATION"
+        title="格式转换与 PDBQT 准备"
         titleId="preparation-title"
-        description="导入或准备受体与配体 PDBQT 文件，为 AutoDock Vina 对接做好准备。"
+        description="将受体 PDB/CIF 与配体 SDF/MOL 准备并转换为 PDBQT，或直接导入已有 PDBQT。"
         actions={(
           <>
+            <ActionButton variant="primary" onClick={onBack}>在线搜索并下载</ActionButton>
+            <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入已有 PDBQT</ActionButton>
             {activeTask?.status === "queued" ? (
               <ActionButton onClick={() => void cancelQueuedPreparation()}>取消排队</ActionButton>
             ) : null}
-            <ActionButton onClick={() => void reloadStatus()} disabled={interactionBusy}>刷新状态</ActionButton>
+            <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新状态"}</ActionButton>
           </>
         )}
       />
 
       <ModeTabs
         id="preparation-mode-tabs"
-        label="结构准备方式"
+        label="PDBQT 输入方式"
         active={mode}
         onChange={setMode}
         options={[
-          { id: "existing", label: "已有 PDBQT" },
-          { id: "raw", label: "从原始结构准备" },
+          { id: "existing", label: "直接导入已有 PDBQT" },
+          { id: "raw", label: "PDB/CIF + SDF/MOL（准备并转换）" },
         ]}
       />
 
@@ -456,28 +519,28 @@ export default function PreparationPage({
             <div className="preparation-source-strip">
               <div>
                 <Wrench aria-hidden="true" size={18} />
-                <span>自动准备需要 Python、RDKit 与 Meeko；你也可以返回获取原始结构。</span>
+                <span>还没有原始文件？可在线搜索，也可在获取页从电脑导入。转换会自动检查 Python、RDKit 与 Meeko。</span>
               </div>
-              <ActionButton onClick={onBack}>获取原始结构</ActionButton>
+              <ActionButton variant="primary" onClick={onBack}>获取或导入原始结构</ActionButton>
             </div>
           ) : (
             <button className="preparation-drop-zone" type="button" onClick={() => onOpenImportPdbqt(project)}>
               <FileArrowUp aria-hidden="true" size={20} />
-              <span>选择或拖放 PDBQT 文件；导入后会保存到当前项目。</span>
+              <span>选择受体与配体 PDBQT；导入后会复制到当前项目。</span>
             </button>
           )}
 
           <div className="preparation-feedback">
             <ScientificDisclaimer kind="preparation" />
-            {message || rawError ? <CommandResultPanel title="准备状态" message={message} rawError={rawError} /> : null}
+            {message || rawError ? <CommandResultPanel title="格式转换状态" message={message} rawError={rawError} /> : null}
           </div>
 
           <footer className="preparation-action-bar">
             <p>自动准备结果仍需人工检查质子化、电荷、构象和缺失残基。</p>
             <div>
-              <ActionButton onClick={() => void reloadStatus()} disabled={interactionBusy}>保存并检查</ActionButton>
+              <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新文件状态"}</ActionButton>
               <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
-                继续设置搜索范围
+                PDBQT 已就绪，设置搜索范围
               </ActionButton>
             </div>
           </footer>
@@ -486,26 +549,41 @@ export default function PreparationPage({
         <RightRail className="preparation-context-rail">
           <RightRailSection title="当前输入">
             <dl className="mode-context-list">
-              <div><dt>受体</dt><dd>{project.receptor.file || "未选择"}</dd></div>
-              <div><dt>配体</dt><dd>{project.ligand.file || "未选择"}</dd></div>
+              <div><dt>受体</dt><dd>{mode === "raw" ? files?.receptor_raw?.path || project.receptor.raw_file || "未选择" : files?.receptor_prepared?.path || "未选择"}</dd></div>
+              <div><dt>配体</dt><dd>{mode === "raw" ? files?.ligand_raw?.path || project.ligand.raw_file || "未选择" : files?.ligand_prepared?.path || "未选择"}</dd></div>
             </dl>
           </RightRailSection>
 
           <RightRailSection title="文件检查">
             <div className="preparation-check-list">
-              <span className={project.receptor.file ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 受体 PDBQT</span>
-              <span className={project.ligand.file ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 配体 PDBQT</span>
+              <span className={files?.receptor_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 受体 PDBQT</span>
+              <span className={files?.ligand_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 配体 PDBQT</span>
             </div>
           </RightRailSection>
 
           <RightRailSection title="工具状态">
-            <AdvancedDetails summary={mode === "existing" ? "当前模式无需转换" : "查看准备工具"}>
-              <dl className="mode-context-list">
-                <div><dt>Python</dt><dd>{statusLabel(tools?.python?.status)} · {toolVersion(tools?.python)}</dd></div>
-                <div><dt>RDKit</dt><dd>{statusLabel(tools?.rdkit?.status)} · {capabilityLine(tools?.rdkit, "sdf_inline_read")}</dd></div>
-                <div><dt>Meeko</dt><dd>{statusLabel(tools?.meeko?.status)}</dd></div>
-              </dl>
-            </AdvancedDetails>
+            {mode === "existing" ? (
+              <p>直接导入 PDBQT 不需要 RDKit / Meeko。</p>
+            ) : (
+              <>
+                <p className="preparation-profile-hint">
+                  Assisted Stable 随附 RDKit / Meeko；Basic Stable 默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
+                </p>
+                <p>{tools ? "已读取本次工具检测结果。" : "进入页面时不再自动启动检测脚本；开始转换时会自动检查。"}</p>
+                <ActionButton disabled={isCheckingTools || interactionBusy} onClick={() => void checkConversionTools()}>
+                  {isCheckingTools ? "检测中…" : "检查转换工具"}
+                </ActionButton>
+                {tools ? (
+                  <AdvancedDetails summary="查看检测详情">
+                    <dl className="mode-context-list">
+                      <div><dt>Python</dt><dd>{statusLabel(tools.python?.status)} · {toolVersion(tools.python)}</dd></div>
+                      <div><dt>RDKit</dt><dd>{statusLabel(tools.rdkit?.status)} · {capabilityLine(tools.rdkit, "sdf_inline_read")}</dd></div>
+                      <div><dt>Meeko</dt><dd>{statusLabel(tools.meeko?.status)}</dd></div>
+                    </dl>
+                  </AdvancedDetails>
+                ) : null}
+              </>
+            )}
           </RightRailSection>
 
           <RightRailSection title="下一步">

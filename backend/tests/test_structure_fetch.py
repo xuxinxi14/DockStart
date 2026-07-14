@@ -103,6 +103,7 @@ class StructureFetchTests(unittest.TestCase):
             target = project_dir / "raw" / "receptor_1HSG.pdb"
             self.assertTrue(result["ok"])
             self.assertEqual(result["raw_file"], "raw/receptor_1HSG.pdb")
+            self.assertEqual(result["project"]["receptor"]["file"], "")
             self.assertEqual(target.read_bytes(), b"HEADER TEST\n")
 
     def test_fetch_pdb_structure_cif_writes_cif_file(self) -> None:
@@ -161,6 +162,7 @@ class StructureFetchTests(unittest.TestCase):
             target = project_dir / "raw" / "ligand_2244.sdf"
             self.assertTrue(result["ok"])
             self.assertEqual(result["raw_file"], "raw/ligand_2244.sdf")
+            self.assertEqual(result["project"]["ligand"]["file"], "")
             self.assertEqual(target.read_bytes(), b"aspirin sdf\n")
 
     def test_fetch_pubchem_ligand_by_name_writes_sdf(self) -> None:
@@ -220,7 +222,31 @@ class StructureFetchTests(unittest.TestCase):
             self.assertEqual(loaded["receptor"]["source_id"], "my receptor.pdb")
             self.assertEqual(loaded["receptor"]["query_type"], "local_file")
             self.assertEqual(loaded["receptor"]["raw_file"], "raw/receptor_my_receptor.pdb")
+            self.assertEqual(loaded["receptor"]["file"], "")
             self.assertTrue((project_dir / "raw" / "receptor_my_receptor.pdb").is_file())
+
+    def test_import_receptor_raw_file_accepts_local_cif(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "receptor.cif"
+            source.write_text("data_receptor\n", encoding="utf-8")
+
+            result = import_receptor_raw_file(str(project_dir), str(source))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["format"], "cif")
+
+    def test_import_receptor_raw_file_rejects_pdbqt_with_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "receptor.pdbqt"
+            source.write_text("ATOM\n", encoding="utf-8")
+
+            result = import_receptor_raw_file(str(project_dir), str(source))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "LOCAL_RAW_FORMAT_UNSUPPORTED")
+        self.assertIn("已有 PDBQT", result["error"]["suggestion"])
 
     def test_import_ligand_raw_file_copies_local_sdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -236,7 +262,31 @@ class StructureFetchTests(unittest.TestCase):
             self.assertEqual(loaded["ligand"]["source"], "local_file")
             self.assertEqual(loaded["ligand"]["source_id"], "aspirin.sdf")
             self.assertEqual(loaded["ligand"]["raw_file"], "raw/ligand_aspirin.sdf")
+            self.assertEqual(loaded["ligand"]["file"], "")
             self.assertTrue((project_dir / "raw" / "ligand_aspirin.sdf").is_file())
+
+    def test_import_ligand_raw_file_accepts_local_mol(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "ligand.mol"
+            source.write_text("mock mol\n", encoding="utf-8")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["format"], "mol")
+
+    def test_import_ligand_raw_file_rejects_mol2_with_conversion_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "ligand.mol2"
+            source.write_text("mock mol2\n", encoding="utf-8")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "LOCAL_RAW_FORMAT_UNSUPPORTED")
+        self.assertIn("MOL2", result["error"]["suggestion"])
 
     def test_import_ligand_raw_file_rejects_unsupported_extension(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -289,35 +339,108 @@ class StructureFetchTests(unittest.TestCase):
         self.assertEqual(loaded["ligand"]["raw_file"], "raw/ligand_2244.sdf")
         self.assertTrue(loaded["ligand"]["downloaded_at"])
 
-    def test_fetch_does_not_replace_existing_prepared_receptor_file_reference(self) -> None:
+    def test_download_clears_legacy_missing_prepared_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            project = load_project(str(project_dir))["project"]
+            project["receptor"]["file"] = "prepared/receptor.pdbqt"
+            self.assertTrue(save_project(_project_from_dict(project, project_dir))["ok"])
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                fetcher=self._fetcher(b"HEADER\n"),
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["project"]["receptor"]["file"], "")
+
+    def test_local_import_invalidates_existing_prepared_reference_but_keeps_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            project = load_project(str(project_dir))["project"]
+            project["ligand"]["file"] = "prepared/ligand.pdbqt"
+            prepared = project_dir / "prepared" / "ligand.pdbqt"
+            prepared.write_text("prepared ligand\n", encoding="utf-8")
+            self.assertTrue(save_project(_project_from_dict(project, project_dir))["ok"])
+            source = Path(temp_dir) / "ligand.sdf"
+            source.write_text("mock sdf\n", encoding="utf-8")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+            prepared_exists = prepared.is_file()
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["project"]["ligand"]["file"], "")
+        self.assertTrue(prepared_exists)
+
+    def test_fetch_invalidates_existing_prepared_receptor_reference_but_keeps_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
             loaded = load_project(str(project_dir))
             project = loaded["project"]
             project["receptor"]["file"] = "prepared/custom_receptor.pdbqt"
+            (project_dir / "prepared" / "custom_receptor.pdbqt").write_text(
+                "prepared receptor\n",
+                encoding="utf-8",
+            )
             save_project_response = save_project(_project_from_dict(project, project_dir))
             self.assertTrue(save_project_response["ok"], save_project_response)
 
             result = fetch_pdb_structure(str(project_dir), "1HSG", fetcher=self._fetcher(b"HEADER\n"))
+            prepared_exists = (project_dir / "prepared" / "custom_receptor.pdbqt").is_file()
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["project"]["receptor"]["file"], "prepared/custom_receptor.pdbqt")
+        self.assertEqual(result["project"]["receptor"]["file"], "")
         self.assertEqual(result["project"]["receptor"]["raw_file"], "raw/receptor_1HSG.pdb")
+        self.assertTrue(prepared_exists)
 
-    def test_fetch_does_not_replace_existing_prepared_ligand_file_reference(self) -> None:
+    def test_fetch_invalidates_existing_prepared_ligand_reference_but_keeps_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
             loaded = load_project(str(project_dir))
             project = loaded["project"]
             project["ligand"]["file"] = "prepared/custom_ligand.pdbqt"
+            (project_dir / "prepared" / "custom_ligand.pdbqt").write_text(
+                "prepared ligand\n",
+                encoding="utf-8",
+            )
             save_project_response = save_project(_project_from_dict(project, project_dir))
             self.assertTrue(save_project_response["ok"], save_project_response)
 
             result = fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
+            prepared_exists = (project_dir / "prepared" / "custom_ligand.pdbqt").is_file()
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["project"]["ligand"]["file"], "prepared/custom_ligand.pdbqt")
+        self.assertEqual(result["project"]["ligand"]["file"], "")
         self.assertEqual(result["project"]["ligand"]["raw_file"], "raw/ligand_2244.sdf")
+        self.assertTrue(prepared_exists)
+
+    def test_failed_raw_acquisition_preserves_prepared_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            target = project_dir / "raw" / "receptor_1HSG.pdb"
+            target.write_bytes(b"existing raw\n")
+            prepared = project_dir / "prepared" / "custom_receptor.pdbqt"
+            prepared.write_text("prepared receptor\n", encoding="utf-8")
+            project = load_project(str(project_dir))["project"]
+            project["receptor"]["file"] = "prepared/custom_receptor.pdbqt"
+            self.assertTrue(save_project(_project_from_dict(project, project_dir))["ok"])
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                overwrite=False,
+                fetcher=self._fetcher(b"replacement raw\n"),
+            )
+            loaded = load_project(str(project_dir))["project"]
+            target_content = target.read_bytes()
+            prepared_exists = prepared.is_file()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "RAW_FILE_EXISTS")
+        self.assertEqual(loaded["receptor"]["file"], "prepared/custom_receptor.pdbqt")
+        self.assertEqual(target_content, b"existing raw\n")
+        self.assertTrue(prepared_exists)
 
     def test_get_raw_files_status_reports_downloaded_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -371,6 +494,9 @@ class StructureFetchTests(unittest.TestCase):
             fetch_pdb_structure(str(project_dir), "1HSG", fetcher=self._fetcher(b"HEADER\n"))
             prepared = project_dir / "prepared" / "receptor.pdbqt"
             prepared.write_text("prepared receptor\n", encoding="utf-8")
+            loaded_project = load_project(str(project_dir))["project"]
+            loaded_project["receptor"]["file"] = "prepared/receptor.pdbqt"
+            self.assertTrue(save_project(_project_from_dict(loaded_project, project_dir))["ok"])
             raw = project_dir / "raw" / "receptor_1HSG.pdb"
 
             result = clear_receptor_raw_record(str(project_dir))
@@ -392,6 +518,9 @@ class StructureFetchTests(unittest.TestCase):
             fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
             prepared = project_dir / "prepared" / "ligand.pdbqt"
             prepared.write_text("prepared ligand\n", encoding="utf-8")
+            loaded_project = load_project(str(project_dir))["project"]
+            loaded_project["ligand"]["file"] = "prepared/ligand.pdbqt"
+            self.assertTrue(save_project(_project_from_dict(loaded_project, project_dir))["ok"])
             raw = project_dir / "raw" / "ligand_2244.sdf"
 
             result = clear_ligand_raw_record(str(project_dir))

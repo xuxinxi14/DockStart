@@ -24,38 +24,40 @@ type ModeConfig = {
   requirement: string;
 };
 
+type AssistedSource = "online" | "local";
+
 function projectModePanelId(mode: StartMode) {
   return `project-mode-panel-${mode}`;
 }
 
 const modeOptions: Array<{ id: StartMode; label: string; controlsId: string }> = [
-  { id: "basic", label: "基础项目", controlsId: projectModePanelId("basic") },
-  { id: "assisted", label: "原始结构项目", controlsId: projectModePanelId("assisted") },
-  { id: "demo", label: "示例流程", controlsId: projectModePanelId("demo") },
+  { id: "basic", label: "已有 PDBQT（直接对接）", controlsId: projectModePanelId("basic") },
+  { id: "assisted", label: "PDB/CIF + SDF/MOL（准备并转换）", controlsId: projectModePanelId("assisted") },
+  { id: "demo", label: "示例项目（快速体验）", controlsId: projectModePanelId("demo") },
 ];
 
 const modeConfig: Record<StartMode, ModeConfig> = {
   basic: {
-    title: "创建基础模式项目",
-    subtitle: "已有 receptor.pdbqt 和 ligand.pdbqt 时，使用此模式。",
-    primaryLabel: "创建项目并进入准备结构",
-    currentPath: "基础模式",
-    nextStep: "导入受体和配体",
+    title: "使用已有 PDBQT 直接开始对接",
+    subtitle: "适合已经准备好受体与配体 PDBQT 的用户；导入后直接设置搜索范围。",
+    primaryLabel: "创建项目并导入 PDBQT",
+    currentPath: "已有 PDBQT",
+    nextStep: "复核两个 PDBQT 文件",
     requirement: "AutoDock Vina",
   },
   assisted: {
-    title: "从原始结构创建项目",
-    subtitle: "从 PDB / SDF 准备 Vina 输入文件。",
-    primaryLabel: "创建项目并进入结构准备",
-    currentPath: "辅助模式",
-    nextStep: "准备 Vina 输入文件",
-    requirement: "Python、RDKit / Meeko",
+    title: "将原始结构转换为 PDBQT",
+    subtitle: "从在线数据库获取，或从电脑导入受体 PDB/CIF 与配体 SDF/MOL，再准备为 Vina 输入。",
+    primaryLabel: "创建项目并进入格式转换",
+    currentPath: "原始结构 → PDBQT",
+    nextStep: "获取结构并完成格式转换",
+    requirement: "Python、RDKit、Meeko",
   },
   demo: {
-    title: "打开示例流程",
+    title: "复制内置示例并快速体验",
     subtitle: "选择一个内置示例，复制到工作区后体验完整流程。",
     primaryLabel: "",
-    currentPath: "示例流程",
+    currentPath: "内置示例",
     nextStep: "选择一个示例并复制到工作区",
     requirement: "示例项目资源",
   },
@@ -163,6 +165,7 @@ export default function ProjectCreatePage({
   const [ligandPdbqtPath, setLigandPdbqtPath] = useState("");
   const [receptorRawPath, setReceptorRawPath] = useState("");
   const [ligandRawPath, setLigandRawPath] = useState("");
+  const [assistedSource, setAssistedSource] = useState<AssistedSource>("online");
   const [showExistingProject, setShowExistingProject] = useState(false);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
@@ -222,12 +225,14 @@ export default function ProjectCreatePage({
   const createProject = useCallback(async () => {
     setIsBusy(true);
     resetFeedback();
+    let createdProjectDir = "";
     try {
       let project = await runProjectCommand(
         "create_project",
         { projectName, baseDir },
         "项目创建失败。",
       );
+      createdProjectDir = project.project_dir;
 
       if (startMode === "basic") {
         project = await runProjectCommand(
@@ -245,6 +250,10 @@ export default function ProjectCreatePage({
       }
 
       if (startMode === "assisted") {
+        if (assistedSource === "online") {
+          onCreated(project, "structure-fetch");
+          return;
+        }
         project = await runProjectCommand(
           "import_receptor_raw_file",
           { projectDir: project.project_dir, sourcePath: receptorRawPath },
@@ -259,13 +268,21 @@ export default function ProjectCreatePage({
         return;
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "无法创建项目。");
+      const errorMessage = error instanceof Error ? error.message : "无法创建项目。";
+      if (createdProjectDir) {
+        setExistingProjectDir(createdProjectDir);
+        setShowExistingProject(true);
+        setMessage(`${errorMessage} 项目目录已安全保留；请点击“打开已有项目”继续补充缺失文件。`);
+      } else {
+        setMessage(errorMessage);
+      }
       setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
     } finally {
       setIsBusy(false);
     }
   }, [
     baseDir,
+    assistedSource,
     ligandPdbqtPath,
     ligandRawPath,
     onCreated,
@@ -354,7 +371,9 @@ export default function ProjectCreatePage({
     projectName.trim() && baseDir.trim() && receptorPdbqtPath.trim() && ligandPdbqtPath.trim(),
   );
   const canCreateAssisted = Boolean(
-    projectName.trim() && baseDir.trim() && receptorRawPath.trim() && ligandRawPath.trim(),
+    projectName.trim()
+      && baseDir.trim()
+      && (assistedSource === "online" || (receptorRawPath.trim() && ligandRawPath.trim())),
   );
   const canCreate = startMode === "basic" ? canCreateBasic : canCreateAssisted;
 
@@ -414,7 +433,11 @@ export default function ProjectCreatePage({
       <div className="main-panel-section">
         <div className="main-panel-section-header">
           <h2>项目信息</h2>
-          <p>{startMode === "basic" ? "选择项目保存位置，并导入已经准备好的受体和配体 PDBQT。" : "选择项目保存位置，并导入受体与配体的原始结构文件。"}</p>
+          <p>
+            {startMode === "basic"
+              ? "选择项目保存位置，并导入已经准备好的受体和配体 PDBQT。"
+              : "先选择在线获取或本地导入；原始结构随后会准备并转换为 PDBQT。"}
+          </p>
         </div>
         <div className="form-panel create-mode-form">
           <div className="form-field" data-layout="form-row">
@@ -470,37 +493,76 @@ export default function ProjectCreatePage({
             </>
           ) : (
             <>
-              <div className="form-field" data-layout="form-row">
-                <label htmlFor="receptor-raw">受体结构文件：PDB / PDBQT</label>
-                <PathInput
-                  id="receptor-raw"
-                  value={receptorRawPath}
-                  onChange={setReceptorRawPath}
-                  mode="file"
-                  title="选择受体结构文件"
-                  placeholder="选择受体 PDB / PDBQT"
-                  filters={[{ name: "Receptor structure", extensions: ["pdb", "pdbqt"] }]}
-                />
-              </div>
+              <fieldset className="assisted-source-picker">
+                <legend>原始结构从哪里获取？</legend>
+                <div className="assisted-source-options">
+                  <button
+                    aria-pressed={assistedSource === "online"}
+                    className={assistedSource === "online" ? "selected" : ""}
+                    onClick={() => setAssistedSource("online")}
+                    type="button"
+                  >
+                    <strong>在线搜索并下载</strong>
+                    <span>受体使用 RCSB PDB ID；配体使用 PubChem CID 或名称。需要联网。</span>
+                    <small>适合还没有原始结构文件</small>
+                  </button>
+                  <button
+                    aria-pressed={assistedSource === "local"}
+                    className={assistedSource === "local" ? "selected" : ""}
+                    onClick={() => setAssistedSource("local")}
+                    type="button"
+                  >
+                    <strong>从电脑导入文件</strong>
+                    <span>受体支持 PDB/CIF；配体支持 SDF/MOL。</span>
+                    <small>适合已经下载好原始结构</small>
+                  </button>
+                </div>
+              </fieldset>
 
-              <div className="form-field" data-layout="form-row">
-                <label htmlFor="ligand-raw">配体结构文件：SDF / MOL2 / PDB</label>
-                <PathInput
-                  id="ligand-raw"
-                  value={ligandRawPath}
-                  onChange={setLigandRawPath}
-                  mode="file"
-                  title="选择配体结构文件"
-                  placeholder="选择配体 SDF / MOL2 / PDB"
-                  filters={[{ name: "Ligand structure", extensions: ["sdf", "mol2", "pdb"] }]}
-                />
-              </div>
+              {assistedSource === "local" ? (
+                <>
+                  <div className="form-field" data-layout="form-row">
+                    <label htmlFor="receptor-raw">受体原始结构：PDB / CIF</label>
+                    <PathInput
+                      id="receptor-raw"
+                      value={receptorRawPath}
+                      onChange={setReceptorRawPath}
+                      mode="file"
+                      title="选择受体 PDB / CIF"
+                      placeholder="选择受体 PDB / CIF"
+                      filters={[{ name: "Receptor structure", extensions: ["pdb", "cif"] }]}
+                    />
+                  </div>
+
+                  <div className="form-field" data-layout="form-row">
+                    <label htmlFor="ligand-raw">配体原始结构：SDF / MOL</label>
+                    <PathInput
+                      id="ligand-raw"
+                      value={ligandRawPath}
+                      onChange={setLigandRawPath}
+                      mode="file"
+                      title="选择配体 SDF / MOL"
+                      placeholder="选择配体 SDF / MOL"
+                      filters={[{ name: "Ligand structure", extensions: ["sdf", "mol"] }]}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="assisted-online-note" role="note">
+                  <strong>创建后直接进入“获取或导入原始结构”</strong>
+                  <p>可随时搜索 RCSB / PubChem，也可改为从电脑导入文件；这个入口会一直保留在结构获取与转换工作区。</p>
+                </div>
+              )}
             </>
           )}
 
           <div className="button-row end">
             <ActionButton variant="primary" disabled={isBusy || !canCreate} onClick={() => void createProject()}>
-              {isBusy ? "处理中..." : currentConfig.primaryLabel}
+              {isBusy
+                ? "处理中..."
+                : startMode === "assisted" && assistedSource === "online"
+                  ? "创建项目并在线获取结构"
+                  : currentConfig.primaryLabel}
             </ActionButton>
           </div>
         </div>
@@ -600,11 +662,19 @@ export default function ProjectCreatePage({
             <dl className="mode-context-list">
               <div>
                 <dt>当前路径</dt>
-                <dd>{currentConfig.currentPath}</dd>
+                <dd>
+                  {startMode === "assisted"
+                    ? assistedSource === "online" ? "在线获取 → PDBQT" : "本地文件 → PDBQT"
+                    : currentConfig.currentPath}
+                </dd>
               </div>
               <div>
                 <dt>下一步</dt>
-                <dd>{currentConfig.nextStep}</dd>
+                <dd>
+                  {startMode === "assisted" && assistedSource === "online"
+                    ? "搜索或导入原始结构"
+                    : currentConfig.nextStep}
+                </dd>
               </div>
               <div>
                 <dt>需要</dt>

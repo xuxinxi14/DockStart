@@ -1409,6 +1409,102 @@ pre,
   padding: 0;
 }
 
+.project-create-workbench .mode-tabs button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px var(--ds-space-3);
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.assisted-source-picker {
+  display: grid;
+  gap: var(--ds-space-3);
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.assisted-source-picker legend {
+  margin-bottom: var(--ds-space-2);
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-sm);
+  font-weight: 700;
+}
+
+.assisted-source-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-space-3);
+}
+
+.assisted-source-options > button {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-panel-soft);
+  color: var(--ds-text-primary);
+  cursor: pointer;
+  padding: var(--ds-space-4);
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.assisted-source-options > button:hover,
+.assisted-source-options > button:focus-visible {
+  border-color: var(--ds-accent);
+  background: var(--ds-surface-hover);
+}
+
+.assisted-source-options > button.selected {
+  border-color: var(--ds-accent);
+  background: var(--ds-surface-selected);
+  box-shadow: inset 3px 0 0 var(--ds-accent);
+}
+
+.assisted-source-options strong {
+  color: var(--ds-text-strong);
+  font-size: var(--ds-text-md);
+}
+
+.assisted-source-options span,
+.assisted-source-options small {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+.assisted-source-options small {
+  color: var(--ds-text-muted);
+}
+
+.assisted-online-note {
+  border-left: 3px solid var(--ds-accent);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-surface-selected);
+  padding: var(--ds-space-3) var(--ds-space-4);
+}
+
+.assisted-online-note strong {
+  color: var(--ds-text-strong);
+}
+
+.assisted-online-note p {
+  margin: 5px 0 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+@media (max-width: 760px) {
+  .assisted-source-options {
+    grid-template-columns: 1fr;
+  }
+}
+
 .inline-secondary-section {
   display: grid;
   gap: var(--ds-space-3);

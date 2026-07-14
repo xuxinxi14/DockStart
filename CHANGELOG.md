@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.10.2
+
+- Reworked project creation labels around the user’s actual inputs: prepared PDBQT, raw PDB/CIF plus SDF/MOL, or a bundled example, replacing ambiguous “Basic” and “raw structure project” wording.
+- Made online receptor/ligand retrieval a persistent, explicit action in the raw-structure workflow instead of a hard-to-rediscover secondary route.
+- Reframed Assisted preparation as “prepare and convert to PDBQT”, with direct receptor/ligand conversion actions, clearer prerequisites, progress, recovery guidance, and next-step handoff.
+- Reduced preparation-page startup work and reused cached toolchain status so navigation and format conversion do not repeatedly cold-start scientific Python checks.
+- Audited adjacent project, preparation, and handoff surfaces for duplicate or unclear actions while keeping the existing project schema and scientific adapters unchanged.
+- Prepared the first public Windows x64 release candidate as four isolated Basic/Assisted MSI and NSIS artifacts; final sizes, hashes, and release gates must be recorded after packaging.
+- Kept the scientific boundary unchanged: automatic preparation requires human review, and docking scores cannot replace experimental validation.
+
 ## v0.10.0
 
 - Added a Box placement shortcut that centers the search box on the receptor coordinate extent without changing its size, plus a page-entry reset action in both standard and fullscreen inspectors.

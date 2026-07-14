@@ -1,14 +1,14 @@
 # DockStart User Guide
 
-本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何在 v0.10.0 Basic/Assisted Stable 中完成最小对接流程。
+本文档面向第一次使用 AutoDock Vina 和 DockStart 的用户，说明如何在 v0.10.2 Basic/Assisted Stable 中完成最小对接流程。
 
-## 选择使用模式
+## 按现有文件选择入口
 
-DockStart V0.8 开始把入口分成三种模式：
+v0.10.2 的创建项目页按用户手上的输入文件提供三种入口：
 
-- **Basic Mode：已有 PDBQT**。你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径。
-- **Assisted Mode：从 raw 文件准备 PDBQT**。你只有 PDB/CIF/SDF/MOL 等原始结构文件；Assisted Stable 已随附固定 Python + RDKit + Meeko，可离线尝试自动准备 PDBQT。兼容的用户配置 Python 仍优先。
-- **Demo Mode：先看示例流程**。用于第一次体验软件流程。示例只用于流程演示，不用于科研结论。
+- **已有 PDBQT（直接对接）**：你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径，对应 Basic Stable 的核心能力。
+- **PDB/CIF + SDF/MOL（准备并转换）**：你只有受体 PDB/CIF 与配体 SDF/MOL；Assisted Stable 已随附固定 Python + RDKit + Meeko，可离线尝试准备并转换为 PDBQT。兼容的用户配置 Python 仍优先。
+- **示例项目（快速体验）**：复制内置小型项目，先熟悉完整操作路径。示例只用于流程演示，不用于科研结论。
 
 如果随附或用户配置的 RDKit/Meeko 检测失败，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
 
@@ -35,23 +35,31 @@ V0.8.5 之后，工具链页可以运行“安装后自检”，并导出本地 
 
 ## 前置条件
 
-你需要先准备好：
+所有模式都需要一个用于保存 DockStart 项目的本地目录。Basic 与 Assisted 都随附 AutoDock Vina；如果工具检测页仍提示不可用，请先执行显式重检。
 
-- AutoDock Vina，并确认 `vina` 或 `vina.exe` 可以被 DockStart 找到；
-- 已经准备好的 `receptor.pdbqt`；
-- 已经准备好的 `ligand.pdbqt`；
-- 一个用于保存 DockStart 项目的本地目录。
+- 选择“已有 PDBQT（直接对接）”时，需要 `receptor.pdbqt` 和 `ligand.pdbqt`；
+- 选择“PDB/CIF + SDF/MOL（准备并转换）”时，需要本地原始结构，或在项目创建后使用在线搜索下载；
+- 选择“示例项目（快速体验）”时不需要自行准备输入文件。
 
 V0.2.5 到 V0.2.10 可以从 RCSB PDB / PubChem 下载原始结构文件到 `raw/`，并显示 raw 文件状态、大小、修改时间和记录一致性。RCSB 支持 `pdb` / `cif`；PubChem 支持 CID 和名称查询。SMILES 查询当前只返回“暂未支持”的结构化提示。V0.3.0 新增自动准备状态入口，V0.3.1 新增 RDKit/Meeko 能力检测，V0.3.2 可以把 ligand SDF/MOL raw 文件尝试准备为 `prepared/ligand.pdbqt`，V0.3.3 可以把 receptor PDB/CIF raw 文件尝试准备为 `prepared/receptor.pdbqt`。运行 Vina 仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。手动准备说明见 [manual_pdbqt_preparation.md](manual_pdbqt_preparation.md)，验收说明见 [smoke_test.md](smoke_test.md)。
 
-当前推荐流程：
+已有 PDBQT 的推荐流程：
 
 ```text
-下载 raw 原始结构
-检查 RDKit/Meeko 准备能力
-准备或手动导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
+导入 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
 设置 Box 和 Vina 参数
 生成 vina_config.txt
+运行 Vina
+解析结果并导出 Markdown 报告
+```
+
+原始结构的推荐流程：
+
+```text
+导入本地 PDB/CIF + SDF/MOL，或在线搜索下载
+准备并转换 receptor / ligand PDBQT
+人工检查 prepared/receptor.pdbqt 和 prepared/ligand.pdbqt
+设置 Box 和 Vina 参数
 运行 Vina
 解析结果并导出 Markdown 报告
 ```
@@ -98,14 +106,15 @@ project_name/
 - 项目目录已存在：换一个项目名，DockStart 不会覆盖已有项目；
 - 项目名称包含非法字符：避免使用 Windows 文件名保留字符，如 `\ / : * ? " < > |`。
 
-创建成功后，页面会提供两个入口：
+创建项目时先选择输入来源：
 
-- 下载原始结构文件：适合还没有 raw PDB/CIF/SDF 的情况；
-- 直接导入 PDBQT：适合已经用外部工具准备好 receptor/ligand PDBQT 的情况。
+- 已有 PDBQT：选择本地 receptor/ligand PDBQT，创建后进入最短对接流程；
+- PDB/CIF + SDF/MOL：可以选择本地原始结构，也可以先创建项目，再使用常驻的“在线搜索并下载”入口；
+- 示例项目：选择示例类型和保存目录，复制后直接进入对应流程。
 
-## 3. 可选：下载原始结构文件
+## 3. 可选：在线搜索并下载原始结构
 
-用户可以在 StructureFetchPage 下载：
+此入口只在主动搜索/下载时联网；返回结构准备页后仍可随时重新进入。用户可以下载：
 
 - RCSB PDB 受体原始结构，例如输入 `1HSG`；
 - PubChem CID 配体原始 SDF，例如输入 `2244`；
@@ -177,9 +186,9 @@ StructureFetchPage 会显示：
 - raw 文件已存在且未开启 overwrite。
 - project.json 记录了 raw_file 但文件被手动删除，此时 `record_consistent` 会显示需要检查。
 
-## 4. 可选：检查自动准备状态
+## 4. 准备并转换为 PDBQT
 
-PreparationPage 会显示：
+原始结构不能直接交给 AutoDock Vina。结构准备页提供明确的“转换受体为 PDBQT”和“转换配体为 PDBQT”动作，并显示后台任务进度、失败原因与恢复建议。页面会显示：
 
 - 当前项目路径；
 - receptor / ligand raw 文件；
@@ -585,4 +594,4 @@ V0.5.9 进行了一轮真实前端可用性验收和小修：
 - Meeko 是否可导入；
 - 下一步建议是配置 Vina、配置 Python 工具链，还是创建项目。
 
-工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。v0.10.0 Assisted 已随附 RDKit/Meeko fallback；DockStart 运行时不会联网安装包，也不会自动修改系统 PATH。
+工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。v0.10.2 Assisted 已随附 RDKit/Meeko fallback；DockStart 运行时不会联网安装包，也不会自动修改系统 PATH。

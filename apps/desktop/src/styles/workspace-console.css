@@ -193,6 +193,32 @@
   font-size: 12px;
 }
 
+.structure-mini-preview-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  text-align: center;
+}
+
+.structure-mini-preview-gate strong {
+  color: var(--ds-text-on-dark);
+  font-size: 13px;
+}
+
+.structure-mini-preview-gate > span {
+  display: block;
+  max-width: 280px;
+  color: var(--ds-text-on-dark-muted);
+  line-height: 1.5;
+}
+
+.structure-mini-preview-gate button {
+  margin-top: 4px;
+}
+
 .preparation-target-actions {
   display: flex;
   flex-direction: column;
@@ -379,6 +405,20 @@
 
 .preparation-check-list .missing {
   color: var(--ds-warning-on-dark) !important;
+}
+
+.preparation-context-rail .right-rail-section > .secondary-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.preparation-profile-hint {
+  border-left: 3px solid var(--ds-brand-on-dark);
+  background: var(--ds-on-dark-surface-muted);
+  padding: 9px 10px;
+  color: var(--ds-text-on-dark-secondary) !important;
+  line-height: 1.55;
 }
 
 /* Docking console alignment with selected mock */

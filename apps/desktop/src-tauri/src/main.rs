@@ -24,6 +24,7 @@ use tauri::Manager;
 
 const RESOURCE_DIR_ENV_VAR: &str = "DOCKSTART_RESOURCE_DIR";
 const SETTINGS_ENV_VAR: &str = "DOCKSTART_SETTINGS_PATH";
+const PREPARATION_TOOLS_SNAPSHOT_ENV_VAR: &str = "DOCKSTART_PREPARATION_TOOLS_JSON";
 const RUNTIME_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 const VIEWER_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_BACKEND_CACHE_AGE: Duration = Duration::from_secs(30 * 60);
@@ -1681,7 +1682,23 @@ fn run_background_job(job: QueuedBackgroundJob) {
         None
     };
 
-    let result = run_backend_module(&spec.module, spec.args.clone());
+    let result = if spec.kind == "preparation" {
+        match cached_preparation_tools(&spec.project_dir) {
+            Ok(tools) => {
+                let tools_json = tools.to_string();
+                run_backend_module_with_env(
+                    &spec.module,
+                    spec.args.clone(),
+                    &[(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR, tools_json.as_str())],
+                )
+            }
+            // A cache failure must not make preparation less reliable than
+            // before. The backend can still perform its own fresh probe.
+            Err(_) => run_backend_module(&spec.module, spec.args.clone()),
+        }
+    } else {
+        run_backend_module(&spec.module, spec.args.clone())
+    };
     watcher_stop.store(true, Ordering::Release);
     if let Some(watcher) = watcher {
         let _ = watcher.join();
@@ -2583,7 +2600,6 @@ fn preparation_status_snapshot(project_dir: &str) -> Result<String, String> {
         .to_string();
     let project_root = fs::canonicalize(&canonical_project_dir)
         .map_err(|error| format!("项目目录不可访问：{error}"))?;
-    let tools = cached_preparation_tools(&canonical_project_dir)?;
     let project_path = |pointer: &str| {
         project
             .pointer(pointer)
@@ -2605,7 +2621,11 @@ fn preparation_status_snapshot(project_dir: &str) -> Result<String, String> {
         "project_dir": canonical_project_dir,
         "project": project,
         "preparation": preparation,
-        "tools": tools,
+        // Tool probing imports RDKit and Meeko and can take several seconds on
+        // a cold runtime. Keep page entry file-only; the UI requests the
+        // cached tool snapshot explicitly or preparation validates it in the
+        // background when conversion starts.
+        "tools": serde_json::Value::Null,
         "files": files,
         "message": "PDBQT 自动准备状态已读取。",
         "error": serde_json::Value::Null,
@@ -2633,24 +2653,40 @@ async fn run_backend_module_cached_async(
 }
 
 fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String> {
+    run_backend_module_with_env(module, args, &[])
+}
+
+fn run_backend_module_with_env(
+    module: &str,
+    args: Vec<String>,
+    extra_env: &[(&str, &str)],
+) -> Result<String, String> {
     // Read-only invocations no longer flush the process cache. Mutations are
     // classified narrowly so project writes do not force expensive Python /
     // RDKit / Meeko probes to run again on the next page.
     let invalidation = backend_command_invalidation(module, &args);
     invalidate_backend_cache(invalidation);
-    let result = run_backend_module_uncached(module, args);
+    let result = run_backend_module_uncached_with_env(module, args, extra_env);
     invalidate_backend_cache(invalidation);
     result
 }
 
 fn run_backend_module_uncached(module: &str, args: Vec<String>) -> Result<String, String> {
+    run_backend_module_uncached_with_env(module, args, &[])
+}
+
+fn run_backend_module_uncached_with_env(
+    module: &str,
+    args: Vec<String>,
+    extra_env: &[(&str, &str)],
+) -> Result<String, String> {
     let backend_dir = find_backend_dir().ok_or_else(|| {
         "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string()
     })?;
 
     let mut errors = Vec::new();
     for python in python_candidates(&backend_dir) {
-        match run_python_module(&backend_dir, &python, module, &args) {
+        match run_python_module_with_env(&backend_dir, &python, module, &args, extra_env) {
             Ok(payload) => return Ok(payload),
             Err(error) => errors.push(format!("{python}: {error}")),
         }
@@ -2659,13 +2695,15 @@ fn run_backend_module_uncached(module: &str, args: Vec<String>) -> Result<String
     Err(errors.join("\n"))
 }
 
-fn run_python_module(
+fn run_python_module_with_env(
     backend_dir: &Path,
     python: &str,
     module: &str,
     args: &[String],
+    extra_env: &[(&str, &str)],
 ) -> Result<String, String> {
-    let mut command = build_python_module_command(backend_dir, python, module, args);
+    let mut command =
+        build_python_module_command_with_env(backend_dir, python, module, args, extra_env);
 
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
@@ -2681,11 +2719,22 @@ fn run_python_module(
     Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
 }
 
+#[cfg(test)]
 fn build_python_module_command(
     backend_dir: &Path,
     python: &str,
     module: &str,
     args: &[String],
+) -> Command {
+    build_python_module_command_with_env(backend_dir, python, module, args, &[])
+}
+
+fn build_python_module_command_with_env(
+    backend_dir: &Path,
+    python: &str,
+    module: &str,
+    args: &[String],
+    extra_env: &[(&str, &str)],
 ) -> Command {
     let mut command = Command::new(python);
     command
@@ -2700,6 +2749,9 @@ fn build_python_module_command(
         // so neither the packaged backend nor the bundled standard library is
         // mutated with __pycache__ directories after installation.
         .env("PYTHONDONTWRITEBYTECODE", "1");
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
     command
 }
 
@@ -3272,6 +3324,30 @@ mod tests {
         assert_eq!(
             environment.get("PYTHONDONTWRITEBYTECODE"),
             Some(&Some("1".to_string())),
+        );
+    }
+
+    #[test]
+    fn preparation_python_command_receives_cached_tool_snapshot() {
+        let command = build_python_module_command_with_env(
+            Path::new("backend-dir"),
+            "bundled-python.exe",
+            "dockstart_core.preparation",
+            &["prepare-receptor".to_string()],
+            &[(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR, "{\"python\":{}}")],
+        );
+        let environment = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|item| item.to_string_lossy().into_owned()),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(
+            environment.get(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR),
+            Some(&Some("{\"python\":{}}".to_string())),
         );
     }
 

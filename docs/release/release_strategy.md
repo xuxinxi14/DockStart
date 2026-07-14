@@ -1,6 +1,6 @@
 # DockStart Release Strategy
 
-> 本文保留 V0.6 阶段的策略演进记录。当前 v0.10.0 双 profile 与强制发布门禁以
+> 本文保留 V0.6 阶段的策略演进记录。当前 v0.10.2 双 profile 与强制发布门禁以
 > `release_artifact_profile.md`、`windows_packaging.md` 和 `assisted_stable.md` 为准。
 
 本文档定义 DockStart V0.6 起的发布类型、工具链分发边界和许可证策略。V0.6 的目标是让 Windows 打包、安装后首次检查和 GitHub Release 准备可复现，而不是新增 docking 科学功能。
