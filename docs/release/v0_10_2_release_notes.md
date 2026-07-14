@@ -60,14 +60,14 @@ DockStart 提供 Basic 与 Assisted 两个隔离的 Windows x64 profile，每个
 
 ## 四个 Windows x64 产物
 
-以下数据必须在最终构建后填写，不能复制旧版本记录：
+以下数据来自提交 `fcbbd0548ab1ea4c3efdfedd3fb737ebbf962162` 的最终构建：
 
 | 文件 | 大小 | SHA256 | 门禁状态 |
 | --- | ---: | --- | --- |
-| `DockStart_0.10.2_Basic_x64-setup.exe` | 待构建后填写 | 待构建后填写 | 待填写 |
-| `DockStart_0.10.2_Basic_x64_en-US.msi` | 待构建后填写 | 待构建后填写 | 待填写 |
-| `DockStart_0.10.2_Assisted_x64-setup.exe` | 待构建后填写 | 待构建后填写 | 待填写 |
-| `DockStart_0.10.2_Assisted_x64_en-US.msi` | 待构建后填写 | 待构建后填写 | 待填写 |
+| `DockStart_0.10.2_Basic_x64-setup.exe` | 17,789,525 B（16.97 MiB） | `7240a1b918ebfdf4053e37e0f26d0af12411adf62b7a5a3e43104bdcc25cee3f` | NSIS 真实安装、离线对接、卸载清理通过 |
+| `DockStart_0.10.2_Basic_x64_en-US.msi` | 23,311,632 B（22.23 MiB） | `4de0858e59ddc5a2e9ea72fd316adc4a6fd69e6bebffd5e5eade3cc28db820f9` | MSI 内容提取与两轮离线对接通过；待干净机安装/卸载 |
+| `DockStart_0.10.2_Assisted_x64-setup.exe` | 73,170,277 B（69.78 MiB） | `91d9d3c474768145d918925deb1f87bc5c9b526e322d2ddb6f25a85628e790a7` | development、post-package、真实安装后流程与卸载清理通过 |
+| `DockStart_0.10.2_Assisted_x64_en-US.msi` | 113,120,476 B（107.88 MiB） | `4352962bed0be9ce09c4948fc4f77d1d770a6201e8985b8ab35a53870e760942` | MSI 内容提取及离线准备、对接、报告通过；待干净机安装/卸载 |
 
 ## 联网与离线边界
 
@@ -121,18 +121,21 @@ Meeko 以独立、可替换的普通 Python 包分发，不会冻结进 DockStar
 
 ## 正式发布前验收状态
 
-当前文档是 v0.10.2 发布候选公告。只有以下项目有真实记录后才能改为“正式发布”：
+当前文档是 v0.10.2 发布候选公告。自动化与本机真实 GUI 验证已经完成，仍保留两项外部发布门禁：
 
-- [ ] Python 全量测试；
-- [ ] 前端生产构建；
-- [ ] Cargo check、test 与 clippy；
-- [ ] Basic 打包布局中的真实 PDBQT/Vina/结果/报告流程；
-- [ ] Assisted development、post-package、post-install 三道真实流程门禁；
-- [ ] NSIS 安装与静默卸载无残留；
-- [ ] MSI 独立安装/卸载烟雾测试；
-- [ ] Basic 与 Assisted 实际 GUI 流程；
-- [ ] 一台没有开发环境依赖的 Windows 10/11 x64 设备复验；
-- [ ] 四个安装包的大小、SHA256 与 Publisher 记录。
+- [x] Python 全量测试：334 项通过；
+- [x] 前端生产构建：通过；
+- [x] Cargo check、14 项测试与 clippy：通过；
+- [x] Basic 打包布局中的真实 PDBQT/Vina/结果/报告流程：两轮运行通过；
+- [x] Assisted development、post-package、post-install 三道真实流程门禁：全部通过，`publishable: true`；
+- [x] Basic 与 Assisted NSIS 真实安装、离线运行与静默卸载：通过，无安装目录、运行时或卸载项残留；
+- [x] Basic 与 Assisted MSI 内容提取及离线运行：通过；
+- [x] 原始结构 GUI 流程：本机真实桌面端完成 PDB/SDF 导入、受体/配体 PDBQT 转换与下一步导航；
+- [x] 四个安装包的大小、SHA256 与 `XinXi Xu` 元数据记录；
+- [ ] Basic 与 Assisted MSI 在干净 Windows 设备上的真实安装/卸载；
+- [ ] 用最终四个安装包在没有开发环境依赖的 Windows 10/11 x64 设备上复验 GUI 主流程。
+
+在最后两项通过前，建议把这些文件称为 **v0.10.2 Release Candidate**；通过后可原样发布并创建 `v0.10.2` 标签。
 
 ## 已知边界
 

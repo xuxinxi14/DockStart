@@ -1,6 +1,6 @@
 # DockStart v0.10.2 Windows x64
 
-> 发布前检查：把本文中的“待构建后填写 / 待门禁完成后填写”全部替换为真实结果。不得沿用旧版本的大小、SHA256 或验收结论。
+> 构建来源：`fcbbd0548ab1ea4c3efdfedd3fb737ebbf962162`。发布前请先在干净 Windows 设备上完成下述两项外部门禁，再创建 `v0.10.2` 标签。
 
 DockStart v0.10.2 是计划发布的首个公开稳定版。它把 AutoDock Vina 的本地对接步骤整理为中文桌面工作流，并提供两个不能并行安装的 Windows x64 profile：
 
@@ -21,10 +21,10 @@ DockStart v0.10.2 是计划发布的首个公开稳定版。它把 AutoDock Vina
 
 | 文件 | 适用对象 | 大小 | SHA256 | 发布门禁 |
 | --- | --- | ---: | --- | --- |
-| `DockStart_0.10.2_Basic_x64-setup.exe` | 已有 PDBQT，推荐安装方式 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
-| `DockStart_0.10.2_Basic_x64_en-US.msi` | 已有 PDBQT，适合 MSI 部署 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
-| `DockStart_0.10.2_Assisted_x64-setup.exe` | PDB/CIF + SDF/MOL，推荐安装方式 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
-| `DockStart_0.10.2_Assisted_x64_en-US.msi` | PDB/CIF + SDF/MOL，适合 MSI 部署 | 待构建后填写 | 待构建后填写 | 待门禁完成后填写 |
+| `DockStart_0.10.2_Basic_x64-setup.exe` | 已有 PDBQT，推荐安装方式 | 17,789,525 B（16.97 MiB） | `7240a1b918ebfdf4053e37e0f26d0af12411adf62b7a5a3e43104bdcc25cee3f` | NSIS 真实安装、离线对接、卸载清理通过 |
+| `DockStart_0.10.2_Basic_x64_en-US.msi` | 已有 PDBQT，适合 MSI 部署 | 23,311,632 B（22.23 MiB） | `4de0858e59ddc5a2e9ea72fd316adc4a6fd69e6bebffd5e5eade3cc28db820f9` | 内容提取与两轮离线对接通过；待干净机安装/卸载 |
+| `DockStart_0.10.2_Assisted_x64-setup.exe` | PDB/CIF + SDF/MOL，推荐安装方式 | 73,170,277 B（69.78 MiB） | `91d9d3c474768145d918925deb1f87bc5c9b526e322d2ddb6f25a85628e790a7` | 三道流程门禁及真实安装/卸载通过 |
+| `DockStart_0.10.2_Assisted_x64_en-US.msi` | PDB/CIF + SDF/MOL，适合 MSI 部署 | 113,120,476 B（107.88 MiB） | `4352962bed0be9ce09c4948fc4f77d1d770a6201e8985b8ab35a53870e760942` | 内容提取及离线准备、对接、报告通过；待干净机安装/卸载 |
 
 Basic 与 Assisted 使用同一个应用身份，**请勿并行安装**。切换 profile 前先正常卸载当前版本；用户项目目录不应放在应用安装目录内。
 
@@ -51,14 +51,17 @@ Basic 与 Assisted 使用同一个应用身份，**请勿并行安装**。切换
 
 ## 发布门禁
 
-- Python 测试：待填写；
-- 前端生产构建：待填写；
-- Cargo check/test/clippy：待填写；
-- Basic 打包布局与真实 PDBQT/Vina 流程：待填写；
-- Assisted development / post-package / post-install 三道门禁：待填写；
-- Basic 与 Assisted GUI 人工流程及另一台干净 Windows 设备复验：待填写。
+- Python 测试：334 项通过；
+- 前端生产构建：通过；
+- Cargo check、14 项测试与 clippy：通过；
+- Basic 打包布局、两轮真实 PDBQT/Vina 流程、NSIS 安装后运行与卸载清理：通过；
+- Assisted development / post-package / post-install 三道离线准备与对接门禁：通过，`publishable: true`；
+- Basic 与 Assisted MSI 内容提取和离线运行验证：通过；
+- 原始结构 GUI 人工流程：本机真实桌面端完成 PDB/SDF 导入、受体/配体转换和后续导航；
+- 待完成：两个 MSI 在干净 Windows 设备上的真实安装/卸载；
+- 待完成：用最终四个安装包在无开发环境依赖的 Windows 10/11 x64 设备上复验 GUI 主流程。
 
-只有完成上述门禁、记录四个文件的真实大小和 SHA256 后，才把本候选标记为正式发布。
+最后两项完成后，可把本 Release Candidate 标记为正式发布。
 
 ## 科学与许可证边界
 
