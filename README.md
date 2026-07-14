@@ -1,530 +1,315 @@
-# DockStart
+<p align="center">
+  <img src="apps/desktop/public/dockstart-icon.png" width="88" alt="DockStart 图标">
+</p>
 
-DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台。
+<h1 align="center">DockStart</h1>
 
-DockStart 的长期目标是成为中文友好、流程清晰、可复现的分子对接工作台。当前 v0.10.0 发布工程保留两个明确隔离的 Windows 档案：**Basic Stable** 面向已有 PDBQT 的用户；**Assisted Stable** 在独立、可替换的 Python 3.11 runtime 中随附固定版本的 RDKit/Meeko，可离线从 PDB + SDF/MOL 尝试准备 PDBQT，再继续 Vina 流程。
+<p align="center">
+  面向 AutoDock Vina 的中文本地分子对接工作台
+</p>
 
-## 重要说明
+<p align="center">
+  从结构准备、对接箱体设置和任务运行，到构象查看、结果解析与实验记录导出。
+</p>
 
-- DockStart 不是 AutoDock Vina 官方项目。
-- DockStart 不修改 AutoDock Vina 的 docking 算法、scoring function 或搜索策略。
-- V0.1 Lite MVP 是项目起点，依赖用户已有的 `receptor.pdbqt`、`ligand.pdbqt` 和 AutoDock Vina。
-- Basic Stable 不随包提供 RDKit/Meeko；Assisted Stable 随包提供经过 hash 校验的 Meeko 0.7.1 与 RDKit 2026.3.3。用户配置的兼容 Python 仍优先于 bundled runtime。
-- Assisted 自动准备只是格式与工作流辅助，不能替代对质子化、电荷、缺失残基、水、金属、辅因子和构象的人工检查。
-- Docking score 仅供结构结合趋势参考，不能替代实验验证，也不能证明真实药效。
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.10.1-155f8a">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
+</p>
 
-## 三种使用模式
+<p align="center">
+  <a href="https://github.com/xuxinxi14/DockStart/releases">下载</a>
+  · <a href="docs/user_guide.md">使用指南</a>
+  · <a href="docs/faq.md">常见问题</a>
+  · <a href="CHANGELOG.md">更新记录</a>
+  · <a href="docs/license_notes.md">第三方许可证</a>
+</p>
 
-V0.8 开始，DockStart 明确区分三条入口，避免把缺少 RDKit/Meeko 误判成“整个软件不可用”：
+---
 
-- **Basic Mode**：用户已经有 `receptor.pdbqt` 和 `ligand.pdbqt`。只要 AutoDock Vina 可用，就可以继续 Box、配置、运行和结果流程。
-- **Assisted Mode**：用户只有 raw PDB/CIF/SDF/MOL。需要 Python + RDKit + Meeko 可用，DockStart 才能尝试自动准备 PDBQT。
-- **Demo Mode**：面向首次体验和教学演示。示例项目只用于软件流程演示，不用于科研结论；没有真实 Vina 时也必须标注无法真实 docking。
+DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-## 产品目标
+> 当前源码版本为 **v0.10.1**。最近一次同时覆盖 Basic 与 Assisted、打包目录与真实安装目录的完整验收基线为 **v0.10.0**。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本和校验值为准。
 
-DockStart 的产品方向：
+## 为什么使用 DockStart
 
-- 分发简单：Basic 与 Assisted 使用不同发布 profile，避免 Basic 用户承担科学工具链体积。
-- 工具链分层：Assisted 的 Meeko 保持为普通、可替换 Python 包，不冻结进 DockStart 可执行文件。
-- 开箱即用边界：Basic 支持已有 PDBQT；Assisted 支持本地 PDB + SDF/MOL 最小准备。两条路径都不自动判断结构是否科学正确。
-- 中文引导：关键参数、错误、路径和报告都提供面向初学者的中文说明。
-- 覆盖全过程：逐步覆盖结构获取、分子准备、对接执行、结果解析、报告导出和结果管理。
+- **完整工作流**：在同一个项目中完成输入准备、Box、Vina 参数、运行、构象查看和报告导出。
+- **中文引导**：解释每一步要做什么、为什么要做，以及阻塞时应该检查什么。
+- **本地优先**：对接、结构准备、项目记录和诊断均在本机执行；只有主动使用 RCSB/PubChem 下载时需要联网。
+- **可复现**：保存输入快照、配置、命令、工具版本、stdout/stderr、结果、时间和 SHA256。
+- **不隐藏科学边界**：自动准备、Box 定位和 docking score 都需要人工判断，不会被描述成真实结合或药效证明。
 
-## Windows 发布 profile
+## 选择安装版本
 
-```powershell
-# 已有 PDBQT 的精简稳定包
-powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Basic
+DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用身份，请勿并行安装。
 
-# 带离线 RDKit/Meeko 工具链的辅助稳定包
-powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Assisted
-```
+| | Basic Stable | Assisted Stable |
+| --- | --- | --- |
+| 适合谁 | 已有受体和配体 PDBQT | 只有受体 PDB/CIF 与配体 SDF/MOL |
+| 内置 AutoDock Vina | 是，1.2.7 | 是，1.2.7 |
+| 内置后端 Python | 是，精简运行时 | 是，独立 CPython 3.11 运行时 |
+| 内置 RDKit / Meeko | 否 | 是，RDKit 2026.3.3 / Meeko 0.7.1 |
+| PDB/SDF/MOL → PDBQT | 不提供 | 可离线尝试准备 |
+| PDBQT 对接完整流程 | 支持 | 支持 |
+| 典型安装包体积 | 较小 | 较大 |
 
-Assisted 构建前需由维护者显式准备固定 wheelhouse；发布构建不会联网。完整版本锁、
-source archive、许可证边界、开发目录/打包目录/实际安装目录三层门禁见
-[docs/release/assisted_stable.md](docs/release/assisted_stable.md)。
+如果不确定：
 
-v0.10.0 同时收口非功能稳定性：工具链检测按 runtime fingerprint 缓存并支持显式重检；
-长任务进入固定后台队列；3Dmol 按需加载且只增量替换变化模型；项目配置采用 schema
-migration、revision 冲突检测与原子写入；运行与准备记录输入、输出和工具 SHA256，并支持
-对中断 run/准备任务做保守恢复。
+- 已经有 `receptor.pdbqt` 和 `ligand.pdbqt`：选择 **Basic Stable**。
+- 只有 `.pdb`、`.cif`、`.sdf` 或 `.mol`：选择 **Assisted Stable**。
+- 只想了解软件流程：安装任一版本后打开内置示例。
 
-## 当前状态
+> 当前安装包尚未进行 Authenticode 签名，Windows SmartScreen 可能显示“未知发布者”。发布者字段应为 `XinXi Xu`，安装前仍应核对 Release 页面提供的 SHA256。
 
-V0.1 Lite 已支持：
-
-- 工具检测；
-- Vina / Python 路径配置；
-- 创建 DockStart 项目；
-- 导入 `receptor.pdbqt` / `ligand.pdbqt`；
-- 设置 docking box；
-- 设置 Vina 参数；
-- 生成 `configs/vina_config.txt`；
-- 准备 run；
-- 执行 AutoDock Vina；
-- 解析 `runs/{run_id}/log.txt`；
-- 导出 `scores.csv`；
-- 导出 Markdown 报告。
-
-V0.2.3 已支持工具链基础能力：
-
-- 识别可选的 bundled Python runtime 路径：`resources/python/python.exe`；
-- 通过 `resources/toolchain_manifest.json` 检查 bundled Python 的版本、来源和 `sha256`；
-- 在 `ToolchainStatusPage` 中展示 bundled Python 是否存在、解析路径、版本、`sha256` 和当前 Python 来源；
-- 桌面端后端运行优先使用 bundled Python；RDKit/Meeko preparation 工具链优先使用用户配置的 Python；
-- 在 V0.2.3 阶段，Meeko / RDKit 只使用解析后的 Python 做 `import` 检测。
-
-V0.2.5 已支持原始结构下载基础层：
-
-- 通过 RCSB PDB ID 下载受体原始结构文件；
-- 通过 PubChem CID 下载配体原始 SDF 文件；
-- 下载结果保存到当前 DockStart 项目的 `raw/` 目录；
-- `project.json` 会记录 `source`、`source_id` 和 `raw_file`；
-- raw 文件只记录来源和原始数据，不能直接运行 AutoDock Vina。
-
-V0.2.6 已支持 raw 文件管理增强：
-
-- StructureFetchPage 会显示受体/配体 raw 文件状态、大小、修改时间、绝对路径和记录一致性；
-- 下载时 `overwrite` 默认关闭，开启后会显示覆盖警告；
-- 可以清除 receptor/ligand 的 raw 记录；
-- 清除 raw 记录不会删除 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`；
-- 如选择同时删除文件，DockStart 只允许删除项目 `raw/` 目录下的文件。
-
-V0.2.7 已支持结构来源查询增强：
-
-- RCSB PDB 下载支持 `pdb` 和 `cif` 两种 raw 格式；
-- PubChem 配体下载继续支持 CID；
-- PubChem 配体下载新增名称查询，例如 `aspirin`；
-- SMILES 查询当前只返回“暂未支持”的中文结构化提示；
-- 不会用 RDKit 解析 SMILES，不会生成 3D，也不会转 PDBQT。
-
-V0.2.8 已增强 raw/prepared 流程引导：
-
-- 首页显示“下载 raw → 手动准备 PDBQT → 导入 prepared PDBQT → 设置参数 → 运行 Vina”的当前推荐流程；
-- 创建项目后继续提供“下载原始结构文件”和“直接导入 PDBQT”两个入口；
-- PDBQT 导入页强调 raw 文件不能直接运行 Vina；
-- StructureFetchPage 下载后提示下一步仍需手动准备并导入 prepared PDBQT；
-- ToolchainStatusPage 在 V0.2.8 阶段明确 Meeko/RDKit 当时只是检测，不会自动处理分子。
-
-V0.2.9 已新增手动 PDBQT 准备指南：
-
-- 新增 [docs/manual_pdbqt_preparation.md](docs/manual_pdbqt_preparation.md)；
-- 解释 raw 文件和 prepared PDBQT 的区别；
-- 说明为什么 Vina 需要 PDBQT；
-- 说明 Meeko、AutoDockTools/MGLTools、Open Babel 等外部工具的当前边界；
-- 明确 DockStart 当前不保证外部工具生成的 PDBQT 科学正确性。
-
-V0.2.10 已整理 smoke test 和 release notes：
-
-- [docs/smoke_test.md](docs/smoke_test.md) 现在区分 V0.1 本地 prepared PDBQT 完整流程和 V0.2 raw 下载流程；
-- V0.2 raw 下载流程的预期产物是 `raw/receptor_{PDB_ID}.pdb` 或 `.cif`，以及 `raw/ligand_{cid}.sdf`；
-- Vina 当前运行流程仍然需要 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
-- 文档明确 raw 文件不等于 prepared PDBQT，DockStart 在 V0.2.10 阶段仍不自动转 PDBQT；
-- 后续 V0.3 才考虑 RDKit/Meeko 自动准备的设计、测试和许可证审查。
-
-V0.3.0 已开始自动准备工作流基础：
-
-- `project.json` 新增 `preparation.receptor` 和 `preparation.ligand` 状态；
-- 新增后端准备状态读取、前置检查和重置能力；
-- 新增最小 PreparationPage 入口，用于查看 raw/prepared 文件、RDKit/Meeko 检测状态和准备状态；
-- V0.3.0 阶段只建立数据模型与入口，不执行真实 RDKit/Meeko 分子处理，也不会生成 PDBQT。
-
-V0.3.1 已增强自动准备工具能力检测：
-
-- RDKit 检测区分 import、版本和基础内联 SDF 读取探测；
-- Meeko 检测区分 import、版本、候选 ligand preparation API/CLI 和 receptor preparation API/CLI；
-- PreparationPage 显示 Python 来源、RDKit/Meeko import 状态和准备能力状态；
-- 当前阶段仍不安装 RDKit/Meeko，不生成 PDBQT，不改变 Vina 主流程。
-
-V0.3.2 已实现配体 PDBQT 自动准备的最小闭环：
-
-- 支持从项目中的 `ligand.raw_file` 读取 SDF / MOL；
-- 使用当前解析到的 Python + RDKit + Meeko 生成 `prepared/ligand.pdbqt`；
-- 默认不覆盖已有 `prepared/ligand.pdbqt`，需要用户显式开启 overwrite；
-- 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
-- V0.3.2 阶段仍不支持 receptor 自动准备、MOL2/SMILES 自动准备，也不改变 Vina 主流程。
-
-V0.3.3 已实现受体 PDBQT 自动准备的最小闭环：
-
-- 支持从项目中的 `receptor.raw_file` 读取 PDB / CIF；
-- 使用当前解析到的 Python + Meeko receptor CLI 生成 `prepared/receptor.pdbqt`；
-- 默认不覆盖已有 `prepared/receptor.pdbqt`，需要用户显式开启 overwrite；
-- 记录 stdout、stderr 和 preparation log 到 `prepared/logs/`；
-- 受体准备采用保守默认设置，仍需用户检查缺失残基、金属离子、水分子、辅因子和质子化状态。
-
-V0.3.4 已把自动准备状态接回现有 Vina 主流程：
-
-- 生成 `vina_config.txt` 和准备 run 前，会识别“已下载 raw 但尚未生成 prepared PDBQT”的状态；
-- 如果 receptor/ligand preparation 上次失败，会提示用户回到 PreparationPage 查看日志；
-- 新增项目工作流状态接口，PreparationPage 会显示下一步建议；
-- 没有修改 Vina config、Vina 执行、结果解析或报告导出逻辑。
-
-V0.3.5 已新增 preparation 审计记录：
-
-- 每次 ligand/receptor 自动准备都会写入独立目录，例如 `preparation/ligand_001/` 或 `preparation/receptor_001/`；
-- 记录包含 `metadata.json`、`stdout.txt`、`stderr.txt`、`command.json`、`input_snapshot.json` 和 `output_check.json`；
-- `project.json` 会记录 `latest_preparation`，便于追踪最近一次准备；
-- 失败的 preparation 也会保留 metadata 和 stdout/stderr，方便排查。
-
-V0.3.6 已完成 preparation 工作流文档收尾：
-
-- 文档描述 raw 下载、RDKit/Meeko 能力检查、ligand/receptor PDBQT 准备、Box/config/run、结果解析和 Markdown 报告导出的一条完整路径；
-- 新增 mock preparation smoke test，不依赖真实 RDKit/Meeko/Vina；
-- 明确自动准备不保证质子化、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确；
-- V0.3.6 阶段仍不包含 Open Babel、MGLTools、PLIP、3D 可视化、相互作用分析、分子动力学、PDF 报告或药效判断。
-
-V0.3.7 是 V0.3 后端冻结审计：
-
-- 统一版本号到 `0.3.7`；
-- 校准文档中 V0.2/V0.3 的历史表述；
-- 不新增功能，不改变 Vina 主流程。
-
-当前仓库没有提交完整 Python runtime。`resources/python/` 当前只提交 `README.md`，真实 runtime 文件（例如 `python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/`）被 `.gitignore` 忽略。
-
-`scripts/prepare_bundled_python.py` 只做本地装配：
-
-- 从本地 Python 目录或 `python.exe` 复制 runtime 文件；
-- 计算 `python.exe` 的 `sha256`；
-- 运行 `python.exe --version` 读取版本；
-- 更新 `resources/toolchain_manifest.json`。
-
-该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko。Assisted 发布另由
-`scripts/fetch_assisted_sources.py`（显式联网获取并校验固定 artifact）和
-`scripts/prepare_assisted_release_resources.py`（只读取离线 wheelhouse）装配，发布构建本身不会联网。
-
-当前边界：
-
-- 可以从部分 raw 文件尝试自动准备 PDBQT，也可以继续手动导入 prepared PDBQT；
-- Basic Stable 与 Assisted Stable 都随附 AutoDock Vina；源码运行或随附 Vina 检测失败时，也可以在设置页配置外部 Vina；
-- raw 文件不能直接运行 Vina，Vina 输入仍然是 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`；
-- raw 文件状态和记录可以管理，但 raw 仍不能直接运行 Vina；
-- raw 文件不等于 prepared PDBQT；
-- V0.3.3 已新增 ligand SDF/MOL 和 receptor PDB/CIF 到 PDBQT 的自动准备；MOL2/SMILES 和复杂结构修复仍未实现；
-- 不提交完整 Python runtime 或 wheel 二进制；Assisted 构建从被 Git 忽略的离线 wheelhouse 装配；
-- 应用运行时不联网安装 RDKit / Meeko；Assisted profile 已把固定版本作为独立组件随包提供；
-- 不保证 RDKit / Meeko 生成的 PDBQT 在科学上一定正确；
-- 不做药效判断。
-
-## V0.4 Viewer 当前进展
-
-V0.4.0 已建立 3D viewer 所需的后端数据通道：
-
-- 可以读取项目内的 receptor raw、ligand raw、prepared receptor、prepared ligand 和 Vina docking output 文本结构文件；
-- 可以列出和读取 `runs/{run_id}/out.pdbqt` 中的 docking pose 文本；
-- 读取前会限制文件必须位于项目目录内，并对超过 20 MB 的结构文件返回中文结构化提示；
-- 该阶段只传递结构文本给前端，不调用 RDKit、Meeko 或 AutoDock Vina，也不做相互作用分析。
-
-V0.4.1 已新增最小 3Dmol.js ViewerPage：
-
-- 前端依赖通过 npm 管理，不使用外部 CDN；
-- 可以从页面选择 receptor raw、ligand raw、receptor prepared、ligand prepared 或最近的 docking output 并加载；
-- 提供清空 viewer 和重新居中按钮；
-- 如果结构格式无法显示，会给出中文提示而不是崩溃。
-
-V0.4.2 已完成 Box 可视化数据与保存同步：
-
-- ViewerPage 显示并可编辑 `center_x/y/z` 与 `size_x/y/z`；
-- Box overlay 会随输入变化刷新；
-- 保存后仍写入 `project.json.box`，与 BoxSetupPage 使用同一字段；
-- size 大于 60 Å 时显示 warning 但允许保存。
-
-Box 可视化只是帮助定位 Vina 搜索空间，不代表自动识别结合口袋，也不会改变 Vina config 生成逻辑。
-
-V0.4.3 已支持 docking pose 查看：
-
-- 可读取 `runs/{run_id}/out.pdbqt` 中的 `MODEL/ENDMDL`；
-- 如果没有 `MODEL`，会作为单 pose 显示；
-- 如果 `runs/{run_id}/scores.csv` 存在，会按 mode 显示 affinity 与 RMSD 摘要；
-- 缺少 `scores.csv` 不阻止查看 pose，只显示 warning；
-- 选中 mode 后可以与 prepared receptor 一起显示。
-
-Docking pose 和 docking score 只供结构查看与趋势参考，不能证明真实结合或药效。
-
-V0.4.4 已把 viewer 状态接入项目 workflow status：
-
-- `get_project_workflow_status` 会返回 raw/prepared/docking output 是否可查看；
-- 如果已有 `out.pdbqt`，会提示可以查看 docking pose；
-- BoxSetupPage 和 ResultPage 增加最小“打开 3D 查看 / 查看 docking pose”入口。
-
-这些入口只帮助用户进入 ViewerPage，不改变 Vina 执行、结果解析或报告导出逻辑。
-
-V0.4.5 是 Viewer 文档与 smoke test 收尾版本：
-
-- 文档说明如何打开 ViewerPage；
-- 如何查看 raw receptor / raw ligand；
-- 如何查看 prepared receptor / ligand；
-- 如何显示和保存 Box；
-- 如何在运行 Vina 后查看 docking poses；
-- 明确 viewer 不做相互作用分析、不判断结合是否真实、不做 pocket prediction，也不能替代专业分子建模软件。
-
-V0.4.6 是 Viewer 冻结审计版本：
-
-- 统一版本号到 `0.4.6`；
-- 校准文档中 V0.4 viewer 的当前状态；
-- 确认 ViewerPage 仍只是几何查看和流程复核入口，不做 PLIP/ProLIF、相互作用分析、pocket prediction、药效判断或 Vina 算法变更；
-- 确认未提交大型结构文件、真实 docking 输出、Python runtime 二进制或外部 CDN 资源。
-
-## V0.5 前端工作流整改
-
-V0.5 已完成一轮前端信息架构整理：
-
-- V0.5.0 建立 AppShell、Sidebar、Topbar 和共享组件基础；
-- V0.5.1 新增 ProjectDashboardPage，把项目状态、下一步建议和主要入口集中到项目总览；
-- V0.5.2 新增 workflow stepper，按创建项目、获取 raw、准备 PDBQT、设置 Box、运行 Vina、解析和报告引导用户；
-- V0.5.3 统一状态卡片、warning、error、命令结果和科学边界提示；
-- V0.5.4 整理 StructureFetchPage 和 PreparationPage；
-- V0.5.5 整理 ViewerPage 为结构加载、3D 画布、文件/pose 信息三栏工作区；
-- V0.5.6 在 Vina config、run 准备、执行、结果解析和报告页加入统一流程条；
-- V0.5.7 新增 HelpPage 和轻量 onboarding；
-- V0.5.8 完成前端工作流冻结审计。
-- V0.5.9 完成真实前端可用性验收与小修，包括 favicon、无项目 Sidebar、run 缺失占位页和工具链文案校准。
-
-V0.5 不改变 Vina config 生成、Vina 执行、score 解析、报告导出、RDKit/Meeko preparation 或 viewer 后端数据通道。V0.5 也没有新增 PLIP/ProLIF、相互作用分析、pocket prediction、药效判断、Open Babel、MGLTools、外部 CDN 或 Vina 算法修改。
-
-## V0.6 发布工程准备
-
-V0.6 开始整理 Windows 打包和发布流程：
-
-- V0.6.0 新增 release strategy、Windows packaging 和 release checklist 文档；
-- V0.6.1 完善 bundled Vina 准备脚本与完整性检查，优先使用 `resources/vina/vina.exe`，旧 `resources/tools/vina/vina.exe` 仅作为兼容回退；
-- V0.6.2 新增 RDKit/Meeko conda 工具链环境导出脚本和环境说明文档；
-- V0.6.3 新增首次启动工具链引导，帮助用户先确认 Vina 和 Python/RDKit/Meeko 状态；
-- V0.6.4 新增 Windows release build 脚本，用于发布前重复执行测试、构建和 Tauri 打包；
-- V0.6.5 已完成一次本地 Windows 安装包构建验收，产物路径和大小记录在 `docs/release/v0_6_5_build_report.md`；
-- V0.6.6 新增 GitHub Release 模板和本地 SHA256 checksum 脚本，用于发布前整理说明和校验值；
-- V0.6.7 完成发布冻结审计，统一版本号并复查 release 文档、仓库卫生和禁止提交项；
-- 发布类型区分 Developer build、Lightweight release、Toolchain-assisted release 和未来 Full offline release；
-- V0.6 目标是生成 Windows 安装包、整理 bundled Vina/Python 检测和发布材料；
-- 当前仍不提交 `vina.exe`、`python.exe`、`Lib/`、`DLLs/`、`site-packages/`、conda 环境、安装包、真实 docking 输出或大型第三方源码 zip；
-- DockStart 不自动安装 RDKit/Meeko，用户仍需通过设置页配置可用 Python 工具链。
-
-发布工程说明见 [docs/release/release_strategy.md](docs/release/release_strategy.md)、[docs/release/windows_packaging.md](docs/release/windows_packaging.md)、[docs/release/release_checklist.md](docs/release/release_checklist.md) 和 [docs/release/toolchain_environment.md](docs/release/toolchain_environment.md)。
-
-## V0.8 开箱即用工作流
-
-V0.8 的方向是降低首次使用门槛，而不是增加新的科学判断能力。V0.8.0 已新增应用能力分级接口，用于判断：
-
-- Basic Mode 是否可用；
-- Assisted Mode 是否可用；
-- Demo Mode 是否有示例资源；
-- 当前推荐用户走哪条路径；
-- 阻塞项和下一步建议。
-
-Dashboard 会在无项目时展示三种模式的状态。RDKit/Meeko 缺失只会影响 Assisted Mode，不会阻止已有 PDBQT 的 Basic Mode。
-
-V0.8.1 进一步把 Basic Mode 作为最低依赖主路径呈现：
-
-- Dashboard 和导入页显示“已有 PDBQT → 设置 Box → 运行 Vina → 查看结果”；
-- workflow stepper 增加“导入 PDBQT”步骤，raw 下载和自动准备不再被表现成 Basic Mode 的硬前置条件；
-- 工具链页区分 Vina 缺失与 RDKit/Meeko 缺失对不同模式的影响。
-
-V0.8.2 新增 Demo Mode 示例项目：
-
-- `resources/examples/basic_pdbqt/`：小型玩具 PDBQT 示例，用于体验 Basic Mode；
-- `resources/examples/assisted_raw/`：小型 raw PDB/SDF 示例，用于体验 Assisted Mode 状态；
-- `resources/examples/viewer_result/`：已完成结果示例，用于体验构象、分数和报告查看；
-- 示例项目可以从创建项目页复制到用户选择的目录；
-- 示例只用于软件流程演示，不用于科研结论。
-
-V0.8.3 升级首次启动向导：
-
-- Dashboard 和帮助页会先问“我已有 PDBQT / 我只有 PDB 或 SDF / 我想先看示例”；
-- 向导会显示当前缺少 Vina、Python/RDKit/Meeko 还是示例资源；
-- 向导只给出配置和下一步建议，不自动安装工具，也不改变 docking 或 preparation 逻辑。
-
-V0.8.4 新增工具链修复建议：
-
-- Vina 缺失时提示如何配置 `vina.exe`；
-- RDKit/Meeko 缺失时提示如何准备独立 conda/mamba Python 工具链；
-- 检测到 Microsoft Store Python 时提示不建议作为 RDKit/Meeko 环境；
-- 修复建议只提供手动步骤和可复制命令，不自动安装、不联网下载、不修改系统 PATH。
-
-V0.8.5 新增安装后自检：
-
-- 一键检查 DockStart 版本、系统、Vina、Python/RDKit/Meeko、Viewer、资源路径、设置路径和示例项目；
-- 显示 Basic / Assisted / Demo Mode 当前是否可用；
-- 可以导出本地 Markdown 诊断报告，用于用户截图或复制给开发者排查；
-- 诊断报告不会上传网络，分享前应检查其中的本机工具路径。
-
-V0.8.6 补充发布产物能力档案：
-
-- Release 文档会明确安装包是否包含 bundled Vina、bundled Python、conda env、示例项目和 examples；
-- 发布说明会分别写清 Basic / Assisted / Demo Mode 的可用条件；
-- 轻量安装包不会被描述成“无需任何外部条件即可自动准备所有分子”。
-
-V0.8.7 是开箱即用工作流冻结审计：
-
-- 统一版本号到 `0.8.7`；
-- 复查 Basic / Assisted / Demo Mode 表述；
-- 复查发布文档和仓库卫生；
-- 确认未提交 installer、dist、target、Python runtime、conda env、真实 docking 输出或大型结构文件。
-
-## 当前暂不支持
-
-当前仍不支持：
-
-- MOL2 / SMILES 自动转 PDBQT；
-- 复杂受体结构修复；
-- 自动安装 RDKit / Meeko；
-- Open Babel；
-- PLIP / MGLTools；
-- 交互式拖拽 Box、自动 pocket prediction 或自动 Box 推荐；
-- PLIP / ProLIF 相互作用分析；
-- 分子动力学；
-- PDF 报告；
-- AI 药效判断。
-
-## 工具链分层
-
-Basic/Assisted 发布已经采用同一分层结构；两个 profile 只在 Python runtime 内容与
-许可证/source 资源上不同：
+## 六步完成一次对接
 
 ```text
-resources/
-├─ tools/
-│  └─ vina/
-├─ python/
-└─ licenses/
+创建或打开项目
+      ↓
+导入已有 PDBQT，或在 Assisted 中从 raw 文件准备 PDBQT
+      ↓
+检查受体、配体和对接箱体
+      ↓
+设置 Vina 参数并通过运行前检查
+      ↓
+执行 AutoDock Vina
+      ↓
+查看构象与 scores，导出 Markdown 实验记录
 ```
 
-Vina 与桌面后端 runtime 解析优先级：
+1. **创建项目**：选择本地目录，DockStart 建立独立的项目文件结构。
+2. **准备输入**：Basic 直接导入受体/配体 PDBQT；Assisted 可从 PDB/CIF 和 SDF/MOL 尝试生成 PDBQT。
+3. **设置搜索范围**：在 3D 工作台检查结构和 Box，输入中心及尺寸；可按受体坐标范围快速定位，再人工微调。
+4. **配置运行**：设置搜索彻底程度、构象数量、能量范围、CPU 和随机种子。
+5. **开始对接**：运行前检查会确认项目文件、PDBQT、Box、Vina 参数、工具和输出目录。
+6. **查看结果**：比较 pose、affinity 与 RMSD，查看输出文件并导出 Markdown 报告。
+
+Box 的“定位到受体”只使用受体原子坐标范围的几何中心，不预测结合口袋，也不会自动判断 Box 是否适合研究目标。
+
+详细操作见 [用户指南](docs/user_guide.md)。如果第一次使用 AutoDock Vina，建议先从 [示例项目](docs/demo_projects.md) 开始。
+
+## 当前能力
+
+### 项目与工具链
+
+- 创建、打开和迁移 DockStart 项目；
+- 检测随附、用户配置和系统 PATH 中的工具；
+- 区分 Basic、Assisted 与 Demo 可用状态；
+- 导出本地诊断报告；
+- 按运行时 fingerprint 缓存工具检测，支持显式重新检测。
+
+### 结构准备
+
+- 导入已有 receptor/ligand PDBQT；
+- 从 RCSB PDB ID 获取受体 PDB/CIF；
+- 从 PubChem CID 或名称获取配体 SDF；
+- Assisted 使用独立 RDKit/Meeko 工具链尝试准备 PDBQT；
+- 保存每次 preparation 的参数、输入快照、stdout、stderr、metadata 和输出检查。
+
+### 3D 对接工作台
+
+- 同时查看受体、配体、对接结果与 Box；
+- 编辑 `center_x/y/z` 和 `size_x/y/z`；
+- 用鼠标滚轮绑定并调整单个 Box 参数；
+- 快速定位到受体坐标范围中心，并恢复进入页面时的参数；
+- 调整 Box 线宽、XYZ 坐标轴显示与轴间距；
+- 设置 Vina 参数、运行前检查、任务进度和取消操作。
+
+### 结果与可追溯性
+
+- 解析 Vina affinity 与 RMSD 表；
+- 按 mode 查看 docking pose；
+- 导出 `scores.csv` 与 Markdown 实验记录；
+- 保存输入、输出、工具二进制 SHA256；
+- 使用原子写入、revision 冲突检测和 schema migration 保护项目数据；
+- 对异常中断的 preparation/run 做保守状态恢复。
+
+## 支持范围
+
+| 类型 | 当前支持 | 说明 |
+| --- | --- | --- |
+| Vina 输入 | PDBQT | Basic 与 Assisted 均支持 |
+| 受体 raw | PDB、CIF | Assisted 可尝试准备 PDBQT |
+| 配体 raw | SDF、MOL | Assisted 可尝试准备 PDBQT |
+| 结构下载 | RCSB PDB ID、PubChem CID/名称 | 需要网络 |
+| 3D 查看 | PDB、PDBQT、CIF、SDF、MOL 等 | 取决于 3Dmol.js 对格式的解析能力 |
+| 对接输出 | PDBQT、CSV、Markdown | pose、scores 与实验记录 |
+
+当前不提供：
+
+- MOL2/SMILES 自动准备；
+- 复杂受体修复、可靠的质子化/电荷判断或自动链选择；
+- pocket prediction 或真实结合位点识别；
+- PLIP/ProLIF 相互作用分析；
+- Open Babel、MGLTools 内置分发；
+- 批量虚拟筛选、分子动力学、PDF 报告或 AI 药效判断；
+- 对 AutoDock Vina 算法或 scoring function 的修改。
+
+## 项目输出
+
+一个典型项目会形成以下结构：
 
 ```text
-内置工具 > 用户配置路径 > 系统 PATH
+my_project/
+├─ project.json
+├─ raw/
+│  ├─ receptor.pdb
+│  └─ ligand.sdf
+├─ prepared/
+│  ├─ receptor.pdbqt
+│  └─ ligand.pdbqt
+├─ preparation/
+│  ├─ receptor_001/
+│  └─ ligand_001/
+├─ configs/
+│  └─ vina_config.txt
+├─ runs/
+│  └─ run_001/
+│     ├─ metadata.json
+│     ├─ config_snapshot.txt
+│     ├─ stdout.txt
+│     ├─ stderr.txt
+│     ├─ log.txt
+│     ├─ out.pdbqt
+│     ├─ scores.csv
+│     └─ docking_report.md
+├─ results/
+│  └─ scores.csv
+└─ reports/
+   └─ docking_report.md
 ```
 
-分子 preparation Python 解析优先级：
+项目记录采用相对路径，便于整体移动和归档。输入、输出和工具来源会写入 metadata；分享项目之前，请检查其中是否包含不希望公开的本机路径或研究数据。
 
-```text
-configured > bundled > current_environment
-```
+## 示例项目
 
-对应架构说明见 [docs/toolchain_design.md](docs/toolchain_design.md) 和 [docs/toolchain_runtime.md](docs/toolchain_runtime.md)。
+安装包内包含三类小型示例：
 
-## 项目结构
+- `basic_pdbqt`：体验已有 PDBQT 的最小对接流程；
+- `assisted_raw`：体验 PDB + SDF 的结构准备流程；
+- `viewer_result`：直接查看已完成的 pose、score 和报告。
 
-```text
-DockStart/
-├─ apps/
-│  └─ desktop/              # Tauri + React 桌面端
-├─ backend/
-│  ├─ adapters/             # 工具检测和调用适配器
-│  ├─ dockstart_core/       # 项目、运行、结果解析和报告导出逻辑
-│  └─ tests/                # 后端单元测试
-├─ docs/
-│  ├─ license_notes.md
-│  ├─ demo_projects.md
-│  ├─ toolchain_design.md
-│  ├─ toolchain_runtime.md
-│  ├─ user_guide.md
-│  ├─ smoke_test.md
-│  ├─ faq.md
-│  └─ roadmap.md
-├─ examples/
-│  └─ demo_project/         # 示例项目骨架
-├─ CHANGELOG.md
-├─ PROJECT.md
-└─ CLAUDE.md
-```
+示例只用于软件回归和操作教学，不应作为科研结论。详见 [示例项目说明](docs/demo_projects.md)。
 
-## 开发环境
+## 从源码运行
 
-建议准备：
+### 环境
 
-- Python 3.11+；
-- Node.js 和 npm；
-- Rust 工具链；
-- Tauri 所需系统依赖；
-- AutoDock Vina：V0.1 Lite 需要用户通过 PATH 或 DockStart 设置页配置路径。
+- Windows 10/11 x64；
+- Node.js 与 npm（建议使用当前 LTS）；
+- Rust stable 与 Tauri Windows 构建依赖；
+- Python 3.11+。
 
-## 开发运行
-
-后端测试：
+### 开发启动
 
 ```powershell
-python -m unittest discover -s backend/tests
-```
-
-前端构建：
-
-```powershell
-cd apps/desktop
-npm run build
-```
-
-Tauri 检查：
-
-```powershell
-# 在 DockStart 仓库根目录执行
-cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-```
-
-Vite 前端开发服务：
-
-```powershell
-cd apps/desktop
-npm run dev
-```
-
-Tauri 桌面端开发启动：
-
-```powershell
-cd apps/desktop
+git clone https://github.com/xuxinxi14/DockStart.git
+cd DockStart\apps\desktop
+npm ci
 npm run tauri dev
 ```
 
-## V0.1 基本流程
+只启动前端界面：
 
-1. 配置 AutoDock Vina 路径。
-2. 创建 DockStart 项目。
-3. 可选：下载 RCSB PDB / PubChem CID 原始结构到 `raw/`。
-4. 可选：在 PreparationPage 用已检测到的 RDKit/Meeko 尝试准备 PDBQT。
-5. 导入或确认 `prepared/receptor.pdbqt` 和 `prepared/ligand.pdbqt`。
-6. 设置 docking box。
-7. 设置 Vina 参数。
-8. 生成 `configs/vina_config.txt`。
-9. 准备 run。
-10. 执行 Vina。
-11. 解析 `log.txt` 并导出 `scores.csv`。
-12. 导出 `reports/docking_report.md`。
-
-详细步骤见 [docs/user_guide.md](docs/user_guide.md)，手动验收流程见 [docs/smoke_test.md](docs/smoke_test.md)。
-从 raw 文件到 prepared PDBQT 的当前人工流程见 [docs/manual_pdbqt_preparation.md](docs/manual_pdbqt_preparation.md)。
-
-## 输出文件
-
-一次典型 V0.1 run 会生成：
-
-```text
-prepared/receptor.pdbqt
-prepared/ligand.pdbqt
-raw/receptor_1HSG.pdb
-raw/receptor_1HSG.cif
-raw/ligand_2244.sdf
-configs/vina_config.txt
-runs/run_001/metadata.json
-runs/run_001/out.pdbqt
-runs/run_001/log.txt
-runs/run_001/scores.csv
-results/scores.csv
-runs/run_001/docking_report.md
-reports/docking_report.md
-preparation/ligand_001/metadata.json
-preparation/receptor_001/metadata.json
+```powershell
+cd apps\desktop
+npm run dev
 ```
 
-其中 `raw/receptor_1HSG.pdb` 和 `raw/receptor_1HSG.cif` 通常根据用户选择二选一；raw 文件只是来源记录和后续准备材料，不会替代 `prepared/receptor.pdbqt` 或 `prepared/ligand.pdbqt`。
+源码运行不会自动下载或安装 AutoDock Vina、RDKit 或 Meeko。请在设置页配置工具路径，或按发布文档准备仓库外的本地资源。
 
-## 许可证与第三方工具
+## 测试与构建
 
-- DockStart 本体计划采用 Apache License 2.0；正式授权以仓库 `LICENSE` 文件为准。
-- AutoDock Vina 许可证允许作为 DockStart Full 的候选内置工具，但需要保留许可证文本和来源说明。
-- RDKit 可作为候选内置组件，但需要随包保留许可证和依赖说明。
-- Meeko 可作为候选内置组件，但需要补充 LGPL 合规说明，包括许可证文本、源码获取方式和修改说明。
-- Open Babel / MGLTools / PLIP 暂不进入核心内置包，可作为后续外部可选集成评估。
-- 第三方依赖和许可证边界详见 [docs/license_notes.md](docs/license_notes.md)。
+在仓库根目录执行：
+
+```powershell
+# 后端测试
+python -m unittest discover -s backend/tests
+
+# 前端生产构建
+cd apps\desktop
+npm run build
+cd ..\..
+
+# Rust/Tauri 检查
+cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+生成 Windows 发布候选：
+
+```powershell
+# 已有 PDBQT 的精简包
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Profile Basic
+
+# 带离线 RDKit/Meeko 的辅助包
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Profile Assisted
+```
+
+Assisted 构建依赖维护者事先准备的固定离线 wheelhouse 与对应源码归档；这些大型资源不提交到 Git，发布构建本身不会联网。构建、安装态门禁和校验要求见 [Windows 打包说明](docs/release/windows_packaging.md)、[Assisted Stable 说明](docs/release/assisted_stable.md) 与 [发布检查表](docs/release/release_checklist.md)。
+
+## 仓库结构
+
+```text
+DockStart/
+├─ apps/desktop/            # Tauri + React + TypeScript 桌面端
+├─ backend/adapters/        # Vina、Python、RDKit、Meeko、Viewer 适配器
+├─ backend/dockstart_core/  # 项目、准备、运行、结果、诊断与持久化
+├─ backend/tests/           # 后端测试
+├─ resources/               # 示例、工具清单与许可证资源
+├─ scripts/                 # 工具链装配、校验与 Windows 发布脚本
+├─ docs/                    # 用户、设计、架构、许可与发布文档
+├─ examples/                # 开发与 smoke test 示例
+├─ PROJECT.md               # 产品范围和科学边界
+└─ CHANGELOG.md             # 版本更新记录
+```
+
+## 文档
+
+- [用户指南](docs/user_guide.md)
+- [常见问题](docs/faq.md)
+- [示例项目](docs/demo_projects.md)
+- [手动准备 PDBQT](docs/manual_pdbqt_preparation.md)
+- [工具链故障排查](docs/toolchain_repair_guide.md)
+- [Smoke test](docs/smoke_test.md)
+- [路线图](docs/roadmap.md)
+- [工具链架构](docs/toolchain_design.md)
+- [发布能力档案](docs/release/release_artifact_profile.md)
+- [更新记录](CHANGELOG.md)
+
+## 反馈与贡献
+
+如果遇到问题，请在 [GitHub Issues](https://github.com/xuxinxi14/DockStart/issues) 中提供：
+
+- DockStart 版本与安装 profile；
+- Windows 版本；
+- 发生问题的工作流步骤；
+- 页面中的中文错误码和建议；
+- 脱敏后的诊断报告、日志或最小复现项目。
+
+请不要公开未脱敏的本机路径、私有结构文件或研究数据。提交代码前应至少运行后端测试、前端生产构建和 `cargo check`，并保持外部科研工具通过 adapter 调用。
+
+## 许可证
+
+DockStart 自有代码以 [Apache License 2.0](LICENSE) 发布。安装包中的第三方组件继续适用各自许可证：
+
+- AutoDock Vina：Apache-2.0；
+- RDKit：BSD-3-Clause；
+- Meeko：LGPL-2.1；
+- 3Dmol.js：BSD-3-Clause；
+- Tauri、React 及其他依赖：见随包 notices。
+
+Meeko 在 Assisted 中作为独立、可替换的 Python 包分发，并附带对应版本许可证、源码获取材料和第三方声明。完整边界见 [第三方许可证说明](docs/license_notes.md) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 科学免责声明
 
-DockStart 输出的 docking score 只表示特定输入结构、box、参数和 AutoDock Vina 版本下的计算结果。它不能直接证明真实结合能力、药效、安全性或临床价值。任何候选分子判断都需要实验验证和更完整的计算/实验流程支持。
+DockStart 输出的 docking score 只表示特定输入结构、对接箱体、参数和 AutoDock Vina 版本下的计算结果。自动准备结果仍需人工检查质子化、电荷、构象、缺失残基、水分子、金属、辅因子和链选择。
+
+**Docking score 仅供结构结合趋势参考，不能替代实验验证，也不能证明真实结合、药效、安全性或临床价值。**
+
+---
+
+<p align="center">
+  Maintained by <strong>XinXi Xu</strong>
+</p>
