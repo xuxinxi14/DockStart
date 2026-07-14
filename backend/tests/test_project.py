@@ -1354,7 +1354,8 @@ class ProjectTests(unittest.TestCase):
             receptor = Path(temp_dir) / "receptor.pdbqt"
             ligand = Path(temp_dir) / "ligand.pdbqt"
             receptor.write_text(
-                "ATOM      1  C1  REC A   1       0.000   0.000   0.000  0.00  0.00     0.000 C\n",
+                "ATOM      1  C1  REC A   1      -4.000   2.000  10.000  0.00  0.00     0.000 C\n"
+                "ATOM      2  C2  REC A   1      12.000  18.000  30.000  0.00  0.00     0.000 C\n",
                 encoding="utf-8",
             )
             ligand.write_text(
@@ -1371,7 +1372,11 @@ class ProjectTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             self.assertTrue(response["ready"])
-            self.assertEqual(response["input_stats"]["receptor"]["atom_count"], 1)
+            self.assertEqual(response["input_stats"]["receptor"]["atom_count"], 2)
+            self.assertEqual(response["input_stats"]["receptor"]["coordinate_count"], 2)
+            self.assertEqual(response["input_stats"]["receptor"]["coordinate_center"], {"x": 4.0, "y": 10.0, "z": 20.0})
+            self.assertEqual(response["input_stats"]["receptor"]["coordinate_bounds"]["min"]["x"], -4.0)
+            self.assertEqual(response["input_stats"]["receptor"]["coordinate_bounds"]["max"]["z"], 30.0)
             self.assertEqual(response["input_stats"]["ligand"]["torsdof"], 3)
             self.assertIn("C", response["input_stats"]["receptor"]["atom_types"])
             self.assertEqual(response["box"]["volume_angstrom3"], 27900.0)

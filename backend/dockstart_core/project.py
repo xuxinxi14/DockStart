@@ -1367,6 +1367,9 @@ def _parse_pdbqt_stats(path: Path, relative_path: str, *, ligand: bool = False) 
     """Return lightweight, deterministic PDBQT facts without chemistry claims."""
 
     atom_count = 0
+    coordinate_count = 0
+    coordinate_min: list[float] | None = None
+    coordinate_max: list[float] | None = None
     chains: set[str] = set()
     atom_types: set[str] = set()
     torsdof: int | None = None
@@ -1383,6 +1386,18 @@ def _parse_pdbqt_stats(path: Path, relative_path: str, *, ligand: bool = False) 
                     atom_type = parts[-1].strip()
                     if atom_type and len(atom_type) <= 4:
                         atom_types.add(atom_type)
+                try:
+                    coordinates = [float(line[30:38]), float(line[38:46]), float(line[46:54])]
+                except (TypeError, ValueError):
+                    coordinates = []
+                if len(coordinates) == 3 and all(math.isfinite(value) for value in coordinates):
+                    coordinate_count += 1
+                    if coordinate_min is None or coordinate_max is None:
+                        coordinate_min = coordinates.copy()
+                        coordinate_max = coordinates.copy()
+                    else:
+                        coordinate_min = [min(current, value) for current, value in zip(coordinate_min, coordinates)]
+                        coordinate_max = [max(current, value) for current, value in zip(coordinate_max, coordinates)]
             if ligand and line.lstrip().upper().startswith("TORSDOF"):
                 parts = line.split()
                 if len(parts) >= 2:
@@ -1391,12 +1406,27 @@ def _parse_pdbqt_stats(path: Path, relative_path: str, *, ligand: bool = False) 
                     except ValueError:
                         torsdof = None
 
+    coordinate_bounds = None
+    coordinate_center = None
+    if coordinate_min is not None and coordinate_max is not None:
+        coordinate_bounds = {
+            "min": dict(zip(("x", "y", "z"), coordinate_min)),
+            "max": dict(zip(("x", "y", "z"), coordinate_max)),
+        }
+        coordinate_center = {
+            axis: round((minimum + maximum) / 2, 3)
+            for axis, minimum, maximum in zip(("x", "y", "z"), coordinate_min, coordinate_max)
+        }
+
     return {
         "relative_path": Path(relative_path).as_posix(),
         "absolute_path": str(path),
         "size_bytes": path.stat().st_size,
         "sha256": _sha256_file(path),
         "atom_count": atom_count,
+        "coordinate_count": coordinate_count,
+        "coordinate_bounds": coordinate_bounds,
+        "coordinate_center": coordinate_center,
         "chains": sorted(chains),
         "atom_types": sorted(atom_types),
         "torsdof": torsdof if ligand else None,

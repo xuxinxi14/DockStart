@@ -35,6 +35,7 @@ type RunStructurePreviewProps = {
   fullscreenInspector?: ReactNode;
   boxLineThickness?: RunBoxLineThickness;
   axisSpacing?: RunAxisSpacing;
+  fitRequestKey?: number;
 };
 
 type PreviewStructures = {
@@ -131,6 +132,7 @@ export default function RunStructurePreview({
   fullscreenInspector,
   boxLineThickness = "standard",
   axisSpacing = "standard",
+  fitRequestKey = 0,
 }: RunStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
@@ -351,6 +353,13 @@ export default function RunStructurePreview({
       setMessage(error instanceof Error ? error.message : "搜索范围预览刷新失败");
     });
   }, [box, refreshBoxOverlay]);
+
+  useEffect(() => {
+    if (fitRequestKey <= 0) return;
+    void renderScene(true).catch((error) => {
+      setMessage(error instanceof Error ? error.message : "无法重新适配结构与搜索范围");
+    });
+  }, [fitRequestKey, renderScene]);
 
   // 全屏变化时的自适应调整
   useEffect(() => {

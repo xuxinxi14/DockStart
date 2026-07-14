@@ -2,6 +2,8 @@
 
 ## v0.10.0
 
+- Added a Box placement shortcut that centers the search box on the receptor coordinate extent without changing its size, plus a page-entry reset action in both standard and fullscreen inspectors.
+- Rebuilt the Help Center around the current Basic, Assisted, and demo routes, with updated workflow guidance, recovery notes, supported formats, and explicit scientific boundaries.
 - Set the Cargo/Tauri/npm package author and Windows installer publisher to `XinXi Xu`; regenerated both Basic and Assisted MSI/NSIS artifacts and verified the publisher metadata.
 - Restored the archived Basic Stable installers and validated an isolated NSIS install, two real PDBQT/Vina runs, report export, and a clean uninstall.
 - Added a separate Assisted Stable distribution with a pinned, offline, replaceable CPython 3.11 runtime containing Meeko 0.7.1, RDKit 2026.3.3, and their verified dependencies; Basic Stable remains available without the scientific Python stack.

@@ -59,6 +59,13 @@
   --ds-text-muted: #A6BACB;
   --ds-text-disabled: #7F96A8;
 
+  /* Rail text remains stable even when a rail is nested inside a viewer that
+     remaps the generic text tokens to the scientific-canvas palette. */
+  --ds-rail-text-strong: #FFFFFF;
+  --ds-rail-text-primary: #EDF4F9;
+  --ds-rail-text-secondary: #CAD9E5;
+  --ds-rail-text-muted: #A6BACB;
+
   /* Deep-surface text. */
   --ds-text-on-dark: #FFFFFF;
   --ds-text-on-dark-secondary: #D1DDE7;
@@ -252,6 +259,11 @@
   --ds-text-secondary: #355C74;
   --ds-text-muted: #456579;
   --ds-text-disabled: #657F91;
+
+  --ds-rail-text-strong: #071F32;
+  --ds-rail-text-primary: #17384F;
+  --ds-rail-text-secondary: #355C74;
+  --ds-rail-text-muted: #456579;
 
   --ds-brand: #14638F;
   --ds-brand-hover: #0E527A;

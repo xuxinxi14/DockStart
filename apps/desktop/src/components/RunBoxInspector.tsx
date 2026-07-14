@@ -1,4 +1,4 @@
-import { MouseScroll } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Crosshair, MouseScroll } from "@phosphor-icons/react";
 import type { DockStartProject } from "../types";
 import StatusBadge from "./StatusBadge";
 
@@ -14,6 +14,9 @@ type RunBoxInspectorProps = {
   wheelStep: RunBoxWheelStep;
   boxLineThickness: RunBoxLineThickness;
   axisSpacing: RunAxisSpacing;
+  canCenterOnReceptor?: boolean;
+  canReset?: boolean;
+  placementMessage?: string;
   disabled?: boolean;
   idPrefix?: string;
   className?: string;
@@ -22,6 +25,8 @@ type RunBoxInspectorProps = {
   onWheelStepChange: (step: RunBoxWheelStep) => void;
   onBoxLineThicknessChange: (value: RunBoxLineThickness) => void;
   onAxisSpacingChange: (value: RunAxisSpacing) => void;
+  onCenterOnReceptor: () => void;
+  onReset: () => void;
 };
 
 const boxFields: Array<{ key: RunBoxFieldKey; label: string }> = [
@@ -62,6 +67,9 @@ export default function RunBoxInspector({
   wheelStep,
   boxLineThickness,
   axisSpacing,
+  canCenterOnReceptor = false,
+  canReset = false,
+  placementMessage = "",
   disabled = false,
   idPrefix = "run-box",
   className = "",
@@ -70,6 +78,8 @@ export default function RunBoxInspector({
   onWheelStepChange,
   onBoxLineThicknessChange,
   onAxisSpacingChange,
+  onCenterOnReceptor,
+  onReset,
 }: RunBoxInspectorProps) {
   return (
     <aside className={`run-box-inspector ${className}`.trim()} aria-label="搜索范围参数">
@@ -173,6 +183,31 @@ export default function RunBoxInspector({
             </div>
           );
         })}
+      </div>
+
+      <div className="run-box-placement">
+        <div className="run-box-placement-actions">
+          <button
+            type="button"
+            disabled={disabled || !canCenterOnReceptor}
+            onClick={onCenterOnReceptor}
+            title={canCenterOnReceptor ? "使用受体原子坐标范围的中心，不改变 Box 尺寸" : "尚未读取到可用的受体坐标"}
+          >
+            <Crosshair aria-hidden="true" size={15} />
+            定位到受体
+          </button>
+          <button
+            type="button"
+            disabled={disabled || !canReset}
+            onClick={onReset}
+            title="恢复进入本页面时的 Box 参数"
+          >
+            <ArrowCounterClockwise aria-hidden="true" size={15} />
+            重置参数
+          </button>
+        </div>
+        <small>定位只更新中心 X / Y / Z，保留当前 Box 尺寸。</small>
+        {placementMessage ? <p className="run-box-placement-message" aria-live="polite">{placementMessage}</p> : null}
       </div>
 
       <p>搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋。</p>

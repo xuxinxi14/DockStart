@@ -147,6 +147,21 @@ function parseBoxForm(form: BoxForm): DockStartProject["box"] | null {
   return parsed;
 }
 
+function boxFormsEqual(left: BoxForm, right: BoxForm): boolean {
+  return (Object.keys(left) as Array<keyof BoxForm>).every((key) => Number(left[key]) === Number(right[key]));
+}
+
+function vinaFormsEqual(left: VinaForm, right: VinaForm): boolean {
+  return (Object.keys(left) as Array<keyof VinaForm>).every((key) => {
+    if (key === "seed" && left[key].trim() === "" && right[key].trim() === "") return true;
+    return Number(left[key]) === Number(right[key]);
+  });
+}
+
+function boxCoordinate(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
 function parseVinaForm(form: VinaForm): DockStartProject["vina"] | null {
   const exhaustiveness = Number(form.exhaustiveness);
   const num_modes = Number(form.num_modes);
@@ -237,10 +252,16 @@ export default function RunPreparePage({
   const [boxWheelStep, setBoxWheelStep] = useState<RunBoxWheelStep>(0.1);
   const [boxLineThickness, setBoxLineThickness] = useState<RunBoxLineThickness>("standard");
   const [axisSpacing, setAxisSpacing] = useState<RunAxisSpacing>("standard");
+  const [boxPlacementMessage, setBoxPlacementMessage] = useState("");
+  const [previewFitRequestKey, setPreviewFitRequestKey] = useState(0);
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
   const preflightRequestRef = useRef(0);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
+  const initialBoxSnapshotRef = useRef({
+    projectDir: initialProject.project_dir,
+    form: boxToForm(initialProject),
+  });
 
   const parsedBox = useMemo(() => parseBoxForm(boxForm), [boxForm]);
   const parsedVina = useMemo(() => parseVinaForm(vinaForm), [vinaForm]);
@@ -249,6 +270,8 @@ export default function RunPreparePage({
   const volume = displayBox.size_x * displayBox.size_y * displayBox.size_z;
   const running = stage === "starting" || stage === "running" || stage === "cancelling" || stage === "cancel_pending";
   const progress = runtime?.progress?.percent ?? (stage === "finished" ? 100 : 0);
+  const receptorCenter = preflight?.input_stats?.receptor?.coordinate_center ?? null;
+  const canResetBox = !boxFormsEqual(boxForm, initialBoxSnapshotRef.current.form);
 
   const commitProject = useCallback((nextProject: DockStartProject, syncForms = false) => {
     if (!mountedRef.current) return;
@@ -315,6 +338,16 @@ export default function RunPreparePage({
       activeTaskAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (initialBoxSnapshotRef.current.projectDir === initialProject.project_dir) return;
+    initialBoxSnapshotRef.current = {
+      projectDir: initialProject.project_dir,
+      form: boxToForm(initialProject),
+    };
+    setBoxPlacementMessage("");
+    setPreviewFitRequestKey(0);
+  }, [initialProject]);
 
   useEffect(() => {
     void refreshPreflight(true);
@@ -427,6 +460,7 @@ export default function RunPreparePage({
 
   const updateBoxField = (key: keyof BoxForm, value: string) => {
     setBoxForm((current) => ({ ...current, [key]: value }));
+    setBoxPlacementMessage("");
     setIsDirty(true);
     dirtyRef.current = true;
   };
@@ -445,9 +479,41 @@ export default function RunPreparePage({
         [boxWheelBinding]: String(Number(next.toFixed(3))),
       };
     });
+    setBoxPlacementMessage("");
     setIsDirty(true);
     dirtyRef.current = true;
   }, [boxWheelBinding, boxWheelStep, isBusy]);
+
+  const centerBoxOnReceptor = useCallback(() => {
+    if (!receptorCenter || isBusy) return;
+    const nextForm = {
+      ...boxForm,
+      center_x: boxCoordinate(receptorCenter.x),
+      center_y: boxCoordinate(receptorCenter.y),
+      center_z: boxCoordinate(receptorCenter.z),
+    };
+    setBoxForm(nextForm);
+    setBoxWheelBinding(null);
+    setBoxPlacementMessage(
+      `已移动到受体坐标范围中心：${boxCoordinate(receptorCenter.x)}, ${boxCoordinate(receptorCenter.y)}, ${boxCoordinate(receptorCenter.z)} Å。`,
+    );
+    setPreviewFitRequestKey((current) => current + 1);
+    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project)) || !vinaFormsEqual(vinaForm, vinaToForm(project));
+    setIsDirty(nextDirty);
+    dirtyRef.current = nextDirty;
+  }, [boxForm, isBusy, project, receptorCenter, vinaForm]);
+
+  const resetBoxToInitial = useCallback(() => {
+    if (isBusy) return;
+    const nextForm = { ...initialBoxSnapshotRef.current.form };
+    setBoxForm(nextForm);
+    setBoxWheelBinding(null);
+    setBoxPlacementMessage("已恢复进入对接工作台时的 Box 参数。");
+    setPreviewFitRequestKey((current) => current + 1);
+    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project)) || !vinaFormsEqual(vinaForm, vinaToForm(project));
+    setIsDirty(nextDirty);
+    dirtyRef.current = nextDirty;
+  }, [isBusy, project, vinaForm]);
 
   const updateVinaField = (key: keyof VinaForm, value: string) => {
     setVinaForm((current) => ({ ...current, [key]: value }));
@@ -691,6 +757,7 @@ export default function RunPreparePage({
                 <RunStructurePreview
                   projectDir={project.project_dir}
                   box={displayBox}
+                  fitRequestKey={previewFitRequestKey}
                   wheelBinding={isBusy ? null : boxWheelBinding}
                   onWheelAdjust={adjustBoundBoxField}
                   boxLineThickness={boxLineThickness}
@@ -703,6 +770,9 @@ export default function RunPreparePage({
                       wheelStep={boxWheelStep}
                       boxLineThickness={boxLineThickness}
                       axisSpacing={axisSpacing}
+                      canCenterOnReceptor={Boolean(receptorCenter)}
+                      canReset={canResetBox}
+                      placementMessage={boxPlacementMessage}
                       disabled={isBusy}
                       idPrefix="run-box-fullscreen"
                       className="run-box-inspector-fullscreen"
@@ -711,6 +781,8 @@ export default function RunPreparePage({
                       onWheelStepChange={setBoxWheelStep}
                       onBoxLineThicknessChange={setBoxLineThickness}
                       onAxisSpacingChange={setAxisSpacing}
+                      onCenterOnReceptor={centerBoxOnReceptor}
+                      onReset={resetBoxToInitial}
                     />
                   )}
                 />
@@ -722,12 +794,17 @@ export default function RunPreparePage({
                 wheelStep={boxWheelStep}
                 boxLineThickness={boxLineThickness}
                 axisSpacing={axisSpacing}
+                canCenterOnReceptor={Boolean(receptorCenter)}
+                canReset={canResetBox}
+                placementMessage={boxPlacementMessage}
                 disabled={isBusy}
                 onFieldChange={updateBoxField}
                 onWheelBindingChange={setBoxWheelBinding}
                 onWheelStepChange={setBoxWheelStep}
                 onBoxLineThicknessChange={setBoxLineThickness}
                 onAxisSpacingChange={setAxisSpacing}
+                onCenterOnReceptor={centerBoxOnReceptor}
+                onReset={resetBoxToInitial}
               />
             </div>
           </section>

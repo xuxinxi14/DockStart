@@ -415,6 +415,12 @@ export type PdbqtInputStats = {
   size_bytes: number;
   sha256: string;
   atom_count: number;
+  coordinate_count: number;
+  coordinate_bounds: {
+    min: { x: number; y: number; z: number };
+    max: { x: number; y: number; z: number };
+  } | null;
+  coordinate_center: { x: number; y: number; z: number } | null;
   chains: string[];
   atom_types: string[];
   torsdof?: number | null;

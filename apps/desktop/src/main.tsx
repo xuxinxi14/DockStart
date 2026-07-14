@@ -9,6 +9,7 @@ import "./styles/components.css";
 import "./styles/instrument-console.css";
 import "./styles/run-cockpit.css";
 import "./styles/workspace-console.css";
+import "./styles/help-center.css";
 
 const savedTheme = window.localStorage.getItem("dockstart-theme");
 document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";

@@ -1004,6 +1004,32 @@
   color: var(--ds-viewer-text-accent);
 }
 
+/* Fullscreen keeps the molecular canvas dark, but its inspector remains a
+   genuine daylight rail. Re-establish rail tokens after the viewer palette is
+   inherited from `.run-preview` so controls never become dark-on-light mixes. */
+:root[data-theme="light"] .run-box-inspector-fullscreen {
+  --ds-text-strong: var(--ds-rail-text-strong);
+  --ds-text-primary: var(--ds-rail-text-primary);
+  --ds-text-secondary: var(--ds-rail-text-secondary);
+  --ds-text-muted: var(--ds-rail-text-muted);
+  --ds-surface-panel: var(--ds-rail-bg-hover);
+  --ds-surface-raised: var(--ds-rail-bg);
+  --ds-surface-input: var(--ds-bg-workspace);
+  --ds-surface-hover: var(--ds-rail-bg-hover);
+  --ds-surface-selected: var(--ds-brand-soft);
+  --ds-border-subtle: var(--ds-rail-divider);
+  --ds-border-default: var(--ds-rail-border);
+  --ds-border-strong: var(--ds-window-border);
+  --ds-on-dark-border-default: var(--ds-rail-border);
+  --ds-on-dark-surface: var(--ds-bg-workspace);
+  border-color: var(--ds-rail-border);
+  background: var(--ds-rail-bg);
+}
+
+:root[data-theme="light"] .run-box-inspector-fullscreen .run-box-placement-actions button:not(:first-child) {
+  color: var(--ds-rail-text-primary);
+}
+
 :root[data-theme="light"] :is(
   .run-cockpit-header > div:first-child > span,
   .run-cockpit-kicker,
