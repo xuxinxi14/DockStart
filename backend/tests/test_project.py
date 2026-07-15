@@ -1546,6 +1546,33 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(len(captured_pid), 1)
             self.assertFalse(vina_adapter.is_process_running(captured_pid[0]))
 
+    def test_adapter_drains_output_in_bounded_lines_before_shutdown_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            observed_chunks: list[str] = []
+
+            def slow_output(stream_name: str, chunk: str) -> None:
+                if stream_name == "stdout":
+                    observed_chunks.append(chunk)
+                    time.sleep(0.01)
+
+            script = "for i in range(40): print(f'vina-line-{i:02d}-' + 'x' * 64, flush=True)"
+            result = vina_adapter.run_managed(
+                [sys.executable, "-c", script],
+                root,
+                root / "stdout.txt",
+                root / "stderr.txt",
+                root / "log.txt",
+                on_output=slow_output,
+            )
+
+            stdout = (root / "stdout.txt").read_text(encoding="utf-8")
+            self.assertFalse(result.error)
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(stdout, (root / "log.txt").read_text(encoding="utf-8"))
+            self.assertEqual("".join(observed_chunks), stdout)
+            self.assertLessEqual(len(observed_chunks), 40)
+
     def test_adapter_exclusive_log_creation_refuses_hardlink_before_spawn(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

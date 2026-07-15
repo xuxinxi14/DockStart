@@ -459,7 +459,12 @@ def run_managed(
                 source = process.stdout if stream_name == "stdout" else process.stderr
                 destination = stdout_handle if stream_name == "stdout" else stderr_handle
                 try:
-                    for chunk in iter(lambda: source.read(1), ""):
+                    # Read complete lines (bounded to 4 KiB) instead of one
+                    # Unicode character at a time.  Per-character callbacks
+                    # made a short Vina run spend longer draining its pipes
+                    # than the five-second shutdown gate on Windows, so a
+                    # successful process could be misreported as failed.
+                    for chunk in iter(lambda: source.readline(4096), ""):
                         destination.write(chunk)
                         destination.flush()
                         if stream_name == "stdout":

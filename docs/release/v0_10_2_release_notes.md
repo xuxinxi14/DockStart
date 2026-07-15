@@ -47,6 +47,8 @@ PDB/SDF 到 PDBQT 并不只是修改扩展名。DockStart 会调用 Gemmi、RDKi
 
 后台任务按候选 ID、查询、格式及 raw 输入身份区分。转换运行期间不能替换同一目标的 raw 文件；准备任务在认领和发布时都会核对项目内相对路径与 SHA256，输入变化时保留候选记录但拒绝发布 PDBQT，避免出现 raw 与 prepared 静默错配。
 
+Vina 的 stdout/stderr 改为有界行块流式写入，避免 Windows 上短任务已经成功生成结果，却因逐字符回调未在收尾期限内排空而被误报为失败。
+
 ### 5. 整理对接工作台与结果定位
 
 - 左下角明确显示当前为 Basic 或 Assisted 安装 profile；
@@ -136,7 +138,7 @@ Meeko 以独立、可替换的普通 Python 包分发，不会冻结进 DockStar
 
 当前文档是 v0.10.2 发布候选公告。自动化与本机真实 GUI 验证已经完成，仍保留两项外部发布门禁：
 
-- [x] Python 全量测试：362 项通过；
+- [x] Python 全量测试：363 项通过；
 - [x] 前端生产构建：通过；
 - [x] Cargo 测试 17 项与 clippy：通过；
 - [x] Basic 打包布局中的真实 PDBQT/Vina/结果/报告流程：两轮运行通过；
