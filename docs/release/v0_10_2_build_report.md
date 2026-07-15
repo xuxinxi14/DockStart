@@ -1,7 +1,7 @@
 # DockStart v0.10.2 Windows 发布构建报告
 
 构建日期：2026-07-15（Asia/Shanghai）  
-源码提交：`fcbbd0548ab1ea4c3efdfedd3fb737ebbf962162`  
+源码提交：`19900f3ad172c8d4b5a583a18ec52a8c683a6322`<br>
 构建分支：`main`  
 Author / Publisher 元数据：`XinXi Xu`
 
@@ -11,9 +11,9 @@ Author / Publisher 元数据：`XinXi Xu`
 
 ## 通用门禁
 
-- Python：`python -m unittest discover -s backend/tests`，334 项通过；
-- 前端：TypeScript 检查与 Vite production build 通过，4636 个模块完成转换；
-- Rust：`cargo check` 通过，14 项 `cargo test` 通过，`cargo clippy --all-targets -- -D warnings` 通过；
+- Python：正式安装包构建时 363 项产品/后端测试通过；补入 Basic NSIS 安装门禁测试后，`python -m unittest discover -s backend/tests` 最终 371 项通过；
+- 前端：TypeScript 检查与 Vite production build 通过，4637 个模块完成转换；
+- Rust：`cargo check` 通过，17 项 `cargo test` 通过，`cargo clippy --all-targets -- -D warnings` 通过；
 - Git：构建前工作区干净，版本字段一致为 `0.10.2`；
 - 构建过程：Basic 与 Assisted 分别执行 `scripts/build_windows_release.ps1`，未复用安装包或跳过 Tauri 构建；
 - 网络：Assisted 由本地固定 wheelhouse 构建，`network_used: false`。
@@ -27,6 +27,7 @@ Author / Publisher 元数据：`XinXi Xu`
 - 明确不随附 Meeko、RDKit、NumPy、SciPy；
 - 打包目录真实对接：连续两轮运行成功，生成 config、metadata、输入快照、stdout、log、PDBQT、scores.csv 与 Markdown 报告；
 - NSIS：真实静默安装到隔离目录、安装后离线对接、静默卸载通过；安装目录、运行时与卸载记录均无残留；
+- Basic NSIS 安装态门禁由 `scripts/verify_installed_basic_release.py` 固化，结果中的 installer SHA256 与本轮归档包一致；
 - MSI：管理提取后的安装布局通过两轮离线对接。该验证确认 MSI 内容与运行时完整，但不等价于真实 MSI 安装/卸载。
 
 ## Assisted Stable
@@ -34,22 +35,22 @@ Author / Publisher 元数据：`XinXi Xu`
 - 随附 CPython 3.11.15、RDKit 2026.3.3、Meeko 0.7.1、NumPy 1.26.4 与必要依赖；
 - Meeko ligand/receptor CLI 均通过离线导入探测；
 - 对应源码归档与许可证清单的 SHA256 校验通过；
-- development gate：PDB 受体与 SDF 配体准备、PDBQT 生成、Vina 对接通过；
-- post-package gate：从 Tauri release 布局重复完成同一离线闭环；
-- post-install gate：NSIS 真实安装后完成原始结构准备、对接与报告，随后静默卸载且无残留；
-- MSI：管理提取后的安装布局完成 PDB/SDF → PDBQT → Vina → 报告闭环。该验证不等价于真实 MSI 安装/卸载；
+- development gate：CIF 受体经 Gemmi 受约束转换、SDF 配体准备、PDBQT 生成与 Vina 对接通过；
+- post-package gate：从 Tauri release 布局重复完成同一 CIF/SDF 离线闭环；
+- post-install gate：NSIS 真实安装后完成 CIF/SDF 原始结构准备、对接与报告，随后静默卸载且无残留；
+- MSI：管理提取后的安装布局完成 CIF/SDF → PDBQT → Vina → 报告闭环。该验证不等价于真实 MSI 安装/卸载；
 - 最终清单：`development_gate=passed`、`post_package_gate=passed`、`post_install_gate=passed`、`publishable=true`。
 
 ## 安装包与校验值
 
 | Profile | 文件 | 大小 | SHA256 |
 | --- | --- | ---: | --- |
-| Basic | `DockStart_0.10.2_Basic_x64-setup.exe` | 17,789,525 B（16.97 MiB） | `7240a1b918ebfdf4053e37e0f26d0af12411adf62b7a5a3e43104bdcc25cee3f` |
-| Basic | `DockStart_0.10.2_Basic_x64_en-US.msi` | 23,311,632 B（22.23 MiB） | `4de0858e59ddc5a2e9ea72fd316adc4a6fd69e6bebffd5e5eade3cc28db820f9` |
-| Assisted | `DockStart_0.10.2_Assisted_x64-setup.exe` | 73,170,277 B（69.78 MiB） | `91d9d3c474768145d918925deb1f87bc5c9b526e322d2ddb6f25a85628e790a7` |
-| Assisted | `DockStart_0.10.2_Assisted_x64_en-US.msi` | 113,120,476 B（107.88 MiB） | `4352962bed0be9ce09c4948fc4f77d1d770a6201e8985b8ab35a53870e760942` |
+| Basic | `DockStart_0.10.2_Basic_x64-setup.exe` | 17,804,745 B（16.98 MiB） | `eb4c8c12b73a84a46de3ea4db7c1b6c94628adc88a7c2dbd92200d97fd91780a` |
+| Basic | `DockStart_0.10.2_Basic_x64_en-US.msi` | 23,340,449 B（22.26 MiB） | `5e406fb920c9508dbe8c2ee5083895b3c9b062cec45c717264f6c8771d817047` |
+| Assisted | `DockStart_0.10.2_Assisted_x64-setup.exe` | 73,191,393 B（69.80 MiB） | `e38aca94f74bbe13d259b93e8da6910918f671276dacb0be5d0e5fa6ac731f71` |
+| Assisted | `DockStart_0.10.2_Assisted_x64_en-US.msi` | 113,145,197 B（107.90 MiB） | `dfc147d8af290e6dfdacdb244d60e92afba9b7dd687412980edf6fbacb0c9b75` |
 
-产物目录：`.release/artifacts/0.10.2/basic` 与 `.release/artifacts/0.10.2/assisted`。
+产物目录：`.release/artifacts/0.10.2/basic` 与 `.release/artifacts/0.10.2/assisted`。四个文件的独立复核结果已写入 `.release/artifacts/0.10.2/SHA256SUMS.txt`。
 
 ## 发布前剩余门禁
 

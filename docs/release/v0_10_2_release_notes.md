@@ -43,7 +43,7 @@ PDB/SDF 到 PDBQT 并不只是修改扩展名。DockStart 会调用 Gemmi、RDKi
 
 ### 4. 减少结构准备过程中的脚本启动等待
 
-结构准备页面复用已有的工具链检测缓存，并把耗时转换放在后台任务中，减少切换页面或重复操作时冷启动 Python/RDKit/Meeko 所造成的界面停顿。发布前仍会在安装态和另一台设备上复验首次冷启动、重复进入页面和连续转换的表现。
+结构准备页面复用已有的工具链检测缓存，并把耗时转换放在后台任务中，减少切换页面或重复操作时冷启动 Python/RDKit/Meeko 所造成的界面停顿。本轮已在本机安装态和打包布局中复验连续转换；另一台无开发环境依赖设备上的首次冷启动与连续操作仍列为外部门禁。
 
 后台任务按候选 ID、查询、格式及 raw 输入身份区分。转换运行期间不能替换同一目标的 raw 文件；准备任务在认领和发布时都会核对项目内相对路径与 SHA256，输入变化时保留候选记录但拒绝发布 PDBQT，避免出现 raw 与 prepared 静默错配。
 
@@ -71,18 +71,20 @@ DockStart 提供 Basic 与 Assisted 两个隔离的 Windows x64 profile，每个
 
 普通个人用户建议优先下载对应 profile 的 `setup.exe`；需要 MSI 部署时选择同 profile 的 `.msi`。
 
-> Basic 与 Assisted 使用同一个应用身份，不能并行安装。切换 profile 前请先卸载当前版本。卸载应用不应删除位于独立工作目录中的用户项目，但发布前仍会执行安装/卸载回归。
+> Basic 与 Assisted 使用同一个应用身份，不能并行安装。切换 profile 前请先卸载当前版本。卸载应用不应删除位于独立工作目录中的用户项目；本轮两个 NSIS 已在隔离目录完成真实安装、运行与卸载回归。
 
 ## 四个 Windows x64 产物
 
-以下数据来自提交 `fcbbd0548ab1ea4c3efdfedd3fb737ebbf962162` 的最终构建：
+以下数据来自提交 `19900f3ad172c8d4b5a583a18ec52a8c683a6322` 的最终构建，并已与两个 profile 的 artifact manifest 独立复核：
 
 | 文件 | 大小 | SHA256 | 门禁状态 |
 | --- | ---: | --- | --- |
-| `DockStart_0.10.2_Basic_x64-setup.exe` | 17,789,525 B（16.97 MiB） | `7240a1b918ebfdf4053e37e0f26d0af12411adf62b7a5a3e43104bdcc25cee3f` | NSIS 真实安装、离线对接、卸载清理通过 |
-| `DockStart_0.10.2_Basic_x64_en-US.msi` | 23,311,632 B（22.23 MiB） | `4de0858e59ddc5a2e9ea72fd316adc4a6fd69e6bebffd5e5eade3cc28db820f9` | MSI 内容提取与两轮离线对接通过；待干净机安装/卸载 |
-| `DockStart_0.10.2_Assisted_x64-setup.exe` | 73,170,277 B（69.78 MiB） | `91d9d3c474768145d918925deb1f87bc5c9b526e322d2ddb6f25a85628e790a7` | development、post-package、真实安装后流程与卸载清理通过 |
-| `DockStart_0.10.2_Assisted_x64_en-US.msi` | 113,120,476 B（107.88 MiB） | `4352962bed0be9ce09c4948fc4f77d1d770a6201e8985b8ab35a53870e760942` | MSI 内容提取及离线准备、对接、报告通过；待干净机安装/卸载 |
+| `DockStart_0.10.2_Basic_x64-setup.exe` | 17,804,745 B（16.98 MiB） | `eb4c8c12b73a84a46de3ea4db7c1b6c94628adc88a7c2dbd92200d97fd91780a` | NSIS 真实安装、两轮离线对接、卸载清理通过 |
+| `DockStart_0.10.2_Basic_x64_en-US.msi` | 23,340,449 B（22.26 MiB） | `5e406fb920c9508dbe8c2ee5083895b3c9b062cec45c717264f6c8771d817047` | MSI 内容提取与两轮离线对接通过；待干净机安装/卸载 |
+| `DockStart_0.10.2_Assisted_x64-setup.exe` | 73,191,393 B（69.80 MiB） | `e38aca94f74bbe13d259b93e8da6910918f671276dacb0be5d0e5fa6ac731f71` | development、post-package、CIF 准备、真实安装后流程与卸载清理通过 |
+| `DockStart_0.10.2_Assisted_x64_en-US.msi` | 113,145,197 B（107.90 MiB） | `dfc147d8af290e6dfdacdb244d60e92afba9b7dd687412980edf6fbacb0c9b75` | MSI 内容提取及 CIF/SDF 准备、对接、报告通过；待干净机安装/卸载 |
+
+四个文件的标准校验清单见同目录的 `SHA256SUMS.txt`。
 
 ## 联网与离线边界
 
@@ -127,7 +129,7 @@ Meeko 以独立、可替换的普通 Python 包分发，不会冻结进 DockStar
 
 ## Windows 安装提示
 
-本轮安装包计划由 `XinXi Xu` 作为元数据中的 Author / Publisher，但目前没有 Authenticode 数字签名。Windows SmartScreen 或组织策略可能显示“未知发布者”。下载后请：
+本轮安装包由 `XinXi Xu` 作为元数据中的 Author / Publisher，但目前没有 Authenticode 数字签名。Windows SmartScreen 或组织策略可能显示“未知发布者”。下载后请：
 
 1. 确认文件名与所需 profile 一致；
 2. 对照本 Release 公告中的 SHA256；
@@ -136,9 +138,9 @@ Meeko 以独立、可替换的普通 Python 包分发，不会冻结进 DockStar
 
 ## 正式发布前验收状态
 
-当前文档是 v0.10.2 发布候选公告。自动化与本机真实 GUI 验证已经完成，仍保留两项外部发布门禁：
+当前文档是 v0.10.2 发布候选公告。自动化、本机真实 GUI 与本机隔离安装验证已经完成，仍保留两项外部发布门禁：
 
-- [x] Python 全量测试：363 项通过；
+- [x] Python 全量测试：371 项通过（含新增的 Basic NSIS 安装门禁测试）；
 - [x] 前端生产构建：通过；
 - [x] Cargo 测试 17 项与 clippy：通过；
 - [x] Basic 打包布局中的真实 PDBQT/Vina/结果/报告流程：两轮运行通过；
