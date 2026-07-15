@@ -301,6 +301,117 @@ def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
     }
 
 
+def _raw_input_identity(path: Path, project_path: Path) -> dict[str, Any]:
+    """Capture a stable project-relative identity for one raw preparation input."""
+
+    safe_path = _safe_project_path(project_path, path, allow_missing=False)
+    canonical_relative_path = _relative_path(safe_path, project_path)
+    captured_at = _now_iso()
+    try:
+        before = safe_path.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+            raise OSError("raw 输入不是非空普通文件")
+        sha256 = _sha256_file(safe_path)
+        after = safe_path.stat()
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable:
+            raise OSError("计算 SHA256 期间 raw 输入发生变化")
+        return {
+            "ok": True,
+            "canonical_relative_path": canonical_relative_path,
+            "sha256": sha256,
+            "size_bytes": int(after.st_size),
+            "modified_at_ns": int(after.st_mtime_ns),
+            "captured_at": captured_at,
+            "error": "",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "canonical_relative_path": canonical_relative_path,
+            "sha256": "",
+            "size_bytes": 0,
+            "modified_at_ns": 0,
+            "captured_at": captured_at,
+            "error": str(exc),
+        }
+
+
+def _verify_current_raw_input(
+    project_path: Path,
+    project: Any,
+    target: PreparationTarget,
+    claimed_input: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any], dict[str, Any] | None]:
+    """Compare current project raw reference and bytes with the claimed input."""
+
+    file_ref = getattr(project, target)
+    recorded_raw_file = str(getattr(file_ref, "raw_file", "") or "")
+    reasons: list[str] = []
+    current_input: dict[str, Any]
+    if not recorded_raw_file:
+        current_input = {
+            "ok": False,
+            "canonical_relative_path": "",
+            "sha256": "",
+            "error": "project.json 当前未记录 raw_file",
+        }
+        reasons.append("raw 引用已被清空")
+    else:
+        try:
+            current_path = _project_file_path(project_path, recorded_raw_file)
+            current_input = _raw_input_identity(current_path, project_path)
+        except (OSError, PreparationPathError) as exc:
+            current_input = {
+                "ok": False,
+                "canonical_relative_path": "",
+                "sha256": "",
+                "error": str(exc),
+            }
+        if not current_input.get("ok"):
+            reasons.append("当前 raw 输入不存在、不可读或在校验期间发生变化")
+
+    claimed_path = str(claimed_input.get("canonical_relative_path") or "")
+    claimed_sha256 = str(claimed_input.get("sha256") or "")
+    current_path = str(current_input.get("canonical_relative_path") or "")
+    current_sha256 = str(current_input.get("sha256") or "")
+    if not claimed_path or not claimed_sha256:
+        reasons.append("任务认领记录缺少规范 raw 路径或 SHA256")
+    if current_path != claimed_path:
+        reasons.append("project.json 的 raw 引用已变化")
+    if current_sha256 != claimed_sha256:
+        reasons.append("raw 文件内容 SHA256 已变化")
+
+    verification = {
+        "checked_at": _now_iso(),
+        "recorded_raw_file": recorded_raw_file,
+        "claimed": dict(claimed_input),
+        "current": current_input,
+        "matches": not reasons,
+        "reasons": reasons,
+    }
+    if not reasons:
+        return True, verification, None
+
+    error = {
+        "code": "PREPARATION_INPUT_STALE",
+        "message": "分子准备期间原始输入发生变化，候选 PDBQT 未发布。",
+        "raw_error": json.dumps(verification, ensure_ascii=False, sort_keys=True),
+        "suggestion": "请确认当前 raw 文件与项目引用后重新启动格式转换；旧候选文件仅保留在 preparation 记录中。",
+    }
+    return False, verification, error
+
+
 def _build_preparation_metadata(
     *,
     prep_id: str,
@@ -354,6 +465,8 @@ def _build_preparation_metadata(
         "input_file": built.get("input_file", ""),
         "output_file": built.get("output_file", ""),
         "candidate_output_file": built.get("candidate_output_file", ""),
+        "claimed_input": built.get("claimed_input", {}),
+        "claim_verification": built.get("claim_verification", {}),
         "script_file": built.get("script_file", ""),
         "intermediate_input_file": built.get("intermediate_input_file", ""),
         "command": built.get("command", []),
@@ -478,23 +591,58 @@ def _claim_preparation(
     input_snapshot_path = _safe_project_path(project_path, Path(built["input_snapshot_file"]))
     metadata_path = _safe_project_path(project_path, Path(built["metadata_file"]))
     input_path = _safe_project_path(project_path, Path(built["input_path"]), allow_missing=False)
+    try:
+        claimed_input = _raw_input_identity(input_path, project_path)
+    except (OSError, PreparationPathError) as exc:
+        claimed_input = {
+            "ok": False,
+            "canonical_relative_path": _relative_path(input_path, project_path),
+            "sha256": "",
+            "captured_at": _now_iso(),
+            "error": str(exc),
+        }
+    built["claimed_input"] = claimed_input
 
     # Create the audit record before publishing the running claim.  A crash can
     # therefore never leave project.json pointing to a record that did not
     # exist at claim time.
     _write_json(command_path, {"prep_id": prep_id, "target": target, "command": built["command"]})
     warnings = list(built.get("warnings", []))
-    _write_json(
-        input_snapshot_path,
-        {
-            "prep_id": prep_id,
-            "target": target,
-            "input_file": built["input_file"],
-            "input": _file_snapshot(input_path, project_path),
-            "tools": built.get("tools", {}),
-            "warnings": warnings,
-        },
-    )
+    input_snapshot_payload = {
+        "prep_id": prep_id,
+        "target": target,
+        "input_file": built["input_file"],
+        "canonical_input_file": str(claimed_input.get("canonical_relative_path") or ""),
+        "input_sha256": str(claimed_input.get("sha256") or ""),
+        "claimed_input": claimed_input,
+        "input": _file_snapshot(input_path, project_path),
+        "tools": built.get("tools", {}),
+        "warnings": warnings,
+    }
+    _write_json(input_snapshot_path, input_snapshot_payload)
+    if not claimed_input.get("ok") or not claimed_input.get("sha256"):
+        snapshot_error = _error(
+            "PREPARATION_INPUT_SNAPSHOT_FAILED",
+            "无法冻结本次分子准备的 raw 输入，任务未启动。",
+            raw_error=str(claimed_input.get("error") or "raw 输入 SHA256 不可用"),
+            suggestion="请确认 raw 文件是项目内可读取的非空普通文件，然后重新启动格式转换。",
+        )
+        rejected = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="failed",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=_now_iso(),
+            built=built,
+            warnings=warnings,
+            error=copy.deepcopy(snapshot_error.get("error")),
+        )
+        rejected["published"] = False
+        rejected["claim_rejected"] = True
+        _write_json(metadata_path, rejected)
+        return None, snapshot_error
     _write_json(
         metadata_path,
         _build_preparation_metadata(
@@ -531,6 +679,56 @@ def _claim_preparation(
             rejected["claim_rejected"] = True
             _write_json(metadata_path, rejected)
             return None, busy
+
+        input_matches, claim_verification, stale_error = _verify_current_raw_input(
+            project_path,
+            project,
+            target,
+            claimed_input,
+        )
+        built["claim_verification"] = claim_verification
+        input_snapshot_payload["claim_verification"] = claim_verification
+        _write_json(input_snapshot_path, input_snapshot_payload)
+        if not input_matches:
+            assert stale_error is not None
+            rejected = _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="failed",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                built=built,
+                warnings=warnings,
+                error=copy.deepcopy(stale_error),
+            )
+            rejected["published"] = False
+            rejected["claim_rejected"] = True
+            _write_json(metadata_path, rejected)
+            return None, _project_error_payload(
+                project,
+                str(stale_error.get("code") or "PREPARATION_INPUT_STALE"),
+                str(stale_error.get("message") or "分子准备输入已变化。"),
+                raw_error=str(stale_error.get("raw_error") or ""),
+                suggestion=str(stale_error.get("suggestion") or ""),
+                warnings=warnings,
+            )
+
+        _write_json(
+            metadata_path,
+            _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="running",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=None,
+                built=built,
+                warnings=warnings,
+            ),
+        )
 
         prep = getattr(project.preparation, target)
         prep.prep_id = prep_id
@@ -605,6 +803,7 @@ def _finalize_preparation(
     ownership_lost = False
     current_project: Any | None = None
     error: dict[str, Any] | None = None
+    input_verification: dict[str, Any] = {}
 
     with _preparation_target_lock(project_path, target):
         with _project_lock(project_path):
@@ -628,8 +827,16 @@ def _finalize_preparation(
                     "suggestion": "请查看最新 preparation 记录；旧任务的候选文件仅保留用于审计。",
                 }
             else:
+                input_matches, input_verification, stale_error = _verify_current_raw_input(
+                    project_path,
+                    current_project,
+                    target,
+                    built.get("claimed_input", {}),
+                )
+                if not input_matches:
+                    error = stale_error
                 previous_output = output_path.read_bytes() if output_path.is_file() else None
-                if exit_code == 0 and candidate_ok:
+                if error is None and exit_code == 0 and candidate_ok:
                     try:
                         _publish_candidate_output(candidate_output_path, output_path, project_path)
                         published = True
@@ -637,26 +844,27 @@ def _finalize_preparation(
                         publication_error = str(exc)
 
                 output_ok = published and output_path.is_file() and output_path.stat().st_size > 0
-                success = exit_code == 0 and candidate_ok and output_ok
+                success = error is None and exit_code == 0 and candidate_ok and output_ok
                 if success:
                     current_prep.status = "finished"
                     current_prep.error = None
                     getattr(current_project, target).file = f"prepared/{target}.pdbqt"
                 else:
                     current_prep.status = "failed"
-                    raw_error = publication_error or stderr or stdout or (
-                        "输出 PDBQT 不存在或为空。" if exit_code == 0 else ""
-                    )
-                    error = {
-                        "code": f"{target.upper()}_PREPARATION_FAILED",
-                        "message": f"{target} PDBQT 自动准备失败，请查看 stderr 和日志。",
-                        "raw_error": raw_error,
-                        "suggestion": (
-                            "请确认 RDKit/Meeko 版本、输入结构和配体准备能力。"
-                            if target == "ligand"
-                            else "请确认 Meeko receptor 模块、输入结构完整性和准备选项。"
-                        ),
-                    }
+                    if error is None:
+                        raw_error = publication_error or stderr or stdout or (
+                            "输出 PDBQT 不存在或为空。" if exit_code == 0 else ""
+                        )
+                        error = {
+                            "code": f"{target.upper()}_PREPARATION_FAILED",
+                            "message": f"{target} PDBQT 自动准备失败，请查看 stderr 和日志。",
+                            "raw_error": raw_error,
+                            "suggestion": (
+                                "请确认 RDKit/Meeko 版本、输入结构和配体准备能力。"
+                                if target == "ligand"
+                                else "请确认 Meeko receptor 模块、输入结构完整性和准备选项。"
+                            ),
+                        }
                     current_prep.error = error
                 current_prep.finished_at = finished_at
                 current_prep.exit_code = exit_code
@@ -691,6 +899,7 @@ def _finalize_preparation(
             "exit_code": exit_code,
             "published": published,
             "ownership_lost": ownership_lost,
+            "input_verification": input_verification,
             "publication_error": publication_error,
             "restore_error": restore_error,
             "success": final_status == "finished",
@@ -720,6 +929,7 @@ def _finalize_preparation(
                 "output_non_empty": output_ok,
                 "published": published,
                 "ownership_lost": ownership_lost,
+                "input_verification": input_verification,
                 "candidate_output": _file_snapshot(candidate_output_path, project_path),
                 "output": _file_snapshot(output_path, project_path),
                 "stdout": _file_snapshot(stdout_path, project_path),
@@ -737,6 +947,7 @@ def _finalize_preparation(
         "exit_code": exit_code,
         "published": published,
         "ownership_lost": ownership_lost,
+        "input_verification": input_verification,
     }
 
 
@@ -802,8 +1013,11 @@ def _prepare_target_pdbqt(
             tools_snapshot=tools_snapshot if isinstance(tools_snapshot, Mapping) else None,
         )
         success = bool(finalized["success"])
+        final_error = finalized.get("error") if isinstance(finalized.get("error"), dict) else {}
         if finalized["ownership_lost"]:
             message = f"{target} 准备任务已失去所有权，候选输出未发布。"
+        elif final_error.get("code") == "PREPARATION_INPUT_STALE":
+            message = f"{target} 准备期间 raw 输入发生变化，候选输出未发布。"
         elif success:
             message = (
                 "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"

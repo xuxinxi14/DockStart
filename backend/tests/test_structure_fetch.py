@@ -40,6 +40,13 @@ class StructureFetchTests(unittest.TestCase):
 
         return fetch
 
+    def _set_preparation_status(self, project_dir: Path, target: str, status: str) -> None:
+        project = load_project(str(project_dir))["project"]
+        project["preparation"][target]["status"] = status
+        project["preparation"][target]["prep_id"] = f"{target}_running_test"
+        saved = save_project(_project_from_dict(project, project_dir))
+        self.assertTrue(saved["ok"], saved)
+
     def test_validate_pdb_id_accepts_four_character_id(self) -> None:
         result = validate_pdb_id("1HSG")
 
@@ -298,6 +305,97 @@ class StructureFetchTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "LOCAL_RAW_FORMAT_UNSUPPORTED")
+
+    def test_local_receptor_import_is_blocked_while_receptor_preparation_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "replacement_receptor.pdb"
+            source.write_text("HEADER REPLACEMENT\n", encoding="utf-8")
+            self._set_preparation_status(project_dir, "receptor", "running")
+            project_before = (project_dir / "project.json").read_bytes()
+
+            result = import_receptor_raw_file(str(project_dir), str(source))
+            project_after = (project_dir / "project.json").read_bytes()
+            target_exists = (project_dir / "raw" / "receptor_replacement_receptor.pdb").exists()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "PREPARATION_IN_PROGRESS")
+        self.assertIn("受体格式转换", result["error"]["message"])
+        self.assertEqual(project_after, project_before)
+        self.assertFalse(target_exists)
+
+    def test_local_ligand_import_is_not_blocked_by_other_target_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "replacement_ligand.sdf"
+            source.write_text("LIGAND\n", encoding="utf-8")
+            self._set_preparation_status(project_dir, "receptor", "running")
+
+            result = import_ligand_raw_file(str(project_dir), str(source))
+
+        self.assertTrue(result["ok"], result)
+
+    def test_interrupted_preparation_does_not_block_stale_recovery_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "recovery_receptor.pdb"
+            source.write_text("HEADER RECOVERY\n", encoding="utf-8")
+            self._set_preparation_status(project_dir, "receptor", "interrupted")
+
+            result = import_receptor_raw_file(str(project_dir), str(source))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["raw_file"], "raw/receptor_recovery_receptor.pdb")
+
+    def test_rcsb_replacement_is_blocked_before_network_while_receptor_preparation_runs(self) -> None:
+        def unexpected_fetcher(_url: str, _timeout: int) -> bytes:
+            self.fail("blocked RCSB replacement must not call the network")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw = project_dir / "raw" / "receptor_1HSG.pdb"
+            raw.write_bytes(b"ORIGINAL RECEPTOR\n")
+            self._set_preparation_status(project_dir, "receptor", "running")
+            project_before = (project_dir / "project.json").read_bytes()
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                overwrite=True,
+                fetcher=unexpected_fetcher,
+            )
+            project_after = (project_dir / "project.json").read_bytes()
+            raw_after = raw.read_bytes()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "PREPARATION_IN_PROGRESS")
+        self.assertEqual(raw_after, b"ORIGINAL RECEPTOR\n")
+        self.assertEqual(project_after, project_before)
+
+    def test_pubchem_replacement_is_blocked_before_network_while_ligand_preparation_runs(self) -> None:
+        def unexpected_fetcher(_url: str, _timeout: int) -> bytes:
+            self.fail("blocked PubChem replacement must not call the network")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw = project_dir / "raw" / "ligand_2244.sdf"
+            raw.write_bytes(b"ORIGINAL LIGAND\n")
+            self._set_preparation_status(project_dir, "ligand", "running")
+            project_before = (project_dir / "project.json").read_bytes()
+
+            result = fetch_pubchem_ligand(
+                str(project_dir),
+                "2244",
+                overwrite=True,
+                fetcher=unexpected_fetcher,
+            )
+            project_after = (project_dir / "project.json").read_bytes()
+            raw_after = raw.read_bytes()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "PREPARATION_IN_PROGRESS")
+        self.assertEqual(raw_after, b"ORIGINAL LIGAND\n")
+        self.assertEqual(project_after, project_before)
 
     def test_pubchem_download_failure_returns_structured_error(self) -> None:
         def failing_fetcher(_url: str, _timeout: int) -> bytes:

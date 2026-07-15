@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from unittest import mock
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -14,6 +15,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from dockstart_core.project import create_project, load_project  # noqa: E402
 from dockstart_core.structure_fetch import (  # noqa: E402
+    MAX_SEARCH_RESPONSE_BYTES,
     fetch_pdb_structure,
     search_pubchem_candidates,
     search_rcsb_candidates,
@@ -175,6 +177,64 @@ class StructureSearchTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_RESPONSE_INVALID")
+
+    def test_search_rejects_actual_json_response_larger_than_hard_limit(self) -> None:
+        oversized = b"{" + (b" " * MAX_SEARCH_RESPONSE_BYTES) + b"}"
+
+        result = search_pubchem_candidates("2244", fetcher=lambda _url, _timeout: oversized)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_RESPONSE_TOO_LARGE")
+        self.assertIn("actual_bytes", result["error"]["raw_error"])
+
+    def test_search_rejects_declared_content_length_before_reading_body(self) -> None:
+        class DeclaredOversizedResponse:
+            headers = {"Content-Length": str(MAX_SEARCH_RESPONSE_BYTES + 1)}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                return False
+
+            def read(self, _limit: int) -> bytes:
+                raise AssertionError("oversized declared response must not be read")
+
+        with mock.patch(
+            "dockstart_core.structure_fetch.urllib.request.urlopen",
+            return_value=DeclaredOversizedResponse(),
+        ):
+            result = search_pubchem_candidates("2244")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_RESPONSE_TOO_LARGE")
+        self.assertIn("content_length", result["error"]["raw_error"])
+
+    def test_search_stops_actual_network_read_at_hard_limit_plus_one(self) -> None:
+        test_case = self
+
+        class StreamingOversizedResponse:
+            headers: dict[str, str] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                return False
+
+            def read(self, limit: int) -> bytes:
+                test_case.assertEqual(limit, MAX_SEARCH_RESPONSE_BYTES + 1)
+                return b"x" * limit
+
+        with mock.patch(
+            "dockstart_core.structure_fetch.urllib.request.urlopen",
+            return_value=StreamingOversizedResponse(),
+        ):
+            result = search_pubchem_candidates("2244")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_RESPONSE_TOO_LARGE")
+        self.assertIn("actual_bytes", result["error"]["raw_error"])
 
     def test_user_can_download_second_rcsb_candidate_explicitly(self) -> None:
         def search_fetcher(url: str, _timeout: int) -> bytes:

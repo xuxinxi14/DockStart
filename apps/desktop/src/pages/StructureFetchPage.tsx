@@ -187,6 +187,45 @@ function validatedLimit(value: string): number | null {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_SEARCH_LIMIT ? parsed : null;
 }
 
+function normalizedCandidateSourceId(value: string, queryType: string): string {
+  const trimmed = value.trim();
+  if (queryType === "pdb_id") return trimmed.toUpperCase();
+  if (queryType === "cid" && /^\d+$/.test(trimmed)) return trimmed.replace(/^0+(?=\d)/, "");
+  return trimmed;
+}
+
+function candidateAcquisitionMismatches(
+  response: ProjectResponse,
+  status: RawStructureStatus | null,
+  expected: { source: string; sourceId: string; queryType: string; format: string },
+): string[] {
+  const mismatches: string[] = [];
+  const responseSourceId = normalizedCandidateSourceId(response.source_id ?? "", expected.queryType);
+  const statusSourceId = normalizedCandidateSourceId(status?.source_id ?? "", expected.queryType);
+  const expectedSourceId = normalizedCandidateSourceId(expected.sourceId, expected.queryType);
+  const responseFormat = (response.format ?? "").trim().toLowerCase();
+  const projectFileRef = expected.source === "rcsb_pdb" ? response.project?.receptor : response.project?.ligand;
+  const responseQueryType = response.query_type ?? projectFileRef?.query_type ?? "";
+  const rawFile = response.raw_file?.trim() ?? "";
+
+  if (response.source !== expected.source) mismatches.push(`下载来源应为 ${expected.source}，实际为 ${response.source || "未返回"}`);
+  if (responseSourceId !== expectedSourceId) mismatches.push(`候选 ID 应为 ${expectedSourceId}，实际为 ${responseSourceId || "未返回"}`);
+  if (responseQueryType !== expected.queryType) mismatches.push(`查询类型应为 ${expected.queryType}，实际为 ${responseQueryType || "未返回"}`);
+  if (responseFormat !== expected.format) mismatches.push(`文件格式应为 ${expected.format}，实际为 ${responseFormat || "未返回"}`);
+  if (!rawFile || !rawFile.toLowerCase().endsWith(`.${expected.format}`)) {
+    mismatches.push(`raw 文件记录缺失，或扩展名不是 .${expected.format}`);
+  }
+  if (!status || status.status !== "ok" || !status.exists || !status.record_consistent) {
+    mismatches.push("项目中的 raw 文件状态未通过存在性与记录一致性检查");
+  } else {
+    if (status.source !== expected.source) mismatches.push(`raw 状态来源应为 ${expected.source}，实际为 ${status.source || "未记录"}`);
+    if (statusSourceId !== expectedSourceId) mismatches.push(`raw 状态候选 ID 应为 ${expectedSourceId}，实际为 ${statusSourceId || "未记录"}`);
+    if (status.query_type !== expected.queryType) mismatches.push(`raw 状态查询类型应为 ${expected.queryType}，实际为 ${status.query_type || "未记录"}`);
+    if (!status.raw_file || status.raw_file !== rawFile) mismatches.push("下载响应与项目 raw 状态指向的文件不一致");
+  }
+  return mismatches;
+}
+
 export default function StructureFetchPage({
   project: initialProject,
   onBack,
@@ -219,8 +258,17 @@ export default function StructureFetchPage({
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [previewingCandidateId, setPreviewingCandidateId] = useState("");
   const activeTaskAbortRef = useRef<AbortController | null>(null);
+  const rcsbSearchGenerationRef = useRef(0);
+  const pubchemSearchGenerationRef = useRef(0);
+  const searchRequestSequenceRef = useRef(0);
+  const activeSearchRequestRef = useRef(0);
 
-  useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
+  useEffect(() => () => {
+    activeTaskAbortRef.current?.abort();
+    rcsbSearchGenerationRef.current += 1;
+    pubchemSearchGenerationRef.current += 1;
+    activeSearchRequestRef.current = 0;
+  }, []);
 
   useEffect(() => {
     setProject(initialProject);
@@ -291,13 +339,21 @@ export default function StructureFetchPage({
   );
 
   const prepareRaw = useCallback(async (target: PreparationTarget, controller: AbortController) => {
+    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
     const label = target === "receptor" ? "受体" : "配体";
     setBusyAction(target === "receptor" ? "prepare-receptor" : "prepare-ligand");
     setMessage(`${label}原始结构已保存，正在自动转换为 PDBQT…`);
     setRawError("");
 
     const started = await startPreparationTask(project.project_dir, target, true);
+    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
+    if (started.deduplicated) {
+      setMessage(`${label}已有一个结构转换任务正在运行。为避免把旧输入误认为本次输入，本次不会复用该任务；请等待任务结束后刷新状态并重试。`);
+      setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未继续自动转换。`);
+      return false;
+    }
     const completed = await waitForTask(started, controller);
+    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
     if (completed.status === "cancelled") {
       setMessage(`${label}自动转换任务已取消；原始结构仍保留在项目 raw/ 目录。`);
       return false;
@@ -334,6 +390,13 @@ export default function StructureFetchPage({
       return;
     }
 
+    const generationRef = isRcsb ? rcsbSearchGenerationRef : pubchemSearchGenerationRef;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    const requestId = searchRequestSequenceRef.current + 1;
+    searchRequestSequenceRef.current = requestId;
+    activeSearchRequestRef.current = requestId;
+
     setIsBusy(true);
     setBusyAction(isRcsb ? "search-receptor" : "search-ligand");
     if (isRcsb) setReceptorPreview(null);
@@ -350,6 +413,7 @@ export default function StructureFetchPage({
         },
       );
       const response = parseSearchResponse(rawPayload);
+      if (generationRef.current !== generation || activeSearchRequestRef.current !== requestId) return;
       if (isRcsb) setRcsbResults(response);
       else setPubchemResults(response);
       if (!response.ok) {
@@ -359,11 +423,15 @@ export default function StructureFetchPage({
       }
       setMessage(response.message || `找到 ${response.returned_count} 个候选，请明确选择后再下载。`);
     } catch (error) {
+      if (generationRef.current !== generation || activeSearchRequestRef.current !== requestId) return;
       setMessage(isRcsb ? "无法搜索 RCSB PDB 候选结构。" : "无法搜索 PubChem 候选化合物。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusyAction(null);
-      setIsBusy(false);
+      if (activeSearchRequestRef.current === requestId) {
+        activeSearchRequestRef.current = 0;
+        setBusyAction(null);
+        setIsBusy(false);
+      }
     }
   };
 
@@ -407,6 +475,14 @@ export default function StructureFetchPage({
   const selectAndPrepareCandidate = async (target: PreparationTarget, candidate: StructureSearchCandidate) => {
     const isReceptor = target === "receptor";
     const label = isReceptor ? "受体" : "配体";
+    const selection = candidate.selection;
+    const ligandQueryType = selection.query_type === "cid" ? "cid" : "name";
+    const expectedQueryType = isReceptor ? "pdb_id" : ligandQueryType;
+    const expectedSourceId = isReceptor
+      ? selection.pdb_id || candidate.source_id
+      : selection.query || candidate.source_id;
+    const expectedFormat = isReceptor ? pdbFormat : "sdf";
+    const expectedSource = isReceptor ? "rcsb_pdb" : "pubchem";
     activeTaskAbortRef.current?.abort();
     const controller = new AbortController();
     activeTaskAbortRef.current = controller;
@@ -415,22 +491,27 @@ export default function StructureFetchPage({
     setMessage(`正在下载已选择的${label}候选：${candidate.source_id}…`);
     setRawError("");
     try {
-      const selection = candidate.selection;
       const started = isReceptor
         ? await startPdbFetchTask(
           project.project_dir,
-          selection.pdb_id || candidate.source_id,
-          pdbFormat,
+          expectedSourceId,
+          expectedFormat,
           overwritePdb,
         )
         : await startPubchemFetchTask(
           project.project_dir,
-          selection.query || candidate.source_id,
-          selection.query_type === "cid" ? "cid" : "name",
-          "sdf",
+          expectedSourceId,
+          ligandQueryType,
+          expectedFormat,
           overwritePubchem,
         );
+      if (started.deduplicated) {
+        setMessage(`${label}已有一个结构获取任务正在运行。为避免把旧候选误认为 ${candidate.source_id}，本次不会复用该任务；请等待任务结束后刷新并重试。`);
+        setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未下载或自动转换所选候选。`);
+        return;
+      }
       const completed = await waitForTask(started, controller);
+      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
       if (completed.status === "cancelled") {
         setMessage(`${label}结构获取任务已取消。`);
         return;
@@ -444,22 +525,45 @@ export default function StructureFetchPage({
         return;
       }
       applyProjectResponse(response, `${label}原始结构已下载。`);
+      const refreshed = await refreshRawStatus(false);
+      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
+      if (!refreshed.ok) {
+        throw new Error(errorDetails(refreshed.error) || `${label} raw 状态读取失败，已停止自动转换。`);
+      }
+      const status = isReceptor
+        ? refreshed.receptor ?? findStatus(refreshed.files ?? [], "receptor_raw")
+        : refreshed.ligand ?? findStatus(refreshed.files ?? [], "ligand_raw");
+      const mismatches = candidateAcquisitionMismatches(response, status, {
+        source: expectedSource,
+        sourceId: expectedSourceId,
+        queryType: expectedQueryType,
+        format: expectedFormat,
+      });
+      if (mismatches.length) {
+        setMessage(`${label}候选下载结果与本次选择不一致，已停止自动转换。raw 文件会保留，等待人工检查。`);
+        setRawError(mismatches.map((item) => `- ${item}`).join("\n"));
+        return;
+      }
       await prepareRaw(target, controller);
+      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
       await refreshRawStatus(false);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage(`无法完成${label}候选的下载与自动转换。若 raw 文件已经写入，它会被保留；可打开“格式转换与 PDBQT 准备”检查并重试。`);
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
-      setBusyAction(null);
-      setIsBusy(false);
+      if (activeTaskAbortRef.current === controller) {
+        activeTaskAbortRef.current = null;
+        setBusyAction(null);
+        setIsBusy(false);
+      }
     }
   };
 
   const importLocalRaw = async (target: PreparationTarget) => {
     const isReceptor = target === "receptor";
     const label = isReceptor ? "受体" : "配体";
+    let controller: AbortController | null = null;
     setMessage("");
     setRawError("");
     try {
@@ -475,34 +579,35 @@ export default function StructureFetchPage({
       if (!sourcePath) return;
 
       activeTaskAbortRef.current?.abort();
-      const controller = new AbortController();
+      controller = new AbortController();
       activeTaskAbortRef.current = controller;
       setIsBusy(true);
       setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
-      try {
-        setMessage(`正在导入${label}原始结构…`);
-        const rawPayload = await invoke<string>(
-          isReceptor ? "import_receptor_raw_file" : "import_ligand_raw_file",
-          { projectDir: project.project_dir, sourcePath },
-        );
-        const response = parseProjectResponse(rawPayload);
-        if (!response.ok) {
-          applyProjectResponse(response, `无法导入${label}原始结构。`);
-          return;
-        }
-        applyProjectResponse(response, `${label}原始结构已导入。`);
-        await prepareRaw(target, controller);
-        await refreshRawStatus(false);
-      } finally {
-        if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
+      setMessage(`正在导入${label}原始结构…`);
+      const rawPayload = await invoke<string>(
+        isReceptor ? "import_receptor_raw_file" : "import_ligand_raw_file",
+        { projectDir: project.project_dir, sourcePath },
+      );
+      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
+      const response = parseProjectResponse(rawPayload);
+      if (!response.ok) {
+        applyProjectResponse(response, `无法导入${label}原始结构。`);
+        return;
       }
+      applyProjectResponse(response, `${label}原始结构已导入。`);
+      await prepareRaw(target, controller);
+      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
+      await refreshRawStatus(false);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setMessage(`无法完成${label}原始结构的导入与自动转换。若 raw 文件已经写入，它会被保留。`);
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusyAction(null);
-      setIsBusy(false);
+      if (controller && activeTaskAbortRef.current === controller) {
+        activeTaskAbortRef.current = null;
+        setBusyAction(null);
+        setIsBusy(false);
+      }
     }
   };
 
@@ -570,7 +675,7 @@ export default function StructureFetchPage({
         <div className="structure-candidate-heading">
           <div>
             <strong>搜索结果</strong>
-            <span>显示 {response.returned_count} / {response.total_count} 个候选</span>
+            <span>查询“{response.query}” · 显示 {response.returned_count} / {response.total_count} 个候选</span>
           </div>
           <StatusBadge tone={response.candidates.length ? "info" : "warning"}>
             {response.candidates.length ? "等待选择" : "无结果"}
@@ -683,6 +788,7 @@ export default function StructureFetchPage({
                       id="rcsb-query"
                       value={rcsbQuery}
                       onChange={(event) => {
+                        rcsbSearchGenerationRef.current += 1;
                         setRcsbQuery(event.target.value);
                         setRcsbResults(null);
                         setReceptorPreview(null);
@@ -696,6 +802,7 @@ export default function StructureFetchPage({
                       id="rcsb-query-type"
                       value={rcsbQueryType}
                       onChange={(event) => {
+                        rcsbSearchGenerationRef.current += 1;
                         setRcsbQueryType(event.target.value as RcsbQueryType);
                         setRcsbResults(null);
                         setReceptorPreview(null);
@@ -716,6 +823,7 @@ export default function StructureFetchPage({
                       step="1"
                       value={rcsbLimit}
                       onChange={(event) => {
+                        rcsbSearchGenerationRef.current += 1;
                         setRcsbLimit(event.target.value);
                         setRcsbResults(null);
                         setReceptorPreview(null);
@@ -778,6 +886,7 @@ export default function StructureFetchPage({
                       id="pubchem-query"
                       value={pubchemQuery}
                       onChange={(event) => {
+                        pubchemSearchGenerationRef.current += 1;
                         setPubchemQuery(event.target.value);
                         setPubchemResults(null);
                         setLigandPreview(null);
@@ -791,6 +900,7 @@ export default function StructureFetchPage({
                       id="pubchem-query-type"
                       value={pubchemQueryType}
                       onChange={(event) => {
+                        pubchemSearchGenerationRef.current += 1;
                         setPubchemQueryType(event.target.value as PubchemQueryType);
                         setPubchemResults(null);
                         setLigandPreview(null);
@@ -812,6 +922,7 @@ export default function StructureFetchPage({
                       step="1"
                       value={pubchemLimit}
                       onChange={(event) => {
+                        pubchemSearchGenerationRef.current += 1;
                         setPubchemLimit(event.target.value);
                         setPubchemResults(null);
                         setLigandPreview(null);

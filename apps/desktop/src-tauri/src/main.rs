@@ -1997,6 +1997,58 @@ fn start_background_job(app: tauri::AppHandle, spec: BackgroundJobSpec) -> Strin
     background_task_status_json(&queued_record, false)
 }
 
+fn structure_fetch_task_key(
+    project_key: &str,
+    target: &str,
+    request_parts: &[&str],
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    for part in request_parts {
+        part.hash(&mut hasher);
+    }
+    format!(
+        "structure-fetch|{project_key}|{target}|{:016x}",
+        hasher.finish()
+    )
+}
+
+fn preparation_task_key(project_dir: &str, target: &str) -> String {
+    let project_key = normalized_project_key(project_dir);
+    let project_root = PathBuf::from(project_dir);
+    let project_json = project_root.join("project.json");
+    let mut hasher = DefaultHasher::new();
+    target.hash(&mut hasher);
+
+    if let Ok(content) = fs::read_to_string(&project_json) {
+        if let Ok(project) = serde_json::from_str::<serde_json::Value>(&content) {
+            let raw_file = project
+                .get(target)
+                .and_then(|value| value.get("raw_file"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            raw_file.hash(&mut hasher);
+            if !raw_file.trim().is_empty() {
+                let relative = Path::new(raw_file);
+                if !relative.is_absolute() {
+                    let candidate = project_root.join(relative);
+                    if let (Ok(canonical_root), Ok(canonical_candidate)) =
+                        (fs::canonicalize(&project_root), fs::canonicalize(&candidate))
+                    {
+                        if canonical_candidate.starts_with(&canonical_root) {
+                            hash_path_signature(&mut hasher, &canonical_candidate, true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    format!(
+        "preparation|{project_key}|{target}|{:016x}",
+        hasher.finish()
+    )
+}
+
 #[tauri::command]
 fn start_preparation_task(
     app: tauri::AppHandle,
@@ -2016,12 +2068,12 @@ fn start_preparation_task(
     } else {
         "prepare-ligand"
     };
-    let project_key = normalized_project_key(&project_dir);
+    let task_key = preparation_task_key(&project_dir, &normalized_target);
     start_background_job(
         app,
         BackgroundJobSpec {
             kind: "preparation".to_string(),
-            key: format!("preparation|{project_key}|{normalized_target}"),
+            key: task_key,
             module: "dockstart_core.preparation".to_string(),
             args: vec![
                 command.to_string(),
@@ -2045,17 +2097,25 @@ fn start_pdb_fetch_task(
     overwrite: bool,
 ) -> String {
     let project_key = normalized_project_key(&project_dir);
+    let normalized_pdb_id = pdb_id.trim().to_uppercase();
+    let normalized_format = format.trim().to_lowercase();
+    let overwrite_key = overwrite.to_string();
+    let task_key = structure_fetch_task_key(
+        &project_key,
+        "receptor",
+        &[&normalized_pdb_id, &normalized_format, &overwrite_key],
+    );
     start_background_job(
         app,
         BackgroundJobSpec {
             kind: "structure-fetch".to_string(),
-            key: format!("structure-fetch|{project_key}|receptor"),
+            key: task_key,
             module: "dockstart_core.structure_fetch".to_string(),
             args: vec![
                 "fetch-pdb".to_string(),
                 project_dir.clone(),
-                pdb_id,
-                format,
+                normalized_pdb_id,
+                normalized_format,
                 overwrite.to_string(),
             ],
             project_dir,
@@ -2076,19 +2136,38 @@ fn start_pubchem_fetch_task(
     overwrite: bool,
 ) -> String {
     let project_key = normalized_project_key(&project_dir);
+    let normalized_query_type = query_type.trim().to_lowercase();
+    let request_query = query.trim().to_string();
+    let normalized_query = if normalized_query_type == "cid" {
+        request_query.clone()
+    } else {
+        request_query.to_lowercase()
+    };
+    let normalized_format = format.trim().to_lowercase();
+    let overwrite_key = overwrite.to_string();
+    let task_key = structure_fetch_task_key(
+        &project_key,
+        "ligand",
+        &[
+            &normalized_query_type,
+            &normalized_query,
+            &normalized_format,
+            &overwrite_key,
+        ],
+    );
     start_background_job(
         app,
         BackgroundJobSpec {
             kind: "structure-fetch".to_string(),
-            key: format!("structure-fetch|{project_key}|ligand"),
+            key: task_key,
             module: "dockstart_core.structure_fetch".to_string(),
             args: vec![
                 "fetch-pubchem".to_string(),
                 project_dir.clone(),
-                query,
-                format,
+                request_query,
+                normalized_format,
                 overwrite.to_string(),
-                query_type,
+                normalized_query_type,
             ],
             project_dir,
             run_id: String::new(),
@@ -3456,6 +3535,45 @@ mod tests {
 
         fs::write(&manifest, br#"{"release_profile":"custom"}"#).unwrap();
         assert!(distribution_profile_from_manifest(&manifest).is_err());
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn structure_fetch_task_key_tracks_the_selected_candidate() {
+        let project = "project-key";
+        let first = structure_fetch_task_key(project, "receptor", &["1IEP", "pdb", "false"]);
+        let same = structure_fetch_task_key(project, "receptor", &["1IEP", "pdb", "false"]);
+        let second = structure_fetch_task_key(project, "receptor", &["3PTB", "pdb", "false"]);
+        let cif = structure_fetch_task_key(project, "receptor", &["1IEP", "cif", "false"]);
+
+        assert_eq!(first, same);
+        assert_ne!(first, second);
+        assert_ne!(first, cif);
+    }
+
+    #[test]
+    fn preparation_task_key_tracks_the_raw_input() {
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-preparation-key-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let raw_dir = test_root.join("raw");
+        fs::create_dir_all(&raw_dir).unwrap();
+        fs::write(
+            test_root.join("project.json"),
+            br#"{"receptor":{"raw_file":"raw/receptor.pdb"}}"#,
+        )
+        .unwrap();
+        fs::write(raw_dir.join("receptor.pdb"), b"ATOM A").unwrap();
+
+        let first = preparation_task_key(&test_root.to_string_lossy(), "receptor");
+        let same = preparation_task_key(&test_root.to_string_lossy(), "receptor");
+        fs::write(raw_dir.join("receptor.pdb"), b"ATOM B with different length").unwrap();
+        let changed = preparation_task_key(&test_root.to_string_lossy(), "receptor");
+
+        assert_eq!(first, same);
+        assert_ne!(first, changed);
         let _ = fs::remove_dir_all(test_root);
     }
 

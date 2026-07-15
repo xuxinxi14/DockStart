@@ -341,6 +341,96 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertEqual(updated["preparation"]["receptor"]["error"]["code"], "RECEPTOR_PREPARATION_FAILED")
         self.assertIsNotNone(updated["preparation"]["receptor"]["finished_at"])
 
+    def test_changed_raw_content_rejects_candidate_and_preserves_previous_output(self) -> None:
+        raw_path: Path | None = None
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            output_stem = Path(command[command.index("-o") + 1])
+            output_stem.with_suffix(".pdbqt").write_text("REMARK stale candidate\n", encoding="utf-8")
+            assert raw_path is not None
+            raw_path.write_text("ATOM changed after claim\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="mock receptor stdout", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw_path = self._set_receptor_raw(project_dir, "raw/receptor.pdb", content="ATOM original\n")
+            previous_output = project_dir / RECEPTOR_PREPARATION_OUTPUT
+            previous_output.write_text("REMARK previous prepared receptor\n", encoding="utf-8")
+            project_json = project_dir / "project.json"
+            before = json.loads(project_json.read_text(encoding="utf-8"))
+            before["receptor"]["file"] = RECEPTOR_PREPARATION_OUTPUT
+            project_json.write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
+
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                result = prepare_receptor_pdbqt(str(project_dir), overwrite=True)
+
+            updated = json.loads(project_json.read_text(encoding="utf-8"))
+            metadata = json.loads((project_dir / result["metadata_file"]).read_text(encoding="utf-8"))
+            input_snapshot = json.loads((project_dir / metadata["input_snapshot_file"]).read_text(encoding="utf-8"))
+            output_check = json.loads((project_dir / metadata["output_check_file"]).read_text(encoding="utf-8"))
+            candidate = project_dir / metadata["candidate_output_file"]
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PREPARATION_INPUT_STALE")
+            self.assertEqual(previous_output.read_text(encoding="utf-8"), "REMARK previous prepared receptor\n")
+            self.assertTrue(candidate.is_file())
+            self.assertEqual(candidate.read_text(encoding="utf-8"), "REMARK stale candidate\n")
+            self.assertFalse(output_check["published"])
+            self.assertFalse(output_check["input_verification"]["matches"])
+            self.assertIn("raw 文件内容 SHA256 已变化", output_check["input_verification"]["reasons"])
+            self.assertEqual(updated["preparation"]["receptor"]["status"], "failed")
+            self.assertEqual(updated["preparation"]["receptor"]["error"]["code"], "PREPARATION_INPUT_STALE")
+            self.assertEqual(updated["receptor"]["file"], RECEPTOR_PREPARATION_OUTPUT)
+            self.assertEqual(input_snapshot["canonical_input_file"], "raw/receptor.pdb")
+            self.assertEqual(len(input_snapshot["input_sha256"]), 64)
+            self.assertEqual(metadata["claimed_input"]["sha256"], input_snapshot["input_sha256"])
+
+    def test_changed_raw_reference_rejects_candidate_even_when_bytes_match(self) -> None:
+        project_json: Path | None = None
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            output_stem = Path(command[command.index("-o") + 1])
+            output_stem.with_suffix(".pdbqt").write_text("REMARK stale candidate\n", encoding="utf-8")
+            assert project_json is not None
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["receptor"]["raw_file"] = "raw/receptor_replacement.pdb"
+            project_json.write_text(json.dumps(project, ensure_ascii=False), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="mock receptor stdout", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw_content = "ATOM identical bytes\n"
+            self._set_receptor_raw(project_dir, "raw/receptor.pdb", content=raw_content)
+            (project_dir / "raw" / "receptor_replacement.pdb").write_text(raw_content, encoding="utf-8")
+            project_json = project_dir / "project.json"
+
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                result = prepare_receptor_pdbqt(str(project_dir), overwrite=False)
+
+            updated = json.loads(project_json.read_text(encoding="utf-8"))
+            metadata = json.loads((project_dir / result["metadata_file"]).read_text(encoding="utf-8"))
+            output_check = json.loads((project_dir / metadata["output_check_file"]).read_text(encoding="utf-8"))
+            candidate = project_dir / metadata["candidate_output_file"]
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PREPARATION_INPUT_STALE")
+            self.assertFalse((project_dir / RECEPTOR_PREPARATION_OUTPUT).exists())
+            self.assertTrue(candidate.is_file())
+            self.assertFalse(output_check["published"])
+            self.assertIn("project.json 的 raw 引用已变化", output_check["input_verification"]["reasons"])
+            self.assertNotIn("raw 文件内容 SHA256 已变化", output_check["input_verification"]["reasons"])
+            self.assertEqual(updated["receptor"]["raw_file"], "raw/receptor_replacement.pdb")
+            self.assertEqual(updated["preparation"]["receptor"]["status"], "failed")
+            self.assertEqual(updated["preparation"]["receptor"]["error"]["code"], "PREPARATION_INPUT_STALE")
+
 
 if __name__ == "__main__":
     unittest.main()

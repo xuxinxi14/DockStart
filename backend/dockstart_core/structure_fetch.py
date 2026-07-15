@@ -25,8 +25,16 @@ SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol"}
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_SEARCH_LIMIT = 8
 MAX_SEARCH_LIMIT = 20
+MAX_SEARCH_RESPONSE_BYTES = 4 * 1024 * 1024
 
 Fetcher = Callable[[str, int], bytes]
+
+
+class _SearchResponseTooLarge(RuntimeError):
+    def __init__(self, observed_size: int, source: str) -> None:
+        super().__init__(f"{source}={observed_size}")
+        self.observed_size = observed_size
+        self.source = source
 
 
 def validate_pdb_id(pdb_id: str) -> dict[str, Any]:
@@ -137,6 +145,26 @@ def _fetch_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
         return response.read()
 
 
+def _fetch_search_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
+    """Read a bounded JSON response from DockStart's fixed official APIs."""
+
+    request = urllib.request.Request(url, headers={"User-Agent": f"DockStart/{__version__}"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS endpoints only.
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except (TypeError, ValueError):
+                declared_size = -1
+            if declared_size > MAX_SEARCH_RESPONSE_BYTES:
+                raise _SearchResponseTooLarge(declared_size, "content_length")
+
+        data = response.read(MAX_SEARCH_RESPONSE_BYTES + 1)
+        if len(data) > MAX_SEARCH_RESPONSE_BYTES:
+            raise _SearchResponseTooLarge(len(data), "actual_bytes")
+        return data
+
+
 def _download(url: str, fetcher: Fetcher | None, timeout: int) -> tuple[bytes | None, dict[str, Any] | None]:
     try:
         data = (fetcher or _fetch_bytes)(url, timeout)
@@ -188,7 +216,19 @@ def _fetch_json(
     """Read JSON from a fixed official endpoint with UI-safe errors."""
 
     try:
-        data = (fetcher or _fetch_bytes)(url, timeout)
+        data = fetcher(url, timeout) if fetcher else _fetch_search_bytes(url, timeout)
+        if len(data) > MAX_SEARCH_RESPONSE_BYTES:
+            raise _SearchResponseTooLarge(len(data), "actual_bytes")
+    except _SearchResponseTooLarge as exc:
+        return None, _error(
+            "STRUCTURE_SEARCH_RESPONSE_TOO_LARGE",
+            f"{provider_name} 搜索响应超过 4 MiB 安全上限，已停止读取。",
+            raw_error=(
+                f"{exc.source}={exc.observed_size} bytes; "
+                f"limit={MAX_SEARCH_RESPONSE_BYTES} bytes"
+            ),
+            suggestion="请减少候选数量、缩短关键词后重试，或手动下载并导入目标结构。",
+        )
     except urllib.error.HTTPError as exc:
         return None, _error(
             "STRUCTURE_SEARCH_HTTP_ERROR",
@@ -249,6 +289,22 @@ def _load_project_for_raw(project_dir: str) -> tuple[Any | None, dict[str, Any] 
     if not loaded.get("ok"):
         return None, loaded
     return _project_from_dict(loaded["project"], Path(project_dir).expanduser()), None
+
+
+def _preparation_running_error(project: Any, target: str) -> dict[str, Any] | None:
+    preparation = getattr(project, "preparation", None)
+    target_state = getattr(preparation, target, None)
+    if str(getattr(target_state, "status", "") or "") != "running":
+        return None
+
+    label = "受体" if target == "receptor" else "配体"
+    prep_id = str(getattr(target_state, "prep_id", "") or "")
+    return _error(
+        "PREPARATION_IN_PROGRESS",
+        f"{label}格式转换仍在运行，当前不能替换对应的原始结构。",
+        raw_error=f"target={target}; prep_id={prep_id or 'unknown'}",
+        suggestion="请等待转换结束；如任务已异常中断，请先在“格式转换与 PDBQT 准备”页面恢复或重置状态。",
+    )
 
 
 def _write_raw_file(target_path: Path, data: bytes, overwrite: bool) -> dict[str, Any]:
@@ -328,6 +384,9 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
     if project_error:
         return project_error
     assert project is not None
+    running_error = _preparation_running_error(project, role)
+    if running_error:
+        return running_error
 
     source = Path(str(validation["path"]))
     file_format = str(validation["format"])
@@ -821,6 +880,9 @@ def fetch_pdb_structure(
     if project_error:
         return project_error
     assert project is not None
+    running_error = _preparation_running_error(project, "receptor")
+    if running_error:
+        return running_error
 
     normalized_pdb_id = validation["pdb_id"]
     relative_file = Path("raw", f"receptor_{normalized_pdb_id}.{file_format}").as_posix()
@@ -911,6 +973,9 @@ def fetch_pubchem_ligand(
     if project_error:
         return project_error
     assert project is not None
+    running_error = _preparation_running_error(project, "ligand")
+    if running_error:
+        return running_error
 
     project_path = Path(project.project_dir).expanduser()
     target_path = project_path / relative_file
