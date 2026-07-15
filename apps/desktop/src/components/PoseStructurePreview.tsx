@@ -21,6 +21,7 @@ type PoseStructurePreviewProps = {
   projectDir: string;
   runId: string;
   mode: number;
+  focusRequest?: { mode: number; token: number } | null;
   refreshKey?: number;
   className?: string;
 };
@@ -33,6 +34,7 @@ export default function PoseStructurePreview({
   projectDir,
   runId,
   mode,
+  focusRequest = null,
   refreshKey = 0,
   className = "",
 }: PoseStructurePreviewProps) {
@@ -223,6 +225,22 @@ export default function PoseStructurePreview({
       })
       .catch((error) => setMessage(error instanceof Error ? error.message : "3D 场景渲染失败"));
   }, [pose, receptor, renderScene]);
+
+  useEffect(() => {
+    if (!focusRequest || focusRequest.mode !== mode || !pose?.ok) return;
+    let cancelled = false;
+    void renderScene(false).then(() => {
+      const viewer = viewerRef.current;
+      const poseModel = poseModelRef.current?.model;
+      if (cancelled || !viewer || !poseModel || loadedPoseModeRef.current !== mode) return;
+      viewer.zoomTo({ model: poseModel }, 320);
+      viewer.render();
+      setMessage(`已定位到 Mode ${mode} 配体构象`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [focusRequest, mode, pose, renderScene]);
 
   useEffect(() => () => {
     const viewer = viewerRef.current as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null;

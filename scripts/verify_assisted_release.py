@@ -115,6 +115,38 @@ def _run_json_module(
     return payload
 
 
+def _convert_pdb_fixture_to_cif(
+    python_exe: Path,
+    pdb_path: Path,
+    cif_path: Path,
+    env: dict[str, str],
+) -> None:
+    """Create an offline CIF fixture with the packaged Gemmi runtime."""
+
+    script = (
+        "import gemmi,sys;"
+        "structure=gemmi.read_structure(sys.argv[1]);"
+        "structure.make_mmcif_document().write_file(sys.argv[2])"
+    )
+    completed = subprocess.run(
+        [str(python_exe), "-I", "-B", "-c", script, str(pdb_path), str(cif_path)],
+        cwd=cif_path.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssistedReleaseVerificationError(
+            "Packaged Gemmi could not create the CIF release fixture: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}",
+        )
+    _require_file(cif_path, "Assisted CIF receptor fixture")
+
+
 def _runtime_probe(python_exe: Path, layout: Path, manifest: dict[str, Any]) -> dict[str, str]:
     expected_packages = manifest.get("packages")
     if not isinstance(expected_packages, dict):
@@ -327,6 +359,25 @@ def verify_assisted_release(
             "assisted_raw",
         )
         project_dir = _find_project_dir(demo)
+        cif_source = work_root / "assisted_receptor.cif"
+        _convert_pdb_fixture_to_cif(
+            python_exe,
+            _require_file(project_dir / "raw" / "receptor.pdb", "Assisted source receptor PDB"),
+            cif_source,
+            env,
+        )
+        imported_cif = _run_json_module(
+            python_exe,
+            backend_dir,
+            env,
+            "dockstart_core.structure_fetch",
+            "import-receptor-raw",
+            str(project_dir),
+            str(cif_source),
+        )
+        receptor_input = str(imported_cif.get("raw_file") or "")
+        if not receptor_input.lower().endswith(".cif"):
+            raise AssistedReleaseVerificationError("Assisted CIF import did not record a CIF receptor input.")
         (project_dir / "prepared" / "receptor.pdbqt").unlink(missing_ok=True)
         (project_dir / "prepared" / "ligand.pdbqt").unlink(missing_ok=True)
         _run_json_module(python_exe, backend_dir, env, "dockstart_core.preparation", "reset", str(project_dir), "receptor")
@@ -452,8 +503,9 @@ def verify_assisted_release(
             "dependency_licenses": dependency_licenses,
             "bundled_fallback_verified": True,
             "configured_python_priority_verified": True,
-            "receptor_input": "raw/receptor.pdb",
+            "receptor_input": receptor_input,
             "ligand_input": "raw/ligand.sdf",
+            "cif_preparation_verified": True,
             "run_id": run_id,
             "run_status": run_metadata.get("status"),
             "best_affinity": float(scores[0]["affinity_kcal_mol"]),

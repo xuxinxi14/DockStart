@@ -9,9 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = BACKEND_ROOT.parent
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from adapters import meeko_adapter  # noqa: E402
 from dockstart_core.preparation import (  # noqa: E402
     RECEPTOR_PREPARATION_OUTPUT,
     build_receptor_preparation_command_or_script,
@@ -22,7 +24,12 @@ from dockstart_core.preparation import (  # noqa: E402
 from dockstart_core.project import create_project  # noqa: E402
 
 
-def _tool_status(meeko: str = "ok", receptor_capability: str = "ok", cli: bool = True) -> dict:
+def _tool_status(
+    meeko: str = "ok",
+    receptor_capability: str = "ok",
+    cli: bool = True,
+    cif_input_available: bool = True,
+) -> dict:
     cli_candidates = [sys.executable] if cli else []
     return {
         "ok": True,
@@ -67,6 +74,8 @@ def _tool_status(meeko: str = "ok", receptor_capability: str = "ok", cli: bool =
                         "status": receptor_capability,
                         "message": "mock receptor capability",
                         "cli_candidates_found": cli_candidates,
+                        "cif_input_available": cif_input_available,
+                        "cif_parser": "gemmi" if cif_input_available else "",
                     }
                 },
                 "message": "mock",
@@ -102,6 +111,23 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertIn("--read_pdb", result["command"])
         self.assertNotIn("-i", result["command"])
+
+    def test_build_receptor_command_uses_gemmi_helper_without_prody_for_cif_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(project_dir, "raw/receptor.cif", content="data_test\n")
+            with patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()):
+                result = build_receptor_preparation_command_or_script(str(project_dir), overwrite=False)
+            helper = Path(result["command"][3])
+            helper_text = helper.read_text(encoding="utf-8")
+
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("-i", result["command"])
+        self.assertNotIn("--read_with_prody", result["command"])
+        self.assertIn("prepare_receptor_cif_gemmi_meeko.py", result["script_file"])
+        self.assertIn("receptor_from_cif.pdb", result["intermediate_input_file"])
+        self.assertIn("import gemmi", helper_text)
+        self.assertIn('"--read_pdb"', helper_text)
 
     def test_validate_receptor_preparation_input_missing_raw_record_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -154,6 +180,90 @@ class ReceptorPreparationTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("mk_prepare_receptor", result["error"]["raw_error"])
+
+    def test_validate_cif_requires_gemmi_capability(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(project_dir, "raw/receptor.cif", content="data_test\n")
+            with patch(
+                "dockstart_core.preparation.get_preparation_tool_status",
+                return_value=_tool_status(cif_input_available=False),
+            ):
+                result = validate_receptor_preparation_input(str(project_dir))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "RECEPTOR_PREPARATION_TOOLS_NOT_READY")
+        self.assertIn("Gemmi CIF parser", result["error"]["raw_error"])
+
+    def test_bundled_runtime_prepares_cif_through_gemmi_without_prody(self) -> None:
+        runtime = REPO_ROOT / "resources" / "python" / "python.exe"
+        source_pdb = REPO_ROOT / "resources" / "examples" / "assisted_raw" / "raw" / "receptor.pdb"
+        if not runtime.is_file():
+            self.skipTest("本地未装配 Assisted Python runtime。")
+        self.assertTrue(source_pdb.is_file(), source_pdb)
+
+        detected_meeko = meeko_adapter.detect_meeko_capabilities(str(runtime), "bundled")
+        receptor_capability = detected_meeko.get("capabilities", {}).get("receptor_preparation", {})
+        self.assertTrue(receptor_capability.get("cif_input_available"), receptor_capability)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            cif_path = project_dir / "raw" / "receptor.cif"
+            converted = subprocess.run(
+                [
+                    str(runtime),
+                    "-I",
+                    "-B",
+                    "-c",
+                    (
+                        "import gemmi,sys; "
+                        "structure=gemmi.read_structure(sys.argv[1]); "
+                        "structure.make_mmcif_document().write_file(sys.argv[2])"
+                    ),
+                    str(source_pdb),
+                    str(cif_path),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            self.assertEqual(converted.returncode, 0, converted.stderr)
+            self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.cif",
+                content=cif_path.read_text(encoding="utf-8"),
+            )
+
+            tool_status = _tool_status()
+            tool_status["tools"]["python"].update(
+                {"path": str(runtime), "source": "bundled", "is_bundled": True},
+            )
+            tool_status["tools"]["meeko"] = detected_meeko
+            with patch(
+                "dockstart_core.preparation.get_preparation_tool_status",
+                return_value=tool_status,
+            ):
+                result = prepare_receptor_pdbqt(str(project_dir), overwrite=False)
+
+            metadata = json.loads(
+                (project_dir / str(result.get("metadata_file") or "missing")).read_text(encoding="utf-8"),
+            )
+            stdout = (project_dir / str(result.get("stdout_file") or "missing")).read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+            project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+
+            self.assertTrue(result["ok"], result)
+            self.assertTrue((project_dir / RECEPTOR_PREPARATION_OUTPUT).is_file())
+            self.assertTrue((project_dir / metadata["intermediate_input_file"]).is_file())
+            self.assertIn("Gemmi", stdout)
+            self.assertEqual(metadata["method"], "meeko")
+            self.assertIn("prepare_receptor_cif_gemmi_meeko.py", metadata["script_file"])
+            self.assertNotIn("--read_with_prody", metadata["command"])
+            self.assertEqual(project["preparation"]["receptor"]["status"], "finished")
 
     def test_existing_receptor_pdbqt_without_overwrite_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

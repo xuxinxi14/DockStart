@@ -856,6 +856,23 @@ export default function RunPreparePage({
                   })}
                 </div>
                 <p className="run-science-note">Vina 使用随机搜索与局部优化；界面不将其错误描述为遗传算法。不同评分函数的分值不能直接横向比较。</p>
+                <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
+                  <div>
+                    <FloppyDisk aria-hidden="true" size={18} weight="duotone" />
+                    <span>
+                      <strong>{isDirty ? "参数有未保存更改" : "当前参数已经保存"}</strong>
+                      <small>保存 Box 与 Vina 参数，并立即重新执行运行前检查。</small>
+                    </span>
+                  </div>
+                  <ActionButton
+                    className="run-parameter-save-button"
+                    variant={isDirty ? "primary" : "secondary"}
+                    disabled={isBusy || !formIsValid}
+                    onClick={() => void saveAndRefresh()}
+                  >
+                    <FloppyDisk size={16} /> 保存参数并重新检查
+                  </ActionButton>
+                </div>
               </div>
 
               <div className="run-ledger-group">
@@ -926,10 +943,11 @@ export default function RunPreparePage({
             ) : null}
 
             <div className="run-action-bar">
-              <div>
-                <ActionButton variant="secondary" disabled={isBusy || !formIsValid} onClick={() => void saveAndRefresh()}>
-                  <FloppyDisk size={16} /> 保存并重新检查
-                </ActionButton>
+              <div className="run-action-context">
+                <span className={`run-action-save-status ${isDirty ? "dirty" : "saved"}`}>
+                  <FloppyDisk aria-hidden="true" size={15} />
+                  {isDirty ? "参数尚未保存" : "参数已保存并通过最新检查"}
+                </span>
                 {activeRunId && stage !== "finished" ? (
                   <ActionButton variant="text" onClick={() => onOpenRunExecute(project, activeRunId)}>打开运行详情</ActionButton>
                 ) : null}

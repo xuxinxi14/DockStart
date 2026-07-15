@@ -38,6 +38,106 @@ const MAX_QUEUED_BACKGROUND_TASKS: usize = 32;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+fn distribution_manifest_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(resource_dir) = env::var(RESOURCE_DIR_ENV_VAR) {
+        let resource_dir = PathBuf::from(resource_dir);
+        candidates.push(
+            resource_dir
+                .join("resources")
+                .join("toolchain_manifest.json"),
+        );
+        candidates.push(resource_dir.join("toolchain_manifest.json"));
+    }
+
+    if let Some(backend_dir) = find_backend_dir() {
+        if let Some(repo_root) = backend_dir.parent() {
+            candidates.push(repo_root.join("resources").join("toolchain_manifest.json"));
+        }
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        for ancestor in current_dir.ancestors().take(6) {
+            candidates.push(ancestor.join("resources").join("toolchain_manifest.json"));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.clone()));
+    candidates
+}
+
+fn distribution_profile_from_manifest(manifest_path: &Path) -> Result<serde_json::Value, String> {
+    let content =
+        fs::read_to_string(manifest_path).map_err(|error| format!("无法读取发布清单：{error}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("发布清单不是有效 JSON：{error}"))?;
+    let release_profile = manifest
+        .get("release_profile")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let display_name = match release_profile {
+        "basic_stable" => "Basic",
+        "assisted_stable" => "Assisted",
+        _ => {
+            return Err(format!(
+                "发布清单中的 release_profile 无法识别：{}",
+                if release_profile.is_empty() {
+                    "<empty>"
+                } else {
+                    release_profile
+                }
+            ))
+        }
+    };
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "release_profile": release_profile,
+        "display_name": display_name,
+        "manifest_file": manifest_path.to_string_lossy(),
+        "message": format!("当前安装为 DockStart {display_name} Stable。"),
+        "error": serde_json::Value::Null,
+    }))
+}
+
+#[tauri::command]
+fn get_distribution_profile() -> String {
+    let mut errors = Vec::new();
+    for manifest_path in distribution_manifest_candidates() {
+        if !manifest_path.is_file() {
+            continue;
+        }
+        match distribution_profile_from_manifest(&manifest_path) {
+            Ok(profile) => {
+                return serde_json::to_string(&profile).unwrap_or_else(|error| {
+                    serde_json::json!({
+                        "ok": false,
+                        "release_profile": "unknown",
+                        "display_name": "Profile 未知",
+                        "manifest_file": manifest_path.to_string_lossy(),
+                        "message": "无法显示当前安装版本。",
+                        "error": error.to_string(),
+                    })
+                    .to_string()
+                })
+            }
+            Err(error) => errors.push(format!("{}: {error}", manifest_path.display())),
+        }
+    }
+
+    serde_json::json!({
+        "ok": false,
+        "release_profile": "unknown",
+        "display_name": "Profile 未知",
+        "manifest_file": "",
+        "message": "没有找到可识别的 DockStart 发布清单。",
+        "error": errors.join("\n"),
+    })
+    .to_string()
+}
+
 #[tauri::command]
 fn refresh_runtime_cache() -> String {
     invalidate_backend_cache(CacheInvalidation::Runtime);
@@ -279,6 +379,55 @@ async fn import_ligand_pdbqt(project_dir: String, source_path: String) -> String
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法导入配体 PDBQT。", &error),
+    }
+}
+
+#[tauri::command]
+async fn search_rcsb_candidates(query: String, limit: u32, query_type: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.structure_fetch",
+        vec![
+            "search-rcsb".to_string(),
+            query,
+            limit.to_string(),
+            query_type,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法搜索 RCSB PDB 候选结构。", &error),
+    }
+}
+
+#[tauri::command]
+async fn search_pubchem_candidates(query: String, limit: u32, query_type: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.structure_fetch",
+        vec![
+            "search-pubchem".to_string(),
+            query,
+            limit.to_string(),
+            query_type,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法搜索 PubChem 候选化合物。", &error),
+    }
+}
+
+#[tauri::command]
+async fn preview_structure_candidate(selection_json: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.candidate_preview",
+        vec!["preview-candidate".to_string(), selection_json],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法加载候选结构的临时 3D 预览。", &error),
     }
 }
 
@@ -3192,6 +3341,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_distribution_profile,
             refresh_runtime_cache,
             check_tools,
             get_toolchain_status,
@@ -3211,6 +3361,9 @@ fn main() {
             load_project,
             import_receptor_pdbqt,
             import_ligand_pdbqt,
+            search_rcsb_candidates,
+            search_pubchem_candidates,
+            preview_structure_candidate,
             fetch_pdb_structure,
             fetch_pubchem_ligand,
             get_raw_files_status,
@@ -3280,6 +3433,31 @@ mod tests {
     // invalidate each other's generation while the Rust test harness runs
     // test functions in parallel.
     static BACKEND_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn distribution_profile_comes_from_the_packaged_manifest() {
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-distribution-profile-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let manifest = test_root.join("toolchain_manifest.json");
+
+        fs::write(&manifest, br#"{"release_profile":"basic_stable"}"#).unwrap();
+        let basic = distribution_profile_from_manifest(&manifest).unwrap();
+        assert_eq!(basic["release_profile"], "basic_stable");
+        assert_eq!(basic["display_name"], "Basic");
+
+        fs::write(&manifest, br#"{"release_profile":"assisted_stable"}"#).unwrap();
+        let assisted = distribution_profile_from_manifest(&manifest).unwrap();
+        assert_eq!(assisted["release_profile"], "assisted_stable");
+        assert_eq!(assisted["display_name"], "Assisted");
+
+        fs::write(&manifest, br#"{"release_profile":"custom"}"#).unwrap();
+        assert!(distribution_profile_from_manifest(&manifest).is_err());
+        let _ = fs::remove_dir_all(test_root);
+    }
 
     #[test]
     fn backend_python_commands_disable_bytecode_writes() {

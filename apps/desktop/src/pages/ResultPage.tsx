@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckCircle, Clock, FileText, FolderOpen, Gauge, Microscope, Timer } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Timer } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -86,6 +86,7 @@ export default function ResultPage({
 }: ResultPageProps) {
   const [project, setProject] = useState(initialProject);
   const [viewerMode, setViewerMode] = useState<number | null>(null);
+  const [focusPoseRequest, setFocusPoseRequest] = useState<{ mode: number; token: number } | null>(null);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [scores, setScores] = useState<ScoreRow[]>([]);
   const [logFile, setLogFile] = useState("");
@@ -111,6 +112,7 @@ export default function ResultPage({
 
   useEffect(() => {
     setViewerMode(null);
+    setFocusPoseRequest(null);
     setMetadata(null);
     setScores([]);
     setLogFile("");
@@ -296,6 +298,7 @@ export default function ResultPage({
                     projectDir={project.project_dir}
                     runId={runId}
                     mode={selectedMode}
+                    focusRequest={focusPoseRequest}
                   />
                 </Suspense>
               ) : (
@@ -322,6 +325,20 @@ export default function ResultPage({
                     <span>{formatScoreValue(score.rmsd_ub)}</span>
                   </button>
                 ))}
+              </div>
+              <div className="result-pose-focus-action">
+                <ActionButton
+                  variant="primary"
+                  disabled={!scores.length}
+                  onClick={() => setFocusPoseRequest((current) => ({
+                    mode: selectedMode,
+                    token: (current?.token ?? 0) + 1,
+                  }))}
+                >
+                  <Crosshair aria-hidden="true" size={17} />
+                  定位到当前配体
+                </ActionButton>
+                <small>将视角聚焦到 Mode {selectedMode}，不会改变构象或评分。</small>
               </div>
               <p>RMSD 相对基于 Mode 1 的构象，仅用于本次输出内比较。</p>
             </div>

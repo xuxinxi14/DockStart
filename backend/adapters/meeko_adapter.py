@@ -215,6 +215,17 @@ try:
     except Exception as exc:
         receptor_errors.append(str(exc))
 
+    gemmi_available = False
+    gemmi_version = ""
+    gemmi_error = ""
+    try:
+        import gemmi
+
+        gemmi_available = True
+        gemmi_version = str(getattr(gemmi, "__version__", ""))
+    except Exception as exc:
+        gemmi_error = str(exc)
+
     ligand_modules = []
     receptor_modules = [receptor_module] if receptor_module else []
     ligand_ready = not ligand_errors and ligand_writer is not None
@@ -241,6 +252,10 @@ try:
         "module_candidates_found": receptor_modules,
         "module_imported": receptor_ready,
         "main_callable": receptor_ready,
+        "cif_input_available": receptor_ready and gemmi_available,
+        "cif_parser": "gemmi" if gemmi_available else "",
+        "gemmi_version": gemmi_version,
+        "gemmi_error": gemmi_error,
         "probe_errors": receptor_errors,
     }
 except Exception as exc:
@@ -345,6 +360,153 @@ print(json.dumps(payload, ensure_ascii=True))
 
 
 detect_capabilities = detect_meeko_capabilities
+
+
+def receptor_cif_bridge_script_text() -> str:
+    """Return the audited Gemmi -> PDB -> Meeko receptor helper.
+
+    Meeko 0.7.1 only reads mmCIF through its optional ProDy path. DockStart's
+    Assisted runtime intentionally does not bundle ProDy, but it already ships
+    Gemmi as a licensed Meeko dependency. Inputs that cannot be represented
+    safely in legacy PDB are rejected instead of being silently truncated.
+    """
+
+    return r'''
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+def fail(message: str, detail: str = "") -> int:
+    print(message, file=sys.stderr)
+    if detail:
+        print(detail, file=sys.stderr)
+    return 2
+
+
+def validate_pdb_bridge(structure) -> None:
+    models = list(structure)
+    if not models:
+        raise RuntimeError("CIF 中没有可读取的结构模型。")
+    if len(models) != 1:
+        raise RuntimeError(
+            f"CIF 包含 {len(models)} 个结构模型。DockStart 不会自动选择其中一个模型；"
+            "请先在结构编辑工具中明确保留目标模型。"
+        )
+
+    model = models[0]
+    chains = list(model)
+    atom_count = sum(len(residue) for chain in chains for residue in chain)
+    if atom_count <= 0:
+        raise RuntimeError("CIF 的第一个模型中没有原子坐标。")
+    if atom_count > 99999:
+        raise RuntimeError(
+            f"CIF 含有 {atom_count} 个原子，超过传统 PDB 原子序号容量。"
+            "当前安全转换不会截断或重编号该结构。"
+        )
+
+    invalid_chains = sorted(
+        {
+            str(chain.name)
+            for chain in chains
+            if len(str(chain.name)) > 1
+            or any(ord(character) < 33 or ord(character) > 126 for character in str(chain.name))
+        }
+    )
+    if invalid_chains:
+        preview = ", ".join(repr(name) for name in invalid_chains[:8])
+        raise RuntimeError(
+            "CIF 含有无法无损写入传统 PDB 的链 ID："
+            f"{preview}。请先明确链选择并导出为 PDB，DockStart 不会静默截断链 ID。"
+        )
+
+    for chain in chains:
+        for residue in chain:
+            residue_number = int(residue.seqid.num)
+            if residue_number < -999 or residue_number > 9999:
+                raise RuntimeError(
+                    f"残基编号 {chain.name}:{residue_number} 超出传统 PDB 可安全表示的范围。"
+                )
+            insertion_code = str(residue.seqid.icode or "").strip()
+            if len(insertion_code) > 1:
+                raise RuntimeError(
+                    f"残基 {chain.name}:{residue_number} 的插入码无法无损写入传统 PDB。"
+                )
+            for atom in residue:
+                if len(str(atom.name).strip()) > 4:
+                    raise RuntimeError(
+                        f"原子名 {atom.name!r} 超过传统 PDB 的 4 字符容量。"
+                    )
+                for coordinate in (atom.pos.x, atom.pos.y, atom.pos.z):
+                    if coordinate < -999.999 or coordinate > 9999.999:
+                        raise RuntimeError(
+                            "CIF 含有超出传统 PDB 坐标字段范围的原子坐标，当前安全转换已停止。"
+                        )
+
+
+def run_meeko(pdb_path: Path, output_stem: Path) -> int:
+    from meeko.cli import mk_prepare_receptor
+
+    original_argv = sys.argv
+    sys.argv = [
+        "mk_prepare_receptor",
+        "--read_pdb",
+        str(pdb_path),
+        "-o",
+        str(output_stem),
+        "-p",
+    ]
+    try:
+        result = mk_prepare_receptor.main()
+        return int(result or 0)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 1
+    finally:
+        sys.argv = original_argv
+
+
+def main() -> int:
+    if len(sys.argv) != 4:
+        return fail("CIF 受体准备需要输入 CIF、审计用中间 PDB 和输出文件名前缀。")
+
+    input_path = Path(sys.argv[1])
+    intermediate_pdb = Path(sys.argv[2])
+    output_stem = Path(sys.argv[3])
+    if not input_path.is_file() or input_path.stat().st_size <= 0:
+        return fail("CIF 受体文件不存在或为空。", str(input_path))
+
+    try:
+        import gemmi
+    except Exception as exc:
+        return fail(
+            "当前准备 Python 缺少 Gemmi，无法安全读取 CIF 受体。",
+            f"{type(exc).__name__}: {exc}",
+        )
+
+    try:
+        structure = gemmi.read_structure(str(input_path))
+        validate_pdb_bridge(structure)
+        intermediate_pdb.parent.mkdir(parents=True, exist_ok=True)
+        structure.write_pdb(str(intermediate_pdb))
+        if not intermediate_pdb.is_file() or intermediate_pdb.stat().st_size <= 0:
+            raise RuntimeError("Gemmi 没有生成非空的中间 PDB 文件。")
+    except Exception as exc:
+        return fail(
+            "CIF 受体无法安全转换为 Meeko 可读取的 PDB。",
+            f"{type(exc).__name__}: {exc}",
+        )
+
+    print(
+        f"CIF 已由 Gemmi 转换为审计用中间 PDB：{intermediate_pdb}",
+        file=sys.stdout,
+    )
+    return run_meeko(intermediate_pdb, output_stem)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
 
 
 def build_module_command(python_executable: str, module: str, arguments: list[str]) -> list[str]:

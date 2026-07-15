@@ -20,10 +20,17 @@ import type { WorkflowStep } from "../components/WorkflowStepper";
 type SidebarProps = {
   collapsed?: boolean;
   currentPage: PageId;
+  distributionProfile: DistributionProfileStatus;
   project: DockStartProject | null;
   workflowSteps?: WorkflowStep[];
   onNavigate: NavigateHandler;
   onToggleCollapsed?: () => void;
+};
+
+export type DistributionProfileStatus = {
+  releaseProfile: "basic_stable" | "assisted_stable" | "unknown";
+  displayName: string;
+  message: string;
 };
 
 function NavigationIcon({ page }: { page: PageId }) {
@@ -59,6 +66,7 @@ function NavigationIcon({ page }: { page: PageId }) {
 export default function Sidebar({
   collapsed = false,
   currentPage,
+  distributionProfile,
   project,
   workflowSteps = [],
   onNavigate,
@@ -169,7 +177,15 @@ export default function Sidebar({
         ))}
       </nav>
       <div className="sidebar-footer">
-        <span className="sidebar-version">v{appVersion}</span>
+        <div className="sidebar-release-info" title={distributionProfile.message}>
+          <span className="sidebar-version">v{appVersion}</span>
+          <span
+            aria-live="polite"
+            className={`sidebar-profile-badge ${distributionProfile.releaseProfile}`}
+          >
+            {distributionProfile.displayName}
+          </span>
+        </div>
         {onToggleCollapsed ? (
           <button
             aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}

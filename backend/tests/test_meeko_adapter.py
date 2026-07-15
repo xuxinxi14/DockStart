@@ -28,6 +28,9 @@ class MeekoAdapterCommandTests(unittest.TestCase):
         self.assertEqual(receptor["status"], "ok", receptor)
         self.assertTrue(receptor["module_imported"])
         self.assertTrue(receptor["main_callable"])
+        self.assertTrue(receptor["cif_input_available"], receptor)
+        self.assertEqual(receptor["cif_parser"], "gemmi")
+        self.assertTrue(receptor["gemmi_version"])
 
     def test_build_module_command_uses_isolated_no_bytecode_invocation(self) -> None:
         command = meeko_adapter.build_module_command(

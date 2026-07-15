@@ -563,6 +563,61 @@ export type RawStructureStatus = RunFileStatus & {
   record_consistent: boolean;
 };
 
+export type StructureSearchSelection = {
+  download_command: "fetch-pdb" | "fetch-pubchem" | string;
+  pdb_id?: string;
+  query?: string;
+  query_type: "pdb_id" | "cid" | "name" | string;
+  format: "pdb" | "cif" | "sdf" | string;
+};
+
+export type StructureSearchCandidate = {
+  candidate_id: string;
+  provider: "rcsb" | "pubchem" | string;
+  source_id: string;
+  title: string;
+  subtitle: string;
+  metadata: Record<string, unknown>;
+  selection: StructureSearchSelection;
+};
+
+export type StructureSearchResponse = {
+  ok: boolean;
+  provider: "rcsb" | "pubchem" | string;
+  query: string;
+  query_type: string;
+  requested_limit: number;
+  total_count: number;
+  returned_count: number;
+  truncated: boolean;
+  selection_required: boolean;
+  candidates: StructureSearchCandidate[];
+  message: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type CandidateStructurePreviewResponse = {
+  ok: boolean;
+  provider: "rcsb" | "pubchem" | string;
+  source_id: string;
+  format: "pdb" | "cif" | "sdf" | string;
+  content: string;
+  size_bytes: number;
+  message: string;
+  warnings: string[];
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
 export type ViewerFileKind =
   | "receptor_raw"
   | "ligand_raw"

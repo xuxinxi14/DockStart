@@ -354,6 +354,8 @@ def _build_preparation_metadata(
         "input_file": built.get("input_file", ""),
         "output_file": built.get("output_file", ""),
         "candidate_output_file": built.get("candidate_output_file", ""),
+        "script_file": built.get("script_file", ""),
+        "intermediate_input_file": built.get("intermediate_input_file", ""),
         "command": built.get("command", []),
         "executor_pid": built.get("executor_pid"),
         "executor_executable": built.get("executor_executable", ""),
@@ -1328,7 +1330,7 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
             "RECEPTOR_RAW_FORMAT_UNSUPPORTED",
             "当前版本暂不支持该受体 raw 文件格式自动准备 PDBQT。",
             raw_error=suffix,
-            suggestion="V0.3.3 优先支持 PDB；CIF 是否可用取决于本机 Meeko。其他格式请先使用外部工具准备 PDBQT。",
+            suggestion="受体自动准备支持 PDB 和 CIF；其他格式请先使用外部工具准备 PDBQT。",
         )
 
     if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
@@ -1353,13 +1355,19 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
         missing.append("Meeko")
     if receptor_capability.get("status") != "ok":
         missing.append("Meeko receptor preparation capability (meeko.cli.mk_prepare_receptor)")
+    if suffix == ".cif" and receptor_capability.get("cif_input_available") is not True:
+        missing.append("Gemmi CIF parser")
 
     if missing:
         return _error(
             "RECEPTOR_PREPARATION_TOOLS_NOT_READY",
             "受体 PDBQT 自动准备所需工具尚未全部可用或不可确认。",
             raw_error=", ".join(missing),
-            suggestion="请确认 Meeko 已安装且可导入 receptor preparation 模块。当前版本不使用 MGLTools/Open Babel 兜底。",
+            suggestion=(
+                "CIF 转换还需要同一 Python 中可导入 Gemmi；请检查 Assisted 工具链，或改用 PDB。"
+                if suffix == ".cif"
+                else "请确认 Meeko 已安装且可导入 receptor preparation 模块。当前版本不使用 MGLTools/Open Babel 兜底。"
+            ),
         )
 
     warnings = [
@@ -1367,7 +1375,10 @@ def validate_receptor_preparation_input(project_dir: str, overwrite: bool = Fals
         "请在运行 Vina 前人工检查 receptor PDBQT。",
     ]
     if suffix == ".cif":
-        warnings.append("CIF 支持取决于本机 Meeko receptor preparation 能力；如失败，请先在外部工具中转换或准备 PDBQT。")
+        warnings.append(
+            "CIF 将先由 Gemmi 转换为 preparation 审计目录中的中间 PDB，再交给 Meeko；"
+            "无法无损表示为传统 PDB 的多模型、长链 ID 或超大结构会被明确拒绝。"
+        )
 
     return {
         "ok": True,
@@ -1405,25 +1416,45 @@ def build_receptor_preparation_command_or_script(
     candidate_output_path = paths["record_dir"] / "candidate_receptor.pdbqt"
     output_stem = str(candidate_output_path.with_suffix(""))
     python_path = validation["tools"]["python"]["path"]
-    input_flag = "--read_pdb" if str(validation.get("format") or "").lower() == ".pdb" else "-i"
-    command = [
-        python_path,
-        "-I",
-        "-B",
-        "-m",
-        str(validation["receptor_module"]),
-        input_flag,
-        validation["input_path"],
-        "-o",
-        output_stem,
-        "-p",
-    ]
+    is_cif = str(validation.get("format") or "").lower() == ".cif"
+    script_file = ""
+    intermediate_input_file = ""
+    if is_cif:
+        script_path = paths["record_dir"] / "prepare_receptor_cif_gemmi_meeko.py"
+        intermediate_path = paths["record_dir"] / "receptor_from_cif.pdb"
+        atomic_write_text(script_path, meeko_adapter.receptor_cif_bridge_script_text())
+        command = [
+            python_path,
+            "-I",
+            "-B",
+            str(script_path),
+            validation["input_path"],
+            str(intermediate_path),
+            output_stem,
+        ]
+        script_file = _relative_path(script_path, project_path)
+        intermediate_input_file = _relative_path(intermediate_path, project_path)
+    else:
+        command = [
+            python_path,
+            "-I",
+            "-B",
+            "-m",
+            str(validation["receptor_module"]),
+            "--read_pdb",
+            validation["input_path"],
+            "-o",
+            output_stem,
+            "-p",
+        ]
 
     return {
         **validation,
         "prep_id": selected_prep_id,
         "record_dir": paths["record_dir_relative"],
         "command": command,
+        "script_file": script_file,
+        "intermediate_input_file": intermediate_input_file,
         "candidate_output_file": _relative_path(candidate_output_path, project_path),
         "candidate_output_path": str(candidate_output_path),
         "stdout_file": paths["stdout_file"],

@@ -679,6 +679,62 @@
   line-height: 1.45;
 }
 
+.run-parameter-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 8px 0 4px;
+  border: 1px solid var(--ds-border-default);
+  border-left: 3px solid var(--ds-success);
+  border-radius: 7px;
+  background: var(--ds-success-soft);
+  padding: 9px 10px 9px 11px;
+}
+
+.run-parameter-save-row.dirty {
+  border-color: var(--ds-brand-border);
+  border-left-color: var(--ds-brand);
+  background: var(--ds-brand-soft);
+}
+
+.run-parameter-save-row > div,
+.run-parameter-save-row > div > span {
+  display: grid;
+}
+
+.run-parameter-save-row > div {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--ds-success-text);
+}
+
+.run-parameter-save-row.dirty > div {
+  color: var(--ds-brand-active);
+}
+
+.run-parameter-save-row > div > span {
+  gap: 2px;
+}
+
+.run-parameter-save-row strong {
+  color: var(--ds-text-strong);
+  font-size: 11px;
+}
+
+.run-parameter-save-row small {
+  color: var(--ds-text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.run-parameter-save-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+}
+
 .run-settings-card > .warning-callout,
 .run-settings-card > .advanced-details,
 .run-inline-message {
@@ -787,12 +843,29 @@
   border-top: 1px solid var(--ds-border-default);
   background: var(--ds-surface-raised);
   padding: 9px 15px;
-  box-shadow: 0 -5px 18px var(--ds-focus-ring);
+  box-shadow: none;
 }
 
 .run-action-bar > div,
 .run-primary-action {
   gap: 8px;
+}
+
+.run-action-context {
+  min-width: 0;
+}
+
+.run-action-save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ds-success-text);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.run-action-save-status.dirty {
+  color: var(--ds-warning-text);
 }
 
 .run-primary-action .primary-button,
@@ -1219,6 +1292,15 @@
 
   .run-cockpit-header-actions {
     justify-content: space-between;
+  }
+
+  .run-parameter-save-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .run-parameter-save-button {
+    width: 100%;
   }
 
   .run-preview,

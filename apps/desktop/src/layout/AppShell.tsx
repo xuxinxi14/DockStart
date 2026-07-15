@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { FolderSimple, Monitor } from "@phosphor-icons/react";
+import { invoke } from "@tauri-apps/api/core";
 import type { DockStartProject } from "../types";
 import { appVersion, pageTitles, type NavigateHandler, type PageId } from "../navigation/pages";
 import LayoutDebugOverlay from "../components/layout/LayoutDebugOverlay";
 import Sidebar from "./Sidebar";
+import type { DistributionProfileStatus } from "./Sidebar";
 import Topbar from "./Topbar";
 import type { WorkflowStep } from "../components/WorkflowStepper";
 
@@ -32,6 +34,43 @@ export default function AppShell({
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+  const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
+    releaseProfile: "unknown",
+    displayName: "识别中",
+    message: "正在读取当前安装包的发布 profile。",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>("get_distribution_profile")
+      .then((rawPayload) => {
+        if (cancelled) return;
+        const payload = JSON.parse(rawPayload) as {
+          release_profile?: unknown;
+          display_name?: unknown;
+          message?: unknown;
+        };
+        const releaseProfile = payload.release_profile === "basic_stable" || payload.release_profile === "assisted_stable"
+          ? payload.release_profile
+          : "unknown";
+        setDistributionProfile({
+          releaseProfile,
+          displayName: typeof payload.display_name === "string" ? payload.display_name : "Profile 未知",
+          message: typeof payload.message === "string" ? payload.message : "无法识别当前安装包的发布 profile。",
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDistributionProfile({
+          releaseProfile: "unknown",
+          displayName: "Profile 未知",
+          message: "无法读取当前安装包的发布清单。",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const preventContextMenu = (event: MouseEvent) => event.preventDefault();
@@ -52,6 +91,7 @@ export default function AppShell({
       <Sidebar
         collapsed={sidebarCollapsed}
         currentPage={currentPage}
+        distributionProfile={distributionProfile}
         project={project}
         workflowSteps={workflowSteps}
         onNavigate={onNavigate}
