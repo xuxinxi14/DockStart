@@ -22,6 +22,12 @@ const ToolchainStatusPage = lazy(() => import("./pages/ToolchainStatusPage"));
 import VinaConfigPage from "./pages/VinaConfigPage";
 import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
+import { listenForBackgroundTaskUpdates } from "./utils/backgroundTasks";
+import {
+  DebouncedProjectRefresh,
+  isSameProjectDir,
+  shouldRefreshProjectAfterTask,
+} from "./utils/backgroundProjectRefresh";
 import { getWorkflowSummary } from "./utils/workflowSummary";
 import { buildWorkflowSteps } from "./utils/workflowSteps";
 
@@ -46,6 +52,13 @@ export default function App() {
     setProjectRevision((revision) => revision + 1);
   }, []);
 
+  const commitProjectSnapshot = useCallback((project: DockStartProject) => {
+    // This snapshot already came from a workflow-status read. Updating the
+    // revision here would immediately schedule the same Python read again.
+    committedProjectKeyRef.current = projectStateKey(project);
+    setCurrentProject(project);
+  }, []);
+
   const commitWorkflowStatus = useCallback((status: ProjectWorkflowStatusResponse | null) => {
     setWorkflowStatus(status);
     const latestRunId = status?.latest_run?.run_id;
@@ -53,6 +66,59 @@ export default function App() {
       setCurrentRunId(latestRunId);
     }
   }, []);
+
+  const commitWorkflowSnapshot = useCallback((status: ProjectWorkflowStatusResponse) => {
+    setWorkflowStatus(status);
+    const latestRunId = status.latest_run?.run_id;
+    if (typeof latestRunId === "string" && latestRunId) {
+      setCurrentRunId((runId) => runId || latestRunId);
+    }
+  }, []);
+
+  useEffect(() => {
+    const projectDir = currentProject?.project_dir;
+    if (!projectDir) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const refresh = new DebouncedProjectRefresh(async () => {
+      try {
+        const rawPayload = await invoke<string>("get_project_workflow_status", {
+          projectDir,
+        });
+        if (disposed) return;
+        const parsed = JSON.parse(rawPayload) as ProjectWorkflowStatusResponse;
+        if (
+          !parsed.ok
+          || !parsed.project
+          || !isSameProjectDir(parsed.project_dir, projectDir)
+          || !isSameProjectDir(parsed.project.project_dir, projectDir)
+        ) return;
+        commitProjectSnapshot(parsed.project);
+        commitWorkflowSnapshot(parsed);
+      } catch {
+        // Pages keep their own actionable error states. The application-level
+        // listener is best-effort synchronization and must never interrupt
+        // navigation when a refresh cannot be read.
+      }
+    });
+
+    void listenForBackgroundTaskUpdates((status) => {
+      if (shouldRefreshProjectAfterTask(status, projectDir)) refresh.request();
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch(() => {
+      // A failed global subscription must not make the workbench unusable;
+      // page-level task observers and manual refresh remain available.
+    });
+
+    return () => {
+      disposed = true;
+      refresh.dispose();
+      unlisten?.();
+    };
+  }, [commitProjectSnapshot, commitWorkflowSnapshot, currentProject?.project_dir]);
 
   useEffect(() => {
     const projectDir = currentProject?.project_dir;
@@ -80,14 +146,9 @@ export default function App() {
         });
         const parsed = JSON.parse(rawPayload) as ProjectWorkflowStatusResponse;
         if (cancelled) return;
-        setWorkflowStatus(parsed);
+        commitWorkflowSnapshot(parsed);
         if (parsed.project) {
-          committedProjectKeyRef.current = projectStateKey(parsed.project);
-          setCurrentProject(parsed.project);
-        }
-        const latestRunId = parsed.latest_run?.run_id;
-        if (typeof latestRunId === "string" && latestRunId) {
-          setCurrentRunId((runId) => runId || latestRunId);
+          commitProjectSnapshot(parsed.project);
         }
       } catch {
         if (!cancelled) setWorkflowStatus(null);
@@ -108,7 +169,7 @@ export default function App() {
     // is the refresh signal; Home and structure-input pages refresh themselves
     // so they do not fan one action out into duplicate Python status scripts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.project_dir, projectRevision]);
+  }, [commitProjectSnapshot, commitWorkflowSnapshot, currentProject?.project_dir, projectRevision]);
 
   function navigateTo(page: PageId, options?: NavigateOptions) {
     const destination = normalizeNavigationPage(page);

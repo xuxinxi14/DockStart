@@ -110,4 +110,47 @@ The focused comparisons cover typography hierarchy, tab and control spacing, the
   - full-screen Box values and wheel binding stayed synchronized with the normal inspector;
   - axis visibility toggled in both run and result viewers without runtime errors.
 
+## Structure Source Horizontal Workflow Pass
+
+- User reference:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-755fbfab-5f6d-4046-a17b-26b4d56631d2.png`
+- Real Tauri implementation:
+  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\accepted-search-results-1000.png`
+  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\accepted-search-results.png`
+- Same-comparison inputs:
+  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\comparison-1000.png`
+  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\comparison.png`
+- Regression evidence:
+  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\navigation-after-pending-search.png`
+- Reference viewport: 978 x 894 pixels.
+- Compact implementation viewport: 1000 x 900 CSS pixels, captured at 150% device scaling.
+- State: the receptor query `1IEP` returned one selectable RCSB result; the receptor workflow is shown before the ligand workflow.
+
+### Visible findings and iterations
+
+1. [P1] The former receptor/ligand side-by-side columns compressed search results, metadata, previews, and actions.
+   - Fix: converted the page into two full-width work rows, receptor first and ligand second. Each row now uses a status summary, a wide search/result workspace, and a local import/action area.
+2. [P1] A 981-1070 px viewport could retain the wider internal grid while the card clipped overflow.
+   - Fix: introduced the compact breakpoint at 1120 px, reducing search controls to two columns and stacking candidate list and preview without horizontal clipping.
+3. [P1] Leaving the page while an online search or preview request was unfinished could allow late Tauri responses and delayed 3D callbacks to update an unmounted page.
+   - Fix: added a page operation scope with generation checks before parsing or committing responses; deferred 3D work now also verifies the active generation and connected container.
+4. [P2] Large candidate payloads could make route changes feel blocked by synchronous preview work.
+   - Fix: limited the complete serialized interactive preview response to 2 MiB, enforced a hard network deadline in the short-lived backend process, and used a lighter receptor representation.
+5. [P2] Busy states did not consistently communicate that controls were temporarily unavailable.
+   - Fix: all relevant search, import, selection, overwrite, and management controls now share the row busy state, with `aria-busy`, labelled regions, and live status text.
+
+### Runtime verification
+
+- At the compact viewport, the 1IEP result, its metadata, `3D 预览`, and `选择并准备` remained visible without horizontal clipping.
+- In the current release-mode desktop build, a receptor search was started and the sidebar `对接工作台` action was invoked 35 ms later.
+- Navigation completed in 378 ms; the process reported `responding: true`.
+- The right-side white assistant bubble visible in QA screenshots belongs to the Codex capture workflow and is not part of DockStart.
+
+### Automated verification
+
+- Frontend production build: passed, 4638 modules.
+- Frontend async lifecycle tests: 4 passed.
+- Backend tests: 375 passed, 7 subtests passed.
+- Rust desktop tests: 18 passed.
+
 final result: passed

@@ -143,6 +143,19 @@ export function isTerminalBackgroundTask(status: BackgroundTaskStatus): boolean 
   return status.status === "finished" || status.status === "failed" || status.status === "cancelled";
 }
 
+export async function listenForBackgroundTaskUpdates(
+  onUpdate: (status: BackgroundTaskStatus) => void,
+  onError?: (error: Error) => void,
+): Promise<UnlistenFn> {
+  return listen<unknown>(BACKGROUND_TASK_EVENT, (event) => {
+    try {
+      onUpdate(normalizeTaskStatus(event.payload));
+    } catch (error) {
+      onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
 function mergeMonotonicTaskStatus(
   previous: BackgroundTaskStatus | null,
   observed: BackgroundTaskStatus,

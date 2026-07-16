@@ -347,6 +347,115 @@ def _raw_input_identity(path: Path, project_path: Path) -> dict[str, Any]:
         }
 
 
+def _prepared_output_identity(path: Path, project_path: Path) -> dict[str, Any]:
+    """Capture one stable prepared-output version, including the missing state."""
+
+    safe_path = _safe_project_path(project_path, path)
+    canonical_relative_path = _relative_path(safe_path, project_path)
+    captured_at = _now_iso()
+    try:
+        if not safe_path.exists():
+            return {
+                "ok": True,
+                "canonical_relative_path": canonical_relative_path,
+                "exists": False,
+                "sha256": "",
+                "size_bytes": 0,
+                "captured_at": captured_at,
+                "error": "",
+            }
+
+        before = safe_path.stat()
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("prepared 输出路径不是普通文件")
+        sha256 = _sha256_file(safe_path)
+        after = safe_path.stat()
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable:
+            raise OSError("计算 SHA256 期间 prepared 输出发生变化")
+        return {
+            "ok": True,
+            "canonical_relative_path": canonical_relative_path,
+            "exists": True,
+            "sha256": sha256,
+            "size_bytes": int(after.st_size),
+            "captured_at": captured_at,
+            "error": "",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "canonical_relative_path": canonical_relative_path,
+            "exists": safe_path.exists(),
+            "sha256": "",
+            "size_bytes": 0,
+            "captured_at": captured_at,
+            "error": str(exc),
+        }
+
+
+def _verify_current_prepared_output(
+    project_path: Path,
+    target: PreparationTarget,
+    claimed_output: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any], dict[str, Any] | None]:
+    """Reject publication when the prepared output changed after task claim."""
+
+    output_path = _safe_project_path(project_path, Path("prepared") / f"{target}.pdbqt")
+    current_output = _prepared_output_identity(output_path, project_path)
+    reasons: list[str] = []
+    if not claimed_output.get("ok"):
+        reasons.append("任务认领时未能冻结 prepared 输出身份")
+    if not current_output.get("ok"):
+        reasons.append("发布前无法稳定读取当前 prepared 输出身份")
+
+    claimed_path = str(claimed_output.get("canonical_relative_path") or "")
+    current_path = str(current_output.get("canonical_relative_path") or "")
+    claimed_exists = bool(claimed_output.get("exists"))
+    current_exists = bool(current_output.get("exists"))
+    if claimed_path != current_path:
+        reasons.append("prepared 输出路径已变化")
+    if claimed_exists != current_exists:
+        reasons.append("prepared 输出在任务运行期间被创建或删除")
+    elif claimed_exists and current_exists:
+        if int(claimed_output.get("size_bytes") or 0) != int(current_output.get("size_bytes") or 0):
+            reasons.append("prepared 输出大小已变化")
+        if str(claimed_output.get("sha256") or "") != str(current_output.get("sha256") or ""):
+            reasons.append("prepared 输出 SHA256 已变化")
+
+    verification = {
+        "checked_at": _now_iso(),
+        "target": target,
+        "claimed": dict(claimed_output),
+        "current": current_output,
+        "matches": not reasons,
+        "reasons": reasons,
+    }
+    if not reasons:
+        return True, verification, None
+
+    error = {
+        "code": "PREPARATION_OUTPUT_CONFLICT",
+        "message": f"prepared/{target}.pdbqt 在准备任务运行期间发生变化，候选输出未发布。",
+        "raw_error": json.dumps(verification, ensure_ascii=False, sort_keys=True),
+        "suggestion": (
+            "DockStart 已保留后来创建、替换或删除的 prepared 输出状态。"
+            "请检查当前 PDBQT；如确需使用自动准备结果，请重新启动准备任务。"
+        ),
+    }
+    return False, verification, error
+
+
 def _verify_current_raw_input(
     project_path: Path,
     project: Any,
@@ -465,8 +574,11 @@ def _build_preparation_metadata(
         "input_file": built.get("input_file", ""),
         "output_file": built.get("output_file", ""),
         "candidate_output_file": built.get("candidate_output_file", ""),
+        "overwrite": bool(built.get("overwrite", False)),
         "claimed_input": built.get("claimed_input", {}),
+        "claimed_output": built.get("claimed_output", {}),
         "claim_verification": built.get("claim_verification", {}),
+        "output_verification": built.get("output_verification", {}),
         "script_file": built.get("script_file", ""),
         "intermediate_input_file": built.get("intermediate_input_file", ""),
         "command": built.get("command", []),
@@ -602,6 +714,9 @@ def _claim_preparation(
             "error": str(exc),
         }
     built["claimed_input"] = claimed_input
+    output_path = _safe_project_path(project_path, Path(built["output_path"]))
+    claimed_output = _prepared_output_identity(output_path, project_path)
+    built["claimed_output"] = claimed_output
 
     # Create the audit record before publishing the running claim.  A crash can
     # therefore never leave project.json pointing to a record that did not
@@ -615,6 +730,7 @@ def _claim_preparation(
         "canonical_input_file": str(claimed_input.get("canonical_relative_path") or ""),
         "input_sha256": str(claimed_input.get("sha256") or ""),
         "claimed_input": claimed_input,
+        "claimed_output": claimed_output,
         "input": _file_snapshot(input_path, project_path),
         "tools": built.get("tools", {}),
         "warnings": warnings,
@@ -626,6 +742,29 @@ def _claim_preparation(
             "无法冻结本次分子准备的 raw 输入，任务未启动。",
             raw_error=str(claimed_input.get("error") or "raw 输入 SHA256 不可用"),
             suggestion="请确认 raw 文件是项目内可读取的非空普通文件，然后重新启动格式转换。",
+        )
+        rejected = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="failed",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=_now_iso(),
+            built=built,
+            warnings=warnings,
+            error=copy.deepcopy(snapshot_error.get("error")),
+        )
+        rejected["published"] = False
+        rejected["claim_rejected"] = True
+        _write_json(metadata_path, rejected)
+        return None, snapshot_error
+    if not claimed_output.get("ok"):
+        snapshot_error = _error(
+            "PREPARATION_OUTPUT_SNAPSHOT_FAILED",
+            "无法冻结本次分子准备的 prepared 输出状态，任务未启动。",
+            raw_error=str(claimed_output.get("error") or "prepared 输出身份不可用"),
+            suggestion="请确认 prepared 目录可写且输出路径是普通文件，然后重新启动格式转换。",
         )
         rejected = _build_preparation_metadata(
             prep_id=prep_id,
@@ -804,6 +943,7 @@ def _finalize_preparation(
     current_project: Any | None = None
     error: dict[str, Any] | None = None
     input_verification: dict[str, Any] = {}
+    output_verification: dict[str, Any] = {}
 
     with _preparation_target_lock(project_path, target):
         with _project_lock(project_path):
@@ -833,11 +973,22 @@ def _finalize_preparation(
                     target,
                     built.get("claimed_input", {}),
                 )
+                output_matches, output_verification, output_conflict_error = (
+                    _verify_current_prepared_output(
+                        project_path,
+                        target,
+                        built.get("claimed_output", {}),
+                    )
+                )
+                built["output_verification"] = output_verification
                 if not input_matches:
                     error = stale_error
-                previous_output = output_path.read_bytes() if output_path.is_file() else None
+                elif not output_matches:
+                    error = output_conflict_error
+                previous_output: bytes | None = None
                 if error is None and exit_code == 0 and candidate_ok:
                     try:
+                        previous_output = output_path.read_bytes() if output_path.is_file() else None
                         _publish_candidate_output(candidate_output_path, output_path, project_path)
                         published = True
                     except Exception as exc:  # noqa: BLE001 - preserve previous output below.
@@ -898,8 +1049,10 @@ def _finalize_preparation(
             "output": _file_snapshot(output_path, project_path),
             "exit_code": exit_code,
             "published": published,
+            "overwrite": bool(built.get("overwrite", False)),
             "ownership_lost": ownership_lost,
             "input_verification": input_verification,
+            "output_verification": output_verification,
             "publication_error": publication_error,
             "restore_error": restore_error,
             "success": final_status == "finished",
@@ -930,6 +1083,7 @@ def _finalize_preparation(
                 "published": published,
                 "ownership_lost": ownership_lost,
                 "input_verification": input_verification,
+                "output_verification": output_verification,
                 "candidate_output": _file_snapshot(candidate_output_path, project_path),
                 "output": _file_snapshot(output_path, project_path),
                 "stdout": _file_snapshot(stdout_path, project_path),
@@ -948,6 +1102,7 @@ def _finalize_preparation(
         "published": published,
         "ownership_lost": ownership_lost,
         "input_verification": input_verification,
+        "output_verification": output_verification,
     }
 
 
@@ -1018,6 +1173,8 @@ def _prepare_target_pdbqt(
             message = f"{target} 准备任务已失去所有权，候选输出未发布。"
         elif final_error.get("code") == "PREPARATION_INPUT_STALE":
             message = f"{target} 准备期间 raw 输入发生变化，候选输出未发布。"
+        elif final_error.get("code") == "PREPARATION_OUTPUT_CONFLICT":
+            message = f"{target} 准备期间 prepared 输出发生变化，候选输出未发布。"
         elif success:
             message = (
                 "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"

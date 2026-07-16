@@ -1,10 +1,18 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
-import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import { BodyGrid, MainPanel, PageHero, PageShell } from "../components/layout/PageLayout";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type {
@@ -25,6 +33,8 @@ import {
   waitForBackgroundTask,
   type BackgroundTaskStatus,
 } from "../utils/backgroundTasks";
+import { PageOperationScope, type PageOperationToken } from "../utils/pageOperationScope";
+import { runRawToPreparedWorkflow } from "../utils/rawToPreparedWorkflow";
 
 const CandidateStructurePreview = lazy(() => import("../components/CandidateStructurePreview"));
 
@@ -257,25 +267,34 @@ export default function StructureFetchPage({
   const [isBusy, setIsBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [previewingCandidateId, setPreviewingCandidateId] = useState("");
-  const activeTaskAbortRef = useRef<AbortController | null>(null);
+  const [operationScope] = useState(() => new PageOperationScope());
   const rcsbSearchGenerationRef = useRef(0);
   const pubchemSearchGenerationRef = useRef(0);
   const searchRequestSequenceRef = useRef(0);
   const activeSearchRequestRef = useRef(0);
 
-  useEffect(() => () => {
-    activeTaskAbortRef.current?.abort();
-    rcsbSearchGenerationRef.current += 1;
-    pubchemSearchGenerationRef.current += 1;
-    activeSearchRequestRef.current = 0;
-  }, []);
+  useLayoutEffect(() => {
+    operationScope.activate();
+    return () => {
+      rcsbSearchGenerationRef.current += 1;
+      pubchemSearchGenerationRef.current += 1;
+      activeSearchRequestRef.current = 0;
+      operationScope.dispose();
+    };
+  }, [operationScope]);
 
   useEffect(() => {
     setProject(initialProject);
   }, [initialProject]);
 
   const applyProjectResponse = useCallback(
-    (response: ProjectResponse, fallbackMessage: string, announce = true) => {
+    (
+      response: ProjectResponse,
+      fallbackMessage: string,
+      announce = true,
+      token?: PageOperationToken,
+    ) => {
+      if (token && !operationScope.isCurrent(token)) return false;
       if (response.ok) {
         if (response.project) {
           setProject(response.project);
@@ -289,96 +308,129 @@ export default function StructureFetchPage({
           setMessage(response.message ?? fallbackMessage);
           setRawError("");
         }
-        return;
+        return true;
       }
       if (announce) {
         setMessage(response.error?.message ?? "原始结构操作失败。");
         setRawError(errorDetails(response.error));
       }
+      return false;
     },
-    [onProjectChange],
+    [onProjectChange, operationScope],
   );
 
-  const refreshRawStatus = useCallback(async (announce = false) => {
+  const readRawStatus = useCallback(async () => {
     const rawPayload = await invoke<string>("get_raw_files_status", {
       projectDir: project.project_dir,
     });
-    const response = parseProjectResponse(rawPayload);
-    applyProjectResponse(response, "原始结构状态已刷新。", announce);
+    return parseProjectResponse(rawPayload);
+  }, [project.project_dir]);
+
+  const refreshRawStatus = useCallback(async (token: PageOperationToken, announce = false) => {
+    const rawPayload = await invoke<string>("get_raw_files_status", {
+      projectDir: project.project_dir,
+    });
+    const response = operationScope.parseIfCurrent(token, rawPayload, parseProjectResponse);
+    if (!response) return null;
+    applyProjectResponse(response, "原始结构状态已刷新。", announce, token);
     return response;
-  }, [applyProjectResponse, project.project_dir]);
+  }, [applyProjectResponse, operationScope, project.project_dir]);
 
   const reloadStatus = useCallback(async () => {
+    const token = operationScope.begin();
     setIsBusy(true);
     setBusyAction("refresh");
     try {
-      await refreshRawStatus(true);
+      await refreshRawStatus(token, true);
     } catch (error) {
-      setMessage("无法读取原始结构状态。");
-      setRawError(error instanceof Error ? error.message : String(error));
+      operationScope.commit(token, () => {
+        setMessage("无法读取原始结构状态。");
+        setRawError(error instanceof Error ? error.message : String(error));
+      });
     } finally {
-      setBusyAction(null);
-      setIsBusy(false);
+      if (operationScope.finish(token)) {
+        setBusyAction(null);
+        setIsBusy(false);
+      }
     }
-  }, [refreshRawStatus]);
+  }, [operationScope, refreshRawStatus]);
 
   useEffect(() => {
     void reloadStatus();
   }, [reloadStatus]);
 
   const waitForTask = useCallback(
-    async (started: BackgroundTaskStatus, controller: AbortController) => waitForBackgroundTask(
+    // Do not pass token.signal: navigation stops UI observation, but an
+    // explicitly started raw -> PDBQT workflow must keep supervising its
+    // native tasks until the preparation stage has been started and finished.
+    async (started: BackgroundTaskStatus, token: PageOperationToken) => waitForBackgroundTask(
       started.task_id,
       (task) => {
-        setMessage(task.progress.message || task.message);
-        if (task.error) setRawError(task.error);
+        operationScope.commit(token, () => {
+          setMessage(task.progress.message || task.message);
+          if (task.error) setRawError(task.error);
+        });
       },
-      controller.signal,
     ),
-    [],
+    [operationScope],
   );
 
-  const prepareRaw = useCallback(async (target: PreparationTarget, controller: AbortController) => {
-    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
+  const prepareRaw = useCallback(async (
+    target: PreparationTarget,
+    token: PageOperationToken,
+    overwritePrepared: boolean,
+  ) => {
     const label = target === "receptor" ? "受体" : "配体";
-    setBusyAction(target === "receptor" ? "prepare-receptor" : "prepare-ligand");
-    setMessage(`${label}原始结构已保存，正在自动转换为 PDBQT…`);
-    setRawError("");
+    operationScope.commit(token, () => {
+      setBusyAction(target === "receptor" ? "prepare-receptor" : "prepare-ligand");
+      setMessage(`${label}原始结构已保存，正在自动转换为 PDBQT…`);
+      setRawError("");
+    });
 
-    const started = await startPreparationTask(project.project_dir, target, true);
-    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
+    const started = await startPreparationTask(
+      project.project_dir,
+      target,
+      overwritePrepared,
+    );
     if (started.deduplicated) {
-      setMessage(`${label}已有一个结构转换任务正在运行。为避免把旧输入误认为本次输入，本次不会复用该任务；请等待任务结束后刷新状态并重试。`);
-      setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未继续自动转换。`);
+      operationScope.commit(token, () => {
+        setMessage(`${label}已有一个结构转换任务正在运行。为避免把旧输入误认为本次输入，本次不会复用该任务；请等待任务结束后刷新状态并重试。`);
+        setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未继续自动转换。`);
+      });
       return false;
     }
-    const completed = await waitForTask(started, controller);
-    if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return false;
+    const completed = await waitForTask(started, token);
     if (completed.status === "cancelled") {
-      setMessage(`${label}自动转换任务已取消；原始结构仍保留在项目 raw/ 目录。`);
+      operationScope.commit(token, () => {
+        setMessage(`${label}自动转换任务已取消；原始结构仍保留在项目 raw/ 目录。`);
+      });
       return false;
     }
     if (!completed.result_json) {
       throw new Error(completed.error || completed.message || `${label}自动转换任务没有返回结果。`);
     }
 
-    const response = parsePreparationResponse(completed.result_json);
-    if (response.project) {
+    const response = operationScope.parseIfCurrent(token, completed.result_json, parsePreparationResponse);
+    if (response?.project) {
       setProject(response.project);
       onProjectChange(response.project);
     }
-    if (!response.ok) {
-      setMessage(
-        `${label}原始结构已保留，但自动转换为 PDBQT 失败。请打开“格式转换与 PDBQT 准备”查看日志、检查工具链后重试。`,
-      );
-      setRawError(errorDetails(response.error) || completed.error || response.message || "自动转换失败。");
+    if (completed.status !== "finished" || response?.ok === false) {
+      operationScope.commit(token, () => {
+        setMessage(
+          `${label}原始结构已保留，但自动转换为 PDBQT 失败。请打开“格式转换与 PDBQT 准备”查看日志、检查工具链后重试。`,
+        );
+        setRawError(errorDetails(response?.error) || completed.error || response?.message || "自动转换失败。");
+      });
       return false;
     }
 
-    setMessage(`${label}已下载或导入，并自动转换为 PDBQT。请继续人工检查结构、质子化和电荷是否合理。`);
-    setRawError("");
+    operationScope.commit(token, () => {
+      setMessage(`${label}已下载或导入，并自动转换为 PDBQT。请继续人工检查结构、质子化和电荷是否合理。`);
+      setRawError("");
+    });
     return true;
-  }, [onProjectChange, project.project_dir, waitForTask]);
+  }, [onProjectChange, operationScope, project.project_dir, waitForTask]);
 
   const searchCandidates = async (provider: "rcsb" | "pubchem") => {
     const isRcsb = provider === "rcsb";
@@ -396,6 +448,7 @@ export default function StructureFetchPage({
     const requestId = searchRequestSequenceRef.current + 1;
     searchRequestSequenceRef.current = requestId;
     activeSearchRequestRef.current = requestId;
+    const token = operationScope.begin();
 
     setIsBusy(true);
     setBusyAction(isRcsb ? "search-receptor" : "search-ligand");
@@ -412,8 +465,13 @@ export default function StructureFetchPage({
           queryType: isRcsb ? rcsbQueryType : pubchemQueryType,
         },
       );
-      const response = parseSearchResponse(rawPayload);
-      if (generationRef.current !== generation || activeSearchRequestRef.current !== requestId) return;
+      if (
+        !operationScope.isCurrent(token)
+        || generationRef.current !== generation
+        || activeSearchRequestRef.current !== requestId
+      ) return;
+      const response = operationScope.parseIfCurrent(token, rawPayload, parseSearchResponse);
+      if (!response) return;
       if (isRcsb) setRcsbResults(response);
       else setPubchemResults(response);
       if (!response.ok) {
@@ -423,11 +481,15 @@ export default function StructureFetchPage({
       }
       setMessage(response.message || `找到 ${response.returned_count} 个候选，请明确选择后再下载。`);
     } catch (error) {
-      if (generationRef.current !== generation || activeSearchRequestRef.current !== requestId) return;
+      if (
+        !operationScope.isCurrent(token)
+        || generationRef.current !== generation
+        || activeSearchRequestRef.current !== requestId
+      ) return;
       setMessage(isRcsb ? "无法搜索 RCSB PDB 候选结构。" : "无法搜索 PubChem 候选化合物。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (activeSearchRequestRef.current === requestId) {
+      if (activeSearchRequestRef.current === requestId && operationScope.finish(token)) {
         activeSearchRequestRef.current = 0;
         setBusyAction(null);
         setIsBusy(false);
@@ -441,6 +503,7 @@ export default function StructureFetchPage({
     const selection = isReceptor
       ? { ...candidate.selection, format: pdbFormat }
       : candidate.selection;
+    const token = operationScope.begin();
     setIsBusy(true);
     setBusyAction(isReceptor ? "preview-receptor" : "preview-ligand");
     setPreviewingCandidateId(candidate.candidate_id);
@@ -452,7 +515,8 @@ export default function StructureFetchPage({
       const rawPayload = await invoke<string>("preview_structure_candidate", {
         selectionJson: JSON.stringify(selection),
       });
-      const response = parseCandidatePreviewResponse(rawPayload);
+      const response = operationScope.parseIfCurrent(token, rawPayload, parseCandidatePreviewResponse);
+      if (!response) return;
       if (!response.ok) {
         setMessage(response.error?.message ?? "候选结构预览失败。");
         setRawError(errorDetails(response.error));
@@ -463,12 +527,16 @@ export default function StructureFetchPage({
       else setLigandPreview(state);
       setMessage(response.message || `${candidate.source_id} 已加载到临时预览。`);
     } catch (error) {
-      setMessage("无法加载候选结构的临时 3D 预览。");
-      setRawError(error instanceof Error ? error.message : String(error));
+      operationScope.commit(token, () => {
+        setMessage("无法加载候选结构的临时 3D 预览。");
+        setRawError(error instanceof Error ? error.message : String(error));
+      });
     } finally {
-      setPreviewingCandidateId("");
-      setBusyAction(null);
-      setIsBusy(false);
+      if (operationScope.finish(token)) {
+        setPreviewingCandidateId("");
+        setBusyAction(null);
+        setIsBusy(false);
+      }
     }
   };
 
@@ -483,77 +551,93 @@ export default function StructureFetchPage({
       : selection.query || candidate.source_id;
     const expectedFormat = isReceptor ? pdbFormat : "sdf";
     const expectedSource = isReceptor ? "rcsb_pdb" : "pubchem";
-    activeTaskAbortRef.current?.abort();
-    const controller = new AbortController();
-    activeTaskAbortRef.current = controller;
+    const token = operationScope.begin();
     setIsBusy(true);
     setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
     setMessage(`正在下载已选择的${label}候选：${candidate.source_id}…`);
     setRawError("");
     try {
-      const started = isReceptor
-        ? await startPdbFetchTask(
-          project.project_dir,
-          expectedSourceId,
-          expectedFormat,
-          overwritePdb,
-        )
-        : await startPubchemFetchTask(
-          project.project_dir,
-          expectedSourceId,
-          ligandQueryType,
-          expectedFormat,
-          overwritePubchem,
-        );
-      if (started.deduplicated) {
-        setMessage(`${label}已有一个结构获取任务正在运行。为避免把旧候选误认为 ${candidate.source_id}，本次不会复用该任务；请等待任务结束后刷新并重试。`);
-        setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未下载或自动转换所选候选。`);
-        return;
-      }
-      const completed = await waitForTask(started, controller);
-      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
-      if (completed.status === "cancelled") {
-        setMessage(`${label}结构获取任务已取消。`);
-        return;
-      }
-      if (!completed.result_json) {
-        throw new Error(completed.error || completed.message || `${label}结构获取任务没有返回结果。`);
-      }
-      const response = parseProjectResponse(completed.result_json);
-      if (!response.ok) {
-        applyProjectResponse(response, `${label}原始结构下载失败。`);
-        return;
-      }
-      applyProjectResponse(response, `${label}原始结构已下载。`);
-      const refreshed = await refreshRawStatus(false);
-      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
-      if (!refreshed.ok) {
-        throw new Error(errorDetails(refreshed.error) || `${label} raw 状态读取失败，已停止自动转换。`);
-      }
-      const status = isReceptor
-        ? refreshed.receptor ?? findStatus(refreshed.files ?? [], "receptor_raw")
-        : refreshed.ligand ?? findStatus(refreshed.files ?? [], "ligand_raw");
-      const mismatches = candidateAcquisitionMismatches(response, status, {
-        source: expectedSource,
-        sourceId: expectedSourceId,
-        queryType: expectedQueryType,
-        format: expectedFormat,
+      await runRawToPreparedWorkflow({
+        acquireRaw: async () => {
+          const started = isReceptor
+            ? await startPdbFetchTask(
+              project.project_dir,
+              expectedSourceId,
+              expectedFormat,
+              overwritePdb,
+            )
+            : await startPubchemFetchTask(
+              project.project_dir,
+              expectedSourceId,
+              ligandQueryType,
+              expectedFormat,
+              overwritePubchem,
+            );
+          if (started.deduplicated) {
+            operationScope.commit(token, () => {
+              setMessage(`${label}已有一个结构获取任务正在运行。为避免把旧候选误认为 ${candidate.source_id}，本次不会复用该任务；请等待任务结束后刷新并重试。`);
+              setRawError(`检测到既有后台任务：${started.task_id || "任务 ID 未返回"}。本次未下载或自动转换所选候选。`);
+            });
+            return false;
+          }
+          const completed = await waitForTask(started, token);
+          if (completed.status === "cancelled") {
+            operationScope.commit(token, () => {
+              setMessage(`${label}结构获取任务已取消。`);
+            });
+            return false;
+          }
+          if (!completed.result_json) {
+            throw new Error(completed.error || completed.message || `${label}结构获取任务没有返回结果。`);
+          }
+
+          // Structure-fetch responses contain project metadata only, never the
+          // molecular payload. Parsing them is required to verify that the raw
+          // file belongs to the candidate the user explicitly selected.
+          const response = parseProjectResponse(completed.result_json);
+          if (!response.ok) {
+            applyProjectResponse(response, `${label}原始结构下载失败。`, true, token);
+            return false;
+          }
+          applyProjectResponse(response, `${label}原始结构已下载。`, true, token);
+
+          const refreshed = await readRawStatus();
+          if (!refreshed.ok) {
+            throw new Error(errorDetails(refreshed.error) || `${label} raw 状态读取失败，已停止自动转换。`);
+          }
+          applyProjectResponse(refreshed, "原始结构状态已刷新。", false, token);
+          const status = isReceptor
+            ? refreshed.receptor ?? findStatus(refreshed.files ?? [], "receptor_raw")
+            : refreshed.ligand ?? findStatus(refreshed.files ?? [], "ligand_raw");
+          const mismatches = candidateAcquisitionMismatches(response, status, {
+            source: expectedSource,
+            sourceId: expectedSourceId,
+            queryType: expectedQueryType,
+            format: expectedFormat,
+          });
+          if (mismatches.length) {
+            operationScope.commit(token, () => {
+              setMessage(`${label}候选下载结果与本次选择不一致，已停止自动转换。raw 文件会保留，等待人工检查。`);
+              setRawError(mismatches.map((item) => `- ${item}`).join("\n"));
+            });
+            return false;
+          }
+          return true;
+        },
+        observerIsCurrent: () => operationScope.isCurrent(token),
+        prepareRaw: (overwritePrepared) => prepareRaw(target, token, overwritePrepared),
       });
-      if (mismatches.length) {
-        setMessage(`${label}候选下载结果与本次选择不一致，已停止自动转换。raw 文件会保留，等待人工检查。`);
-        setRawError(mismatches.map((item) => `- ${item}`).join("\n"));
-        return;
+      if (operationScope.isCurrent(token)) {
+        await refreshRawStatus(token, false);
       }
-      await prepareRaw(target, controller);
-      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
-      await refreshRawStatus(false);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setMessage(`无法完成${label}候选的下载与自动转换。若 raw 文件已经写入，它会被保留；可打开“格式转换与 PDBQT 准备”检查并重试。`);
-      setRawError(error instanceof Error ? error.message : String(error));
+      operationScope.commit(token, () => {
+        setMessage(`无法完成${label}候选的下载与自动转换。若 raw 文件已经写入，它会被保留；可打开“格式转换与 PDBQT 准备”检查并重试。`);
+        setRawError(error instanceof Error ? error.message : String(error));
+      });
     } finally {
-      if (activeTaskAbortRef.current === controller) {
-        activeTaskAbortRef.current = null;
+      if (operationScope.finish(token)) {
         setBusyAction(null);
         setIsBusy(false);
       }
@@ -563,7 +647,7 @@ export default function StructureFetchPage({
   const importLocalRaw = async (target: PreparationTarget) => {
     const isReceptor = target === "receptor";
     const label = isReceptor ? "受体" : "配体";
-    let controller: AbortController | null = null;
+    const token = operationScope.begin();
     setMessage("");
     setRawError("");
     try {
@@ -578,33 +662,39 @@ export default function StructureFetchPage({
       const sourcePath = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
       if (!sourcePath) return;
 
-      activeTaskAbortRef.current?.abort();
-      controller = new AbortController();
-      activeTaskAbortRef.current = controller;
-      setIsBusy(true);
-      setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
-      setMessage(`正在导入${label}原始结构…`);
-      const rawPayload = await invoke<string>(
-        isReceptor ? "import_receptor_raw_file" : "import_ligand_raw_file",
-        { projectDir: project.project_dir, sourcePath },
-      );
-      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
-      const response = parseProjectResponse(rawPayload);
-      if (!response.ok) {
-        applyProjectResponse(response, `无法导入${label}原始结构。`);
-        return;
+      operationScope.commit(token, () => {
+        setIsBusy(true);
+        setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
+        setMessage(`正在导入${label}原始结构…`);
+      });
+      await runRawToPreparedWorkflow({
+        acquireRaw: async () => {
+          const rawPayload = await invoke<string>(
+            isReceptor ? "import_receptor_raw_file" : "import_ligand_raw_file",
+            { projectDir: project.project_dir, sourcePath },
+          );
+          const response = parseProjectResponse(rawPayload);
+          if (!response.ok) {
+            applyProjectResponse(response, `无法导入${label}原始结构。`, true, token);
+            return false;
+          }
+          applyProjectResponse(response, `${label}原始结构已导入。`, true, token);
+          return true;
+        },
+        observerIsCurrent: () => operationScope.isCurrent(token),
+        prepareRaw: (overwritePrepared) => prepareRaw(target, token, overwritePrepared),
+      });
+      if (operationScope.isCurrent(token)) {
+        await refreshRawStatus(token, false);
       }
-      applyProjectResponse(response, `${label}原始结构已导入。`);
-      await prepareRaw(target, controller);
-      if (controller.signal.aborted || activeTaskAbortRef.current !== controller) return;
-      await refreshRawStatus(false);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setMessage(`无法完成${label}原始结构的导入与自动转换。若 raw 文件已经写入，它会被保留。`);
-      setRawError(error instanceof Error ? error.message : String(error));
+      operationScope.commit(token, () => {
+        setMessage(`无法完成${label}原始结构的导入与自动转换。若 raw 文件已经写入，它会被保留。`);
+        setRawError(error instanceof Error ? error.message : String(error));
+      });
     } finally {
-      if (controller && activeTaskAbortRef.current === controller) {
-        activeTaskAbortRef.current = null;
+      if (operationScope.finish(token)) {
         setBusyAction(null);
         setIsBusy(false);
       }
@@ -616,6 +706,7 @@ export default function StructureFetchPage({
     const deleteFile = role === "receptor" ? deleteReceptorRawFile : deleteLigandRawFile;
     if (!window.confirm(`确定清除${label} raw 记录吗？Vina 输入文件不会被删除。`)) return;
 
+    const token = operationScope.begin();
     setIsBusy(true);
     setMessage("");
     setRawError("");
@@ -625,17 +716,23 @@ export default function StructureFetchPage({
         projectDir: project.project_dir,
         deleteFile,
       });
-      applyProjectResponse(parseProjectResponse(rawPayload), `${label} raw 记录已清除。`);
+      const response = operationScope.parseIfCurrent(token, rawPayload, parseProjectResponse);
+      if (!response) return;
+      applyProjectResponse(response, `${label} raw 记录已清除。`, true, token);
     } catch (error) {
-      setMessage(`无法清除${label} raw 记录。`);
-      setRawError(error instanceof Error ? error.message : String(error));
+      operationScope.commit(token, () => {
+        setMessage(`无法清除${label} raw 记录。`);
+        setRawError(error instanceof Error ? error.message : String(error));
+      });
     } finally {
-      setIsBusy(false);
+      if (operationScope.finish(token)) setIsBusy(false);
     }
   };
 
   const receptorStatus = receptorRaw ?? findStatus(files, "receptor_raw");
   const ligandStatus = ligandRaw ?? findStatus(files, "ligand_raw");
+  const receptorBusy = isBusy && (busyAction === "refresh" || Boolean(busyAction?.endsWith("-receptor")));
+  const ligandBusy = isBusy && (busyAction === "refresh" || Boolean(busyAction?.endsWith("-ligand")));
 
   const renderTechnicalDetails = (status: RawStructureStatus | null, fallbackRawFile: string) => (
     <dl className="meta-list">
@@ -670,8 +767,12 @@ export default function StructureFetchPage({
     if (!response?.ok) return null;
     const label = target === "receptor" ? "受体" : "配体";
     const preview = target === "receptor" ? receptorPreview : ligandPreview;
+    const statusId = `${target}-operation-status`;
     return (
-      <section className="structure-candidate-panel" aria-label={`${label}候选列表`}>
+      <section
+        className={`structure-candidate-panel${preview ? " has-preview" : ""}`}
+        aria-label={`${label}候选列表`}
+      >
         <div className="structure-candidate-heading">
           <div>
             <strong>搜索结果</strong>
@@ -681,64 +782,68 @@ export default function StructureFetchPage({
             {response.candidates.length ? "等待选择" : "无结果"}
           </StatusBadge>
         </div>
-        {response.candidates.length ? (
-          <div className="structure-candidate-list">
-            {response.candidates.map((candidate) => {
-              const details = candidateMetadata(candidate);
-              return (
-                <article className="structure-candidate-item" key={candidate.candidate_id}>
-                  <div className="structure-candidate-copy">
-                    <div className="structure-candidate-title">
-                      <strong>{candidate.source_id}</strong>
-                      <span>{candidate.title || candidate.source_id}</span>
+        <div className="structure-candidate-body">
+          {response.candidates.length ? (
+            <div className="structure-candidate-list">
+              {response.candidates.map((candidate) => {
+                const details = candidateMetadata(candidate);
+                return (
+                  <article className="structure-candidate-item" key={candidate.candidate_id}>
+                    <div className="structure-candidate-copy">
+                      <div className="structure-candidate-title">
+                        <strong>{candidate.source_id}</strong>
+                        <span>{candidate.title || candidate.source_id}</span>
+                      </div>
+                      {candidate.subtitle ? <p>{candidate.subtitle}</p> : null}
+                      {details.length ? (
+                        <ul className="structure-candidate-meta" aria-label="候选元数据">
+                          {details.map((detail) => <li key={detail}>{detail}</li>)}
+                        </ul>
+                      ) : null}
                     </div>
-                    {candidate.subtitle ? <p>{candidate.subtitle}</p> : null}
-                    {details.length ? (
-                      <ul className="structure-candidate-meta" aria-label="候选元数据">
-                        {details.map((detail) => <li key={detail}>{detail}</li>)}
-                      </ul>
-                    ) : null}
-                  </div>
-                  <div className="structure-candidate-actions">
-                    <ActionButton
-                      disabled={isBusy}
-                      aria-label={`临时预览 ${candidate.source_id}`}
-                      onClick={() => void previewCandidate(target, candidate)}
-                    >
-                      {previewingCandidateId === candidate.candidate_id ? "加载中…" : "3D 预览"}
-                    </ActionButton>
-                    <ActionButton
-                      variant="primary"
-                      disabled={isBusy}
-                      aria-label={`选择 ${candidate.source_id} 并自动准备${label} PDBQT`}
-                      onClick={() => void selectAndPrepareCandidate(target, candidate)}
-                    >
-                      选择并准备
-                    </ActionButton>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="structure-candidate-empty">没有找到候选。请调整关键词、查询类型或候选数量后重试。</p>
-        )}
-        {preview ? (
-          <section className="structure-candidate-preview-panel" aria-label={`${preview.label} 临时 3D 预览`}>
-            <header>
-              <div><span>只读 3D 预览</span><strong>{preview.label}</strong></div>
-              <StatusBadge tone="info">未写入项目</StatusBadge>
-            </header>
-            <Suspense fallback={<div className="run-preview-loading">正在加载 3D 查看器…</div>}>
-              <CandidateStructurePreview
-                content={preview.response.content}
-                format={preview.response.format}
-                label={preview.label}
-              />
-            </Suspense>
-            <p>原始 PDB / mmCIF / SDF 可直接用于临时 3D 选择预览；只有点击“选择并准备”后才会写入项目并生成 PDBQT。</p>
-          </section>
-        ) : null}
+                    <div className="structure-candidate-actions">
+                      <ActionButton
+                        aria-describedby={statusId}
+                        disabled={isBusy}
+                        aria-label={`临时预览 ${candidate.source_id}`}
+                        onClick={() => void previewCandidate(target, candidate)}
+                      >
+                        {previewingCandidateId === candidate.candidate_id ? "加载中…" : "3D 预览"}
+                      </ActionButton>
+                      <ActionButton
+                        aria-describedby={statusId}
+                        variant="primary"
+                        disabled={isBusy}
+                        aria-label={`选择 ${candidate.source_id} 并自动准备${label} PDBQT`}
+                        onClick={() => void selectAndPrepareCandidate(target, candidate)}
+                      >
+                        选择并准备
+                      </ActionButton>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="structure-candidate-empty">没有找到候选。请调整关键词、查询类型或候选数量后重试。</p>
+          )}
+          {preview ? (
+            <section className="structure-candidate-preview-panel" aria-label={`${preview.label} 临时 3D 预览`}>
+              <header>
+                <div><span>只读 3D 预览</span><strong>{preview.label}</strong></div>
+                <StatusBadge tone="info">未写入项目</StatusBadge>
+              </header>
+              <Suspense fallback={<div className="run-preview-loading">正在加载 3D 查看器…</div>}>
+                <CandidateStructurePreview
+                  content={preview.response.content}
+                  format={preview.response.format}
+                  label={preview.label}
+                />
+              </Suspense>
+              <p>原始 PDB / mmCIF / SDF 可直接用于临时 3D 选择预览；只有点击“选择并准备”后才会写入项目并生成 PDBQT。</p>
+            </section>
+          ) : null}
+        </div>
         <p className="structure-candidate-note">
           DockStart 不会默认下载第一项。可逐项加载只读 3D 预览；只有明确点击“选择并准备”的候选才会写入项目并转换。
         </p>
@@ -763,201 +868,332 @@ export default function StructureFetchPage({
         }
       />
 
-      <BodyGrid>
+      <BodyGrid className="structure-source-body-grid">
         <MainPanel>
           <div className="main-panel-content structure-source-content">
             <WarningCallout title="自动转换不等于科学检查">
               <p>下载或导入后会立即尝试生成 PDBQT，但仍需人工检查受体链、水、金属、辅因子，以及配体质子化、电荷和构象。</p>
             </WarningCallout>
 
-            <div className="two-column-grid structure-source-grid">
-              <article className="task-card structure-source-card" data-layout="task-card">
-                <div className="section-card-header">
-                  <div>
+            <div className="structure-source-grid">
+              <article
+                aria-busy={receptorBusy}
+                aria-labelledby="receptor-source-title"
+                className="task-card structure-source-card"
+                data-layout="task-card"
+                data-source-role="receptor"
+              >
+                <div className="structure-source-summary">
+                  <div className="structure-source-summary-header">
                     <span className="structure-source-step">01 · RECEPTOR</span>
-                    <h2>搜索或导入受体</h2>
+                    <h2 id="receptor-source-title">受体</h2>
                   </div>
-                  <StatusBadge tone={statusTone(receptorStatus?.status)}>{statusLabel(receptorStatus?.status)}</StatusBadge>
+                  <span aria-live="polite" className="viewer-sr-only" id="receptor-operation-status">
+                    {receptorBusy ? message || "正在处理受体结构。" : ""}
+                  </span>
+                  <StatusBadge tone={statusTone(receptorStatus?.status)}>
+                    {`raw ${statusLabel(receptorStatus?.status)}`}
+                  </StatusBadge>
+                  <div className="structure-source-status-item">
+                    <span>当前 raw 文件</span>
+                    <code title={receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}>
+                      {receptorStatus?.raw_file || project.receptor.raw_file || "未记录"}
+                    </code>
+                  </div>
+                  <div className="structure-source-status-item">
+                    <span>Vina 输入</span>
+                    <strong>{project.receptor.file ? "PDBQT 已准备" : "PDBQT 未准备"}</strong>
+                  </div>
                 </div>
-                <p className="muted-path">{receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}</p>
 
-                <div className="structure-search-controls">
-                  <div className="field-stack structure-search-query">
-                    <label htmlFor="rcsb-query">RCSB PDB ID 或关键词</label>
-                    <input
-                      id="rcsb-query"
-                      value={rcsbQuery}
-                      onChange={(event) => {
-                        rcsbSearchGenerationRef.current += 1;
-                        setRcsbQuery(event.target.value);
-                        setRcsbResults(null);
+                <section className="structure-source-workspace" aria-labelledby="receptor-source-workspace-title">
+                  <header className="structure-source-workspace-header">
+                    <div>
+                      <span>在线结构库</span>
+                      <h3 id="receptor-source-workspace-title">搜索 RCSB 并预览受体</h3>
+                    </div>
+                    <p>可先查看候选原始结构；明确选择后才会写入项目并转换。</p>
+                  </header>
+
+                  <div className="structure-search-controls">
+                    <div className="field-stack structure-search-query">
+                      <label htmlFor="rcsb-query">RCSB PDB ID 或关键词</label>
+                      <input
+                        disabled={isBusy}
+                        id="rcsb-query"
+                        value={rcsbQuery}
+                        onChange={(event) => {
+                          rcsbSearchGenerationRef.current += 1;
+                          setRcsbQuery(event.target.value);
+                          setRcsbResults(null);
+                          setReceptorPreview(null);
+                        }}
+                        placeholder="例如 1IEP 或 c-Abl imatinib"
+                      />
+                    </div>
+                    <div className="field-stack">
+                      <label htmlFor="rcsb-query-type">搜索方式</label>
+                      <select
+                        disabled={isBusy}
+                        id="rcsb-query-type"
+                        value={rcsbQueryType}
+                        onChange={(event) => {
+                          rcsbSearchGenerationRef.current += 1;
+                          setRcsbQueryType(event.target.value as RcsbQueryType);
+                          setRcsbResults(null);
+                          setReceptorPreview(null);
+                        }}
+                      >
+                        <option value="auto">自动识别</option>
+                        <option value="pdb_id">PDB ID</option>
+                        <option value="keyword">关键词</option>
+                      </select>
+                    </div>
+                    <div className="field-stack">
+                      <label htmlFor="rcsb-limit">候选数量</label>
+                      <input
+                        disabled={isBusy}
+                        id="rcsb-limit"
+                        type="number"
+                        min="1"
+                        max={MAX_SEARCH_LIMIT}
+                        step="1"
+                        value={rcsbLimit}
+                        onChange={(event) => {
+                          rcsbSearchGenerationRef.current += 1;
+                          setRcsbLimit(event.target.value);
+                          setRcsbResults(null);
+                          setReceptorPreview(null);
+                        }}
+                      />
+                    </div>
+                    <div className="field-stack">
+                      <label htmlFor="pdb-format">下载格式</label>
+                      <select disabled={isBusy} id="pdb-format" value={pdbFormat} onChange={(event) => {
+                        setPdbFormat(event.target.value);
                         setReceptorPreview(null);
-                      }}
-                      placeholder="例如 1IEP 或 c-Abl imatinib"
-                    />
+                      }}>
+                        <option value="pdb">PDB</option>
+                        <option value="cif">mmCIF</option>
+                      </select>
+                    </div>
                   </div>
-                  <div className="field-stack">
-                    <label htmlFor="rcsb-query-type">搜索方式</label>
-                    <select
-                      id="rcsb-query-type"
-                      value={rcsbQueryType}
-                      onChange={(event) => {
-                        rcsbSearchGenerationRef.current += 1;
-                        setRcsbQueryType(event.target.value as RcsbQueryType);
-                        setRcsbResults(null);
-                        setReceptorPreview(null);
-                      }}
+                  <div className="button-row">
+                    <ActionButton
+                      aria-describedby="receptor-operation-status"
+                      variant="primary"
+                      disabled={isBusy || !rcsbQuery.trim()}
+                      onClick={() => void searchCandidates("rcsb")}
                     >
-                      <option value="auto">自动识别</option>
-                      <option value="pdb_id">PDB ID</option>
-                      <option value="keyword">关键词</option>
-                    </select>
+                      {busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选"}
+                    </ActionButton>
                   </div>
-                  <div className="field-stack">
-                    <label htmlFor="rcsb-limit">候选数量</label>
+
+                  {renderCandidates("receptor", rcsbResults)}
+                </section>
+
+                <div className="structure-source-actions">
+                  <div className="structure-source-actions-copy">
+                    <span>本地文件</span>
+                    <strong>导入 PDB / CIF</strong>
+                    <p>选择本机原始结构后，立即尝试生成受体 PDBQT。</p>
+                  </div>
+                  <ActionButton
+                    aria-describedby="receptor-operation-status"
+                    className="structure-source-import-button"
+                    disabled={isBusy}
+                    onClick={() => void importLocalRaw("receptor")}
+                  >
+                    {busyAction === "prepare-receptor" ? "正在处理…" : "导入并自动转换"}
+                  </ActionButton>
+                  <label className="checkbox-row structure-source-overwrite">
                     <input
-                      id="rcsb-limit"
-                      type="number"
-                      min="1"
-                      max={MAX_SEARCH_LIMIT}
-                      step="1"
-                      value={rcsbLimit}
-                      onChange={(event) => {
-                        rcsbSearchGenerationRef.current += 1;
-                        setRcsbLimit(event.target.value);
-                        setRcsbResults(null);
-                        setReceptorPreview(null);
-                      }}
+                      type="checkbox"
+                      checked={overwritePdb}
+                      disabled={isBusy}
+                      onChange={(event) => setOverwritePdb(event.target.checked)}
                     />
-                  </div>
-                  <div className="field-stack">
-                    <label htmlFor="pdb-format">下载格式</label>
-                    <select id="pdb-format" value={pdbFormat} onChange={(event) => {
-                      setPdbFormat(event.target.value);
-                      setReceptorPreview(null);
-                    }}>
-                      <option value="pdb">PDB</option>
-                      <option value="cif">mmCIF</option>
-                    </select>
-                  </div>
-                </div>
-
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={overwritePdb} onChange={(event) => setOverwritePdb(event.target.checked)} />
-                  若同名 raw 文件已存在，允许覆盖
-                </label>
-                <div className="button-row">
-                  <ActionButton variant="primary" disabled={isBusy || !rcsbQuery.trim()} onClick={() => void searchCandidates("rcsb")}>
-                    {busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选"}
-                  </ActionButton>
-                  <ActionButton disabled={isBusy} onClick={() => void importLocalRaw("receptor")}>
-                    {busyAction === "prepare-receptor" ? "正在处理…" : "导入并自动转换 PDB / CIF"}
-                  </ActionButton>
-                </div>
-
-                {renderCandidates("receptor", rcsbResults)}
-
-                <AdvancedDetails summary="管理受体原始结构">
-                  <label className="checkbox-row">
-                    <input type="checkbox" checked={deleteReceptorRawFile} onChange={(event) => setDeleteReceptorRawFile(event.target.checked)} />
-                    清除记录时同时删除项目中的 raw 文件
+                    在线候选允许覆盖同名 raw 文件
                   </label>
-                  <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
-                    清除受体记录
-                  </ActionButton>
-                  {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
-                </AdvancedDetails>
+                  <AdvancedDetails className="structure-source-manage" summary="管理受体原始结构">
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={deleteReceptorRawFile}
+                        disabled={isBusy}
+                        onChange={(event) => setDeleteReceptorRawFile(event.target.checked)}
+                      />
+                      清除记录时同时删除项目中的 raw 文件
+                    </label>
+                    <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
+                      清除受体记录
+                    </ActionButton>
+                    {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
+                  </AdvancedDetails>
+                </div>
               </article>
 
-              <article className="task-card structure-source-card" data-layout="task-card">
-                <div className="section-card-header">
-                  <div>
+              <article
+                aria-busy={ligandBusy}
+                aria-labelledby="ligand-source-title"
+                className="task-card structure-source-card"
+                data-layout="task-card"
+                data-source-role="ligand"
+              >
+                <div className="structure-source-summary">
+                  <div className="structure-source-summary-header">
                     <span className="structure-source-step">02 · LIGAND</span>
-                    <h2>搜索或导入配体</h2>
+                    <h2 id="ligand-source-title">配体</h2>
                   </div>
-                  <StatusBadge tone={statusTone(ligandStatus?.status)}>{statusLabel(ligandStatus?.status)}</StatusBadge>
+                  <span aria-live="polite" className="viewer-sr-only" id="ligand-operation-status">
+                    {ligandBusy ? message || "正在处理配体结构。" : ""}
+                  </span>
+                  <StatusBadge tone={statusTone(ligandStatus?.status)}>
+                    {`raw ${statusLabel(ligandStatus?.status)}`}
+                  </StatusBadge>
+                  <div className="structure-source-status-item">
+                    <span>当前 raw 文件</span>
+                    <code title={ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}>
+                      {ligandStatus?.raw_file || project.ligand.raw_file || "未记录"}
+                    </code>
+                  </div>
+                  <div className="structure-source-status-item">
+                    <span>Vina 输入</span>
+                    <strong>{project.ligand.file ? "PDBQT 已准备" : "PDBQT 未准备"}</strong>
+                  </div>
                 </div>
-                <p className="muted-path">{ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}</p>
 
-                <div className="structure-search-controls">
-                  <div className="field-stack structure-search-query">
-                    <label htmlFor="pubchem-query">PubChem CID、名称或关键词</label>
-                    <input
-                      id="pubchem-query"
-                      value={pubchemQuery}
-                      onChange={(event) => {
-                        pubchemSearchGenerationRef.current += 1;
-                        setPubchemQuery(event.target.value);
-                        setPubchemResults(null);
-                        setLigandPreview(null);
-                      }}
-                      placeholder="例如 5291 或 imatinib"
-                    />
+                <section className="structure-source-workspace" aria-labelledby="ligand-source-workspace-title">
+                  <header className="structure-source-workspace-header">
+                    <div>
+                      <span>在线化合物库</span>
+                      <h3 id="ligand-source-workspace-title">搜索 PubChem 并预览配体</h3>
+                    </div>
+                    <p>名称搜索会返回多个候选，可先预览再选择目标化合物。</p>
+                  </header>
+
+                  <div className="structure-search-controls">
+                    <div className="field-stack structure-search-query">
+                      <label htmlFor="pubchem-query">PubChem CID、名称或关键词</label>
+                      <input
+                        disabled={isBusy}
+                        id="pubchem-query"
+                        value={pubchemQuery}
+                        onChange={(event) => {
+                          pubchemSearchGenerationRef.current += 1;
+                          setPubchemQuery(event.target.value);
+                          setPubchemResults(null);
+                          setLigandPreview(null);
+                        }}
+                        placeholder="例如 5291 或 imatinib"
+                      />
+                    </div>
+                    <div className="field-stack">
+                      <label htmlFor="pubchem-query-type">搜索方式</label>
+                      <select
+                        disabled={isBusy}
+                        id="pubchem-query-type"
+                        value={pubchemQueryType}
+                        onChange={(event) => {
+                          pubchemSearchGenerationRef.current += 1;
+                          setPubchemQueryType(event.target.value as PubchemQueryType);
+                          setPubchemResults(null);
+                          setLigandPreview(null);
+                        }}
+                      >
+                        <option value="auto">自动识别</option>
+                        <option value="cid">CID</option>
+                        <option value="name">名称</option>
+                        <option value="keyword">关键词</option>
+                      </select>
+                    </div>
+                    <div className="field-stack">
+                      <label htmlFor="pubchem-limit">候选数量</label>
+                      <input
+                        disabled={isBusy}
+                        id="pubchem-limit"
+                        type="number"
+                        min="1"
+                        max={MAX_SEARCH_LIMIT}
+                        step="1"
+                        value={pubchemLimit}
+                        onChange={(event) => {
+                          pubchemSearchGenerationRef.current += 1;
+                          setPubchemLimit(event.target.value);
+                          setPubchemResults(null);
+                          setLigandPreview(null);
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="field-stack">
-                    <label htmlFor="pubchem-query-type">搜索方式</label>
-                    <select
-                      id="pubchem-query-type"
-                      value={pubchemQueryType}
-                      onChange={(event) => {
-                        pubchemSearchGenerationRef.current += 1;
-                        setPubchemQueryType(event.target.value as PubchemQueryType);
-                        setPubchemResults(null);
-                        setLigandPreview(null);
-                      }}
+                  <div className="button-row">
+                    <ActionButton
+                      aria-describedby="ligand-operation-status"
+                      variant="primary"
+                      disabled={isBusy || !pubchemQuery.trim()}
+                      onClick={() => void searchCandidates("pubchem")}
                     >
-                      <option value="auto">自动识别</option>
-                      <option value="cid">CID</option>
-                      <option value="name">名称</option>
-                      <option value="keyword">关键词</option>
-                    </select>
+                      {busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选"}
+                    </ActionButton>
                   </div>
-                  <div className="field-stack">
-                    <label htmlFor="pubchem-limit">候选数量</label>
+
+                  {renderCandidates("ligand", pubchemResults)}
+                </section>
+
+                <div className="structure-source-actions">
+                  <div className="structure-source-actions-copy">
+                    <span>本地文件</span>
+                    <strong>导入 SDF / MOL</strong>
+                    <p>选择本机原始结构后，立即尝试生成配体 PDBQT。</p>
+                  </div>
+                  <ActionButton
+                    aria-describedby="ligand-operation-status"
+                    className="structure-source-import-button"
+                    disabled={isBusy}
+                    onClick={() => void importLocalRaw("ligand")}
+                  >
+                    {busyAction === "prepare-ligand" ? "正在处理…" : "导入并自动转换"}
+                  </ActionButton>
+                  <label className="checkbox-row structure-source-overwrite">
                     <input
-                      id="pubchem-limit"
-                      type="number"
-                      min="1"
-                      max={MAX_SEARCH_LIMIT}
-                      step="1"
-                      value={pubchemLimit}
-                      onChange={(event) => {
-                        pubchemSearchGenerationRef.current += 1;
-                        setPubchemLimit(event.target.value);
-                        setPubchemResults(null);
-                        setLigandPreview(null);
-                      }}
+                      type="checkbox"
+                      checked={overwritePubchem}
+                      disabled={isBusy}
+                      onChange={(event) => setOverwritePubchem(event.target.checked)}
                     />
-                  </div>
-                </div>
-
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={overwritePubchem} onChange={(event) => setOverwritePubchem(event.target.checked)} />
-                  若同名 raw 文件已存在，允许覆盖
-                </label>
-                <div className="button-row">
-                  <ActionButton variant="primary" disabled={isBusy || !pubchemQuery.trim()} onClick={() => void searchCandidates("pubchem")}>
-                    {busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选"}
-                  </ActionButton>
-                  <ActionButton disabled={isBusy} onClick={() => void importLocalRaw("ligand")}>
-                    {busyAction === "prepare-ligand" ? "正在处理…" : "导入并自动转换 SDF / MOL"}
-                  </ActionButton>
-                </div>
-
-                {renderCandidates("ligand", pubchemResults)}
-
-                <AdvancedDetails summary="管理配体原始结构">
-                  <label className="checkbox-row">
-                    <input type="checkbox" checked={deleteLigandRawFile} onChange={(event) => setDeleteLigandRawFile(event.target.checked)} />
-                    清除记录时同时删除项目中的 raw 文件
+                    在线候选允许覆盖同名 raw 文件
                   </label>
-                  <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
-                    清除配体记录
-                  </ActionButton>
-                  {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
-                </AdvancedDetails>
+                  <AdvancedDetails className="structure-source-manage" summary="管理配体原始结构">
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={deleteLigandRawFile}
+                        disabled={isBusy}
+                        onChange={(event) => setDeleteLigandRawFile(event.target.checked)}
+                      />
+                      清除记录时同时删除项目中的 raw 文件
+                    </label>
+                    <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
+                      清除配体记录
+                    </ActionButton>
+                    {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
+                  </AdvancedDetails>
+                </div>
               </article>
             </div>
+
+            <aside className="structure-source-guidance" aria-label="结构选择与转换说明">
+              <section>
+                <span>选择规则</span>
+                <strong>预览不会修改项目</strong>
+                <p>只有明确点击某个候选的“选择并准备”，DockStart 才下载该结构并启动转换。</p>
+              </section>
+              <section>
+                <span>转换失败怎么办</span>
+                <strong>raw 文件会保留</strong>
+                <p>打开“格式转换与 PDBQT 准备”检查工具链、stderr 和日志，或改为导入已有 PDBQT。</p>
+              </section>
+            </aside>
 
             <div className="next-step-strip">
               <div>
@@ -973,37 +1209,6 @@ export default function StructureFetchPage({
             <CommandResultPanel title="结构搜索与准备结果" message={message} rawError={rawError} />
           </div>
         </MainPanel>
-
-        <RightRail>
-          <RightRailSection title="当前输入状态">
-            <dl className="mode-context-list">
-              <div>
-                <dt>受体 raw</dt>
-                <dd>{statusLabel(receptorStatus?.status)}</dd>
-              </div>
-              <div>
-                <dt>受体 PDBQT</dt>
-                <dd>{project.receptor.file ? "已准备" : "未准备"}</dd>
-              </div>
-              <div>
-                <dt>配体 raw</dt>
-                <dd>{statusLabel(ligandStatus?.status)}</dd>
-              </div>
-              <div>
-                <dt>配体 PDBQT</dt>
-                <dd>{project.ligand.file ? "已准备" : "未准备"}</dd>
-              </div>
-            </dl>
-          </RightRailSection>
-
-          <RightRailSection title="选择规则">
-            <p>搜索和临时 3D 预览都不会写入项目。明确选择某一项后，DockStart 才下载该结构并自动转换。</p>
-          </RightRailSection>
-
-          <RightRailSection title="转换失败怎么办">
-            <p>原始结构会保留在 raw/。打开“格式转换与 PDBQT 准备”查看工具链、stderr 和日志，也可改为导入已准备好的 PDBQT。</p>
-          </RightRailSection>
-        </RightRail>
       </BodyGrid>
     </PageShell>
   );

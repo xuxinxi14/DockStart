@@ -8,7 +8,9 @@ the accepted payload is the ``selection`` object returned by structure search.
 from __future__ import annotations
 
 import json
+import queue
 import sys
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -74,20 +76,63 @@ def _preview_error(
     )
 
 
-def _fetch_bytes_limited(url: str, timeout: int) -> bytes:
+def _fetch_bytes_limited(url: str, timeout: int, byte_limit: int = MAX_PREVIEW_BYTES) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": f"DockStart/{__version__}"})
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - allowlisted HTTPS endpoints.
         content_length = response.headers.get("Content-Length")
         if content_length:
             try:
-                if int(content_length) > MAX_PREVIEW_BYTES:
+                if int(content_length) > byte_limit:
                     raise _PreviewTooLargeError(f"Content-Length={content_length}")
             except ValueError:
                 pass
-        data = response.read(MAX_PREVIEW_BYTES + 1)
-    if len(data) > MAX_PREVIEW_BYTES:
+        data = response.read(byte_limit + 1)
+    if len(data) > byte_limit:
         raise _PreviewTooLargeError(f"downloaded={len(data)}")
     return data
+
+
+def _fetch_with_deadline(
+    url: str,
+    timeout: int,
+    *,
+    fetcher: PreviewFetcher | None,
+    byte_limit: int,
+) -> bytes:
+    """Run one preview download behind a hard wall-clock deadline.
+
+    ``urllib`` applies its timeout to individual blocking socket operations.
+    A server that continuously drips data can therefore exceed the intended
+    total request time. The worker is deliberately daemonized: when this CLI
+    returns a timeout payload, the short-lived Python process can exit without
+    waiting for the abandoned network read.
+    """
+
+    result_queue: queue.Queue[tuple[bool, bytes | Exception]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            data = fetcher(url, timeout) if fetcher else _fetch_bytes_limited(url, timeout, byte_limit)
+        except Exception as exc:  # noqa: BLE001 - re-raised on the caller thread.
+            result_queue.put((False, exc))
+        else:
+            result_queue.put((True, data))
+
+    thread = threading.Thread(target=worker, name="dockstart-candidate-preview", daemon=True)
+    thread.start()
+    thread.join(timeout=max(float(timeout), 0.001))
+    if thread.is_alive():
+        raise TimeoutError(f"候选结构预览超过总时限：{timeout} 秒")
+
+    try:
+        succeeded, payload = result_queue.get_nowait()
+    except queue.Empty as exc:
+        raise RuntimeError("候选结构预览线程没有返回结果。") from exc
+    if succeeded:
+        assert isinstance(payload, bytes)
+        return payload
+    assert isinstance(payload, Exception)
+    raise payload
 
 
 def _download_preview(
@@ -101,7 +146,12 @@ def _download_preview(
     file_format: str,
 ) -> tuple[bytes | None, dict[str, Any] | None]:
     try:
-        data = (fetcher or _fetch_bytes_limited)(url, timeout)
+        data = _fetch_with_deadline(
+            url,
+            timeout,
+            fetcher=fetcher,
+            byte_limit=byte_limit,
+        )
     except _PreviewTooLargeError as exc:
         return None, _preview_error(
             "STRUCTURE_PREVIEW_TOO_LARGE",
@@ -110,7 +160,7 @@ def _download_preview(
             source_id=source_id,
             file_format=file_format,
             raw_error=str(exc),
-            suggestion=f"临时预览最多读取 {MAX_PREVIEW_BYTES // (1024 * 1024)} MB；可先下载目标结构，再在项目工作台中查看。",
+            suggestion=f"为保持界面流畅，本次临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
         )
     except urllib.error.HTTPError as exc:
         return None, _preview_error(
@@ -171,7 +221,7 @@ def _download_preview(
             source_id=source_id,
             file_format=file_format,
             raw_error=f"size_bytes={len(data)}; limit_bytes={byte_limit}",
-            suggestion=f"临时预览最多读取 {MAX_PREVIEW_BYTES // (1024 * 1024)} MB；可先下载目标结构，再在项目工作台中查看。",
+            suggestion=f"为保持界面流畅，本次临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
         )
     return data, None
 
@@ -350,15 +400,15 @@ def preview_candidate_structure(
     # The JSON transport adds escaping and metadata around ``content``. Enforce
     # the same hard ceiling on the complete response, not only the download.
     response_size = len(json.dumps(response, ensure_ascii=False).encode("utf-8")) + 1
-    if response_size > MAX_PREVIEW_BYTES:
+    if response_size > byte_limit:
         return _preview_error(
             "STRUCTURE_PREVIEW_TOO_LARGE",
             "候选结构过大，未加载 3D 预览。",
             provider=target["provider"],
             source_id=target["source_id"],
             file_format=target["format"],
-            raw_error=f"response_bytes={response_size}; limit_bytes={MAX_PREVIEW_BYTES}",
-            suggestion=f"临时预览响应最多 {MAX_PREVIEW_BYTES // (1024 * 1024)} MB；可先下载目标结构，再在项目工作台中查看。",
+            raw_error=f"response_bytes={response_size}; limit_bytes={byte_limit}",
+            suggestion=f"为保持界面流畅，本次临时预览响应最多 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
         )
     return response
 
@@ -393,7 +443,21 @@ def main() -> None:
                 ),
             )
             return
-        _print_json(preview_candidate_structure(selection))
+        byte_limit = MAX_PREVIEW_BYTES
+        if len(sys.argv) >= 4:
+            try:
+                byte_limit = int(sys.argv[3])
+            except ValueError:
+                _print_json(
+                    _preview_error(
+                        "STRUCTURE_PREVIEW_LIMIT_INVALID",
+                        "候选结构预览大小上限无效。",
+                        raw_error=sys.argv[3],
+                        suggestion=f"预览上限必须在 1 字节到 {MAX_PREVIEW_BYTES} 字节之间。",
+                    ),
+                )
+                return
+        _print_json(preview_candidate_structure(selection, byte_limit=byte_limit))
         return
 
     _print_json(_preview_error("STRUCTURE_PREVIEW_COMMAND_UNKNOWN", f"未知候选预览命令：{command}"))

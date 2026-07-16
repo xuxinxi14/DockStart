@@ -4,6 +4,8 @@ import contextlib
 import io
 import json
 import sys
+import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -93,6 +95,39 @@ class CandidatePreviewTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "STRUCTURE_PREVIEW_TOO_LARGE")
         self.assertEqual(result["content"], "")
 
+    def test_custom_interactive_limit_applies_to_serialized_response(self) -> None:
+        byte_limit = 2_048
+        payload = b"\\" * 1_200
+        result = preview_candidate_structure(
+            {"download_command": "fetch-pdb", "pdb_id": "1IEP", "format": "pdb"},
+            fetcher=lambda _url, _timeout: payload,
+            byte_limit=byte_limit,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_PREVIEW_TOO_LARGE")
+        self.assertIn(f"limit_bytes={byte_limit}", result["error"]["raw_error"])
+
+    def test_fetcher_has_total_wall_clock_deadline(self) -> None:
+        release = threading.Event()
+
+        def slow_fetcher(_url: str, _timeout: int) -> bytes:
+            release.wait(timeout=2)
+            return b"HEADER TEST\nEND\n"
+
+        started = time.monotonic()
+        result = preview_candidate_structure(
+            {"download_command": "fetch-pdb", "pdb_id": "1IEP", "format": "pdb"},
+            fetcher=slow_fetcher,
+            timeout=0.05,
+        )
+        elapsed = time.monotonic() - started
+        release.set()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_PREVIEW_TIMEOUT")
+        self.assertLess(elapsed, 0.5)
+
     def test_network_failure_is_chinese_structured_error(self) -> None:
         def fetcher(_url: str, _timeout: int) -> bytes:
             raise urllib.error.URLError("offline")
@@ -121,6 +156,40 @@ class CandidatePreviewTests(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], "STRUCTURE_PREVIEW_SELECTION_REQUIRED")
+
+    def test_cli_accepts_interactive_preview_limit(self) -> None:
+        output = io.StringIO()
+        selection = json.dumps(
+            {"download_command": "fetch-pdb", "pdb_id": "1IEP", "format": "pdb"},
+        )
+        with patch.object(sys, "argv", ["candidate_preview", "preview-candidate", selection, "0"]):
+            with contextlib.redirect_stdout(output):
+                main()
+
+        payload = json.loads(output.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "STRUCTURE_PREVIEW_LIMIT_INVALID")
+
+    def test_cli_forwards_valid_interactive_preview_limit(self) -> None:
+        output = io.StringIO()
+        selection = json.dumps(
+            {"download_command": "fetch-pdb", "pdb_id": "1IEP", "format": "pdb"},
+        )
+        with patch.object(
+            sys,
+            "argv",
+            ["candidate_preview", "preview-candidate", selection, str(2 * 1024 * 1024)],
+        ):
+            with patch(
+                "dockstart_core.candidate_preview.preview_candidate_structure",
+                return_value={"ok": True},
+            ) as preview:
+                with contextlib.redirect_stdout(output):
+                    main()
+
+        payload = json.loads(output.getvalue())
+        self.assertTrue(payload["ok"])
+        self.assertEqual(preview.call_args.kwargs["byte_limit"], 2 * 1024 * 1024)
 
 
 if __name__ == "__main__":

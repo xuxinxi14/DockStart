@@ -31,6 +31,7 @@ const MAX_BACKEND_CACHE_AGE: Duration = Duration::from_secs(30 * 60);
 const MAX_BACKEND_CACHE_ENTRIES: usize = 128;
 const MAX_BACKEND_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BACKEND_CACHE_ENTRY_BYTES: usize = 20 * 1024 * 1024;
+const INTERACTIVE_STRUCTURE_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
 const BACKGROUND_TASK_EVENT: &str = "dockstart-background-task";
 const MAX_CONCURRENT_BACKGROUND_TASKS: usize = 2;
 const MAX_QUEUED_BACKGROUND_TASKS: usize = 32;
@@ -422,7 +423,11 @@ async fn search_pubchem_candidates(query: String, limit: u32, query_type: String
 async fn preview_structure_candidate(selection_json: String) -> String {
     match run_backend_module_async(
         "dockstart_core.candidate_preview",
-        vec!["preview-candidate".to_string(), selection_json],
+        vec![
+            "preview-candidate".to_string(),
+            selection_json,
+            INTERACTIVE_STRUCTURE_PREVIEW_BYTES.to_string(),
+        ],
     )
     .await
     {
@@ -3512,6 +3517,16 @@ mod tests {
     // invalidate each other's generation while the Rust test harness runs
     // test functions in parallel.
     static BACKEND_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn tauri_config_declares_the_main_workbench_window() {
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let windows = &context.config().app.windows;
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].label, "main");
+        assert_eq!(windows[0].title, "DockStart");
+    }
 
     #[test]
     fn distribution_profile_comes_from_the_packaged_manifest() {

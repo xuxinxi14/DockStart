@@ -483,6 +483,146 @@ class BackendReliabilityTests(unittest.TestCase):
             self.assertEqual(stale_metadata["status"], "interrupted")
             self.assertFalse(stale_metadata["published"])
 
+    def test_non_overwrite_preparation_preserves_pdbqt_imported_while_running(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            Path(command[-1]).write_text("AUTOMATIC CANDIDATE", encoding="utf-8")
+            started.set()
+            self.assertTrue(release.wait(10))
+            return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_ligand_raw(project_dir)
+            manual_source = Path(temp_dir) / "manual_ligand.pdbqt"
+            manual_source.write_text("MANUALLY IMPORTED PDBQT", encoding="utf-8")
+            results: list[dict] = []
+
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_meeko_tools()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                worker = threading.Thread(
+                    target=lambda: results.append(
+                        prepare_ligand_pdbqt(str(project_dir), overwrite=False),
+                    ),
+                    daemon=True,
+                )
+                worker.start()
+                self.assertTrue(started.wait(10))
+                imported = project_module.import_ligand_pdbqt(
+                    str(project_dir),
+                    str(manual_source),
+                )
+                release.set()
+                worker.join(10)
+
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(imported["ok"], imported)
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0]["ok"])
+            self.assertEqual(results[0]["error"]["code"], "PREPARATION_OUTPUT_CONFLICT")
+            self.assertEqual(
+                (project_dir / "prepared" / "ligand.pdbqt").read_text(encoding="utf-8"),
+                "MANUALLY IMPORTED PDBQT",
+            )
+            metadata = json.loads(
+                (project_dir / "preparation" / "ligand_001" / "metadata.json").read_text(encoding="utf-8"),
+            )
+            output_check = json.loads(
+                (project_dir / "preparation" / "ligand_001" / "output_check.json").read_text(encoding="utf-8"),
+            )
+            persisted = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], "failed")
+            self.assertFalse(metadata["published"])
+            self.assertFalse(metadata["overwrite"])
+            self.assertFalse(metadata["output_verification"]["matches"])
+            self.assertFalse(output_check["published"])
+            self.assertFalse(output_check["overwrite"])
+            self.assertFalse(output_check["output_verification"]["matches"])
+            self.assertIn(
+                "prepared 输出在任务运行期间被创建或删除",
+                output_check["output_verification"]["reasons"],
+            )
+            self.assertEqual(
+                persisted["preparation"]["ligand"]["error"]["code"],
+                "PREPARATION_OUTPUT_CONFLICT",
+            )
+            self.assertEqual(persisted["ligand"]["file"], "prepared/ligand.pdbqt")
+            self.assertEqual(
+                (project_dir / "preparation" / "ligand_001" / "candidate_ligand.pdbqt").read_text(
+                    encoding="utf-8",
+                ),
+                "AUTOMATIC CANDIDATE",
+            )
+
+    def test_overwrite_preparation_preserves_pdbqt_replaced_while_running(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            Path(command[-1]).write_text("AUTOMATIC REPLACEMENT", encoding="utf-8")
+            started.set()
+            self.assertTrue(release.wait(10))
+            return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_ligand_raw(project_dir, output_text="ORIGINAL PREPARED OUTPUT")
+            manual_source = Path(temp_dir) / "manual_replacement.pdbqt"
+            manual_source.write_text("NEW MANUAL PDBQT", encoding="utf-8")
+            results: list[dict] = []
+
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_meeko_tools()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                worker = threading.Thread(
+                    target=lambda: results.append(
+                        prepare_ligand_pdbqt(str(project_dir), overwrite=True),
+                    ),
+                    daemon=True,
+                )
+                worker.start()
+                self.assertTrue(started.wait(10))
+                imported = project_module.import_ligand_pdbqt(
+                    str(project_dir),
+                    str(manual_source),
+                )
+                release.set()
+                worker.join(10)
+
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(imported["ok"], imported)
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0]["ok"])
+            self.assertEqual(results[0]["error"]["code"], "PREPARATION_OUTPUT_CONFLICT")
+            self.assertEqual(
+                (project_dir / "prepared" / "ligand.pdbqt").read_text(encoding="utf-8"),
+                "NEW MANUAL PDBQT",
+            )
+            metadata = json.loads(
+                (project_dir / "preparation" / "ligand_001" / "metadata.json").read_text(encoding="utf-8"),
+            )
+            output_verification = metadata["output_verification"]
+            self.assertTrue(metadata["overwrite"])
+            self.assertFalse(metadata["published"])
+            self.assertTrue(output_verification["claimed"]["exists"])
+            self.assertTrue(output_verification["current"]["exists"])
+            self.assertFalse(output_verification["matches"])
+            self.assertIn("prepared 输出大小已变化", output_verification["reasons"])
+            self.assertIn("prepared 输出 SHA256 已变化", output_verification["reasons"])
+            self.assertEqual(
+                json.loads((project_dir / "project.json").read_text(encoding="utf-8"))[
+                    "preparation"
+                ]["ligand"]["error"]["code"],
+                "PREPARATION_OUTPUT_CONFLICT",
+            )
+
     def test_preparation_rejects_reparsed_prepared_preparation_and_record_paths(self) -> None:
         for unsafe_kind in ("prepared", "preparation", "record"):
             with self.subTest(unsafe_kind=unsafe_kind), tempfile.TemporaryDirectory() as temp_dir:

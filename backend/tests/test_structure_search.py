@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -235,6 +237,84 @@ class StructureSearchTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_RESPONSE_TOO_LARGE")
         self.assertIn("actual_bytes", result["error"]["raw_error"])
+
+    def test_pubchem_search_enforces_hard_wall_clock_deadline(self) -> None:
+        release = threading.Event()
+        worker_finished = threading.Event()
+        worker_is_daemon: list[bool] = []
+
+        def slow_fetcher(_url: str, _timeout: int | float) -> bytes:
+            worker_is_daemon.append(threading.current_thread().daemon)
+            try:
+                release.wait(timeout=2)
+                return b"{}"
+            finally:
+                worker_finished.set()
+
+        started_at = time.monotonic()
+        try:
+            result = search_pubchem_candidates(
+                "2244",
+                fetcher=slow_fetcher,
+                timeout=0.05,
+            )
+            elapsed = time.monotonic() - started_at
+        finally:
+            release.set()
+            worker_finished.wait(timeout=1)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "STRUCTURE_SEARCH_TIMEOUT")
+        self.assertIn("总时限", result["error"]["raw_error"])
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(worker_is_daemon, [True])
+
+    def test_rcsb_keyword_requests_share_one_total_deadline(self) -> None:
+        release = threading.Event()
+        second_worker_finished = threading.Event()
+        observed_timeouts: list[float] = []
+
+        def slow_second_fetcher(url: str, request_timeout: int | float) -> bytes:
+            observed_timeouts.append(float(request_timeout))
+            if url.startswith("https://search.rcsb.org/"):
+                time.sleep(0.2)
+                return json.dumps(
+                    {
+                        "total_count": 1,
+                        "result_set": [{"identifier": "1IEP", "score": 1.0}],
+                    }
+                ).encode()
+            try:
+                release.wait(timeout=2)
+                return json.dumps(
+                    {"data": {"entries": [_entry_payload("1IEP", "TITLE 1IEP")]}}
+                ).encode()
+            finally:
+                second_worker_finished.set()
+
+        started_at = time.monotonic()
+        try:
+            result = search_rcsb_candidates(
+                "kinase",
+                limit=1,
+                query_type="keyword",
+                fetcher=slow_second_fetcher,
+                timeout=0.35,
+            )
+            elapsed = time.monotonic() - started_at
+        finally:
+            release.set()
+            second_worker_finished.wait(timeout=1)
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["returned_count"], 1)
+        self.assertEqual(
+            result["candidates"][0]["metadata"]["error_code"],
+            "STRUCTURE_SEARCH_TIMEOUT",
+        )
+        self.assertGreaterEqual(len(observed_timeouts), 2)
+        self.assertLess(observed_timeouts[1], observed_timeouts[0])
+        self.assertLess(elapsed, 0.8)
 
     def test_user_can_download_second_rcsb_candidate_explicitly(self) -> None:
         def search_fetcher(url: str, _timeout: int) -> bytes:

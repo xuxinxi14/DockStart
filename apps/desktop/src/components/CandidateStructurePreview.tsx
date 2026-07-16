@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowsOut, MagnifyingGlassMinus, MagnifyingGlassPlus } from "@phosphor-icons/react";
 import {
   load3Dmol,
@@ -15,6 +15,11 @@ type CandidateStructurePreviewProps = {
 };
 
 const LIGAND_FORMATS = new Set(["sdf", "mol", "mol2"]);
+
+function releaseViewerSurface(container: HTMLDivElement | null): void {
+  if (!container) return;
+  container.replaceChildren();
+}
 
 /**
  * Read-only preview for a remote search candidate.
@@ -33,6 +38,7 @@ export default function CandidateStructurePreview({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
   const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
+  const viewerGenerationRef = useRef(0);
   const modelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
   const [message, setMessage] = useState(content ? "正在绘制候选结构…" : "选择候选后可进行 3D 预览");
 
@@ -41,8 +47,9 @@ export default function CandidateStructurePreview({
     if (!containerRef.current) return null;
     if (!viewerInitRef.current) {
       const container = containerRef.current;
+      const generation = viewerGenerationRef.current;
       viewerInitRef.current = load3Dmol().then(($3Dmol) => {
-        if (!container.isConnected) return null;
+        if (!container.isConnected || viewerGenerationRef.current !== generation) return null;
         const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
         viewerRef.current = $3Dmol.createViewer(container, {
           backgroundColor: background || "#031A2D",
@@ -67,13 +74,26 @@ export default function CandidateStructurePreview({
   useEffect(() => {
     let observer: ResizeObserver | null = null;
     let cancelled = false;
+    const generation = viewerGenerationRef.current;
+    const container = containerRef.current;
     void ensureViewer().then((viewer) => {
-      if (cancelled || !viewer || !containerRef.current) return;
+      if (
+        cancelled
+        || !viewer
+        || !container
+        || viewerGenerationRef.current !== generation
+        || !container.isConnected
+      ) return;
       observer = new ResizeObserver(() => {
+        if (
+          cancelled
+          || viewerGenerationRef.current !== generation
+          || !container.isConnected
+        ) return;
         viewer.resize();
         viewer.render();
       });
-      observer.observe(containerRef.current);
+      observer.observe(container);
     });
     return () => {
       cancelled = true;
@@ -83,59 +103,101 @@ export default function CandidateStructurePreview({
 
   useEffect(() => {
     let cancelled = false;
+    let animationFrame = 0;
+    let drawTimer = 0;
+    const generation = viewerGenerationRef.current;
+    const container = containerRef.current;
     const normalizedFormat = format.trim().toLowerCase();
     const fingerprint = content
       ? structureFingerprint(content, normalizedFormat, label)
       : "";
 
     void ensureViewer().then((viewer) => {
-      if (cancelled || !viewer) return;
-      if (!fingerprint) {
-        if (modelRef.current) viewer.removeModel(modelRef.current.model);
-        modelRef.current = null;
-        viewer.render();
-        setMessage("选择候选后可进行 3D 预览");
-        return;
-      }
-      if (modelRef.current?.fingerprint === fingerprint) return;
+      if (
+        cancelled
+        || !viewer
+        || !container
+        || viewerGenerationRef.current !== generation
+        || !container.isConnected
+      ) return;
+      // Give the browser one paint and one task boundary before 3Dmol parses
+      // the candidate. A navigation click queued while the preview shell is
+      // appearing can therefore unmount the page before expensive drawing.
+      animationFrame = window.requestAnimationFrame(() => {
+        if (
+          cancelled
+          || viewerGenerationRef.current !== generation
+          || !container.isConnected
+        ) return;
+        drawTimer = window.setTimeout(() => {
+          if (
+            cancelled
+            || viewerGenerationRef.current !== generation
+            || !container.isConnected
+          ) return;
+          if (!fingerprint) {
+            if (modelRef.current) viewer.removeModel(modelRef.current.model);
+            modelRef.current = null;
+            viewer.render();
+            setMessage("选择候选后可进行 3D 预览");
+            return;
+          }
+          if (modelRef.current?.fingerprint === fingerprint) return;
 
-      try {
-        if (modelRef.current) viewer.removeModel(modelRef.current.model);
-        const model = viewer.addModel(content, normalizedFormat);
-        if (LIGAND_FORMATS.has(normalizedFormat)) {
-          model.setStyle({}, {
-            stick: { radius: 0.25, colorscheme: "greenCarbon" },
-            sphere: { scale: 0.22 },
-          });
-        } else {
-          model.setStyle({}, {
-            cartoon: { color: "spectrum", opacity: 0.82 },
-            stick: { radius: 0.08, colorscheme: "Jmol" },
-          });
-        }
-        modelRef.current = { fingerprint, model };
-        viewer.zoomTo();
-        viewer.render();
-        setMessage(`${label} · 临时预览`);
-      } catch (error) {
-        modelRef.current = null;
-        viewer.clear();
-        viewer.render();
-        setMessage(error instanceof Error ? `3D 预览失败：${error.message}` : "3D 预览失败，请选择其他候选");
-      }
+          try {
+            if (modelRef.current) viewer.removeModel(modelRef.current.model);
+            const model = viewer.addModel(content, normalizedFormat);
+            if (LIGAND_FORMATS.has(normalizedFormat)) {
+              model.setStyle({}, {
+                stick: { radius: 0.25, colorscheme: "greenCarbon" },
+                sphere: { scale: 0.22 },
+              });
+            } else {
+              // Candidate preview is for identification, so keep large
+              // receptors lightweight instead of drawing sticks for every atom.
+              model.setStyle({}, {
+                cartoon: { color: "spectrum", opacity: 0.86 },
+              });
+              model.setStyle({ hetflag: true }, {
+                stick: { radius: 0.12, colorscheme: "Jmol" },
+              });
+            }
+            modelRef.current = { fingerprint, model };
+            viewer.zoomTo();
+            viewer.render();
+            setMessage(`${label} · 临时预览`);
+          } catch (error) {
+            modelRef.current = null;
+            viewer.clear();
+            viewer.render();
+            setMessage(error instanceof Error ? `3D 预览失败：${error.message}` : "3D 预览失败，请选择其他候选");
+          }
+        }, 0);
+      });
     });
 
     return () => {
       cancelled = true;
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+      if (drawTimer) window.clearTimeout(drawTimer);
     };
   }, [content, ensureViewer, format, label]);
 
-  useEffect(() => () => {
-    viewerRef.current?.clear();
+  useLayoutEffect(() => () => {
+    // `GLViewer.clear()` ends by rendering the emptied scene. Doing that
+    // synchronously during a React route unmount can stall navigation for a
+    // large raw PDB/mmCIF candidate. Detaching the canvas and dropping the
+    // viewer references lets WebView release the private WebGL scene without
+    // forcing one last main-thread render for a page that is already leaving.
+    const viewer = viewerRef.current as unknown as {
+      spin?: (axis: string | boolean, speed?: number) => void;
+    } | null;
+    viewerGenerationRef.current += 1;
+    viewer?.spin?.(false);
+    releaseViewerSurface(containerRef.current);
     viewerRef.current = null;
     viewerInitRef.current = null;
     modelRef.current = null;
-    containerRef.current?.replaceChildren();
   }, []);
 
   return (
@@ -151,7 +213,12 @@ export default function CandidateStructurePreview({
           <ArrowsOut size={18} />
         </button>
       </div>
-      <div className="run-preview-canvas" ref={containerRef} tabIndex={0} />
+      <div
+        aria-label={`${label} 的只读三维结构视图。可使用上方按钮缩放或适应窗口。`}
+        className="run-preview-canvas"
+        ref={containerRef}
+        role="img"
+      />
       <div className="run-preview-legend" aria-live="polite">
         <span><i className={`run-preview-dot ${isLigand ? "ligand" : "receptor"}`} />候选结构</span>
         <strong>{message}</strong>

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
+import queue
 import re
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -27,7 +31,7 @@ DEFAULT_SEARCH_LIMIT = 8
 MAX_SEARCH_LIMIT = 20
 MAX_SEARCH_RESPONSE_BYTES = 4 * 1024 * 1024
 
-Fetcher = Callable[[str, int], bytes]
+Fetcher = Callable[[str, int | float], bytes]
 
 
 class _SearchResponseTooLarge(RuntimeError):
@@ -35,6 +39,26 @@ class _SearchResponseTooLarge(RuntimeError):
         super().__init__(f"{source}={observed_size}")
         self.observed_size = observed_size
         self.source = source
+
+
+class _SearchDeadline:
+    """Share one hard wall-clock budget across a complete remote search."""
+
+    def __init__(self, timeout: int | float) -> None:
+        try:
+            seconds = float(timeout)
+        except (TypeError, ValueError):
+            seconds = 0.001
+        if not math.isfinite(seconds) or seconds <= 0:
+            seconds = 0.001
+        self.timeout_seconds = seconds
+        self.expires_at = time.monotonic() + seconds
+
+    def remaining(self) -> float:
+        return max(0.0, self.expires_at - time.monotonic())
+
+    def timeout_error(self) -> TimeoutError:
+        return TimeoutError(f"结构搜索超过总时限：{self.timeout_seconds:g} 秒")
 
 
 def validate_pdb_id(pdb_id: str) -> dict[str, Any]:
@@ -145,7 +169,10 @@ def _fetch_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
         return response.read()
 
 
-def _fetch_search_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
+def _fetch_search_bytes(
+    url: str,
+    timeout: int | float = DEFAULT_TIMEOUT_SECONDS,
+) -> bytes:
     """Read a bounded JSON response from DockStart's fixed official APIs."""
 
     request = urllib.request.Request(url, headers={"User-Agent": f"DockStart/{__version__}"})
@@ -163,6 +190,60 @@ def _fetch_search_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> byt
         if len(data) > MAX_SEARCH_RESPONSE_BYTES:
             raise _SearchResponseTooLarge(len(data), "actual_bytes")
         return data
+
+
+def _fetch_search_bytes_with_deadline(
+    url: str,
+    fetcher: Fetcher | None,
+    deadline: _SearchDeadline,
+) -> bytes:
+    """Read one search response without exceeding the search-wide deadline.
+
+    ``urllib`` treats its timeout as a limit for individual blocking socket
+    operations. A remote service that continuously drips bytes can therefore
+    exceed the intended total request duration. The network read runs in a
+    daemon worker so the short-lived structure-search Python process can exit
+    immediately after returning a timeout payload instead of waiting for an
+    abandoned request.
+    """
+
+    remaining = deadline.remaining()
+    if remaining <= 0:
+        raise deadline.timeout_error()
+
+    result_queue: queue.Queue[tuple[bool, bytes | Exception]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            data = (
+                fetcher(url, remaining)
+                if fetcher
+                else _fetch_search_bytes(url, remaining)
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised on the caller thread.
+            result_queue.put((False, exc))
+        else:
+            result_queue.put((True, data))
+
+    thread = threading.Thread(
+        target=worker,
+        name="dockstart-structure-search",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=deadline.remaining())
+    if thread.is_alive():
+        raise deadline.timeout_error()
+
+    try:
+        succeeded, payload = result_queue.get_nowait()
+    except queue.Empty as exc:
+        raise RuntimeError("结构搜索线程没有返回结果。") from exc
+    if succeeded:
+        assert isinstance(payload, bytes)
+        return payload
+    assert isinstance(payload, Exception)
+    raise payload
 
 
 def _download(url: str, fetcher: Fetcher | None, timeout: int) -> tuple[bytes | None, dict[str, Any] | None]:
@@ -210,13 +291,15 @@ def _download(url: str, fetcher: Fetcher | None, timeout: int) -> tuple[bytes | 
 def _fetch_json(
     url: str,
     fetcher: Fetcher | None,
-    timeout: int,
+    timeout: int | float,
     provider_name: str,
+    deadline: _SearchDeadline | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Read JSON from a fixed official endpoint with UI-safe errors."""
 
+    active_deadline = deadline or _SearchDeadline(timeout)
     try:
-        data = fetcher(url, timeout) if fetcher else _fetch_search_bytes(url, timeout)
+        data = _fetch_search_bytes_with_deadline(url, fetcher, active_deadline)
         if len(data) > MAX_SEARCH_RESPONSE_BYTES:
             raise _SearchResponseTooLarge(len(data), "actual_bytes")
     except _SearchResponseTooLarge as exc:
@@ -280,6 +363,14 @@ def _fetch_json(
             f"{provider_name} 搜索返回的数据结构不符合预期。",
             raw_error=type(payload).__name__,
             suggestion="远端服务可能更新了接口，请稍后重试或报告此问题。",
+        )
+    if active_deadline.remaining() <= 0:
+        timeout_error = active_deadline.timeout_error()
+        return None, _error(
+            "STRUCTURE_SEARCH_TIMEOUT",
+            f"{provider_name} 搜索超时。",
+            raw_error=str(timeout_error),
+            suggestion="请缩短关键词、减少候选数量，或稍后重试。",
         )
     return payload, None
 
@@ -608,7 +699,7 @@ def search_rcsb_candidates(
     limit: int | str = DEFAULT_SEARCH_LIMIT,
     query_type: str = "auto",
     fetcher: Fetcher | None = None,
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    timeout: int | float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Return RCSB candidates without downloading or mutating a project."""
 
@@ -632,13 +723,18 @@ def search_rcsb_candidates(
     if normalized_type == "auto":
         normalized_type = "pdb_id" if PDB_ID_PATTERN.fullmatch(normalized_query) else "keyword"
 
+    deadline = _SearchDeadline(timeout)
     if normalized_type == "pdb_id":
         validation = validate_pdb_id(normalized_query)
         if not validation.get("ok"):
             return validation
         pdb_id = str(validation["pdb_id"])
         metadata, metadata_error = _fetch_json(
-            _rcsb_entry_metadata_url(pdb_id), fetcher, timeout, "RCSB PDB"
+            _rcsb_entry_metadata_url(pdb_id),
+            fetcher,
+            timeout,
+            "RCSB PDB",
+            deadline,
         )
         if metadata_error:
             return metadata_error
@@ -646,7 +742,11 @@ def search_rcsb_candidates(
         return _search_response("rcsb", normalized_query, normalized_type, result_limit, 1, [_rcsb_candidate(metadata, pdb_id)])
 
     search_payload, search_error = _fetch_json(
-        _rcsb_keyword_search_url(normalized_query, result_limit), fetcher, timeout, "RCSB PDB"
+        _rcsb_keyword_search_url(normalized_query, result_limit),
+        fetcher,
+        timeout,
+        "RCSB PDB",
+        deadline,
     )
     if search_error:
         return search_error
@@ -672,6 +772,7 @@ def search_rcsb_candidates(
             fetcher,
             timeout,
             "RCSB PDB",
+            deadline,
         )
         if metadata_payload is not None:
             data = metadata_payload.get("data") if isinstance(metadata_payload.get("data"), dict) else {}
@@ -764,7 +865,7 @@ def search_pubchem_candidates(
     limit: int | str = DEFAULT_SEARCH_LIMIT,
     query_type: str = "auto",
     fetcher: Fetcher | None = None,
-    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    timeout: int | float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Return PubChem compound candidates without writing a project file."""
 
@@ -788,13 +889,18 @@ def search_pubchem_candidates(
     if normalized_type == "auto":
         normalized_type = "cid" if normalized_query.isdecimal() else "name"
 
+    deadline = _SearchDeadline(timeout)
     if normalized_type == "cid":
         validation = validate_pubchem_cid(normalized_query)
         if not validation.get("ok"):
             return validation
         cid = str(validation["cid"])
         property_payload, property_error = _fetch_json(
-            _pubchem_property_url(cid), fetcher, timeout, "PubChem"
+            _pubchem_property_url(cid),
+            fetcher,
+            timeout,
+            "PubChem",
+            deadline,
         )
         if property_error:
             return property_error
@@ -817,7 +923,11 @@ def search_pubchem_candidates(
         return _search_response("pubchem", normalized_query, normalized_type, result_limit, len(candidates), candidates)
 
     autocomplete_payload, autocomplete_error = _fetch_json(
-        _pubchem_autocomplete_url(normalized_query, result_limit), fetcher, timeout, "PubChem"
+        _pubchem_autocomplete_url(normalized_query, result_limit),
+        fetcher,
+        timeout,
+        "PubChem",
+        deadline,
     )
     if autocomplete_error:
         return autocomplete_error

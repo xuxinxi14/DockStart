@@ -630,31 +630,35 @@ def _import_pdbqt(project_dir: str, source_path: str, role: str) -> dict[str, An
     if role not in {"receptor", "ligand"}:
         return _error("PDBQT_ROLE_INVALID", "PDBQT 导入类型无效。")
 
-    loaded = load_project(project_dir)
-    if not loaded.get("ok"):
-        return loaded
-
     validation = validate_pdbqt_file(source_path)
     if not validation.get("ok"):
         return validation
 
     try:
-        project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
-        target_relative = f"prepared/{role}.pdbqt"
-        target_path = Path(project.project_dir).expanduser() / "prepared" / f"{role}.pdbqt"
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(Path(source_path).expanduser(), target_path)
+        # Use the same target lock as preparation claim/finalize. If an import
+        # races final publication, either preparation observes the imported
+        # output and rejects its candidate, or the later user import wins after
+        # publication. The older task can never overwrite the later import.
+        with _preparation_target_lock(project_dir, role):
+            loaded = load_project(project_dir)
+            if not loaded.get("ok"):
+                return loaded
+            project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
+            target_relative = f"prepared/{role}.pdbqt"
+            target_path = Path(project.project_dir).expanduser() / "prepared" / f"{role}.pdbqt"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(source_path).expanduser(), target_path)
 
-        file_ref = getattr(project, role)
-        file_ref.source = "local"
-        file_ref.file = target_relative
+            file_ref = getattr(project, role)
+            file_ref.source = "local"
+            file_ref.file = target_relative
 
-        saved = save_project(project)
-        if not saved.get("ok"):
-            return saved
+            saved = save_project(project)
+            if not saved.get("ok"):
+                return saved
 
-        label = "受体" if role == "receptor" else "配体"
-        return _success(project, f"{label} PDBQT 已导入。")
+            label = "受体" if role == "receptor" else "配体"
+            return _success(project, f"{label} PDBQT 已导入。")
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "PDBQT_IMPORT_ERROR",
