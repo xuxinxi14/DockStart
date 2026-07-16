@@ -154,3 +154,15 @@ The focused comparisons cover typography hierarchy, tab and control spacing, the
 - Rust desktop tests: 18 passed.
 
 final result: passed
+
+## Search Candidate Details Pass (2026-07-17)
+
+- User reference: `C:\Users\19701\AppData\Local\Temp\codex-clipboard-d0ae4512-7772-4903-abbb-e97279ccd679.png`.
+- Added a progressive-disclosure action to every RCSB and PubChem candidate card.
+- Expanded RCSB content uses search metadata already present in memory.
+- Expanded PubChem content reuses the candidate SDF preview cache for CID, formula, charge, component count, and related descriptors; no additional blocking page-level process was introduced.
+- Keyboard and screen-reader state is exposed through `aria-expanded` and `aria-controls`.
+- Production frontend build and release-mode no-bundle desktop build passed.
+- Real desktop capture could not be isolated reliably in this run because the current Windows desktop layout overlapped the QA window and WebView accessibility automation exposed no usable element tree. No visual-pass claim is made from the incomplete capture.
+
+final result: blocked

@@ -120,6 +120,75 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(ligand_path.read_text(encoding="utf-8"), pdbqt)
             self.assertTrue(response["warnings"])
 
+    def test_prepared_ligand_reuses_matching_raw_sdf_for_consistent_display(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw_path = project_dir / "raw" / "ligand.sdf"
+            raw_content = (
+                "DockStart display ligand\n"
+                "  DockStart\n\n"
+                "  2  1  0  0  0  0            999 V2000\n"
+                "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "    1.2000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "  1  2  1  0  0  0  0\n"
+                "M  END\n$$$$\n"
+            )
+            raw_path.write_text(raw_content, encoding="utf-8")
+            prepared_path = project_dir / "prepared" / "ligand.pdbqt"
+            prepared_path.write_text(
+                "ROOT\n"
+                "ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.000 C\n"
+                "ATOM      2  O   UNL     1       1.200   0.000   0.000  1.00  0.00     0.000 OA\n"
+                "ENDROOT\nTORSDOF 0\n",
+                encoding="utf-8",
+            )
+            data = self._read_project_json(project_dir)
+            data["ligand"]["raw_file"] = "raw/ligand.sdf"
+            data["ligand"]["file"] = "prepared/ligand.pdbqt"
+            data["preparation"]["ligand"].update(
+                {
+                    "status": "finished",
+                    "input_file": "raw/ligand.sdf",
+                    "output_file": "prepared/ligand.pdbqt",
+                }
+            )
+            self._write_project_json(project_dir, data)
+
+            response = viewer.load_structure_for_viewer(str(project_dir), "ligand_prepared")
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "sdf")
+            self.assertEqual(response["relative_path"], "raw/ligand.sdf")
+            self.assertEqual(response["content"], raw_content)
+            self.assertTrue(any("原始 SDF/MOL" in warning for warning in response["warnings"]))
+
+    def test_prepared_ligand_ignores_stale_raw_display_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            (project_dir / "raw" / "ligand.sdf").write_text("stale sdf\n", encoding="utf-8")
+            prepared_path = project_dir / "prepared" / "ligand.pdbqt"
+            prepared_path.write_text(
+                "ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.000 C\n",
+                encoding="utf-8",
+            )
+            data = self._read_project_json(project_dir)
+            data["ligand"]["raw_file"] = "raw/ligand.sdf"
+            data["ligand"]["file"] = "prepared/ligand.pdbqt"
+            data["preparation"]["ligand"].update(
+                {
+                    "status": "finished",
+                    "input_file": "raw/another-ligand.sdf",
+                    "output_file": "prepared/ligand.pdbqt",
+                }
+            )
+            self._write_project_json(project_dir, data)
+
+            response = viewer.load_structure_for_viewer(str(project_dir), "ligand_prepared")
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "pdb")
+            self.assertEqual(response["relative_path"], "prepared/ligand.pdbqt")
+
     def test_docking_pose_removes_pdbqt_branch_terminators_for_viewer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
@@ -148,6 +217,107 @@ class ViewerTests(unittest.TestCase):
             )
             self.assertNotIn("ENDROOT", response["content"])
             self.assertNotIn("ENDBRANCH", response["content"])
+
+    def test_docking_pose_reuses_raw_ligand_bonds_with_vina_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw_content = (
+                "DockStart ligand\n"
+                "  DockStart\n\n"
+                "  5  4  0  0  0  0            999 V2000\n"
+                "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "    1.2000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "    0.0000    1.3000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "   -0.8000   -0.6000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "    0.0000    2.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "  1  2  2  0  0  0  0\n"
+                "  1  3  1  0  0  0  0\n"
+                "  1  4  1  0  0  0  0\n"
+                "  3  5  1  0  0  0  0\n"
+                "M  END\n$$$$\n"
+            )
+            raw_path = project_dir / "raw" / "ligand.sdf"
+            raw_path.write_text(raw_content, encoding="utf-8")
+            prepared_content = (
+                "ATOM      1  O   UNL     1       1.200   0.000   0.000  1.00  0.00     0.000 OA\n"
+                "ATOM      2  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.000 C\n"
+                "ATOM      3  N   UNL     1       0.000   1.300   0.000  1.00  0.00     0.000 N\n"
+                "ATOM      4  H   UNL     1       0.000   2.000   0.000  1.00  0.00     0.000 HD\n"
+            )
+            (project_dir / "prepared" / "ligand.pdbqt").write_text(prepared_content, encoding="utf-8")
+            run_dir = project_dir / "runs" / "run_001"
+            (run_dir / "inputs").mkdir(parents=True)
+            (run_dir / "inputs" / "ligand.pdbqt").write_text(prepared_content, encoding="utf-8")
+            (run_dir / "out.pdbqt").write_text(
+                "MODEL 1\n"
+                "ATOM      1  O   UNL     1      11.200  20.000  30.000  1.00  0.00     0.000 OA\n"
+                "ATOM      2  C   UNL     1      10.000  20.000  30.000  1.00  0.00     0.000 C\n"
+                "ATOM      3  N   UNL     1      10.000  21.300  30.000  1.00  0.00     0.000 N\n"
+                "ATOM      4  H   UNL     1      10.000  22.000  30.000  1.00  0.00     0.000 HD\n"
+                "ENDMDL\n",
+                encoding="utf-8",
+            )
+            data = self._read_project_json(project_dir)
+            data["ligand"]["raw_file"] = "raw/ligand.sdf"
+            data["ligand"]["file"] = "prepared/ligand.pdbqt"
+            data["preparation"]["ligand"].update(
+                {
+                    "status": "finished",
+                    "input_file": "raw/ligand.sdf",
+                    "output_file": "prepared/ligand.pdbqt",
+                }
+            )
+            self._write_project_json(project_dir, data)
+
+            response = viewer.load_docking_pose_for_viewer(str(project_dir), "run_001", 1)
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "sdf")
+            self.assertIn("  3  2  0  0  0  0            999 V2000", response["content"])
+            self.assertIn("   10.0000   20.0000   30.0000 C", response["content"])
+            self.assertIn("  1  2  2  0  0  0  0", response["content"])
+            self.assertNotIn(" H  ", response["content"])
+            self.assertTrue(any("原始 SDF/MOL 键拓扑" in warning for warning in response["warnings"]))
+
+    def test_docking_pose_falls_back_when_raw_atom_mapping_does_not_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            (project_dir / "raw" / "ligand.sdf").write_text(
+                "Mismatch\n  DockStart\n\n"
+                "  1  0  0  0  0  0            999 V2000\n"
+                "   99.0000   99.0000   99.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n"
+                "M  END\n$$$$\n",
+                encoding="utf-8",
+            )
+            (project_dir / "prepared" / "ligand.pdbqt").write_text(
+                "ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.000 C\n",
+                encoding="utf-8",
+            )
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text(
+                "MODEL 1\n"
+                "ATOM      1  C   UNL     1       5.000   6.000   7.000  1.00  0.00     0.000 C\n"
+                "ENDMDL\n",
+                encoding="utf-8",
+            )
+            data = self._read_project_json(project_dir)
+            data["ligand"]["raw_file"] = "raw/ligand.sdf"
+            data["ligand"]["file"] = "prepared/ligand.pdbqt"
+            data["preparation"]["ligand"].update(
+                {
+                    "status": "finished",
+                    "input_file": "raw/ligand.sdf",
+                    "output_file": "prepared/ligand.pdbqt",
+                }
+            )
+            self._write_project_json(project_dir, data)
+
+            response = viewer.load_docking_pose_for_viewer(str(project_dir), "run_001", 1)
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "pdb")
+            self.assertIn("ATOM      1", response["content"])
 
     def test_docking_output_can_be_listed_and_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

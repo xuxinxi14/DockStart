@@ -51,6 +51,24 @@ PDBQT_VIEWER_RECORDS = {
     "REMARK",
 }
 
+PDBQT_ELEMENT_BY_TYPE = {
+    "A": "C",
+    "C": "C",
+    "N": "N",
+    "NA": "N",
+    "O": "O",
+    "OA": "O",
+    "S": "S",
+    "SA": "S",
+    "P": "P",
+    "H": "H",
+    "HD": "H",
+    "F": "F",
+    "CL": "Cl",
+    "BR": "Br",
+    "I": "I",
+}
+
 
 def _viewer_error(
     code: str,
@@ -142,6 +160,245 @@ def _relative_path_for_kind(project: Any, file_kind: str) -> str | None:
     if file_kind == "docking_output":
         return _latest_docking_output(project)
     return None
+
+
+def _prepared_ligand_display_source(
+    project_dir: str,
+    project: Any,
+) -> tuple[str, dict[str, Any], str] | None:
+    """Reuse the preparation input for display when it is the matching SDF/MOL.
+
+    PDBQT does not retain complete bond-order information. Rendering its atom
+    records through a PDB parser can therefore look different from the exact
+    SDF/MOL candidate the user selected. The original file is used only as a
+    read-only display source when the finished preparation record proves that
+    it produced the current PDBQT.
+    """
+
+    raw_relative = str(project.ligand.raw_file or "").strip()
+    prepared_relative = str(project.ligand.file or "").strip()
+    preparation = project.preparation.ligand
+    if (
+        preparation.status != "finished"
+        or str(preparation.input_file or "").strip() != raw_relative
+        or str(preparation.output_file or "").strip() != prepared_relative
+        or _detect_format(raw_relative) not in {"sdf", "mol", "mol2"}
+    ):
+        return None
+
+    validation = validate_viewer_file(project_dir, raw_relative)
+    if not validation.get("ok"):
+        return None
+    try:
+        content = Path(validation["absolute_path"]).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    return raw_relative, validation, content
+
+
+def _pdbqt_atoms(content: str) -> list[dict[str, Any]]:
+    atoms: list[dict[str, Any]] = []
+    for line in content.splitlines():
+        if line[:6].strip().upper() not in {"ATOM", "HETATM"}:
+            continue
+        try:
+            serial = int(line[6:11].strip())
+            x = float(line[30:38].strip())
+            y = float(line[38:46].strip())
+            z = float(line[46:54].strip())
+        except (TypeError, ValueError):
+            continue
+        atom_type = line.split()[-1].upper() if line.split() else ""
+        element = PDBQT_ELEMENT_BY_TYPE.get(atom_type)
+        if not element:
+            atom_name = re.sub(r"[^A-Za-z]", "", line[12:16]).strip()
+            element = atom_name[:1].upper() if atom_name else ""
+        atoms.append(
+            {
+                "serial": serial,
+                "element": element,
+                "x": x,
+                "y": y,
+                "z": z,
+            }
+        )
+    return atoms
+
+
+def _parse_v2000_display_source(content: str) -> dict[str, Any] | None:
+    first_record = content.split("$$$$", 1)[0]
+    lines = first_record.splitlines()
+    if len(lines) < 4 or "V2000" not in lines[3].upper():
+        return None
+    try:
+        atom_count = int(lines[3][0:3].strip())
+        bond_count = int(lines[3][3:6].strip())
+    except (TypeError, ValueError):
+        return None
+    if atom_count <= 0 or len(lines) < 4 + atom_count + bond_count:
+        return None
+
+    atoms: list[dict[str, Any]] = []
+    for index, line in enumerate(lines[4 : 4 + atom_count], start=1):
+        try:
+            atoms.append(
+                {
+                    "index": index,
+                    "x": float(line[0:10].strip()),
+                    "y": float(line[10:20].strip()),
+                    "z": float(line[20:30].strip()),
+                    "element": line[31:34].strip(),
+                    "suffix": line[30:],
+                }
+            )
+        except (TypeError, ValueError):
+            return None
+
+    bonds: list[dict[str, Any]] = []
+    for line in lines[4 + atom_count : 4 + atom_count + bond_count]:
+        try:
+            bonds.append(
+                {
+                    "start": int(line[0:3].strip()),
+                    "end": int(line[3:6].strip()),
+                    "suffix": line[6:],
+                }
+            )
+        except (TypeError, ValueError):
+            return None
+    return {"atoms": atoms, "bonds": bonds}
+
+
+def _match_v2000_atoms_to_pdbqt(
+    source_atoms: list[dict[str, Any]],
+    prepared_atoms: list[dict[str, Any]],
+    tolerance: float = 0.03,
+) -> dict[int, int] | None:
+    heavy_source = [atom for atom in source_atoms if str(atom["element"]).upper() != "H"]
+    heavy_prepared = [atom for atom in prepared_atoms if str(atom["element"]).upper() != "H"]
+    if not heavy_source or len(heavy_source) != len(heavy_prepared):
+        return None
+
+    available = set(range(len(heavy_prepared)))
+    mapping: dict[int, int] = {}
+    for source_atom in heavy_source:
+        candidates: list[tuple[float, int]] = []
+        source_element = str(source_atom["element"]).upper()
+        for prepared_index in available:
+            prepared_atom = heavy_prepared[prepared_index]
+            if str(prepared_atom["element"]).upper() != source_element:
+                continue
+            distance_squared = sum(
+                (float(source_atom[axis]) - float(prepared_atom[axis])) ** 2
+                for axis in ("x", "y", "z")
+            )
+            candidates.append((distance_squared, prepared_index))
+        if not candidates:
+            return None
+        distance_squared, prepared_index = min(candidates)
+        if distance_squared > tolerance**2:
+            return None
+        available.remove(prepared_index)
+        mapping[int(source_atom["index"])] = int(heavy_prepared[prepared_index]["serial"])
+    return mapping
+
+
+def _v2000_with_pose_coordinates(
+    source: dict[str, Any],
+    source_to_pdbqt: dict[int, int],
+    pose_atoms: list[dict[str, Any]],
+    mode: int,
+) -> str | None:
+    pose_by_serial = {int(atom["serial"]): atom for atom in pose_atoms}
+    heavy_atoms = [
+        atom
+        for atom in source["atoms"]
+        if str(atom["element"]).upper() != "H" and int(atom["index"]) in source_to_pdbqt
+    ]
+    if not heavy_atoms or len(heavy_atoms) != len(source_to_pdbqt):
+        return None
+
+    source_to_display = {
+        int(atom["index"]): display_index
+        for display_index, atom in enumerate(heavy_atoms, start=1)
+    }
+    bonds = [
+        bond
+        for bond in source["bonds"]
+        if int(bond["start"]) in source_to_display and int(bond["end"]) in source_to_display
+    ]
+    output = [
+        f"DockStart docking pose Mode {mode}",
+        "  DockStart          3D",
+        "",
+        f"{len(heavy_atoms):>3}{len(bonds):>3}  0  0  0  0            999 V2000",
+    ]
+    for source_atom in heavy_atoms:
+        serial = source_to_pdbqt[int(source_atom["index"])]
+        pose_atom = pose_by_serial.get(serial)
+        if pose_atom is None or str(pose_atom["element"]).upper() != str(source_atom["element"]).upper():
+            return None
+        output.append(
+            f"{float(pose_atom['x']):10.4f}"
+            f"{float(pose_atom['y']):10.4f}"
+            f"{float(pose_atom['z']):10.4f}"
+            f"{source_atom['suffix']}"
+        )
+    for bond in bonds:
+        output.append(
+            f"{source_to_display[int(bond['start'])]:>3}"
+            f"{source_to_display[int(bond['end'])]:>3}"
+            f"{bond['suffix']}"
+        )
+    output.extend(["M  END", "$$$$"])
+    return "\n".join(output) + "\n"
+
+
+def _docking_pose_display_content(
+    project_dir: str,
+    project: Any,
+    run_id: str,
+    pose_content: str,
+    mode: int,
+) -> tuple[str, str, list[str]] | None:
+    display_source = _prepared_ligand_display_source(project_dir, project)
+    if display_source is None:
+        return None
+    _, source_validation, source_content = display_source
+    if source_validation["format"] not in {"sdf", "mol"}:
+        return None
+    source = _parse_v2000_display_source(source_content)
+    if source is None:
+        return None
+
+    project_root = _project_root(project_dir)
+    run_input = project_root / "runs" / run_id / "inputs" / "ligand.pdbqt"
+    prepared_path = project_root / str(project.ligand.file or "")
+    mapping_source_path = run_input if run_input.is_file() else prepared_path
+    try:
+        prepared_content = mapping_source_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+    source_to_pdbqt = _match_v2000_atoms_to_pdbqt(source["atoms"], _pdbqt_atoms(prepared_content))
+    if source_to_pdbqt is None:
+        return None
+    reconstructed = _v2000_with_pose_coordinates(
+        source,
+        source_to_pdbqt,
+        _pdbqt_atoms(pose_content),
+        mode,
+    )
+    if reconstructed is None:
+        return None
+    return (
+        reconstructed,
+        "sdf",
+        [
+            "结果构象沿用生成该配体 PDBQT 的原始 SDF/MOL 键拓扑，并使用当前 Mode 的 Vina 坐标；"
+            "显示副本不修改 out.pdbqt。"
+        ],
+    )
 
 
 def _resolve_project_file(
@@ -430,6 +687,16 @@ def load_structure_for_viewer(project_dir: str, file_kind: str) -> dict[str, Any
             suggestion="请确认该文件是可读取的文本结构文件。",
         )
 
+    display_warning: list[str] = []
+    if file_kind == "ligand_prepared":
+        display_source = _prepared_ligand_display_source(project_dir, project)
+        if display_source is not None:
+            relative_path, validation, content = display_source
+            absolute_path = Path(validation["absolute_path"])
+            display_warning.append(
+                "3D 显示使用生成当前 PDBQT 的原始 SDF/MOL，以保留一致的键级和视觉拓扑；对接计算仍使用准备后的 PDBQT。"
+            )
+
     viewer_content, viewer_format, viewer_warnings = _viewer_content(content, validation["format"])
     return ViewerStructureResult(
         ok=True,
@@ -441,7 +708,7 @@ def load_structure_for_viewer(project_dir: str, file_kind: str) -> dict[str, Any
         content=viewer_content,
         size_bytes=validation["size_bytes"],
         message="结构文件已读取，仅用于 3D 几何查看，不做科学解释。",
-        warnings=[*validation.get("warnings", []), *viewer_warnings],
+        warnings=[*validation.get("warnings", []), *display_warning, *viewer_warnings],
         error=None,
     ).to_dict()
 
@@ -693,10 +960,25 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
         (score for score in score_summary.get("scores", []) if isinstance(score, dict) and score.get("mode") == selected_mode),
         None,
     )
-    viewer_content, viewer_format, viewer_warnings = _viewer_content(
-        str(selected["content"]),
-        validation["format"],
+    project, project_error = _load_project_model(project_dir)
+    display_pose = (
+        _docking_pose_display_content(
+            project_dir,
+            project,
+            run_id,
+            str(selected["content"]),
+            selected_mode,
+        )
+        if project_error is None and project is not None
+        else None
     )
+    if display_pose is not None:
+        viewer_content, viewer_format, viewer_warnings = display_pose
+    else:
+        viewer_content, viewer_format, viewer_warnings = _viewer_content(
+            str(selected["content"]),
+            validation["format"],
+        )
     return ViewerStructureResult(
         ok=True,
         file_kind="docking_output",
@@ -705,7 +987,7 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
         exists=True,
         format=viewer_format,
         content=viewer_content,
-        size_bytes=len(str(selected["content"]).encode("utf-8")),
+        size_bytes=len(viewer_content.encode("utf-8")),
         message=f"已读取 docking pose mode {selected_mode}，仅用于几何查看。",
         warnings=[*score_summary.get("warnings", []), *viewer_warnings],
         error=None,

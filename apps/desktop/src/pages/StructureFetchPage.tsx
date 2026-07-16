@@ -9,6 +9,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -60,6 +61,12 @@ type CandidatePreviewState = {
   candidateId: string;
   label: string;
   response: CandidateStructurePreviewResponse;
+};
+
+type CandidateDetailRow = {
+  label: string;
+  value: string;
+  wide?: boolean;
 };
 
 const DEFAULT_SEARCH_LIMIT = 8;
@@ -186,6 +193,107 @@ function candidateMetadata(candidate: StructureSearchCandidate): string[] {
   return details;
 }
 
+function parseSdfProperties(content: string): Record<string, string> {
+  const properties: Record<string, string> = {};
+  const lines = content.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^>\s*<([^>]+)>/);
+    if (!match) continue;
+    const values: string[] = [];
+    for (index += 1; index < lines.length && lines[index].trim(); index += 1) {
+      values.push(lines[index].trim());
+    }
+    properties[match[1]] = values.join(" ");
+  }
+  return properties;
+}
+
+function detailValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "未提供";
+  return String(value);
+}
+
+function signedCharge(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return detailValue(value);
+  return numeric > 0 ? `+${numeric}` : String(numeric);
+}
+
+function candidateDetailRows(
+  candidate: StructureSearchCandidate,
+  preview?: CandidateStructurePreviewResponse,
+): CandidateDetailRow[] {
+  const metadata = candidate.metadata ?? {};
+  if (candidate.provider === "rcsb") {
+    const resolution = Number(metadata.resolution_angstrom);
+    const score = Number(metadata.search_score);
+    return [
+      { label: "PDB ID", value: candidate.source_id },
+      { label: "结构标题", value: candidate.title || candidate.source_id, wide: true },
+      { label: "实验方法", value: detailValue(metadata.experimental_method) },
+      {
+        label: "分辨率",
+        value: Number.isFinite(resolution) && resolution > 0 ? `${resolution.toFixed(2)} Å` : "未提供",
+      },
+      { label: "聚合物实体", value: detailValue(metadata.polymer_entity_count) },
+      { label: "非聚合物实体", value: detailValue(metadata.nonpolymer_entity_count) },
+      { label: "沉积原子数", value: detailValue(metadata.deposited_atom_count) },
+      { label: "首次发布日期", value: detailValue(String(metadata.initial_release_date ?? "").slice(0, 10)) },
+      { label: "关键词", value: detailValue(metadata.keywords), wide: true },
+      { label: "搜索相关度", value: Number.isFinite(score) ? score.toFixed(3) : "未提供" },
+      { label: "下载格式", value: candidate.selection.format.toUpperCase() },
+    ];
+  }
+
+  const properties = preview?.format === "sdf" ? parseSdfProperties(preview.content) : {};
+  const componentCount = Number(properties.PUBCHEM_COMPONENT_COUNT);
+  const recordType = Number.isFinite(componentCount)
+    ? componentCount > 1
+      ? "多组分记录（可能为盐或复合物）"
+      : "单组分化合物"
+    : detailValue(metadata.record_type);
+  return [
+    { label: "名称", value: candidate.title || candidate.source_id, wide: true },
+    {
+      label: "PubChem CID",
+      value: detailValue(properties.PUBCHEM_COMPOUND_CID || (candidate.selection.query_type === "cid" ? candidate.source_id : "")),
+    },
+    {
+      label: "分子式",
+      value: detailValue(properties.PUBCHEM_MOLECULAR_FORMULA || metadata.molecular_formula),
+    },
+    {
+      label: "分子量",
+      value: detailValue(properties.PUBCHEM_MOLECULAR_WEIGHT || metadata.molecular_weight),
+    },
+    { label: "记录总电荷", value: signedCharge(properties.PUBCHEM_TOTAL_CHARGE) },
+    { label: "结构类型", value: recordType },
+    {
+      label: "组分数",
+      value: Number.isFinite(componentCount) ? String(componentCount) : "未提供",
+    },
+    { label: "重原子数", value: detailValue(properties.PUBCHEM_HEAVY_ATOM_COUNT) },
+    { label: "可旋转键", value: detailValue(properties.PUBCHEM_CACTVS_ROTATABLE_BOND) },
+    {
+      label: "氢键供体 / 受体",
+      value: `${detailValue(properties.PUBCHEM_CACTVS_HBOND_DONOR)} / ${detailValue(properties.PUBCHEM_CACTVS_HBOND_ACCEPTOR)}`,
+    },
+    { label: "XLogP", value: detailValue(properties.PUBCHEM_XLOGP3_AA) },
+    { label: "TPSA", value: properties.PUBCHEM_CACTVS_TPSA ? `${properties.PUBCHEM_CACTVS_TPSA} Å²` : "未提供" },
+    { label: "IUPAC 名称", value: detailValue(properties.PUBCHEM_IUPAC_NAME), wide: true },
+    {
+      label: "InChIKey",
+      value: detailValue(properties.PUBCHEM_IUPAC_INCHIKEY || metadata.inchi_key),
+      wide: true,
+    },
+    {
+      label: "SMILES",
+      value: detailValue(properties.PUBCHEM_SMILES || metadata.isomeric_smiles),
+      wide: true,
+    },
+  ];
+}
+
 function errorDetails(error: { message?: string; suggestion?: string; raw_error?: string } | null | undefined): string {
   return [error?.message, error?.suggestion, error?.raw_error].filter(Boolean).join("\n");
 }
@@ -273,6 +381,10 @@ export default function StructureFetchPage({
   const [isBusy, setIsBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [previewingCandidateId, setPreviewingCandidateId] = useState("");
+  const [expandedCandidateIds, setExpandedCandidateIds] = useState<Set<string>>(() => new Set());
+  const [candidateDetailSources, setCandidateDetailSources] = useState<Record<string, CandidateStructurePreviewResponse>>({});
+  const [candidateDetailLoadingIds, setCandidateDetailLoadingIds] = useState<Set<string>>(() => new Set());
+  const [candidateDetailErrors, setCandidateDetailErrors] = useState<Record<string, string>>({});
   const [operationScope] = useState(() => new PageOperationScope());
   const rcsbSearchGenerationRef = useRef(0);
   const pubchemSearchGenerationRef = useRef(0);
@@ -608,6 +720,53 @@ export default function StructureFetchPage({
     }
   }, [pdbFormat, requestCandidatePreview]);
 
+  const toggleCandidateDetails = useCallback(async (
+    target: PreparationTarget,
+    candidate: StructureSearchCandidate,
+  ) => {
+    const candidateId = candidate.candidate_id;
+    if (expandedCandidateIds.has(candidateId)) {
+      setExpandedCandidateIds((current) => {
+        const next = new Set(current);
+        next.delete(candidateId);
+        return next;
+      });
+      return;
+    }
+
+    setExpandedCandidateIds((current) => new Set(current).add(candidateId));
+    if (
+      candidate.provider !== "pubchem"
+      || candidateDetailSources[candidateId]
+      || candidateDetailLoadingIds.has(candidateId)
+    ) return;
+
+    setCandidateDetailLoadingIds((current) => new Set(current).add(candidateId));
+    setCandidateDetailErrors((current) => ({ ...current, [candidateId]: "" }));
+    try {
+      const state = await requestCandidatePreview(target, candidate);
+      if (!previewMountedRef.current) return;
+      setCandidateDetailSources((current) => ({
+        ...current,
+        [candidateId]: state.response,
+      }));
+    } catch (error) {
+      if (!previewMountedRef.current) return;
+      setCandidateDetailErrors((current) => ({
+        ...current,
+        [candidateId]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      if (previewMountedRef.current) {
+        setCandidateDetailLoadingIds((current) => {
+          const next = new Set(current);
+          next.delete(candidateId);
+          return next;
+        });
+      }
+    }
+  }, [candidateDetailLoadingIds, candidateDetailSources, expandedCandidateIds, requestCandidatePreview]);
+
   const selectAndPrepareCandidate = async (target: PreparationTarget, candidate: StructureSearchCandidate) => {
     const isReceptor = target === "receptor";
     const label = isReceptor ? "受体" : "配体";
@@ -857,6 +1016,10 @@ export default function StructureFetchPage({
                 const details = candidateMetadata(candidate);
                 const previewKey = candidatePreviewKey(target, candidate, pdbFormat);
                 const isSelected = preview?.candidateId === candidate.candidate_id;
+                const isExpanded = expandedCandidateIds.has(candidate.candidate_id);
+                const isLoadingDetails = candidateDetailLoadingIds.has(candidate.candidate_id);
+                const detailRows = candidateDetailRows(candidate, candidateDetailSources[candidate.candidate_id]);
+                const detailsId = `${target}-${candidate.candidate_id.replace(/[^A-Za-z0-9_-]/g, "-")}-details`;
                 return (
                   <article
                     className={`structure-candidate-item${isSelected ? " is-selected" : ""}`}
@@ -876,6 +1039,16 @@ export default function StructureFetchPage({
                     </div>
                     <div className="structure-candidate-actions">
                       <ActionButton
+                        className="structure-candidate-details-toggle"
+                        aria-expanded={isExpanded}
+                        aria-controls={detailsId}
+                        disabled={isBusy || isLoadingDetails}
+                        onClick={() => void toggleCandidateDetails(target, candidate)}
+                      >
+                        {isLoadingDetails ? "读取参数中…" : isExpanded ? "收起详细参数" : "展开详细参数"}
+                        {isExpanded ? <CaretUp size={14} /> : <CaretDown size={14} />}
+                      </ActionButton>
+                      <ActionButton
                         aria-describedby={statusId}
                         disabled={isBusy}
                         aria-label={`临时预览 ${candidate.source_id}`}
@@ -893,6 +1066,33 @@ export default function StructureFetchPage({
                         选择并准备
                       </ActionButton>
                     </div>
+                    {isExpanded ? (
+                      <section className="structure-candidate-details" id={detailsId} aria-label={`${candidate.source_id} 详细参数`}>
+                        <header>
+                          <strong>详细参数</strong>
+                          <span>{candidate.provider === "rcsb" ? "RCSB 结构记录" : "PubChem 化合物记录"}</span>
+                        </header>
+                        {isLoadingDetails ? <p className="structure-candidate-details-state">正在读取标准化合物记录…</p> : null}
+                        {candidateDetailErrors[candidate.candidate_id] ? (
+                          <p className="structure-candidate-details-state is-error">
+                            详细参数读取失败；基础搜索信息仍可使用。{candidateDetailErrors[candidate.candidate_id]}
+                          </p>
+                        ) : null}
+                        <dl>
+                          {detailRows.map((row) => (
+                            <div className={row.wide ? "is-wide" : ""} key={row.label}>
+                              <dt>{row.label}</dt>
+                              <dd>{row.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        {candidate.provider === "pubchem" ? (
+                          <p className="structure-candidate-detail-note">
+                            总电荷和组分信息来自 PubChem 记录；DockStart 不据此推断生理 pH 下的质子化状态。
+                          </p>
+                        ) : null}
+                      </section>
+                    ) : null}
                   </article>
                 );
               })}

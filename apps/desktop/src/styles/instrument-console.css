@@ -1706,6 +1706,7 @@ pre,
   display: grid;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--ds-border-default);
   border-radius: 8px;
   background: var(--ds-surface-panel);
@@ -1747,14 +1748,18 @@ pre,
 }
 
 .structure-candidate-panel.has-preview .structure-candidate-body {
-  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.35fr);
+  grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+  height: 460px;
+  overflow: hidden;
 }
 
 .structure-candidate-list {
   display: grid;
   align-content: start;
   gap: 7px;
-  max-height: 390px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 2px;
@@ -1854,9 +1859,106 @@ pre,
   white-space: nowrap;
 }
 
-.structure-candidate-preview-panel {
+.structure-candidate-details-toggle {
+  color: var(--ds-text-primary);
+}
+
+.structure-candidate-details {
   display: grid;
   gap: 9px;
+  min-width: 0;
+  border-top: 1px solid var(--ds-border-subtle);
+  padding-top: 10px;
+}
+
+.structure-candidate-details > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.structure-candidate-details > header strong {
+  color: var(--ds-text-primary);
+  font-size: 12px;
+}
+
+.structure-candidate-details > header span {
+  color: var(--ds-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.structure-candidate-details dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ds-surface-panel);
+}
+
+.structure-candidate-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.42fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--ds-border-subtle);
+}
+
+.structure-candidate-details dl > div:nth-child(odd):not(.is-wide) {
+  border-right: 1px solid var(--ds-border-subtle);
+}
+
+.structure-candidate-details dl > div.is-wide {
+  grid-column: 1 / -1;
+}
+
+.structure-candidate-details dt,
+.structure-candidate-details dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.structure-candidate-details dt {
+  color: var(--ds-text-muted);
+}
+
+.structure-candidate-details dd {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-primary);
+  font-family: var(--ds-font-mono);
+}
+
+.structure-candidate-details-state,
+.structure-candidate-detail-note {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.structure-candidate-details-state.is-error {
+  color: var(--ds-danger-on-dark);
+}
+
+.structure-candidate-detail-note {
+  border-left: 2px solid var(--ds-warning);
+  padding-left: 8px;
+}
+
+.structure-candidate-preview-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--ds-brand-border);
   border-radius: 8px;
   overflow: hidden;
@@ -1894,11 +1996,14 @@ pre,
 
 .candidate-structure-preview,
 .candidate-structure-preview .run-preview-canvas {
-  min-height: 390px;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
 }
 
 .candidate-structure-preview {
-  height: 390px;
+  width: 100%;
+  height: 100%;
   border-radius: 7px;
 }
 
@@ -2012,6 +2117,26 @@ pre,
 
   .structure-candidate-panel.has-preview .structure-candidate-body {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    overflow: visible;
+  }
+
+  .structure-candidate-list {
+    height: auto;
+    max-height: 390px;
+  }
+
+  .structure-candidate-preview-panel {
+    height: auto;
+  }
+
+  .candidate-structure-preview,
+  .candidate-structure-preview .run-preview-canvas {
+    min-height: 390px;
+  }
+
+  .candidate-structure-preview {
+    height: 390px;
   }
 }
 
@@ -2188,6 +2313,16 @@ pre,
 
   .structure-candidate-actions {
     width: 100%;
+  }
+
+  .structure-candidate-details dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .structure-candidate-details dl > div,
+  .structure-candidate-details dl > div:nth-child(odd):not(.is-wide) {
+    grid-column: 1;
+    border-right: 0;
   }
 }
 
