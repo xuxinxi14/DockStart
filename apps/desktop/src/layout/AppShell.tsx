@@ -15,6 +15,7 @@ type AppShellProps = {
   workflowSummary: string;
   workflowSteps?: WorkflowStep[];
   onNavigate: NavigateHandler;
+  onOpenProject: () => void;
   children: ReactNode;
 };
 
@@ -30,6 +31,7 @@ export default function AppShell({
   workflowSummary,
   workflowSteps = [],
   onNavigate,
+  onOpenProject,
   children,
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -105,6 +107,7 @@ export default function AppShell({
           theme={theme}
           onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")}
           onNavigate={onNavigate}
+          onOpenProject={onOpenProject}
         />
         <main className="app-content" data-layout="app-content" id="main-content" tabIndex={-1}>{children}</main>
         <footer className="app-statusbar" aria-label="当前工作区状态">

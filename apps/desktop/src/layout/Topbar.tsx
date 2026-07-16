@@ -19,6 +19,7 @@ type TopbarProps = {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onNavigate: NavigateHandler;
+  onOpenProject: () => void;
 };
 
 function formatSavedAt(value: string | undefined): string {
@@ -33,7 +34,15 @@ function formatSavedAt(value: string | undefined): string {
   }).format(date);
 }
 
-export default function Topbar({ currentPage, project, workflowSummary, theme, onToggleTheme, onNavigate }: TopbarProps) {
+export default function Topbar({
+  currentPage,
+  project,
+  workflowSummary,
+  theme,
+  onToggleTheme,
+  onNavigate,
+  onOpenProject,
+}: TopbarProps) {
   const hasProject = Boolean(project);
   return (
     <header className="app-topbar" data-tauri-drag-region>
@@ -58,7 +67,7 @@ export default function Topbar({ currentPage, project, workflowSummary, theme, o
       </div>
       <div className="topbar-end">
         <div className="topbar-actions" aria-label="工作区快捷操作">
-          <button aria-label="打开项目" title="打开项目" onClick={() => onNavigate("project-create")} type="button">
+          <button aria-label="打开项目" title="打开项目" onClick={onOpenProject} type="button">
             <FolderOpen aria-hidden="true" size={18} />
             <span>打开项目</span>
           </button>

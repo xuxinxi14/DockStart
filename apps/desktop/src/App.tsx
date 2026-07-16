@@ -41,6 +41,7 @@ export default function App() {
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
+  const [openProjectRequestKey, setOpenProjectRequestKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
   const committedProjectKeyRef = useRef("");
 
@@ -179,12 +180,18 @@ export default function App() {
     setCurrentPage(destination);
   }
 
+  const requestOpenProject = useCallback(() => {
+    setOpenProjectRequestKey((key) => key + 1);
+    setCurrentPage("project-create");
+  }, []);
+
   function renderPage() {
     if (currentPage === "home") {
       return (
         <ProjectDashboardPage
           project={currentProject}
           onNavigate={navigateTo}
+          onOpenProject={requestOpenProject}
           onProjectChange={commitProject}
           onWorkflowChange={commitWorkflowStatus}
         />
@@ -212,6 +219,7 @@ export default function App() {
     if (currentPage === "project-create") {
       return (
         <ProjectCreatePage
+          openExistingRequestKey={openProjectRequestKey}
           startMode={projectStartMode}
           onBack={() => navigateTo("home")}
           onStartModeChange={setProjectStartMode}
@@ -407,6 +415,7 @@ export default function App() {
       <ProjectDashboardPage
         project={currentProject}
         onNavigate={navigateTo}
+        onOpenProject={requestOpenProject}
         onProjectChange={commitProject}
         onWorkflowChange={commitWorkflowStatus}
       />
@@ -420,6 +429,7 @@ export default function App() {
       workflowSummary={getWorkflowSummary(currentProject, currentPage)}
       workflowSteps={buildWorkflowSteps(currentProject, workflowStatus)}
       onNavigate={navigateTo}
+      onOpenProject={requestOpenProject}
     >
       <Suspense
         fallback={(

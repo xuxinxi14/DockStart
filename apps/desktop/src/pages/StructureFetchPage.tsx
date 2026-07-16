@@ -52,8 +52,6 @@ type BusyAction =
   | "refresh"
   | "search-receptor"
   | "search-ligand"
-  | "preview-receptor"
-  | "preview-ligand"
   | "prepare-receptor"
   | "prepare-ligand"
   | null;
@@ -197,6 +195,14 @@ function validatedLimit(value: string): number | null {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_SEARCH_LIMIT ? parsed : null;
 }
 
+function candidatePreviewKey(
+  target: PreparationTarget,
+  candidate: StructureSearchCandidate,
+  receptorFormat: string,
+): string {
+  return `${target}:${candidate.candidate_id}:${target === "receptor" ? receptorFormat : "sdf"}:${JSON.stringify(candidate.selection)}`;
+}
+
 function normalizedCandidateSourceId(value: string, queryType: string): string {
   const trimmed = value.trim();
   if (queryType === "pdb_id") return trimmed.toUpperCase();
@@ -272,13 +278,25 @@ export default function StructureFetchPage({
   const pubchemSearchGenerationRef = useRef(0);
   const searchRequestSequenceRef = useRef(0);
   const activeSearchRequestRef = useRef(0);
+  const previewMountedRef = useRef(true);
+  const previewGenerationRef = useRef<Record<PreparationTarget, number>>({
+    receptor: 0,
+    ligand: 0,
+  });
+  const previewCacheRef = useRef(new Map<string, CandidatePreviewState>());
+  const previewPromiseRef = useRef(new Map<string, Promise<CandidatePreviewState>>());
 
   useLayoutEffect(() => {
     operationScope.activate();
+    previewMountedRef.current = true;
     return () => {
       rcsbSearchGenerationRef.current += 1;
       pubchemSearchGenerationRef.current += 1;
       activeSearchRequestRef.current = 0;
+      previewMountedRef.current = false;
+      previewGenerationRef.current.receptor += 1;
+      previewGenerationRef.current.ligand += 1;
+      previewPromiseRef.current.clear();
       operationScope.dispose();
     };
   }, [operationScope]);
@@ -452,8 +470,13 @@ export default function StructureFetchPage({
 
     setIsBusy(true);
     setBusyAction(isRcsb ? "search-receptor" : "search-ligand");
-    if (isRcsb) setReceptorPreview(null);
-    else setLigandPreview(null);
+    if (isRcsb) {
+      previewGenerationRef.current.receptor += 1;
+      setReceptorPreview(null);
+    } else {
+      previewGenerationRef.current.ligand += 1;
+      setLigandPreview(null);
+    }
     setMessage(isRcsb ? "正在搜索 RCSB PDB 候选结构…" : "正在搜索 PubChem 候选化合物…");
     setRawError("");
     try {
@@ -480,6 +503,15 @@ export default function StructureFetchPage({
         return;
       }
       setMessage(response.message || `找到 ${response.returned_count} 个候选，请明确选择后再下载。`);
+      const firstCandidate = response.candidates[0];
+      if (firstCandidate) {
+        const target: PreparationTarget = isRcsb ? "receptor" : "ligand";
+        window.setTimeout(() => {
+          if (previewMountedRef.current) {
+            void previewCandidate(target, firstCandidate, response.candidates);
+          }
+        }, 0);
+      }
     } catch (error) {
       if (
         !operationScope.isCurrent(token)
@@ -497,48 +529,84 @@ export default function StructureFetchPage({
     }
   };
 
-  const previewCandidate = async (target: PreparationTarget, candidate: StructureSearchCandidate) => {
+  const requestCandidatePreview = useCallback((
+    target: PreparationTarget,
+    candidate: StructureSearchCandidate,
+  ): Promise<CandidatePreviewState> => {
     const isReceptor = target === "receptor";
     const label = `${candidate.source_id} · ${candidate.title || candidate.source_id}`;
     const selection = isReceptor
       ? { ...candidate.selection, format: pdbFormat }
       : candidate.selection;
-    const token = operationScope.begin();
-    setIsBusy(true);
-    setBusyAction(isReceptor ? "preview-receptor" : "preview-ligand");
-    setPreviewingCandidateId(candidate.candidate_id);
-    if (isReceptor) setReceptorPreview(null);
-    else setLigandPreview(null);
+    const key = candidatePreviewKey(target, candidate, pdbFormat);
+    const cached = previewCacheRef.current.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = previewPromiseRef.current.get(key);
+    if (pending) return pending;
+
+    const request = invoke<string>("preview_structure_candidate", {
+      selectionJson: JSON.stringify(selection),
+    }).then((rawPayload) => {
+      const response = parseCandidatePreviewResponse(rawPayload);
+      if (!response.ok) {
+        throw new Error(errorDetails(response.error) || response.message || "候选结构预览失败。");
+      }
+      const state = { candidateId: candidate.candidate_id, label, response };
+      previewCacheRef.current.set(key, state);
+      return state;
+    }).finally(() => {
+      previewPromiseRef.current.delete(key);
+    });
+    previewPromiseRef.current.set(key, request);
+    return request;
+  }, [pdbFormat]);
+
+  const previewCandidate = useCallback(async (
+    target: PreparationTarget,
+    candidate: StructureSearchCandidate,
+    candidates: StructureSearchCandidate[] = [],
+  ) => {
+    const isReceptor = target === "receptor";
+    const key = candidatePreviewKey(target, candidate, pdbFormat);
+    const generation = previewGenerationRef.current[target] + 1;
+    previewGenerationRef.current[target] = generation;
+    setPreviewingCandidateId(key);
     setMessage(`正在加载 ${candidate.source_id} 的临时 3D 预览…`);
     setRawError("");
     try {
-      const rawPayload = await invoke<string>("preview_structure_candidate", {
-        selectionJson: JSON.stringify(selection),
-      });
-      const response = operationScope.parseIfCurrent(token, rawPayload, parseCandidatePreviewResponse);
-      if (!response) return;
-      if (!response.ok) {
-        setMessage(response.error?.message ?? "候选结构预览失败。");
-        setRawError(errorDetails(response.error));
-        return;
-      }
-      const state = { candidateId: candidate.candidate_id, label, response };
+      const state = await requestCandidatePreview(target, candidate);
+      if (
+        !previewMountedRef.current
+        || previewGenerationRef.current[target] !== generation
+      ) return;
       if (isReceptor) setReceptorPreview(state);
       else setLigandPreview(state);
-      setMessage(response.message || `${candidate.source_id} 已加载到临时预览。`);
+      setMessage(state.response.message || `${candidate.source_id} 已加载到临时预览。`);
+
+      const candidateIndex = candidates.findIndex((item) => item.candidate_id === candidate.candidate_id);
+      const nextCandidate = candidateIndex >= 0 ? candidates[candidateIndex + 1] : undefined;
+      if (nextCandidate) {
+        void requestCandidatePreview(target, nextCandidate).catch(() => {
+          // Adjacent-result warmup is best effort; explicit selection still
+          // reports an actionable error if the candidate cannot be fetched.
+        });
+      }
     } catch (error) {
-      operationScope.commit(token, () => {
-        setMessage("无法加载候选结构的临时 3D 预览。");
-        setRawError(error instanceof Error ? error.message : String(error));
-      });
+      if (
+        !previewMountedRef.current
+        || previewGenerationRef.current[target] !== generation
+      ) return;
+      setMessage("无法加载候选结构的临时 3D 预览。");
+      setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (operationScope.finish(token)) {
+      if (
+        previewMountedRef.current
+        && previewGenerationRef.current[target] === generation
+      ) {
         setPreviewingCandidateId("");
-        setBusyAction(null);
-        setIsBusy(false);
       }
     }
-  };
+  }, [pdbFormat, requestCandidatePreview]);
 
   const selectAndPrepareCandidate = async (target: PreparationTarget, candidate: StructureSearchCandidate) => {
     const isReceptor = target === "receptor";
@@ -787,8 +855,13 @@ export default function StructureFetchPage({
             <div className="structure-candidate-list">
               {response.candidates.map((candidate) => {
                 const details = candidateMetadata(candidate);
+                const previewKey = candidatePreviewKey(target, candidate, pdbFormat);
+                const isSelected = preview?.candidateId === candidate.candidate_id;
                 return (
-                  <article className="structure-candidate-item" key={candidate.candidate_id}>
+                  <article
+                    className={`structure-candidate-item${isSelected ? " is-selected" : ""}`}
+                    key={candidate.candidate_id}
+                  >
                     <div className="structure-candidate-copy">
                       <div className="structure-candidate-title">
                         <strong>{candidate.source_id}</strong>
@@ -806,9 +879,9 @@ export default function StructureFetchPage({
                         aria-describedby={statusId}
                         disabled={isBusy}
                         aria-label={`临时预览 ${candidate.source_id}`}
-                        onClick={() => void previewCandidate(target, candidate)}
+                        onClick={() => void previewCandidate(target, candidate, response.candidates)}
                       >
-                        {previewingCandidateId === candidate.candidate_id ? "加载中…" : "3D 预览"}
+                        {previewingCandidateId === previewKey ? "加载中…" : "3D 预览"}
                       </ActionButton>
                       <ActionButton
                         aria-describedby={statusId}
@@ -924,9 +997,11 @@ export default function StructureFetchPage({
                         value={rcsbQuery}
                         onChange={(event) => {
                           rcsbSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.receptor += 1;
                           setRcsbQuery(event.target.value);
                           setRcsbResults(null);
                           setReceptorPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                         placeholder="例如 1IEP 或 c-Abl imatinib"
                       />
@@ -939,9 +1014,11 @@ export default function StructureFetchPage({
                         value={rcsbQueryType}
                         onChange={(event) => {
                           rcsbSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.receptor += 1;
                           setRcsbQueryType(event.target.value as RcsbQueryType);
                           setRcsbResults(null);
                           setReceptorPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                       >
                         <option value="auto">自动识别</option>
@@ -961,17 +1038,21 @@ export default function StructureFetchPage({
                         value={rcsbLimit}
                         onChange={(event) => {
                           rcsbSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.receptor += 1;
                           setRcsbLimit(event.target.value);
                           setRcsbResults(null);
                           setReceptorPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                       />
                     </div>
                     <div className="field-stack">
                       <label htmlFor="pdb-format">下载格式</label>
                       <select disabled={isBusy} id="pdb-format" value={pdbFormat} onChange={(event) => {
+                        previewGenerationRef.current.receptor += 1;
                         setPdbFormat(event.target.value);
                         setReceptorPreview(null);
+                        setPreviewingCandidateId("");
                       }}>
                         <option value="pdb">PDB</option>
                         <option value="cif">mmCIF</option>
@@ -1081,9 +1162,11 @@ export default function StructureFetchPage({
                         value={pubchemQuery}
                         onChange={(event) => {
                           pubchemSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.ligand += 1;
                           setPubchemQuery(event.target.value);
                           setPubchemResults(null);
                           setLigandPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                         placeholder="例如 5291 或 imatinib"
                       />
@@ -1096,9 +1179,11 @@ export default function StructureFetchPage({
                         value={pubchemQueryType}
                         onChange={(event) => {
                           pubchemSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.ligand += 1;
                           setPubchemQueryType(event.target.value as PubchemQueryType);
                           setPubchemResults(null);
                           setLigandPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                       >
                         <option value="auto">自动识别</option>
@@ -1119,9 +1204,11 @@ export default function StructureFetchPage({
                         value={pubchemLimit}
                         onChange={(event) => {
                           pubchemSearchGenerationRef.current += 1;
+                          previewGenerationRef.current.ligand += 1;
                           setPubchemLimit(event.target.value);
                           setPubchemResults(null);
                           setLigandPreview(null);
+                          setPreviewingCandidateId("");
                         }}
                       />
                     </div>

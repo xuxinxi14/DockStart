@@ -19,6 +19,7 @@ import type {
 type ProjectDashboardPageProps = {
   project: DockStartProject | null;
   onNavigate: NavigateHandler;
+  onOpenProject: () => void;
   onProjectChange: (project: DockStartProject) => void;
   onWorkflowChange?: (workflow: ProjectWorkflowStatusResponse | null) => void;
 };
@@ -244,6 +245,7 @@ function DockingStepper({ activeIndex }: { activeIndex: number | null }) {
 export default function ProjectDashboardPage({
   project,
   onNavigate,
+  onOpenProject,
   onProjectChange,
   onWorkflowChange,
 }: ProjectDashboardPageProps) {
@@ -378,7 +380,7 @@ export default function ProjectDashboardPage({
           titleId="first-run-title"
           description="导入受体和配体，设置搜索范围，然后运行 AutoDock Vina。"
           actions={
-            <ActionButton variant="text" onClick={() => onNavigate("project-create")}>
+            <ActionButton variant="text" onClick={onOpenProject}>
               打开已有项目
             </ActionButton>
           }

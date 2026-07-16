@@ -102,7 +102,7 @@ export default function PoseStructurePreview({
     if (poseFingerprint && poseModelRef.current?.fingerprint !== poseFingerprint) {
       if (poseModelRef.current) viewer.removeModel(poseModelRef.current.model);
       const model = viewer.addModel(pose!.content, pose!.format);
-      model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
+      model.setStyle({}, { stick: { radius: 0.25, colorscheme: "greenCarbon" }, sphere: { scale: 0.22 } });
       poseModelRef.current = { fingerprint: poseFingerprint, model };
     } else if (!poseFingerprint && poseModelRef.current) {
       viewer.removeModel(poseModelRef.current.model);

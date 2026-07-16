@@ -127,7 +127,7 @@ export default function StructureMiniPreview({
           });
         } else {
           model.setStyle({}, {
-            stick: { radius: 0.26, colorscheme: "greenCarbon" },
+            stick: { radius: 0.25, colorscheme: "greenCarbon" },
             sphere: { scale: 0.22 },
           });
         }

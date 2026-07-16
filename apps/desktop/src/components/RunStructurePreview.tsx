@@ -202,7 +202,7 @@ export default function RunStructurePreview({
     if (ligandFingerprint && ligandModelRef.current?.fingerprint !== ligandFingerprint) {
       if (ligandModelRef.current) viewer.removeModel(ligandModelRef.current.model);
       const model = viewer.addModel(structures.ligand!.content, structures.ligand!.format);
-      model.setStyle({}, { stick: { radius: 0.28, colorscheme: "greenCarbon" }, sphere: { scale: 0.24 } });
+      model.setStyle({}, { stick: { radius: 0.25, colorscheme: "greenCarbon" }, sphere: { scale: 0.22 } });
       ligandModelRef.current = { fingerprint: ligandFingerprint, model };
     } else if (!ligandFingerprint && ligandModelRef.current) {
       viewer.removeModel(ligandModelRef.current.model);

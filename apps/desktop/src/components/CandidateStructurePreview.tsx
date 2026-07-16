@@ -144,9 +144,10 @@ export default function CandidateStructurePreview({
           }
           if (modelRef.current?.fingerprint === fingerprint) return;
 
+          const previousModel = modelRef.current;
+          let model: ThreeDmolModel | null = null;
           try {
-            if (modelRef.current) viewer.removeModel(modelRef.current.model);
-            const model = viewer.addModel(content, normalizedFormat);
+            model = viewer.addModel(content, normalizedFormat);
             if (LIGAND_FORMATS.has(normalizedFormat)) {
               model.setStyle({}, {
                 stick: { radius: 0.25, colorscheme: "greenCarbon" },
@@ -162,13 +163,14 @@ export default function CandidateStructurePreview({
                 stick: { radius: 0.12, colorscheme: "Jmol" },
               });
             }
+            if (previousModel) viewer.removeModel(previousModel.model);
             modelRef.current = { fingerprint, model };
             viewer.zoomTo();
             viewer.render();
             setMessage(`${label} · 临时预览`);
           } catch (error) {
-            modelRef.current = null;
-            viewer.clear();
+            if (model) viewer.removeModel(model);
+            modelRef.current = previousModel;
             viewer.render();
             setMessage(error instanceof Error ? `3D 预览失败：${error.message}` : "3D 预览失败，请选择其他候选");
           }

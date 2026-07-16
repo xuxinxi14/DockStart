@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
@@ -9,6 +9,7 @@ import type { PageId, StartMode } from "../navigation/pages";
 import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 
 type ProjectCreatePageProps = {
+  openExistingRequestKey?: number;
   startMode: StartMode;
   onBack: () => void;
   onCreated: (project: DockStartProject, nextPage: PageId, runId?: string) => void;
@@ -153,6 +154,7 @@ function projectFromResponse(response: ProjectResponse, fallbackMessage: string)
 }
 
 export default function ProjectCreatePage({
+  openExistingRequestKey = 0,
   startMode,
   onBack,
   onCreated,
@@ -292,12 +294,14 @@ export default function ProjectCreatePage({
     startMode,
   ]);
 
-  const loadExistingProject = useCallback(async () => {
+  const handledOpenRequestRef = useRef(0);
+
+  const loadExistingProject = useCallback(async (projectDir = existingProjectDir) => {
     setIsBusy(true);
     resetFeedback();
     try {
       const rawPayload = await invoke<string>("load_project", {
-        projectDir: existingProjectDir,
+        projectDir,
       });
       const response = parseProjectResponse(rawPayload);
       if (response.ok && response.project) {
@@ -313,6 +317,34 @@ export default function ProjectCreatePage({
       setIsBusy(false);
     }
   }, [existingProjectDir, onCreated]);
+
+  const pickAndLoadExistingProject = useCallback(async () => {
+    setShowExistingProject(true);
+    resetFeedback();
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择已有 DockStart 项目目录",
+      });
+      const projectDir = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
+      if (!projectDir) return;
+      setExistingProjectDir(projectDir);
+      await loadExistingProject(projectDir);
+    } catch (error) {
+      setMessage("无法打开项目目录选择器。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    }
+  }, [loadExistingProject]);
+
+  useEffect(() => {
+    if (
+      openExistingRequestKey <= 0
+      || handledOpenRequestRef.current === openExistingRequestKey
+    ) return;
+    handledOpenRequestRef.current = openExistingRequestKey;
+    void pickAndLoadExistingProject();
+  }, [openExistingRequestKey, pickAndLoadExistingProject]);
 
   const pickDemoDestinationDir = useCallback(async (): Promise<string> => {
     const currentDir = baseDir.trim();
@@ -579,7 +611,7 @@ export default function ProjectCreatePage({
         description={currentConfig.subtitle}
         actions={
           <>
-          <ActionButton variant="text" onClick={() => setShowExistingProject((value) => !value)}>
+          <ActionButton variant="text" onClick={() => void pickAndLoadExistingProject()}>
             打开已有项目
           </ActionButton>
           <ActionButton variant="text" onClick={onBack}>返回总览</ActionButton>
