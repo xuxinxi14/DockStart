@@ -41,6 +41,15 @@ TEXT_STRUCTURE_EXTENSIONS = {
 
 MODEL_PATTERN = re.compile(r"^\s*MODEL\s+(\d+)?\s*$", re.IGNORECASE)
 ENDMDL_PATTERN = re.compile(r"^\s*ENDMDL\s*$", re.IGNORECASE)
+PDBQT_VIEWER_RECORDS = {
+    "ATOM",
+    "HETATM",
+    "MODEL",
+    "ENDMDL",
+    "TER",
+    "CONECT",
+    "REMARK",
+}
 
 
 def _viewer_error(
@@ -77,6 +86,35 @@ def _project_root(project_dir: str | Path) -> Path:
 def _detect_format(relative_path: str) -> str:
     suffix = Path(relative_path).suffix.lower()
     return TEXT_STRUCTURE_EXTENSIONS.get(suffix, "unknown")
+
+
+def _normalize_pdbqt_for_viewer(content: str) -> str:
+    """Build a PDB-compatible display copy without changing stored PDBQT.
+
+    3Dmol routes PDBQT through its PDB parser. That parser treats every record
+    beginning with ``END`` as the end of the model, so Meeko's ``ENDROOT`` and
+    ``ENDBRANCH`` records truncate flexible ligands. Keep only records the PDB
+    parser understands; all atom coordinates and identities remain unchanged.
+    """
+
+    lines: list[str] = []
+    for line in content.splitlines():
+        record = line[:6].strip().upper()
+        if record in PDBQT_VIEWER_RECORDS:
+            lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _viewer_content(content: str, structure_format: str) -> tuple[str, str, list[str]]:
+    if structure_format != "pdbqt":
+        return content, structure_format, []
+    return (
+        _normalize_pdbqt_for_viewer(content),
+        "pdb",
+        [
+            "PDBQT 拓扑记录已从本次 3D 显示副本中移除，以避免查看器截断柔性配体；项目中的原始 PDBQT 文件未被修改。"
+        ],
+    )
 
 
 def _latest_docking_output(project: Any) -> str:
@@ -392,17 +430,18 @@ def load_structure_for_viewer(project_dir: str, file_kind: str) -> dict[str, Any
             suggestion="请确认该文件是可读取的文本结构文件。",
         )
 
+    viewer_content, viewer_format, viewer_warnings = _viewer_content(content, validation["format"])
     return ViewerStructureResult(
         ok=True,
         file_kind=file_kind,
         relative_path=relative_path,
         absolute_path=str(absolute_path),
         exists=True,
-        format=validation["format"],
-        content=content,
+        format=viewer_format,
+        content=viewer_content,
         size_bytes=validation["size_bytes"],
         message="结构文件已读取，仅用于 3D 几何查看，不做科学解释。",
-        warnings=validation.get("warnings", []),
+        warnings=[*validation.get("warnings", []), *viewer_warnings],
         error=None,
     ).to_dict()
 
@@ -654,17 +693,21 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
         (score for score in score_summary.get("scores", []) if isinstance(score, dict) and score.get("mode") == selected_mode),
         None,
     )
+    viewer_content, viewer_format, viewer_warnings = _viewer_content(
+        str(selected["content"]),
+        validation["format"],
+    )
     return ViewerStructureResult(
         ok=True,
         file_kind="docking_output",
         relative_path=relative_path,
         absolute_path=validation["absolute_path"],
         exists=True,
-        format=validation["format"],
-        content=str(selected["content"]),
+        format=viewer_format,
+        content=viewer_content,
         size_bytes=len(str(selected["content"]).encode("utf-8")),
         message=f"已读取 docking pose mode {selected_mode}，仅用于几何查看。",
-        warnings=score_summary.get("warnings", []),
+        warnings=[*score_summary.get("warnings", []), *viewer_warnings],
         error=None,
     ).to_dict() | {"run_id": run_id, "mode": selected_mode, "score": selected_score}
 

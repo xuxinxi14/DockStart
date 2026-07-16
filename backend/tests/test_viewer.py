@@ -85,6 +85,70 @@ class ViewerTests(unittest.TestCase):
             self.assertTrue(ligand["ok"])
             self.assertIn("REMARK ligand", ligand["content"])
 
+    def test_meeko_ligand_is_not_truncated_at_endroot_in_viewer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            ligand_path = project_dir / "prepared" / "ligand.pdbqt"
+            pdbqt = (
+                "ROOT\n"
+                "ATOM      1  N   UNL     1       3.732   1.440   0.000  1.00  0.00    -0.384 N \n"
+                "ATOM      2  N   UNL     1       2.000   1.440   0.000  1.00  0.00    -0.284 NA\n"
+                "ATOM      3  C   UNL     1       2.866   0.940   0.000  1.00  0.00     0.122 C \n"
+                "ENDROOT\n"
+                "BRANCH   3   4\n"
+                "ATOM      4  C   UNL     1       2.866  -0.060   0.000  1.00  0.00     0.016 A \n"
+                "ATOM      5  C   UNL     1       2.000  -0.560   0.000  1.00  0.00     0.012 A \n"
+                "ATOM      6  C   UNL     1       3.732  -0.560   0.000  1.00  0.00     0.012 A \n"
+                "ENDBRANCH   3   4\n"
+                "TORSDOF 1\n"
+            )
+            ligand_path.write_text(pdbqt, encoding="utf-8")
+            data = self._read_project_json(project_dir)
+            data["ligand"]["file"] = "prepared/ligand.pdbqt"
+            self._write_project_json(project_dir, data)
+
+            response = viewer.load_structure_for_viewer(str(project_dir), "ligand_prepared")
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "pdb")
+            self.assertEqual(
+                len([line for line in response["content"].splitlines() if line.startswith("ATOM")]),
+                6,
+            )
+            self.assertNotIn("ENDROOT", response["content"])
+            self.assertNotIn("ENDBRANCH", response["content"])
+            self.assertEqual(ligand_path.read_text(encoding="utf-8"), pdbqt)
+            self.assertTrue(response["warnings"])
+
+    def test_docking_pose_removes_pdbqt_branch_terminators_for_viewer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            (run_dir / "out.pdbqt").write_text(
+                "MODEL 1\n"
+                "ROOT\n"
+                "ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.000 C \n"
+                "ENDROOT\n"
+                "BRANCH   1   2\n"
+                "ATOM      2  C   UNL     1       1.400   0.000   0.000  1.00  0.00     0.000 C \n"
+                "ENDBRANCH   1   2\n"
+                "TORSDOF 1\n"
+                "ENDMDL\n",
+                encoding="utf-8",
+            )
+
+            response = viewer.load_docking_pose_for_viewer(str(project_dir), "run_001", 1)
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["format"], "pdb")
+            self.assertEqual(
+                len([line for line in response["content"].splitlines() if line.startswith("ATOM")]),
+                2,
+            )
+            self.assertNotIn("ENDROOT", response["content"])
+            self.assertNotIn("ENDBRANCH", response["content"])
+
     def test_docking_output_can_be_listed_and_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
