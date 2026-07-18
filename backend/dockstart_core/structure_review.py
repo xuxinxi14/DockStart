@@ -80,6 +80,7 @@ def _element_from_pdb_line(line: str) -> str:
 
 def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: int) -> dict[str, Any]:
     atom_count = 0
+    heavy_atom_count = 0
     chains: set[str] = set()
     models: set[str] = set()
     waters: set[tuple[str, str, str]] = set()
@@ -100,6 +101,7 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
         insertion = row.get("insertion", "")
         group = row.get("group", "ATOM").upper()
         element = row.get("element", "").upper()
+        heavy_atom_count += element not in {"H", "D", "T"}
         altloc = row.get("altloc", "")
         key = (model, chain, residue_number, insertion)
         if previous is not None and key != previous:
@@ -125,6 +127,12 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
         model_count = model_markers
     return {
         "atom_count": atom_count,
+        "heavy_atom_count": heavy_atom_count,
+        "has_3d_coordinates": atom_count > 0,
+        "fragment_count": None,
+        "formal_charge": None,
+        "contains_salt": None,
+        "undefined_stereochemistry": None,
         "residue_count": len(seen_residues),
         "chains": sorted(chains),
         "model_count": model_count,
@@ -277,6 +285,8 @@ def _parse_v2000_mol(block: str) -> dict[str, Any]:
         "formal_charge": None,
         "fragment_count": None,
         "stereochemistry_encoded": False,
+        "undefined_stereochemistry": None,
+        "has_3d_coordinates": False,
     }
     if len(lines) < 4:
         return facts
@@ -297,10 +307,16 @@ def _parse_v2000_mol(block: str) -> dict[str, Any]:
     elements: list[str] = []
     atom_charge_codes: dict[int, int] = {}
     stereo_encoded = False
+    has_nonzero_z = False
     for atom_index, line in enumerate(atom_lines, 1):
         fields = line.split()
         element = (line[31:34].strip() if len(line) >= 34 else "") or (fields[3] if len(fields) > 3 else "")
         elements.append(element.upper())
+        try:
+            z_coordinate = float(line[20:30]) if len(line) >= 30 else float(fields[2])
+        except (ValueError, IndexError):
+            z_coordinate = 0.0
+        has_nonzero_z = has_nonzero_z or abs(z_coordinate) > 1e-6
         try:
             charge_code = int(line[36:39]) if len(line) >= 39 else int(fields[5])
         except (ValueError, IndexError):
@@ -350,7 +366,12 @@ def _parse_v2000_mol(block: str) -> dict[str, Any]:
             "formal_charge": sum(charges.values()),
             "fragment_count": _connected_components(atom_count, bonds),
             "stereochemistry_encoded": stereo_encoded,
+            "undefined_stereochemistry": None,
+            "has_3d_coordinates": "3D" in " ".join(lines[:3]).upper() or has_nonzero_z,
         },
+    )
+    facts["contains_salt"] = bool(
+        isinstance(facts.get("fragment_count"), int) and facts["fragment_count"] > 1
     )
     return facts
 
@@ -361,6 +382,7 @@ def _parse_v3000_mol(block: str) -> dict[str, Any]:
     charges: list[int] = []
     bonds: list[tuple[int, int]] = []
     stereo_encoded = False
+    has_nonzero_z = False
     for line in block.splitlines():
         stripped = line.strip()
         if "M  V30 COUNTS" in stripped:
@@ -373,6 +395,11 @@ def _parse_v3000_mol(block: str) -> dict[str, Any]:
         if atom_match:
             element = atom_match.group(2).upper()
             heavy_atom_count += element not in {"H", "D", "T"}
+            coordinate_fields = stripped.split()
+            try:
+                has_nonzero_z = has_nonzero_z or abs(float(coordinate_fields[6])) > 1e-6
+            except (ValueError, IndexError):
+                pass
             charge_match = re.search(r"\bCHG=([+-]?\d+)", stripped)
             if charge_match:
                 charges.append(int(charge_match.group(1)))
@@ -382,13 +409,17 @@ def _parse_v3000_mol(block: str) -> dict[str, Any]:
         if bond_match:
             bonds.append((int(bond_match.group(1)), int(bond_match.group(2))))
             stereo_encoded = stereo_encoded or " CFG=" in stripped
+    fragment_count = _connected_components(atom_count, bonds)
     return {
         "format": "mol/sdf-v3000",
         "atom_count": atom_count,
         "heavy_atom_count": heavy_atom_count,
         "formal_charge": sum(charges),
-        "fragment_count": _connected_components(atom_count, bonds),
+        "fragment_count": fragment_count,
         "stereochemistry_encoded": stereo_encoded,
+        "undefined_stereochemistry": None,
+        "has_3d_coordinates": "3D" in " ".join(block.splitlines()[:3]).upper() or has_nonzero_z,
+        "contains_salt": bool(isinstance(fragment_count, int) and fragment_count > 1),
     }
 
 
@@ -407,6 +438,10 @@ def _parse_ligand_mol(path: Path) -> dict[str, Any]:
                 pass
             break
     facts["record_count"] = len(blocks) if blocks else 1
+    facts["contains_salt"] = bool(
+        facts["record_count"] > 1
+        or (isinstance(facts.get("fragment_count"), int) and facts["fragment_count"] > 1)
+    )
     facts["title"] = first.splitlines()[0].strip() if first.splitlines() else ""
     return facts
 
@@ -467,8 +502,11 @@ def _parse_ligand_pdbqt(path: Path) -> dict[str, Any]:
         "formal_charge": _formal_charge_from_smiles(smiles),
         "formal_charge_source": "PDBQT REMARK SMILES" if smiles else "",
         "fragment_count": fragment_count,
+        "contains_salt": bool(isinstance(fragment_count, int) and fragment_count > 1),
         "partial_charge_sum": round(sum(partial_charges), 4) if partial_charges else None,
         "stereochemistry_encoded": ("@" in smiles) if smiles else None,
+        "undefined_stereochemistry": None,
+        "has_3d_coordinates": atom_count > 0,
     }
 
 

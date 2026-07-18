@@ -122,7 +122,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "Markdown 实验记录已导出。");
+      applyResponse(parseProjectResponse(rawPayload), "Markdown 结果分析报告已生成。");
     } catch (error) {
       setMessage("无法导出 Markdown 实验记录。");
       setRawError(error instanceof Error ? error.message : String(error));
@@ -135,9 +135,9 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
     <PageShell labelledBy="report-title">
       <PageHero
         eyebrow="结果与报告"
-        title="导出实验记录"
+        title="结果分析报告"
         titleId="report-title"
-        description="导出 Markdown 记录，便于复现和排查。"
+        description="生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。"
         actions={
           <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
@@ -171,16 +171,16 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             </div>
 
             {!hasScores ? (
-              <WarningCallout title="报告暂不可导出">
-                <p>请先回到结果页解析 scores.csv。</p>
+              <WarningCallout title="分析报告暂不可生成">
+                <p>请先完成对接并确认结果页已加载 scores.csv。</p>
               </WarningCallout>
             ) : null}
 
-            <SectionCard title="导出">
+            <SectionCard title="生成与导出">
               <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
               <div className="button-row">
                 <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-                  {isBusy ? "处理中..." : "导出 Markdown 实验记录"}
+                  {isBusy ? "处理中..." : "生成 Markdown 结果分析报告"}
                 </ActionButton>
               </div>
             </SectionCard>
@@ -188,7 +188,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             {(reportStatus === "exported" || displayedReportedAt) ? (
               <div className="next-step-strip">
                 <div>
-                  <strong>实验记录已导出</strong>
+                  <strong>结果分析报告已生成</strong>
                   <p>{displayedProjectReportFile}</p>
                 </div>
               </div>
@@ -241,7 +241,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
           </RightRailSection>
 
           <RightRailSection title="说明">
-            <p>报告用于记录参数、输入、日志和评分，不能替代实验验证。</p>
+            <p>报告提供统计汇总、结构事实和可复现记录；不会把 docking score 解释为真实结合或药效证据。</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

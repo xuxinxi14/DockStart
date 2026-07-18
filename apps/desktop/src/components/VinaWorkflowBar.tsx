@@ -12,7 +12,7 @@ const steps: Array<{ id: VinaWorkflowStepId; label: string; description: string 
   { id: "prepare", label: "创建运行记录", description: "保存命令预览与配置快照" },
   { id: "execute", label: "开始对接", description: "保存 stdout / stderr / log / out" },
   { id: "result", label: "解析结果", description: "从 log.txt 生成 scores.csv" },
-  { id: "report", label: "导出实验记录", description: "生成 Markdown 实验记录" },
+  { id: "report", label: "结果分析报告", description: "生成详细 Markdown 分析记录" },
 ];
 
 export default function VinaWorkflowBar({ current, runId }: VinaWorkflowBarProps) {

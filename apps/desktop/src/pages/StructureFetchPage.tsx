@@ -1401,16 +1401,16 @@ export default function StructureFetchPage({
                         <option value="cif">mmCIF</option>
                       </select>
                     </div>
-                  </div>
-                  <div className="button-row">
-                    <ActionButton
+                    <div className="structure-search-submit">
+                      <ActionButton
                       aria-describedby="receptor-operation-status"
                       variant="primary"
                       disabled={isBusy || !rcsbQuery.trim()}
                       onClick={() => void searchCandidates("rcsb")}
-                    >
-                      {busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选"}
-                    </ActionButton>
+                      >
+                        {busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选"}
+                      </ActionButton>
+                    </div>
                   </div>
 
                   {renderCandidates("receptor", rcsbResults)}
@@ -1557,16 +1557,16 @@ export default function StructureFetchPage({
                         }}
                       />
                     </div>
-                  </div>
-                  <div className="button-row">
-                    <ActionButton
-                      aria-describedby="ligand-operation-status"
-                      variant="primary"
-                      disabled={isBusy || !pubchemQuery.trim()}
-                      onClick={() => void searchCandidates("pubchem")}
-                    >
-                      {busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选"}
-                    </ActionButton>
+                    <div className="structure-search-submit">
+                      <ActionButton
+                        aria-describedby="ligand-operation-status"
+                        variant="primary"
+                        disabled={isBusy || !pubchemQuery.trim()}
+                        onClick={() => void searchCandidates("pubchem")}
+                      >
+                        {busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选"}
+                      </ActionButton>
+                    </div>
                   </div>
 
                   {renderCandidates("ligand", pubchemResults)}

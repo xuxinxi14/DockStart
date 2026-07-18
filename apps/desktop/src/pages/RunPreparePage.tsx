@@ -90,7 +90,7 @@ const stageLabels: Record<string, string> = {
   cancel_pending: "等待安全取消",
   cancelled: "已取消",
   analyzing: "解析评分",
-  reporting: "导出实验记录",
+  reporting: "生成结果分析报告",
   finished: "完整流程已完成",
   failed: "运行失败",
   interrupted: "运行已中断",

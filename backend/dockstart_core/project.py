@@ -3355,7 +3355,7 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         return _error(
             "RUN_STATUS_NOT_FINISHED",
             f"当前 run 状态为 {status or 'unknown'}，只有 finished 状态的 run 可以导出 Markdown 报告。",
-            suggestion="请先成功运行 Vina，并解析 scores.csv 后再导出报告。",
+            suggestion="请先成功运行 Vina，并确认已生成 scores.csv 后再生成分析报告。",
         )
 
     if not any(isinstance(item, dict) and item.get("run_id") == run_id for item in project.runs):
@@ -3497,9 +3497,83 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     else:
         reference_rmsd_text = "### 共晶参考 RMSD\n\n尚未选择共晶参考配体，因此未计算该项。"
 
+    affinities = [float(score["affinity_kcal_mol"]) for score in scores]
+    sorted_affinities = sorted(affinities)
+    score_count = len(affinities)
+    mean_affinity = sum(affinities) / score_count
+    median_affinity = (
+        sorted_affinities[score_count // 2]
+        if score_count % 2
+        else (sorted_affinities[score_count // 2 - 1] + sorted_affinities[score_count // 2]) / 2
+    )
+    score_std = math.sqrt(sum((value - mean_affinity) ** 2 for value in affinities) / score_count)
+    best_affinity = affinities[0]
+    second_gap = affinities[1] - best_affinity if score_count > 1 else None
+    score_summary_rows = [
+        ["输出构象数量", score_count, "个"],
+        ["最佳评分", best_affinity, "kcal/mol"],
+        ["第二名与最佳评分差", second_gap, "kcal/mol"],
+        ["评分均值", round(mean_affinity, 4), "kcal/mol"],
+        ["评分中位数", round(median_affinity, 4), "kcal/mol"],
+        ["评分标准差", round(score_std, 4), "kcal/mol"],
+        ["评分跨度", round(max(affinities) - min(affinities), 4), "kcal/mol"],
+        ["距最佳评分 1 kcal/mol 内", sum(value <= best_affinity + 1 for value in affinities), "个"],
+        ["距最佳评分 2 kcal/mol 内", sum(value <= best_affinity + 2 for value in affinities), "个"],
+    ]
+    alternate_scores = [score for score in scores if int(score["mode"]) != int(scores[0]["mode"])]
+    rmsd_lb_values = [float(score["rmsd_lb"]) for score in alternate_scores]
+    rmsd_ub_values = [float(score["rmsd_ub"]) for score in alternate_scores]
+    pose_dispersion_rows = [
+        ["参考构象", f"Mode {scores[0]['mode']}", "Vina 输出中的最佳预测构象"],
+        ["RMSD l.b. ≤ 2 Å", sum(value <= 2 for value in rmsd_lb_values), "只表示相对 Mode 1 的下界"],
+        ["RMSD l.b. > 4 Å", sum(value > 4 for value in rmsd_lb_values), "提示输出中存在几何差异较大的构象"],
+        ["最大 RMSD l.b.", max(rmsd_lb_values) if rmsd_lb_values else None, "Å"],
+        ["最大 RMSD u.b.", max(rmsd_ub_values) if rmsd_ub_values else None, "Å"],
+    ]
+
+    structure_review = build_structure_review(
+        project_dir,
+        receptor_file=context["receptor_file"],
+        ligand_file=context["ligand_file"],
+    )
+    receptor_facts = structure_review.get("receptor") if isinstance(structure_review.get("receptor"), dict) else {}
+    ligand_review = structure_review.get("ligand") if isinstance(structure_review.get("ligand"), dict) else {}
+    ligand_facts = ligand_review.get("pdbqt") if isinstance(ligand_review.get("pdbqt"), dict) else {}
+
+    def yes_no_unknown(value: Any) -> str:
+        if value is True:
+            return "是"
+        if value is False:
+            return "否"
+        return "无法可靠判定"
+
+    structure_fact_rows = [
+        ["受体重原子数", receptor_facts.get("heavy_atom_count"), context["receptor_file"]],
+        ["受体三维坐标", yes_no_unknown(receptor_facts.get("has_3d_coordinates")), "由坐标记录判断"],
+        ["配体连接组分", ligand_facts.get("fragment_count"), "优先读取 PDBQT REMARK SMILES / ROOT"],
+        ["配体总形式电荷", ligand_facts.get("formal_charge"), ligand_facts.get("formal_charge_source")],
+        ["配体重原子数", ligand_facts.get("heavy_atom_count"), context["ligand_file"]],
+        ["配体是否包含盐/多片段", yes_no_unknown(ligand_facts.get("contains_salt")), "仅依据连接组分"],
+        ["配体未定义立体信息", yes_no_unknown(ligand_facts.get("undefined_stereochemistry")), "PDBQT 通常不足以可靠判断"],
+        ["配体三维坐标", yes_no_unknown(ligand_facts.get("has_3d_coordinates")), "由原子坐标记录判断"],
+        ["PDBQT 活动扭转数量", ligand_facts.get("torsdof"), "TORSDOF"],
+    ]
+    review_rows = [
+        [check.get("name"), check.get("status"), check.get("message"), check.get("evidence")]
+        for check in structure_review.get("checks", [])
+        if isinstance(check, dict)
+    ]
+    second_gap_text = _format_config_number(second_gap) if second_gap is not None else "无第二构象"
+    interpretation_lines = [
+        f"- 本次最佳预测为 Mode {scores[0]['mode']}，评分 {_format_config_number(best_affinity)} kcal/mol。",
+        f"- 第二名与最佳评分差为 {second_gap_text} kcal/mol；该差值只描述本次输出的内部排序，不代表结合概率或置信度。",
+        f"- {sum(value <= best_affinity + 1 for value in affinities)} / {score_count} 个构象位于最佳评分 1 kcal/mol 范围内。",
+        "- Vina 表格中的 RMSD l.b./u.b. 是相对最佳预测构象的距离界限，不是相对共晶配体的验证 RMSD。",
+    ]
+
     report_text = "\n".join(
         [
-            "# DockStart Docking Report",
+            "# DockStart Docking Report · 深度结果分析",
             "",
             "## 1. 项目信息",
             "",
@@ -3543,9 +3617,33 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "",
             _markdown_table(["Mode", "Affinity kcal/mol", "RMSD l.b.", "RMSD u.b."], score_rows),
             "",
+            "## 8. 评分统计摘要",
+            "",
+            _markdown_table(["指标", "值", "单位/说明"], score_summary_rows),
+            "",
+            "### 受控解读",
+            "",
+            *interpretation_lines,
+            "",
+            "## 9. 构象离散度",
+            "",
+            _markdown_table(["指标", "值", "说明"], pose_dispersion_rows),
+            "",
+            "## 10. 输入结构事实",
+            "",
+            _markdown_table(["项目", "记录值", "依据"], structure_fact_rows),
+            "",
+            "## 11. 结构审查摘要",
+            "",
+            _markdown_table(["检查项", "状态", "说明", "证据文件"], review_rows),
+            "",
+            structure_review.get("disclaimer", ""),
+            "",
+            "## 12. 参考姿势验证",
+            "",
             reference_rmsd_text,
             "",
-            "## 8. 重要说明",
+            "## 13. 重要说明",
             "",
             DOCKING_SCORE_DISCLAIMER,
             "",

@@ -364,7 +364,7 @@ export default function ProjectDashboardPage({
         artifact(
           "report",
           String(workflow?.latest_run?.status ?? "") === "finished" ? "可进行" : "未开始",
-          String(workflow?.latest_run?.status ?? "") === "finished" ? "可导出实验记录" : "等待结果解析",
+          String(workflow?.latest_run?.status ?? "") === "finished" ? "可生成结果分析报告" : "等待对接完成",
         ),
       ];
     },

@@ -154,6 +154,6 @@ export function buildWorkflowSteps(
     step("创建运行记录", "保存运行编号、配置快照和命令预览。", runPrepareStatus, "创建运行记录", "run-prepare"),
     step("开始对接", "执行 AutoDock Vina 并保存 stdout/stderr/log/out。", executeStatus, "开始对接", "run-execute"),
     step("解析结果", "从 Vina log 解析 scores.csv。", resultStatus, "查看结果", "result"),
-    step("导出实验记录", "导出 Markdown 实验记录。", resultStatus, "导出实验记录", "report"),
+    step("结果分析报告", "生成包含评分统计与可复现记录的 Markdown 报告。", resultStatus, "生成分析报告", "report"),
   ];
 }

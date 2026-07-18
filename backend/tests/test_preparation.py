@@ -96,6 +96,7 @@ class PreparationWorkflowModelTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["preparation"]["receptor"]["status"], "not_started")
         self.assertEqual(result["files"]["receptor_raw"]["status"], "missing")
+        self.assertIn("structure_review", result)
 
     def test_validate_preparation_prerequisites_missing_raw_file_returns_chinese_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -45,6 +45,9 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
     project_scores_file: parsed.project_scores_file,
     best_affinity: parsed.best_affinity,
     analyzed_at: parsed.analyzed_at,
+    report_file: parsed.report_file,
+    project_report_file: parsed.project_report_file,
+    reported_at: parsed.reported_at,
     files: parsed.files ?? [],
     message: parsed.message,
     error: parsed.error,
@@ -128,7 +131,7 @@ export default function ResultPage({
   const loadRequestRef = useRef(0);
 
   const status = metadataString(metadata, "status") || "unknown";
-  const canAnalyze = status === "finished" && !isBusy;
+  const canGenerateReport = status === "finished" && scores.length > 0 && !isBusy;
   const logPath = logFile || metadataString(metadata, "log_file") || `runs/${runId}/log.txt`;
   const displayedScoresFile = scoresFile || metadataString(metadata, "scores_file");
   const displayedProjectScoresFile = projectScoresFile || metadataString(metadata, "project_scores_file");
@@ -226,18 +229,18 @@ export default function ResultPage({
     void reloadRunMetadata();
   }, [reloadRunMetadata]);
 
-  const analyzeResults = async () => {
+  const generateDetailedReport = async () => {
     setIsBusy(true);
     setMessage("");
     setRawError("");
     try {
-      const rawPayload = await invoke<string>("analyze_vina_run_results", {
+      const rawPayload = await invoke<string>("export_markdown_report", {
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(parseProjectResponse(rawPayload), "结果已解析。");
+      applyResponse(parseProjectResponse(rawPayload), "深度结果分析报告已生成。");
     } catch (error) {
-      setMessage("无法解析 Vina 结果。");
+      setMessage("无法生成深度结果分析报告。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -409,7 +412,9 @@ export default function ResultPage({
             <div className="result-score-actions">
               <div><strong>scores.csv</strong><span>{displayedScoresFile || "尚未生成"}</span></div>
               <div>
-                <ActionButton variant="primary" disabled={!canAnalyze} onClick={() => void analyzeResults()}>{isBusy ? "处理中…" : "解析 scores"}</ActionButton>
+                <ActionButton variant="primary" disabled={!canGenerateReport} onClick={() => void generateDetailedReport()}>
+                  {isBusy ? "生成中…" : reportReady ? "重新生成分析" : "生成结果分析"}
+                </ActionButton>
                 <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
               </div>
             </div>
@@ -470,7 +475,7 @@ export default function ResultPage({
           </section>
           <section className="result-rail-actions">
             <ActionButton variant="primary" disabled={!(scores.length || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
-              <FileText aria-hidden="true" size={17} /> {reportReady ? "查看实验记录" : "导出实验记录"}
+              <FileText aria-hidden="true" size={17} /> {reportReady ? "查看分析报告" : "生成分析报告"}
             </ActionButton>
             <ActionButton onClick={() => void copyOutputPath()}><FolderOpen aria-hidden="true" size={17} /> 复制输出路径</ActionButton>
           </section>

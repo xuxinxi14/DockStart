@@ -111,6 +111,8 @@ class StructureReviewTests(unittest.TestCase):
 
             self.assertFalse(review["scientific_validation"])
             self.assertEqual(review["receptor"]["chains"], ["A"])
+            self.assertEqual(review["receptor"]["heavy_atom_count"], 6)
+            self.assertTrue(review["receptor"]["has_3d_coordinates"])
             self.assertEqual(len(review["receptor"]["interrupted_residues"]), 1)
             self.assertEqual(review["receptor"]["water_residue_count"], 1)
             self.assertEqual(review["receptor"]["metals"][0]["element"], "ZN")
@@ -119,7 +121,10 @@ class StructureReviewTests(unittest.TestCase):
             self.assertEqual(review["ligand"]["raw"]["heavy_atom_count"], 3)
             self.assertEqual(review["ligand"]["raw"]["formal_charge"], 0)
             self.assertEqual(review["ligand"]["raw"]["fragment_count"], 2)
+            self.assertTrue(review["ligand"]["raw"]["contains_salt"])
+            self.assertFalse(review["ligand"]["raw"]["has_3d_coordinates"])
             self.assertEqual(review["ligand"]["pdbqt"]["torsdof"], 1)
+            self.assertTrue(review["ligand"]["pdbqt"]["has_3d_coordinates"])
             self.assertEqual(review["ligand"]["pdbqt"]["formal_charge"], 0)
             self.assertEqual(review["provenance"]["ligand"]["meeko_version"], "0.7.1")
             checks = {item["key"]: item for item in review["checks"]}

@@ -31,6 +31,7 @@ from dockstart_core.preparation_models import (
     PreparationTarget,
     default_preparation_result,
 )
+from dockstart_core.structure_review import build_structure_review
 from dockstart_core.toolchain import get_resolved_python
 
 SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol"}
@@ -1277,11 +1278,21 @@ def get_preparation_status(
     # Meeko probes.  Reuse that immutable snapshot instead of starting the
     # detection scripts a second time merely to assemble the response payload.
     tools = copy.deepcopy(dict(tools_snapshot)) if tools_snapshot is not None else _tool_status()
+    structure_review = build_structure_review(
+        project.project_dir,
+        receptor_file=project.receptor.file,
+        ligand_file=project.ligand.file,
+        receptor_raw_file=project.receptor.raw_file,
+        ligand_raw_file=project.ligand.raw_file,
+        receptor_metadata_file=project.preparation.receptor.metadata_file,
+        ligand_metadata_file=project.preparation.ligand.metadata_file,
+    )
     return {
         "ok": True,
         "project_dir": project.project_dir,
         "project": project.to_dict(),
         "preparation": project.preparation.to_dict(),
+        "structure_review": structure_review,
         "tools": tools,
         "files": {
             "receptor_raw": _file_status(project_path, project.receptor.raw_file, "receptor_raw", "受体 raw 文件"),

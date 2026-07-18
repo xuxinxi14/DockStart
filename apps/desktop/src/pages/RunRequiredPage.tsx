@@ -21,7 +21,7 @@ const pageText: Record<RunRequiredPageProps["requestedPage"], { title: string; d
   },
   report: {
     title: "还没有可导出的报告",
-    description: "需要先完成 run、解析 scores.csv，然后才能导出 Markdown 报告。",
+    description: "需要先完成 run 并生成 scores.csv，然后才能生成 Markdown 结果分析报告。",
   },
 };
 

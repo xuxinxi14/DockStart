@@ -167,6 +167,10 @@ class MarkdownReportTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             self.assertIn("# DockStart Docking Report", response["report_text"])
+            self.assertIn("## 8. 评分统计摘要", response["report_text"])
+            self.assertIn("## 9. 构象离散度", response["report_text"])
+            self.assertIn("## 10. 输入结构事实", response["report_text"])
+            self.assertIn("## 11. 结构审查摘要", response["report_text"])
 
     def test_report_contains_project_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

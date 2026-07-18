@@ -861,6 +861,7 @@ export type PreparationStatusResponse = {
   project_dir: string;
   project: DockStartProject | null;
   preparation: PreparationState | null;
+  structure_review?: StructureReviewPayload;
   tools?: {
     python?: ToolCheckResult;
     rdkit?: PreparationToolCapabilityResult;

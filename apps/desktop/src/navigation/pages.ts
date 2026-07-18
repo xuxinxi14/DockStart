@@ -33,7 +33,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.10.4";
+export const appVersion = "0.11.0";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -80,7 +80,7 @@ export const pageTitles: Record<PageId, string> = {
   "run-prepare": "准备对接运行",
   "run-execute": "执行 AutoDock Vina",
   result: "查看对接结果",
-  report: "导出实验记录",
+  report: "结果分析报告",
   help: "文档帮助",
 };
 

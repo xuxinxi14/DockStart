@@ -14,6 +14,7 @@ import type {
   PreparationTarget,
   PreparationToolCapabilityResult,
   RunFileStatus,
+  StructureReviewPayload,
   ToolCheckResult,
 } from "../types";
 import {
@@ -43,6 +44,7 @@ function parsePreparationResponse(rawPayload: string): PreparationStatusResponse
     project_dir: parsed.project_dir ?? "",
     project: parsed.project ?? null,
     preparation: parsed.preparation ?? null,
+    structure_review: parsed.structure_review,
     tools: parsed.tools,
     files: parsed.files,
     target: parsed.target,
@@ -91,6 +93,26 @@ function capabilityLine(tool: PreparationToolCapabilityResult | undefined, capab
   const capability = tool?.capabilities?.[capabilityKey];
   if (!capability) return "未检测";
   return `${statusLabel(capability.status)} · ${capability.message}`;
+}
+
+function factRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function factNumber(facts: Record<string, unknown>, key: string): number | null {
+  const value = facts[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function factBooleanLabel(value: unknown, unknownLabel = "无法可靠判定"): string {
+  if (value === true) return "是";
+  if (value === false) return "否";
+  return unknownLabel;
+}
+
+function formalChargeLabel(value: number | null): string {
+  if (value === null) return "未可靠记录";
+  return value > 0 ? `+${value}` : String(value);
 }
 
 export default function PreparationPage({
@@ -386,16 +408,45 @@ export default function PreparationPage({
     const fileName = displayFile.split(/[\\/]/).filter(Boolean).pop() || "尚未选择 PDBQT";
     const preparedSize = preparedFile?.size ?? 0;
     const shouldLoadPreview = isReady && previewRequested[target];
+    const review: StructureReviewPayload | undefined = response?.structure_review;
+    const receptorFacts = factRecord(review?.receptor);
+    const ligandFacts = factRecord(review?.ligand);
+    const ligandRawFacts = factRecord(ligandFacts.raw);
+    const ligandPdbqtFacts = factRecord(ligandFacts.pdbqt);
+    const sourceFacts = isReceptor
+      ? receptorFacts
+      : Object.keys(ligandRawFacts).length ? ligandRawFacts : ligandPdbqtFacts;
+    const fragmentCount = factNumber(sourceFacts, "fragment_count");
+    const formalCharge = factNumber(sourceFacts, "formal_charge");
+    const heavyAtomCount = factNumber(sourceFacts, "heavy_atom_count");
+    const torsdof = factNumber(ligandPdbqtFacts, "torsdof");
+    const stereoEncoded = sourceFacts.stereochemistry_encoded === true;
 
     return (
       <article className="preparation-target-row">
         <div className="preparation-target-identity">
-          <span className="preparation-target-icon"><FileArrowUp aria-hidden="true" size={24} /></span>
-          <div>
-            <span>{label}</span>
-            <strong>{fileName}</strong>
-            <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL") : "等待文件"}</small>
+          <div className="preparation-target-primary">
+            <span className="preparation-target-icon"><FileArrowUp aria-hidden="true" size={24} /></span>
+            <div>
+              <span>{label}</span>
+              <strong>{fileName}</strong>
+              <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL") : "等待文件"}</small>
+            </div>
           </div>
+          {isReady ? (
+            <dl className="preparation-structure-facts" aria-label={`${label}结构事实`}>
+              <div><dt>连接组分</dt><dd>{isReceptor ? "无法从受体格式判定" : fragmentCount ?? "未记录"}</dd></div>
+              <div><dt>总形式电荷</dt><dd>{isReceptor ? "未可靠记录" : formalChargeLabel(formalCharge)}</dd></div>
+              <div><dt>重原子数</dt><dd>{heavyAtomCount ?? "未记录"}</dd></div>
+              <div><dt>包含盐</dt><dd>{isReceptor ? "不适用" : factBooleanLabel(sourceFacts.contains_salt)}</dd></div>
+              <div>
+                <dt>未定义立体信息</dt>
+                <dd>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</dd>
+              </div>
+              <div><dt>三维坐标</dt><dd>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</dd></div>
+              <div><dt>PDBQT 活动扭转</dt><dd>{isReceptor ? "不适用（刚性受体）" : torsdof ?? "未记录"}</dd></div>
+            </dl>
+          ) : null}
         </div>
 
         {shouldLoadPreview ? (
