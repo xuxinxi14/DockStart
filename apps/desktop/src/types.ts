@@ -458,6 +458,29 @@ export type ProjectRunGuardPayload = {
   error: string;
 };
 
+export type StructureReviewCheck = {
+  key: string;
+  role: "receptor" | "ligand" | string;
+  name: string;
+  status: "ok" | "warning" | "unknown" | string;
+  message: string;
+  detail: string;
+  evidence: string;
+  blocking: false;
+  requires_manual_review: boolean;
+};
+
+export type StructureReviewPayload = {
+  scientific_validation: false;
+  disclaimer: string;
+  receptor: Record<string, unknown>;
+  ligand: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+  checks: StructureReviewCheck[];
+  warning_count: number;
+  unknown_count: number;
+};
+
 export type RunPreflightResponse = {
   ok: boolean;
   ready: boolean;
@@ -470,6 +493,7 @@ export type RunPreflightResponse = {
     receptor: PdbqtInputStats | null;
     ligand: PdbqtInputStats | null;
   };
+  structure_review?: StructureReviewPayload;
   box: DockStartProject["box"] & {
     volume_angstrom3: number;
     warnings: string[];
@@ -817,6 +841,7 @@ export type DockStartProject = {
     size_z: number;
   };
   vina: {
+    scoring: "vina" | "vinardo";
     exhaustiveness: number;
     num_modes: number;
     energy_range: number;

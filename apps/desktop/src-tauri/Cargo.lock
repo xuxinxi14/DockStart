@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "dockstart-desktop"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "serde",
  "serde_json",

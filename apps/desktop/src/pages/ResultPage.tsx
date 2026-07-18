@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Timer } from "@phosphor-icons/react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -60,6 +61,32 @@ function metadataNumber(metadata: Record<string, unknown> | null, key: string): 
   return typeof value === "number" ? value : null;
 }
 
+type ReferenceRmsdResult = {
+  mode: number;
+  rmsd_angstrom: number;
+  method: string;
+  heavy_atom_count: number;
+  reference_source_name: string;
+  reference_sha256: string;
+  calculated_at: string;
+};
+
+function metadataReferenceRmsd(metadata: Record<string, unknown> | null): ReferenceRmsdResult | null {
+  const value = metadata?.reference_rmsd;
+  if (!value || typeof value !== "object") return null;
+  const result = value as Partial<ReferenceRmsdResult>;
+  if (typeof result.mode !== "number" || typeof result.rmsd_angstrom !== "number") return null;
+  return {
+    mode: result.mode,
+    rmsd_angstrom: result.rmsd_angstrom,
+    method: typeof result.method === "string" ? result.method : "重原子、对称性修正",
+    heavy_atom_count: typeof result.heavy_atom_count === "number" ? result.heavy_atom_count : 0,
+    reference_source_name: typeof result.reference_source_name === "string" ? result.reference_source_name : "参考配体",
+    reference_sha256: typeof result.reference_sha256 === "string" ? result.reference_sha256 : "",
+    calculated_at: typeof result.calculated_at === "string" ? result.calculated_at : "",
+  };
+}
+
 function formatScoreValue(value: number): string {
   return Number.isFinite(value) ? String(value) : "";
 }
@@ -109,6 +136,7 @@ export default function ResultPage({
   const displayedAnalyzedAt = analyzedAt || metadataString(metadata, "analyzed_at");
   const displayedReportFile = metadataString(metadata, "report_file") || metadataString(metadata, "project_report_file");
   const reportReady = Boolean(displayedReportFile);
+  const referenceRmsd = metadataReferenceRmsd(metadata);
 
   useEffect(() => {
     setViewerMode(null);
@@ -257,6 +285,33 @@ export default function ResultPage({
     }
   };
 
+  const calculateReferenceRmsd = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "选择共晶参考配体",
+      filters: [{ name: "参考配体", extensions: ["sdf", "mol", "pdb", "pdbqt"] }],
+    });
+    if (!selected || Array.isArray(selected)) return;
+    setIsBusy(true);
+    setMessage("");
+    setRawError("");
+    try {
+      const rawPayload = await invoke<string>("calculate_reference_ligand_rmsd", {
+        projectDir: project.project_dir,
+        runId,
+        mode: selectedMode,
+        referencePath: selected,
+      });
+      applyResponse(parseProjectResponse(rawPayload), `Mode ${selectedMode} 的共晶参考 RMSD 已计算。`);
+    } catch (error) {
+      setMessage("无法计算共晶参考 RMSD。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   return (
     <PageShell labelledBy="result-title" className="result-analysis-page">
       <PageHero
@@ -396,6 +451,22 @@ export default function ResultPage({
             <div><FileText aria-hidden="true" size={18} /><span><strong>log.txt</strong><small>{logPath}</small></span></div>
             <div><FileText aria-hidden="true" size={18} /><span><strong>scores.csv</strong><small>{displayedScoresFile || "未生成"}</small></span></div>
             <div><FileText aria-hidden="true" size={18} /><span><strong>docking_report.md</strong><small>{displayedReportFile || "未生成"}</small></span></div>
+          </section>
+          <section className="result-reference-rmsd">
+            <h2><Ruler aria-hidden="true" size={18} /> 共晶姿势验证</h2>
+            {referenceRmsd ? (
+              <div className="result-reference-rmsd-value">
+                <span>Mode {referenceRmsd.mode}</span>
+                <strong>{referenceRmsd.rmsd_angstrom.toFixed(3)} Å</strong>
+                <small>{referenceRmsd.reference_source_name} · {referenceRmsd.heavy_atom_count} 个重原子</small>
+              </div>
+            ) : (
+              <p>选择同一化学实体的共晶配体，计算重原子、对称性修正 RMSD。</p>
+            )}
+            <ActionButton disabled={isBusy || !scores.length} onClick={() => void calculateReferenceRmsd()}>
+              {referenceRmsd ? "更换参考并重算" : "选择参考配体并计算"}
+            </ActionButton>
+            <small>此值不同于列表中相对 Mode 1 的 RMSD；化学连接不一致时不会强行比较。</small>
           </section>
           <section className="result-rail-actions">
             <ActionButton variant="primary" disabled={!(scores.length || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>

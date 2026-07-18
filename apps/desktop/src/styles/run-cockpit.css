@@ -358,7 +358,8 @@
 }
 
 .run-box-fields input,
-.run-vina-fields input {
+.run-vina-fields input,
+.run-vina-fields select {
   width: 100%;
   min-width: 0;
   min-height: 31px;
@@ -657,7 +658,7 @@
 
 .run-vina-fields {
   display: grid;
-  grid-template-columns: repeat(5, minmax(100px, 1fr));
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
   gap: 8px;
   padding: 8px 0 6px;
 }
@@ -677,6 +678,49 @@
   padding: 6px 9px;
   font-size: 11px;
   line-height: 1.45;
+}
+
+.run-structure-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.run-structure-review-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--ds-border-default);
+  border-left: 3px solid var(--ds-warning);
+  border-radius: 6px;
+  background: var(--ds-surface-subtle);
+  padding: 9px 10px;
+}
+
+.run-structure-review-item.ok {
+  border-left-color: var(--ds-success);
+}
+
+.run-structure-review-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.run-structure-review-item p,
+.run-structure-review-item small {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.run-structure-review-item small {
+  color: var(--ds-text-muted);
+  font-size: 10px;
 }
 
 .run-parameter-save-row {
@@ -1311,6 +1355,10 @@
   .run-box-fields,
   .run-vina-fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .run-structure-review-grid {
+    grid-template-columns: 1fr;
   }
 
   .run-ledger-row {

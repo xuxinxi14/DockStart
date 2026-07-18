@@ -28,6 +28,7 @@ from dockstart_core import __version__
 from dockstart_core.persistence import atomic_write_text as _atomic_write_text
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
 from dockstart_core.settings import load_settings
+from dockstart_core.structure_review import build_structure_review
 
 PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation")
 PROJECT_NAME_PATTERN = re.compile(r"^[^<>:\"/\\|?*\x00-\x1f]+$")
@@ -75,6 +76,7 @@ class BoxSettings:
 
 @dataclass
 class VinaSettings:
+    scoring: str = "vina"
     exhaustiveness: int = 8
     num_modes: int = 9
     energy_range: float = 4
@@ -411,6 +413,7 @@ def _project_from_dict(data: dict[str, Any], fallback_dir: Path) -> DockStartPro
             size_z=float(_value_or_default(box, "size_z", 20)),
         ),
         vina=VinaSettings(
+            scoring=str(_value_or_default(vina, "scoring", "vina") or "vina").strip().lower(),
             exhaustiveness=int(_value_or_default(vina, "exhaustiveness", 8)),
             num_modes=int(_value_or_default(vina, "num_modes", 9)),
             energy_range=float(_value_or_default(vina, "energy_range", 4)),
@@ -955,6 +958,14 @@ def validate_vina_params(vina: dict[str, Any]) -> dict[str, Any]:
             suggestion="请提交包含 exhaustiveness、num_modes、energy_range、cpu 和 seed 的对象。",
         )
 
+    scoring = str(vina.get("scoring") or "vina").strip().lower()
+    if scoring not in {"vina", "vinardo"}:
+        return _error(
+            "VINA_SCORING_INVALID",
+            "评分函数仅支持 Vina 或 Vinardo。",
+            suggestion="请选择 Vina 或 Vinardo；AutoDock4 需要预先生成 affinity maps，当前标准流程不开放。",
+        )
+
     exhaustiveness, error = _parse_vina_int(vina, "exhaustiveness")
     if error:
         return error
@@ -972,6 +983,7 @@ def validate_vina_params(vina: dict[str, Any]) -> dict[str, Any]:
         return error
 
     parsed = {
+        "scoring": scoring,
         "exhaustiveness": exhaustiveness,
         "num_modes": num_modes,
         "energy_range": energy_range,
@@ -1026,6 +1038,7 @@ def update_vina_params(project_dir: str, vina: dict[str, Any]) -> dict[str, Any]
         project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
         parsed_vina = validation["vina"]
         project.vina = VinaSettings(
+            scoring=parsed_vina["scoring"],
             exhaustiveness=parsed_vina["exhaustiveness"],
             num_modes=parsed_vina["num_modes"],
             energy_range=parsed_vina["energy_range"],
@@ -1190,6 +1203,7 @@ def build_vina_config_text(project_dir: str) -> dict[str, Any]:
     lines = [
         f"receptor = {Path(project.receptor.file).as_posix()}",
         f"ligand = {Path(project.ligand.file).as_posix()}",
+        f"scoring = {vina['scoring']}",
         "",
         f"center_x = {_format_config_number(box['center_x'])}",
         f"center_y = {_format_config_number(box['center_y'])}",
@@ -1615,6 +1629,15 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
         "blockers": blockers,
         "warnings": warnings,
         "input_stats": input_stats,
+        "structure_review": {
+            "scientific_validation": False,
+            "receptor": {},
+            "ligand": {},
+            "provenance": {},
+            "checks": [],
+            "warning_count": 0,
+            "unknown_count": 0,
+        },
         "box": {},
         "vina_params": {},
         "tool": {"status": "unknown", "version": "", "path": "", "source": "unknown", "message": ""},
@@ -1722,6 +1745,55 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
 
     inspect_input("receptor", project.receptor.file)
     inspect_input("ligand", project.ligand.file)
+
+    structure_review = build_structure_review(
+        project_path,
+        receptor_file=project.receptor.file,
+        ligand_file=project.ligand.file,
+        receptor_raw_file=project.receptor.raw_file,
+        ligand_raw_file=project.ligand.raw_file,
+        receptor_metadata_file=project.preparation.receptor.metadata_file,
+        ligand_metadata_file=project.preparation.ligand.metadata_file,
+    )
+    default_payload["structure_review"] = structure_review
+    for role, label in (("receptor", "受体结构审查"), ("ligand", "配体结构审查")):
+        role_checks = [item for item in structure_review["checks"] if item.get("role") == role]
+        concrete_warnings = [item for item in role_checks if item.get("status") == "warning"]
+        unknown_checks = [item for item in role_checks if item.get("status") == "unknown"]
+        if concrete_warnings:
+            message = f"检测到 {len(concrete_warnings)} 项需要人工确认的结构事实。"
+            detail = "；".join(str(item.get("message") or "") for item in concrete_warnings)
+            warnings.append(f"{label}：{message}")
+            add_check(
+                f"{role}_structure_review",
+                label,
+                "warning",
+                message,
+                blocking=False,
+                detail=detail,
+                action_page="import-pdbqt",
+            )
+        elif unknown_checks:
+            message = f"文件事实已汇总，但仍有 {len(unknown_checks)} 项不能自动判定。"
+            detail = "；".join(str(item.get("message") or "") for item in unknown_checks)
+            add_check(
+                f"{role}_structure_review",
+                label,
+                "warning",
+                message,
+                blocking=False,
+                detail=detail,
+                action_page="import-pdbqt",
+            )
+        else:
+            add_check(
+                f"{role}_structure_review",
+                label,
+                "ok",
+                "可观察的结构文件事实已汇总；仍需人工判断其科学适用性。",
+                blocking=False,
+                action_page="import-pdbqt",
+            )
 
     box_data = asdict(project.box)
     box_validation = validate_box_params(box_data)
@@ -1962,6 +2034,7 @@ def _build_run_snapshot_config(project: DockStartProject, run_id: str) -> str:
     lines = [
         f"receptor = {receptor}",
         f"ligand = {ligand}",
+        f"scoring = {project.vina.scoring}",
         "",
         f"center_x = {_format_config_number(project.box.center_x)}",
         f"center_y = {_format_config_number(project.box.center_y)}",
@@ -3235,6 +3308,27 @@ def _command_for_report(metadata: dict[str, Any]) -> list[str]:
     return []
 
 
+def _run_snapshot_mapping(metadata: dict[str, Any], key: str) -> dict[str, Any]:
+    direct = metadata.get(f"{key}_snapshot")
+    if isinstance(direct, dict):
+        return copy.deepcopy(direct)
+    snapshots = metadata.get("snapshots")
+    nested = snapshots.get(key) if isinstance(snapshots, dict) else None
+    return copy.deepcopy(nested) if isinstance(nested, dict) else {}
+
+
+def _run_input_snapshot_file(metadata: dict[str, Any], role: str, fallback: str) -> str:
+    snapshots = metadata.get("snapshots")
+    inputs = snapshots.get("inputs") if isinstance(snapshots, dict) else None
+    item = inputs.get(role) if isinstance(inputs, dict) else None
+    if isinstance(item, dict):
+        for key in ("relative_path", "snapshot_file"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                return Path(value).as_posix()
+    return Path(fallback).as_posix() if fallback else ""
+
+
 def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
@@ -3271,9 +3365,11 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
             suggestion="请确认该 run 来自当前 DockStart 项目，或重新准备运行记录。",
         )
 
+    receptor_file = _run_input_snapshot_file(metadata, "receptor", project.receptor.file)
+    ligand_file = _run_input_snapshot_file(metadata, "ligand", project.ligand.file)
     receptor_path, receptor_error = _project_relative_existing_file(
         project_path,
-        project.receptor.file,
+        receptor_file,
         "RECEPTOR_FILE",
         "receptor.pdbqt",
     )
@@ -3281,14 +3377,14 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         return receptor_error
     ligand_path, ligand_error = _project_relative_existing_file(
         project_path,
-        project.ligand.file,
+        ligand_file,
         "LIGAND_FILE",
         "ligand.pdbqt",
     )
     if ligand_error:
         return ligand_error
 
-    config_file = str(metadata.get("config_file") or _config_relative_path(project))
+    config_file = str(metadata.get("config_snapshot") or metadata.get("config_file") or _config_relative_path(project))
     config_path, config_error = _project_relative_existing_file(project_path, config_file, "VINA_CONFIG", "vina_config.txt")
     if config_error:
         return config_error
@@ -3306,12 +3402,14 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         "scores": scores_payload["scores"],
         "scores_file": scores_payload["scores_file"],
         "project_scores_file": scores_payload.get("project_scores_file", Path("results", "scores.csv").as_posix()),
-        "receptor_file": project.receptor.file,
+        "receptor_file": receptor_file,
         "receptor_path": str(receptor_path) if receptor_path else "",
-        "ligand_file": project.ligand.file,
+        "ligand_file": ligand_file,
         "ligand_path": str(ligand_path) if ligand_path else "",
         "config_file": config_file,
         "config_path": str(config_path) if config_path else "",
+        "box_snapshot": _run_snapshot_mapping(metadata, "box") or asdict(project.box),
+        "vina_snapshot": _run_snapshot_mapping(metadata, "vina") or asdict(project.vina),
         "error": None,
     }
 
@@ -3337,25 +3435,67 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["stdout.txt", str(metadata.get("stdout_file") or Path("runs", run_id, "stdout.txt").as_posix())],
         ["stderr.txt", str(metadata.get("stderr_file") or Path("runs", run_id, "stderr.txt").as_posix())],
     ]
+    box_snapshot = {**asdict(project.box), **context["box_snapshot"]}
+    vina_snapshot = {**asdict(project.vina), **context["vina_snapshot"]}
     box_rows = [
-        ["center_x", project.box.center_x, "Å"],
-        ["center_y", project.box.center_y, "Å"],
-        ["center_z", project.box.center_z, "Å"],
-        ["size_x", project.box.size_x, "Å"],
-        ["size_y", project.box.size_y, "Å"],
-        ["size_z", project.box.size_z, "Å"],
+        ["center_x", box_snapshot["center_x"], "Å"],
+        ["center_y", box_snapshot["center_y"], "Å"],
+        ["center_z", box_snapshot["center_z"], "Å"],
+        ["size_x", box_snapshot["size_x"], "Å"],
+        ["size_y", box_snapshot["size_y"], "Å"],
+        ["size_z", box_snapshot["size_z"], "Å"],
     ]
     vina_rows = [
-        ["exhaustiveness", project.vina.exhaustiveness],
-        ["num_modes", project.vina.num_modes],
-        ["energy_range", project.vina.energy_range],
-        ["cpu", project.vina.cpu],
-        ["seed", project.vina.seed if project.vina.seed is not None else "未设置"],
+        ["scoring", vina_snapshot.get("scoring") or "vina"],
+        ["exhaustiveness", vina_snapshot["exhaustiveness"]],
+        ["num_modes", vina_snapshot["num_modes"]],
+        ["energy_range", vina_snapshot["energy_range"]],
+        ["cpu", vina_snapshot["cpu"]],
+        ["seed", vina_snapshot["seed"] if vina_snapshot.get("seed") is not None else "未设置"],
     ]
     score_rows = [
         [score["mode"], score["affinity_kcal_mol"], score["rmsd_lb"], score["rmsd_ub"]]
         for score in scores
     ]
+    input_sha256 = metadata.get("input_sha256") if isinstance(metadata.get("input_sha256"), dict) else {}
+    vina_tool = metadata.get("vina_tool") if isinstance(metadata.get("vina_tool"), dict) else {}
+    system = metadata.get("system") if isinstance(metadata.get("system"), dict) else {}
+    app = metadata.get("app") if isinstance(metadata.get("app"), dict) else {}
+    reproducibility_rows = [
+        ["DockStart version", metadata.get("app_version") or app.get("version")],
+        ["Vina binary SHA256", metadata.get("vina_sha256") or vina_tool.get("sha256")],
+        ["receptor SHA256", input_sha256.get("receptor")],
+        ["ligand SHA256", input_sha256.get("ligand")],
+        ["config SHA256", input_sha256.get("config")],
+        ["system fingerprint", system.get("fingerprint")],
+    ]
+    reference_rmsd = metadata.get("reference_rmsd") if isinstance(metadata.get("reference_rmsd"), dict) else {}
+    if reference_rmsd:
+        reproducibility_rows.extend(
+            [
+                ["reference ligand SHA256", reference_rmsd.get("reference_sha256")],
+                ["reference ligand file", reference_rmsd.get("reference_file")],
+            ]
+        )
+        reference_rmsd_text = "\n".join(
+            [
+                "### 共晶参考 RMSD",
+                "",
+                _markdown_table(
+                    ["构象", "重原子 RMSD (Å)", "方法", "参考配体"],
+                    [[
+                        f"Mode {reference_rmsd.get('mode')}",
+                        reference_rmsd.get("rmsd_angstrom"),
+                        reference_rmsd.get("method"),
+                        reference_rmsd.get("reference_source_name") or reference_rmsd.get("reference_file"),
+                    ]],
+                ),
+                "",
+                "该值是对接构象与所选参考配体的重原子、对称性修正 RMSD；不是 Vina 表格中相对 Mode 1 的 RMSD。",
+            ]
+        )
+    else:
+        reference_rmsd_text = "### 共晶参考 RMSD\n\n尚未选择共晶参考配体，因此未计算该项。"
 
     report_text = "\n".join(
         [
@@ -3395,11 +3535,17 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             command_text,
             "```",
             "",
-            "## 6. Docking Score 结果",
+            "## 6. 可复现记录",
+            "",
+            _markdown_table(["项目", "记录值"], reproducibility_rows),
+            "",
+            "## 7. Docking Score 结果",
             "",
             _markdown_table(["Mode", "Affinity kcal/mol", "RMSD l.b.", "RMSD u.b."], score_rows),
             "",
-            "## 7. 重要说明",
+            reference_rmsd_text,
+            "",
+            "## 8. 重要说明",
             "",
             DOCKING_SCORE_DISCLAIMER,
             "",

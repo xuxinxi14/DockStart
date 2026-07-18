@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -200,7 +201,64 @@ class MarkdownReportTests(unittest.TestCase):
             report = build_markdown_report(str(project_dir), run_id)["report_text"]
 
             self.assertIn("| exhaustiveness | 8 |", report)
+            self.assertIn("| scoring | vina |", report)
             self.assertIn("| seed | 12345 |", report)
+
+    def test_report_uses_run_snapshots_after_project_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir, run_id = self._create_report_ready_run(temp_dir)
+            run_dir = project_dir / "runs" / run_id
+            inputs_dir = run_dir / "inputs"
+            inputs_dir.mkdir()
+            (inputs_dir / "receptor.pdbqt").write_text("REMARK receptor snapshot\n", encoding="utf-8")
+            (inputs_dir / "ligand.pdbqt").write_text("REMARK ligand snapshot\n", encoding="utf-8")
+            (run_dir / "config_snapshot.txt").write_text("scoring = vinardo\n", encoding="utf-8")
+
+            metadata_path = run_dir / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["config_snapshot"] = f"runs/{run_id}/config_snapshot.txt"
+            metadata["snapshots"] = {
+                "inputs": {
+                    "receptor": {"relative_path": f"runs/{run_id}/inputs/receptor.pdbqt"},
+                    "ligand": {"relative_path": f"runs/{run_id}/inputs/ligand.pdbqt"},
+                },
+                "box": {
+                    "center_x": 10,
+                    "center_y": 11,
+                    "center_z": 12,
+                    "size_x": 30,
+                    "size_y": 31,
+                    "size_z": 32,
+                },
+                "vina": {
+                    "scoring": "vinardo",
+                    "exhaustiveness": 24,
+                    "num_modes": 7,
+                    "energy_range": 3,
+                    "cpu": 2,
+                    "seed": 99,
+                },
+            }
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["box"]["center_x"] = -999
+            project["vina"]["exhaustiveness"] = 1
+            project_json.write_text(json.dumps(project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            (project_dir / "prepared" / "receptor.pdbqt").unlink()
+            (project_dir / "prepared" / "ligand.pdbqt").unlink()
+
+            response = build_markdown_report(str(project_dir), run_id)
+
+            self.assertTrue(response["ok"], response)
+            report = response["report_text"]
+            self.assertIn(f"runs/{run_id}/inputs/receptor.pdbqt", report)
+            self.assertIn(f"runs/{run_id}/config_snapshot.txt", report)
+            self.assertIn("| center_x | 10 | Å |", report)
+            self.assertIn("| scoring | vinardo |", report)
+            self.assertIn("| exhaustiveness | 24 |", report)
+            self.assertNotIn("| center_x | -999 | Å |", report)
 
     def test_report_contains_command_array(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

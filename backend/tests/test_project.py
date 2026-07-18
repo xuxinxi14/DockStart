@@ -480,6 +480,7 @@ class ProjectTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             self.assertEqual(response["vina"]["exhaustiveness"], 8)
+            self.assertEqual(response["vina"]["scoring"], "vina")
             self.assertEqual(response["vina"]["num_modes"], 9)
             self.assertEqual(response["vina"]["energy_range"], 4)
             self.assertEqual(response["vina"]["cpu"], 0)
@@ -493,6 +494,7 @@ class ProjectTests(unittest.TestCase):
             response = update_vina_params(
                 str(project_dir),
                 {
+                    "scoring": "vinardo",
                     "exhaustiveness": 16,
                     "num_modes": 12,
                     "energy_range": 3.5,
@@ -503,9 +505,29 @@ class ProjectTests(unittest.TestCase):
 
             self.assertTrue(response["ok"])
             project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(project["vina"]["scoring"], "vinardo")
             self.assertEqual(project["vina"]["exhaustiveness"], 16)
             self.assertEqual(project["vina"]["energy_range"], 3.5)
             self.assertEqual(project["vina"]["seed"], 12345)
+
+    def test_update_vina_params_rejects_ad4_without_maps_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+
+            response = update_vina_params(
+                project_response["project_dir"],
+                {
+                    "scoring": "ad4",
+                    "exhaustiveness": 8,
+                    "num_modes": 9,
+                    "energy_range": 4,
+                    "cpu": 0,
+                    "seed": None,
+                },
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "VINA_SCORING_INVALID")
 
     def test_exhaustiveness_must_be_positive_integer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -694,7 +716,28 @@ class ProjectTests(unittest.TestCase):
             self.assertIn("receptor = prepared/receptor.pdbqt", response["config_text"])
             self.assertIn("ligand = prepared/ligand.pdbqt", response["config_text"])
             self.assertIn("center_x = 0", response["config_text"])
+            self.assertIn("scoring = vina", response["config_text"])
             self.assertIn("exhaustiveness = 8", response["config_text"])
+
+    def test_vina_config_supports_vinardo_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project_with_imports(temp_dir)
+            response = update_vina_params(
+                str(project_dir),
+                {
+                    "scoring": "vinardo",
+                    "exhaustiveness": 8,
+                    "num_modes": 9,
+                    "energy_range": 4,
+                    "cpu": 0,
+                    "seed": None,
+                },
+            )
+
+            self.assertTrue(response["ok"])
+            config = build_vina_config_text(str(project_dir))
+            self.assertTrue(config["ok"])
+            self.assertIn("scoring = vinardo", config["config_text"])
 
     def test_vina_config_omits_seed_when_null(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1442,6 +1485,8 @@ class ProjectTests(unittest.TestCase):
             self.assertIn(f"ligand = runs/{response['run_id']}/inputs/ligand.pdbqt", snapshot_config_text)
             self.assertIn("box", metadata["snapshots"])
             self.assertIn("vina", metadata["snapshots"])
+            self.assertEqual(metadata["vina_snapshot"]["scoring"], "vina")
+            self.assertIn("scoring = vina", snapshot_config_text)
             self.assertIn("fingerprint", metadata["system"])
 
     def test_runtime_status_returns_progress_elapsed_and_log_tails(self) -> None:

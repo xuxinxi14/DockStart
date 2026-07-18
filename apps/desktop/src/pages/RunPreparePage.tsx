@@ -56,6 +56,7 @@ type RunPreparePageProps = {
 type RunActionMode = "full" | "prepare" | "config";
 type BoxForm = Record<keyof DockStartProject["box"], string>;
 type VinaForm = Record<keyof DockStartProject["vina"], string>;
+type VinaNumericKey = Exclude<keyof DockStartProject["vina"], "scoring">;
 const minBoxDimension = 0.1;
 
 const runActionLabels: Record<RunActionMode, string> = {
@@ -70,7 +71,7 @@ const runActionDescriptions: Record<RunActionMode, string> = {
   config: "仅保存并生成配置",
 };
 
-const vinaFields: Array<{ key: keyof DockStartProject["vina"]; label: string; hint: string }> = [
+const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string }> = [
   { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议从 8 开始" },
   { key: "num_modes", label: "输出构象数量", hint: "建议 9" },
   { key: "energy_range", label: "能量范围", hint: "kcal/mol" },
@@ -128,6 +129,7 @@ function boxToForm(project: DockStartProject): BoxForm {
 
 function vinaToForm(project: DockStartProject): VinaForm {
   return {
+    scoring: project.vina.scoring ?? "vina",
     exhaustiveness: String(project.vina.exhaustiveness),
     num_modes: String(project.vina.num_modes),
     energy_range: String(project.vina.energy_range),
@@ -153,6 +155,7 @@ function boxFormsEqual(left: BoxForm, right: BoxForm): boolean {
 
 function vinaFormsEqual(left: VinaForm, right: VinaForm): boolean {
   return (Object.keys(left) as Array<keyof VinaForm>).every((key) => {
+    if (key === "scoring") return left[key] === right[key];
     if (key === "seed" && left[key].trim() === "" && right[key].trim() === "") return true;
     return Number(left[key]) === Number(right[key]);
   });
@@ -163,17 +166,19 @@ function boxCoordinate(value: number): string {
 }
 
 function parseVinaForm(form: VinaForm): DockStartProject["vina"] | null {
+  const scoring = form.scoring.trim().toLowerCase();
   const exhaustiveness = Number(form.exhaustiveness);
   const num_modes = Number(form.num_modes);
   const energy_range = Number(form.energy_range);
   const cpu = Number(form.cpu);
   const seed = form.seed.trim() ? Number(form.seed) : null;
+  if (scoring !== "vina" && scoring !== "vinardo") return null;
   if (!Number.isInteger(exhaustiveness) || exhaustiveness <= 0) return null;
   if (!Number.isInteger(num_modes) || num_modes <= 0) return null;
   if (!Number.isFinite(energy_range) || energy_range <= 0) return null;
   if (!Number.isInteger(cpu) || cpu < 0) return null;
   if (seed !== null && !Number.isInteger(seed)) return null;
-  return { exhaustiveness, num_modes, energy_range, cpu, seed };
+  return { scoring, exhaustiveness, num_modes, energy_range, cpu, seed };
 }
 
 function formatBytes(bytes: number): string {
@@ -841,6 +846,15 @@ export default function RunPreparePage({
               <div className="run-ledger-group">
                 <h3>AutoDock Vina 参数</h3>
                 <div className="run-vina-fields">
+                  <label>
+                    <span>评分函数</span>
+                    <select disabled={isBusy} value={vinaForm.scoring} onChange={(event) => updateVinaField("scoring", event.target.value)}>
+                      <option value="vina">Vina</option>
+                      <option value="vinardo">Vinardo</option>
+                      <option value="ad4" disabled>AutoDock4（需要 maps）</option>
+                    </select>
+                    <small>分值不可跨函数比较</small>
+                  </label>
                   {vinaFields.map((field) => {
                     const value = vinaForm[field.key];
                     const invalid = field.key === "seed"
@@ -891,6 +905,26 @@ export default function RunPreparePage({
                 </div>
               </div>
             </div>
+
+            {preflight?.structure_review?.checks?.length ? (
+              <AdvancedDetails summary={`结构审查明细 · ${preflight.structure_review.warning_count} 项警告`}>
+                <div className="run-structure-review-grid">
+                  {preflight.structure_review.checks.map((check) => (
+                    <article key={check.key} className={`run-structure-review-item ${check.status}`}>
+                      <div>
+                        <strong>{check.name}</strong>
+                        <StatusBadge tone={check.status === "ok" ? "ok" : "warning"}>
+                          {check.status === "ok" ? "已读取" : check.status === "unknown" ? "需人工确认" : "需复核"}
+                        </StatusBadge>
+                      </div>
+                      <p>{check.message}</p>
+                      {check.evidence ? <small>依据：{check.evidence}</small> : null}
+                    </article>
+                  ))}
+                </div>
+                <p className="run-science-note">{preflight.structure_review.disclaimer}</p>
+              </AdvancedDetails>
+            ) : null}
 
             {!formIsValid ? (
               <WarningCallout title="参数格式需要修正">

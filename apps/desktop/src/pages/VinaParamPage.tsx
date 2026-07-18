@@ -16,8 +16,9 @@ type VinaParamPageProps = {
 };
 
 type VinaFormState = Record<keyof DockStartProject["vina"], string>;
+type VinaNumericKey = Exclude<keyof DockStartProject["vina"], "scoring">;
 
-const vinaFields: Array<{ key: keyof DockStartProject["vina"]; label: string; hint: string; inputMode: "numeric" | "decimal" }> = [
+const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string; inputMode: "numeric" | "decimal" }> = [
   { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议 8", inputMode: "numeric" },
   { key: "num_modes", label: "输出构象数量", hint: "建议 9", inputMode: "numeric" },
   { key: "energy_range", label: "能量范围", hint: "kcal/mol", inputMode: "decimal" },
@@ -40,6 +41,7 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
 
 function vinaToForm(project: DockStartProject): VinaFormState {
   return {
+    scoring: project.vina.scoring ?? "vina",
     exhaustiveness: String(project.vina.exhaustiveness),
     num_modes: String(project.vina.num_modes),
     energy_range: String(project.vina.energy_range),
@@ -54,6 +56,7 @@ function hasPreparedFiles(project: DockStartProject): boolean {
 
 function isValidVinaParams(vina: DockStartProject["vina"]): boolean {
   return (
+    (vina.scoring === "vina" || vina.scoring === "vinardo") &&
     Number.isInteger(vina.exhaustiveness) &&
     vina.exhaustiveness > 0 &&
     Number.isInteger(vina.num_modes) &&
@@ -193,6 +196,15 @@ export default function VinaParamPage({
 
             <SectionCard title="Vina 参数">
               <div className="param-form">
+                <label className="param-field">
+                  <span>评分函数</span>
+                  <select value={vinaForm.scoring} onChange={(event) => updateField("scoring", event.target.value)}>
+                    <option value="vina">Vina</option>
+                    <option value="vinardo">Vinardo</option>
+                    <option value="ad4" disabled>AutoDock4（需要 affinity maps）</option>
+                  </select>
+                  <small>不同评分函数的分值不能直接比较</small>
+                </label>
                 {vinaFields.map((field) => (
                   <label className="param-field" key={field.key}>
                     <span>{field.label}</span>
@@ -259,6 +271,10 @@ export default function VinaParamPage({
 
           <RightRailSection title="当前参数">
             <dl className="mode-context-list">
+              <div>
+                <dt>评分函数</dt>
+                <dd>{project.vina.scoring === "vinardo" ? "Vinardo" : "Vina"}</dd>
+              </div>
               <div>
                 <dt>搜索彻底程度</dt>
                 <dd>{project.vina.exhaustiveness}</dd>

@@ -166,3 +166,16 @@ final result: passed
 - Real desktop capture could not be isolated reliably in this run because the current Windows desktop layout overlapped the QA window and WebView accessibility automation exposed no usable element tree. No visual-pass claim is made from the incomplete capture.
 
 final result: blocked
+
+## Narrow Details and Search History Pass (2026-07-18)
+
+- User references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-b5365cd2-8b54-4ccb-83b9-754cd6b1dafa.png`
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c717ea0b-bc9b-4080-af2a-69974ec512c9.png`
+- Candidate details now use one narrow-column definition list; long fields are stacked and values no longer inherit a two-column squeeze that caused character-by-character wrapping.
+- Native WebView autocomplete is disabled for RCSB/PubChem inputs. The replacement history popover uses DockStart surface, border, text, hover, focus and danger tokens, keeps the two providers separate, and exposes an icon-button delete action per record.
+- Keyboard review: focus stays within two sibling buttons per row, Escape closes the popover, deletion does not trigger a search, and focus outlines use the existing token.
+- Automated verification: TypeScript/Vite production build passed; Rust bridge check passed.
+- A new real-desktop screenshot comparison was not captured because this task explicitly avoided rebuilding/packaging the GUI and no approved browser automation target was available. The layout was checked statically against the supplied narrow references, so no fresh pixel-level visual-pass claim is made.
+
+final result: blocked

@@ -9,7 +9,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CaretDown, CaretUp } from "@phosphor-icons/react";
+import { CaretDown, CaretUp, X } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -71,6 +71,143 @@ type CandidateDetailRow = {
 
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 20;
+const SEARCH_HISTORY_LIMIT = 8;
+const RCSB_SEARCH_HISTORY_KEY = "dockstart.search-history.rcsb";
+const PUBCHEM_SEARCH_HISTORY_KEY = "dockstart.search-history.pubchem";
+
+type SearchHistoryInputProps = {
+  disabled: boolean;
+  history: string[];
+  id: string;
+  onChange: (value: string) => void;
+  onDelete: (value: string) => void;
+  placeholder: string;
+  value: string;
+};
+
+function readSearchHistory(storageKey: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .slice(0, SEARCH_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function writeSearchHistory(storageKey: string, history: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(history));
+  } catch {
+    // 搜索历史是辅助功能；存储不可用时不阻断结构搜索。
+  }
+}
+
+function useSearchHistory(storageKey: string) {
+  const [history, setHistory] = useState<string[]>(() => readSearchHistory(storageKey));
+
+  const remember = useCallback((rawValue: string) => {
+    const value = rawValue.trim();
+    if (!value) return;
+    setHistory((current) => {
+      const next = [
+        value,
+        ...current.filter((item) => item.localeCompare(value, undefined, { sensitivity: "accent" }) !== 0),
+      ].slice(0, SEARCH_HISTORY_LIMIT);
+      writeSearchHistory(storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
+
+  const remove = useCallback((value: string) => {
+    setHistory((current) => {
+      const next = current.filter((item) => item !== value);
+      writeSearchHistory(storageKey, next);
+      return next;
+    });
+  }, [storageKey]);
+
+  return { history, remember, remove };
+}
+
+function SearchHistoryInput({
+  disabled,
+  history,
+  id,
+  onChange,
+  onDelete,
+  placeholder,
+  value,
+}: SearchHistoryInputProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = `${id}-history`;
+
+  return (
+    <div
+      className="structure-search-history"
+      ref={rootRef}
+      onBlur={(event) => {
+        if (!rootRef.current?.contains(event.relatedTarget as Node | null)) setIsOpen(false);
+      }}
+    >
+      <input
+        aria-controls={isOpen && history.length ? menuId : undefined}
+        aria-expanded={isOpen && history.length > 0}
+        aria-haspopup="dialog"
+        autoComplete="off"
+        disabled={disabled}
+        id={id}
+        name={`dockstart-${id}`}
+        placeholder={placeholder}
+        spellCheck={false}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onFocus={() => setIsOpen(history.length > 0)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setIsOpen(false);
+        }}
+      />
+      {isOpen && history.length ? (
+        <div className="structure-search-history-menu" id={menuId} role="dialog" aria-label="历史输入">
+          <span className="structure-search-history-label">历史输入</span>
+          <ul>
+            {history.map((item) => (
+              <li key={item}>
+                <button
+                  className="structure-search-history-value"
+                  type="button"
+                  title={item}
+                  onClick={() => {
+                    onChange(item);
+                    setIsOpen(false);
+                  }}
+                >
+                  {item}
+                </button>
+                <button
+                  aria-label={`删除历史输入 ${item}`}
+                  className="structure-search-history-delete"
+                  type="button"
+                  title="删除记录"
+                  onClick={() => onDelete(item)}
+                >
+                  <X aria-hidden="true" size={15} weight="bold" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectResponse>;
@@ -376,6 +513,8 @@ export default function StructureFetchPage({
   const [ligandPreview, setLigandPreview] = useState<CandidatePreviewState | null>(null);
   const [overwritePubchem, setOverwritePubchem] = useState(false);
   const [deleteLigandRawFile, setDeleteLigandRawFile] = useState(false);
+  const rcsbSearchHistory = useSearchHistory(RCSB_SEARCH_HISTORY_KEY);
+  const pubchemSearchHistory = useSearchHistory(PUBCHEM_SEARCH_HISTORY_KEY);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -564,13 +703,16 @@ export default function StructureFetchPage({
 
   const searchCandidates = async (provider: "rcsb" | "pubchem") => {
     const isRcsb = provider === "rcsb";
-    const query = isRcsb ? rcsbQuery : pubchemQuery;
+    const query = (isRcsb ? rcsbQuery : pubchemQuery).trim();
     const limit = validatedLimit(isRcsb ? rcsbLimit : pubchemLimit);
+    if (!query) return;
     if (limit === null) {
       setMessage(`候选数量必须是 1 到 ${MAX_SEARCH_LIMIT} 之间的整数。`);
       setRawError("");
       return;
     }
+    if (isRcsb) rcsbSearchHistory.remember(query);
+    else pubchemSearchHistory.remember(query);
 
     const generationRef = isRcsb ? rcsbSearchGenerationRef : pubchemSearchGenerationRef;
     const generation = generationRef.current + 1;
@@ -733,7 +875,6 @@ export default function StructureFetchPage({
       });
       return;
     }
-
     setExpandedCandidateIds((current) => new Set(current).add(candidateId));
     if (
       candidate.provider !== "pubchem"
@@ -1191,14 +1332,16 @@ export default function StructureFetchPage({
                   <div className="structure-search-controls">
                     <div className="field-stack structure-search-query">
                       <label htmlFor="rcsb-query">RCSB PDB ID 或关键词</label>
-                      <input
+                      <SearchHistoryInput
                         disabled={isBusy}
+                        history={rcsbSearchHistory.history}
                         id="rcsb-query"
+                        onDelete={rcsbSearchHistory.remove}
                         value={rcsbQuery}
-                        onChange={(event) => {
+                        onChange={(value) => {
                           rcsbSearchGenerationRef.current += 1;
                           previewGenerationRef.current.receptor += 1;
-                          setRcsbQuery(event.target.value);
+                          setRcsbQuery(value);
                           setRcsbResults(null);
                           setReceptorPreview(null);
                           setPreviewingCandidateId("");
@@ -1356,14 +1499,16 @@ export default function StructureFetchPage({
                   <div className="structure-search-controls">
                     <div className="field-stack structure-search-query">
                       <label htmlFor="pubchem-query">PubChem CID、名称或关键词</label>
-                      <input
+                      <SearchHistoryInput
                         disabled={isBusy}
+                        history={pubchemSearchHistory.history}
                         id="pubchem-query"
+                        onDelete={pubchemSearchHistory.remove}
                         value={pubchemQuery}
-                        onChange={(event) => {
+                        onChange={(value) => {
                           pubchemSearchGenerationRef.current += 1;
                           previewGenerationRef.current.ligand += 1;
-                          setPubchemQuery(event.target.value);
+                          setPubchemQuery(value);
                           setPubchemResults(null);
                           setLigandPreview(null);
                           setPreviewingCandidateId("");

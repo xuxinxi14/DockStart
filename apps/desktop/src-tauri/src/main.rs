@@ -988,6 +988,30 @@ async fn analyze_vina_run_results(project_dir: String, run_id: String) -> String
 }
 
 #[tauri::command]
+async fn calculate_reference_ligand_rmsd(
+    project_dir: String,
+    run_id: String,
+    mode: u32,
+    reference_path: String,
+) -> String {
+    match run_backend_module_async(
+        "dockstart_core.reference_rmsd",
+        vec![
+            "calculate".to_string(),
+            project_dir,
+            run_id,
+            mode.to_string(),
+            reference_path,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法计算共晶参考 RMSD。", &error),
+    }
+}
+
+#[tauri::command]
 async fn load_scores_csv(project_dir: String, run_id: String) -> String {
     match run_backend_module_cached_async(
         "dockstart_core.project",
@@ -3247,6 +3271,7 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
         "dockstart_core.viewer" if command == "update-box-visualization" => {
             CacheInvalidation::Project
         }
+        "dockstart_core.reference_rmsd" if command == "calculate" => CacheInvalidation::Project,
         "dockstart_core.project"
             if matches!(
                 command,
@@ -3490,6 +3515,7 @@ fn main() {
             cancel_background_task,
             get_run_files_status,
             analyze_vina_run_results,
+            calculate_reference_ligand_rmsd,
             load_scores_csv,
             export_markdown_report,
             get_report_status,
