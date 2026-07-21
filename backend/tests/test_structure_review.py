@@ -57,6 +57,100 @@ $$$$
 
 
 class StructureReviewTests(unittest.TestCase):
+    def test_existing_receptor_pdbqt_reports_observable_facts_without_guessing_chemistry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            prepared = root / "prepared"
+            prepared.mkdir()
+            receptor = prepared / "receptor.pdbqt"
+            receptor.write_text(
+                _pdb_line("ATOM", 1, "C1", "ALA", "A", 1, "C").rstrip("\n") + "  0.125 C\n"
+                + _pdb_line("ATOM", 2, "N1", "ALA", "A", 1, "N").rstrip("\n") + " -0.250 NA\n"
+                + _pdb_line("ATOM", 3, "H1", "ALA", "A", 1, "H").rstrip("\n") + "  0.125 HD\n",
+                encoding="utf-8",
+            )
+
+            review = build_structure_review(root, receptor_file="prepared/receptor.pdbqt", ligand_file="")
+            facts = review["receptor"]["pdbqt"]
+            independent_heavy_count = sum(
+                1
+                for line in receptor.read_text(encoding="utf-8").splitlines()
+                if line[:6].strip() in {"ATOM", "HETATM"} and line.split()[-1].upper() not in {"H", "HD", "HS"}
+            )
+
+            self.assertEqual(facts["atom_count"], 3)
+            self.assertEqual(facts["coordinate_count"], 3)
+            self.assertEqual(facts["heavy_atom_count"], independent_heavy_count)
+            self.assertEqual(facts["hydrogen_atom_count"], 1)
+            self.assertTrue(facts["has_3d_coordinates"])
+            self.assertEqual(facts["coordinate_bounds"]["x"], [1.0, 3.0])
+            self.assertEqual(facts["chains"], ["A"])
+            self.assertEqual(facts["residue_count"], 1)
+            self.assertEqual(facts["autodock_atom_types"], ["C", "HD", "NA"])
+            self.assertEqual(facts["partial_charge_sum"], 0.0)
+            self.assertEqual(facts["receptor_pdbqt_mode"], "rigid")
+            self.assertFalse(facts["activity_torsion_applicable"])
+            self.assertIsNone(facts["active_torsions"])
+            self.assertNotIn("formal_charge", facts)
+            self.assertNotIn("contains_salt", facts)
+            self.assertIsNone(facts["ion_non_polymer_components"])
+            self.assertIsNone(facts["bond_orders"])
+            self.assertIsNone(facts["stereochemistry"])
+            continuity = next(item for item in review["checks"] if item["key"] == "receptor_continuity")
+            self.assertEqual(continuity["status"], "unknown")
+            self.assertIn("需要原始 PDB/mmCIF", continuity["message"])
+
+    def test_receptor_pdbqt_rejects_non_finite_partial_charge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            prepared = root / "prepared"
+            prepared.mkdir()
+            receptor = prepared / "receptor.pdbqt"
+            receptor.write_text(
+                _pdb_line("ATOM", 1, "C1", "ALA", "A", 1, "C").rstrip("\n") + " nan C\n",
+                encoding="utf-8",
+            )
+
+            facts = build_structure_review(root, receptor_file="prepared/receptor.pdbqt", ligand_file="")["receptor"]["pdbqt"]
+            self.assertEqual(facts["partial_charge_count"], 0)
+            self.assertIsNone(facts["partial_charge_sum"])
+
+    def test_receptor_pdbqt_with_unparseable_coordinate_is_not_marked_3d_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            prepared = root / "prepared"
+            prepared.mkdir()
+            valid = _pdb_line("ATOM", 1, "C1", "ALA", "A", 1, "C").rstrip("\n") + "  0.000 C\n"
+            invalid = _pdb_line("ATOM", 2, "N1", "ALA", "A", 1, "N")
+            invalid = invalid[:30] + "     nan" + invalid[38:]
+            receptor = prepared / "receptor.pdbqt"
+            receptor.write_text(valid + invalid.rstrip("\n") + "  0.000 N\n", encoding="utf-8")
+
+            facts = build_structure_review(root, receptor_file="prepared/receptor.pdbqt", ligand_file="")["receptor"]["pdbqt"]
+            self.assertEqual(facts["atom_count"], 2)
+            self.assertEqual(facts["coordinate_count"], 1)
+            self.assertFalse(facts["has_3d_coordinates"])
+            self.assertIsNone(facts["coordinate_bounds"])
+
+    def test_flexible_receptor_is_identified_from_flex_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            prepared = root / "prepared"
+            prepared.mkdir()
+            receptor = prepared / "receptor_flex.pdbqt"
+            receptor.write_text(
+                "BEGIN_RES TYR A 42\n"
+                + _pdb_line("ATOM", 1, "CB", "TYR", "A", 42, "C").rstrip("\n") + "  0.000 C\n"
+                + _pdb_line("ATOM", 2, "CG", "TYR", "A", 42, "C").rstrip("\n") + "  0.000 A\n"
+                + "BRANCH 1 2\nENDBRANCH 1 2\nEND_RES TYR A 42\n",
+                encoding="utf-8",
+            )
+
+            facts = build_structure_review(root, receptor_file="prepared/receptor_flex.pdbqt", ligand_file="")["receptor"]["pdbqt"]
+            self.assertEqual(facts["receptor_pdbqt_mode"], "flexible")
+            self.assertTrue(facts["activity_torsion_applicable"])
+            self.assertEqual(facts["active_torsions"], 1)
+
     def test_reports_receptor_records_and_ligand_chemistry_facts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -118,6 +212,9 @@ class StructureReviewTests(unittest.TestCase):
             self.assertEqual(review["receptor"]["metals"][0]["element"], "ZN")
             self.assertEqual(review["receptor"]["nonstandard_residues"][0]["residue_name"], "FAD")
             self.assertEqual(review["receptor"]["alternate_locations"], ["A"])
+            self.assertNotIn("formal_charge", review["receptor"]["raw"])
+            self.assertNotIn("contains_salt", review["receptor"]["raw"])
+            self.assertIsNone(review["receptor"]["raw"]["residue_template_anomalies"])
             self.assertEqual(review["ligand"]["raw"]["heavy_atom_count"], 3)
             self.assertEqual(review["ligand"]["raw"]["formal_charge"], 0)
             self.assertEqual(review["ligand"]["raw"]["fragment_count"], 2)

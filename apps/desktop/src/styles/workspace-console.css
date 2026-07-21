@@ -112,7 +112,7 @@
 
 .preparation-target-row {
   display: grid;
-  grid-template-columns: minmax(200px, 0.72fr) minmax(300px, 1.4fr) minmax(190px, 0.72fr);
+  grid-template-columns: minmax(278px, 0.94fr) minmax(300px, 1.35fr) minmax(190px, 0.7fr);
   align-items: stretch;
   min-height: 238px;
   border-bottom: 1px solid var(--ds-on-dark-border-default);
@@ -324,6 +324,81 @@
   min-height: 28px;
   color: var(--ds-text-on-dark-secondary);
   font-size: 11px;
+}
+
+.preparation-macrocycle-panel {
+  margin: 14px 14px 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 8px;
+  background: var(--ds-on-dark-surface-muted);
+}
+
+.preparation-macrocycle-panel > summary {
+  min-height: 42px;
+  padding: 11px 14px;
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preparation-macrocycle-panel .advanced-details-content {
+  display: grid;
+  gap: 13px;
+  margin-top: 0;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+  padding: 14px;
+}
+
+.preparation-macrocycle-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.42fr);
+  align-items: end;
+  gap: 16px;
+}
+
+.preparation-macrocycle-intro > div,
+.preparation-macrocycle-intro > label,
+.preparation-macrocycle-settings > label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.preparation-macrocycle-intro strong,
+.preparation-macrocycle-intro span,
+.preparation-macrocycle-settings label > span {
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
+.preparation-macrocycle-intro p,
+.preparation-macrocycle-note {
+  margin: 0;
+  color: var(--ds-text-on-dark-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.preparation-macrocycle-intro select,
+.preparation-macrocycle-settings input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+}
+
+.preparation-macrocycle-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 0.55fr)) repeat(3, minmax(155px, 1fr));
+  align-items: end;
+  gap: 10px 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.preparation-macrocycle-note {
+  padding-left: 9px;
+  border-left: 2px solid var(--ds-warning-on-dark);
 }
 
 .preparation-drop-zone,
@@ -881,6 +956,27 @@
   text-align: right;
 }
 
+.preparation-fact-value {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.preparation-fact-source {
+  display: inline-flex;
+  width: fit-content;
+  justify-self: end;
+  border: 1px solid var(--ds-brand-border-on-dark);
+  border-radius: 999px;
+  background: var(--ds-brand-hover-on-dark);
+  color: var(--ds-brand-on-dark);
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
 .result-reference-rmsd {
   display: grid;
   gap: 11px;
@@ -948,7 +1044,7 @@
 
 @media (max-width: 1240px) {
   .preparation-target-row {
-    grid-template-columns: minmax(170px, 0.62fr) minmax(260px, 1.2fr) minmax(175px, 0.68fr);
+    grid-template-columns: minmax(260px, 0.82fr) minmax(260px, 1.2fr) minmax(175px, 0.68fr);
   }
 
   .result-pose-workbench {
@@ -975,7 +1071,7 @@
   }
 
   .preparation-target-row {
-    grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.2fr) minmax(180px, 0.7fr);
+    grid-template-columns: minmax(260px, 0.8fr) minmax(280px, 1.2fr) minmax(180px, 0.7fr);
   }
 
   .result-analysis-rail {
@@ -1017,6 +1113,11 @@
 
   .preparation-target-actions {
     padding-top: 4px;
+  }
+
+  .preparation-macrocycle-intro,
+  .preparation-macrocycle-settings {
+    grid-template-columns: 1fr;
   }
 
   .preparation-action-bar,
@@ -1134,6 +1235,31 @@
 :root[data-theme="light"] .preparation-stage-panel {
   border-color: var(--ds-border-default);
   background: var(--ds-surface-panel);
+}
+
+:root[data-theme="light"] .preparation-macrocycle-panel {
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-primary);
+}
+
+:root[data-theme="light"] .preparation-macrocycle-panel > summary,
+:root[data-theme="light"] .preparation-macrocycle-intro strong,
+:root[data-theme="light"] .preparation-macrocycle-intro span,
+:root[data-theme="light"] .preparation-macrocycle-settings label > span {
+  color: var(--ds-text-primary);
+}
+
+:root[data-theme="light"] .preparation-macrocycle-intro p,
+:root[data-theme="light"] .preparation-macrocycle-note {
+  color: var(--ds-text-secondary);
+}
+
+:root[data-theme="light"] .preparation-macrocycle-intro select,
+:root[data-theme="light"] .preparation-macrocycle-settings input[type="number"] {
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-input);
+  color: var(--ds-text-primary);
 }
 
 :root[data-theme="light"] .preparation-target-row {

@@ -8,6 +8,7 @@ water policy and must not be treated as scientific validation.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shlex
 from pathlib import Path
@@ -78,14 +79,28 @@ def _element_from_pdb_line(line: str) -> str:
     return two if two in METAL_ELEMENTS else letters[:1].upper()
 
 
-def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: int) -> dict[str, Any]:
+def _coordinate_bounds(coordinates: list[tuple[float, float, float]]) -> dict[str, Any] | None:
+    if not coordinates:
+        return None
+    xs, ys, zs = zip(*coordinates)
+    return {
+        "x": [round(min(xs), 3), round(max(xs), 3)],
+        "y": [round(min(ys), 3), round(max(ys), 3)],
+        "z": [round(min(zs), 3), round(max(zs), 3)],
+    }
+
+
+def _summarize_receptor_rows(rows: Iterable[dict[str, Any]], *, model_markers: int) -> dict[str, Any]:
     atom_count = 0
     heavy_atom_count = 0
+    hydrogen_atom_count = 0
+    coordinates: list[tuple[float, float, float]] = []
     chains: set[str] = set()
     models: set[str] = set()
     waters: set[tuple[str, str, str]] = set()
     metals: set[tuple[str, str, str, str]] = set()
     nonstandard: set[tuple[str, str, str]] = set()
+    non_polymer_candidates: set[tuple[str, str, str]] = set()
     altlocs: set[str] = set()
     interrupted: set[tuple[str, str, str, str]] = set()
     seen_residues: set[tuple[str, str, str, str]] = set()
@@ -101,7 +116,16 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
         insertion = row.get("insertion", "")
         group = row.get("group", "ATOM").upper()
         element = row.get("element", "").upper()
-        heavy_atom_count += element not in {"H", "D", "T"}
+        is_hydrogen = element in {"H", "D", "T"}
+        heavy_atom_count += not is_hydrogen
+        hydrogen_atom_count += is_hydrogen
+        coordinate = row.get("coordinate")
+        if (
+            isinstance(coordinate, tuple)
+            and len(coordinate) == 3
+            and all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in coordinate)
+        ):
+            coordinates.append((float(coordinate[0]), float(coordinate[1]), float(coordinate[2])))
         altloc = row.get("altloc", "")
         key = (model, chain, residue_number, insertion)
         if previous is not None and key != previous:
@@ -119,8 +143,11 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
             waters.add(residue_identity)
         elif group == "HETATM" and (element in METAL_ELEMENTS or residue_name in METAL_ELEMENTS):
             metals.add((chain, residue_number, residue_name, element or residue_name))
-        elif residue_name not in STANDARD_RESIDUES:
-            nonstandard.add(residue_identity)
+        else:
+            if group == "HETATM":
+                non_polymer_candidates.add(residue_identity)
+            if residue_name not in STANDARD_RESIDUES:
+                nonstandard.add(residue_identity)
 
     model_count = len(models) if atom_count else 0
     if atom_count and model_markers > model_count:
@@ -128,11 +155,10 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
     return {
         "atom_count": atom_count,
         "heavy_atom_count": heavy_atom_count,
-        "has_3d_coordinates": atom_count > 0,
-        "fragment_count": None,
-        "formal_charge": None,
-        "contains_salt": None,
-        "undefined_stereochemistry": None,
+        "hydrogen_atom_count": hydrogen_atom_count,
+        "coordinate_count": len(coordinates),
+        "has_3d_coordinates": atom_count > 0 and len(coordinates) == atom_count,
+        "coordinate_bounds": _coordinate_bounds(coordinates) if atom_count > 0 and len(coordinates) == atom_count else None,
         "residue_count": len(seen_residues),
         "chains": sorted(chains),
         "model_count": model_count,
@@ -151,11 +177,51 @@ def _summarize_receptor_rows(rows: Iterable[dict[str, str]], *, model_markers: i
             {"chain": chain, "residue_number": number, "insertion_code": insertion, "residue_name": name}
             for chain, number, insertion, name in sorted(interrupted)
         ],
+        "ion_non_polymer_components": [
+            *[
+                {"kind": "water", "chain": chain, "residue_number": number, "residue_name": name}
+                for chain, number, name in sorted(waters)
+            ],
+            *[
+                {
+                    "kind": "metal",
+                    "chain": chain,
+                    "residue_number": number,
+                    "residue_name": name,
+                    "element": element,
+                }
+                for chain, number, name, element in sorted(metals)
+            ],
+            *[
+                {"kind": "non_polymer", "chain": chain, "residue_number": number, "residue_name": name}
+                for chain, number, name in sorted(non_polymer_candidates)
+            ],
+        ],
+        # PDB/mmCIF records alone do not prove whether a residue matches a
+        # Meeko template.  Keep observable non-standard/interrupted records
+        # separate and leave template validation explicitly unperformed.
+        "residue_template_anomalies": None,
+        "residue_template_check_status": "not_run",
+        "nonstandard_chirality_geometry": None,
+        "fact_sources": {
+            "atom_count": "原始结构",
+            "heavy_atom_count": "原始结构",
+            "hydrogen_atom_count": "原始结构",
+            "coordinate_count": "原始结构",
+            "has_3d_coordinates": "原始结构",
+            "coordinate_bounds": "原始结构",
+            "chains": "原始结构",
+            "residue_count": "原始结构",
+            "ion_non_polymer_components": "原始结构",
+            "alternate_locations": "原始结构",
+            "residue_template_anomalies": "Meeko",
+            "nonstandard_chirality_geometry": "原始结构",
+        },
     }
 
 
 def _parse_pdb_receptor(path: Path) -> dict[str, Any]:
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
     model = "1"
     model_markers = 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -166,6 +232,14 @@ def _parse_pdb_receptor(path: Path) -> dict[str, Any]:
             continue
         if record not in {"ATOM", "HETATM"}:
             continue
+        try:
+            coordinate: tuple[float, float, float] | None = (
+                float(line[30:38]),
+                float(line[38:46]),
+                float(line[46:54]),
+            )
+        except (TypeError, ValueError):
+            coordinate = None
         rows.append(
             {
                 "group": record,
@@ -176,6 +250,7 @@ def _parse_pdb_receptor(path: Path) -> dict[str, Any]:
                 "insertion": line[26:27].strip() if len(line) > 26 else "",
                 "altloc": line[16:17].strip() if len(line) > 16 else "",
                 "element": _element_from_pdb_line(line),
+                "coordinate": coordinate,
             },
         )
     return _summarize_receptor_rows(rows, model_markers=model_markers)
@@ -183,7 +258,7 @@ def _parse_pdb_receptor(path: Path) -> dict[str, Any]:
 
 def _parse_cif_receptor(path: Path) -> dict[str, Any]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
     index = 0
     while index < len(lines):
         if lines[index].strip().lower() != "loop_":
@@ -215,6 +290,14 @@ def _parse_cif_receptor(path: Path) -> dict[str, Any]:
             except ValueError:
                 tokens = stripped.split()
             if len(tokens) >= len(headers):
+                try:
+                    coordinate: tuple[float, float, float] | None = (
+                        float(value(tokens, "_atom_site.Cartn_x")),
+                        float(value(tokens, "_atom_site.Cartn_y")),
+                        float(value(tokens, "_atom_site.Cartn_z")),
+                    )
+                except ValueError:
+                    coordinate = None
                 rows.append(
                     {
                         "group": value(tokens, "_atom_site.group_PDB") or "ATOM",
@@ -225,6 +308,7 @@ def _parse_cif_receptor(path: Path) -> dict[str, Any]:
                         "insertion": value(tokens, "_atom_site.pdbx_PDB_ins_code"),
                         "altloc": value(tokens, "_atom_site.label_alt_id", "_atom_site.auth_alt_id"),
                         "element": value(tokens, "_atom_site.type_symbol"),
+                        "coordinate": coordinate,
                     },
                 )
             index += 1
@@ -477,7 +561,10 @@ def _parse_ligand_pdbqt(path: Path) -> dict[str, Any]:
             heavy_atom_count += atom_type not in PDBQT_HYDROGEN_TYPES
             if len(fields) >= 2:
                 try:
-                    partial_charges.append(float(fields[-2]))
+                    charge = float(fields[-2])
+                    if not math.isfinite(charge):
+                        raise ValueError("non-finite partial charge")
+                    partial_charges.append(charge)
                 except ValueError:
                     pass
         elif upper.startswith("TORSDOF"):
@@ -510,6 +597,116 @@ def _parse_ligand_pdbqt(path: Path) -> dict[str, Any]:
     }
 
 
+def _parse_receptor_pdbqt(path: Path) -> dict[str, Any]:
+    """Read receptor facts that PDBQT actually carries, without inventing chemistry."""
+
+    atom_count = 0
+    heavy_atom_count = 0
+    hydrogen_atom_count = 0
+    coordinates: list[tuple[float, float, float]] = []
+    chains: set[str] = set()
+    residues: set[tuple[str, str, str, str]] = set()
+    atom_types: set[str] = set()
+    partial_charges: list[float] = []
+    models = 0
+    torsdof: int | None = None
+    branch_count = 0
+    flexible_residue_markers = 0
+
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        upper = stripped.upper()
+        record = line[:6].strip().upper()
+        if record in {"ATOM", "HETATM"}:
+            atom_count += 1
+            fields = line.split()
+            atom_type = fields[-1].upper() if fields else ""
+            atom_types.add(atom_type)
+            is_hydrogen = atom_type in PDBQT_HYDROGEN_TYPES
+            heavy_atom_count += not is_hydrogen
+            hydrogen_atom_count += is_hydrogen
+            chain = line[21:22].strip() if len(line) > 21 else ""
+            residue_name = line[17:20].strip() if len(line) > 19 else ""
+            residue_number = line[22:26].strip() if len(line) > 25 else ""
+            insertion = line[26:27].strip() if len(line) > 26 else ""
+            chains.add(chain or "(空)")
+            residues.add((chain or "(空)", residue_number, insertion, residue_name))
+            try:
+                coordinate = (float(line[30:38]), float(line[38:46]), float(line[46:54]))
+                if not all(math.isfinite(value) for value in coordinate):
+                    raise ValueError("non-finite coordinate")
+                coordinates.append(coordinate)
+            except (TypeError, ValueError):
+                pass
+            if len(fields) >= 2:
+                try:
+                    charge = float(fields[-2])
+                    if not math.isfinite(charge):
+                        raise ValueError("non-finite partial charge")
+                    partial_charges.append(charge)
+                except ValueError:
+                    pass
+        elif upper.startswith("MODEL"):
+            models += 1
+        elif upper.startswith("TORSDOF"):
+            try:
+                torsdof = int(stripped.split()[1])
+            except (ValueError, IndexError):
+                torsdof = None
+        elif upper.startswith("BRANCH"):
+            branch_count += 1
+        elif upper.startswith("BEGIN_RES"):
+            flexible_residue_markers += 1
+
+    flexible = flexible_residue_markers > 0 or branch_count > 0
+    return {
+        "format": "pdbqt",
+        "atom_count": atom_count,
+        "heavy_atom_count": heavy_atom_count,
+        "hydrogen_atom_count": hydrogen_atom_count,
+        "coordinate_count": len(coordinates),
+        "has_3d_coordinates": atom_count > 0 and len(coordinates) == atom_count,
+        "coordinate_bounds": _coordinate_bounds(coordinates) if atom_count > 0 and len(coordinates) == atom_count else None,
+        "chains": sorted(chains),
+        "residue_count": len(residues),
+        "model_count": models or (1 if atom_count else 0),
+        "autodock_atom_types": sorted(atom_type for atom_type in atom_types if atom_type),
+        "partial_charge_sum": round(sum(partial_charges), 4) if len(partial_charges) == atom_count else None,
+        "partial_charge_count": len(partial_charges),
+        "receptor_pdbqt_mode": "flexible" if flexible else "rigid",
+        "active_torsions": branch_count if flexible else None,
+        "activity_torsion_applicable": flexible,
+        "flexible_residue_count": flexible_residue_markers,
+        "branch_count": branch_count,
+        # These fields are deliberately unknown in PDBQT.  They are included so
+        # callers cannot mistake a missing key for a negative scientific result.
+        "ion_non_polymer_components": None,
+        "alternate_locations": None,
+        "interrupted_residues": None,
+        "water_residue_count": None,
+        "metals": None,
+        "nonstandard_residues": None,
+        "residue_template_anomalies": None,
+        "nonstandard_chirality_geometry": None,
+        "bond_orders": None,
+        "stereochemistry": None,
+        "fact_sources": {
+            "atom_count": "最终 PDBQT",
+            "heavy_atom_count": "最终 PDBQT",
+            "hydrogen_atom_count": "最终 PDBQT",
+            "coordinate_count": "最终 PDBQT",
+            "has_3d_coordinates": "最终 PDBQT",
+            "coordinate_bounds": "最终 PDBQT",
+            "chains": "最终 PDBQT",
+            "residue_count": "最终 PDBQT",
+            "autodock_atom_types": "最终 PDBQT",
+            "partial_charge_sum": "最终 PDBQT",
+            "receptor_pdbqt_mode": "最终 PDBQT",
+            "active_torsions": "最终 PDBQT",
+        },
+    }
+
+
 def _load_preparation_provenance(project_root: Path, metadata_file: str) -> dict[str, Any]:
     path = _safe_project_file(project_root, metadata_file)
     if path is None:
@@ -534,21 +731,27 @@ def _load_preparation_provenance(project_root: Path, metadata_file: str) -> dict
     }
 
 
-def _receptor_checks(facts: dict[str, Any], evidence: str) -> list[dict[str, Any]]:
+def _receptor_checks(
+    raw: dict[str, Any],
+    pdbqt: dict[str, Any],
+    raw_evidence: str,
+    prepared_evidence: str,
+) -> list[dict[str, Any]]:
+    facts = pdbqt or raw
     if not facts or not facts.get("atom_count"):
-        return [_check("receptor_structure_unavailable", "receptor", "受体结构审查", "unknown", "没有足够的受体结构记录可供审查。", evidence=evidence)]
+        return [_check("receptor_structure_unavailable", "receptor", "受体结构审查", "unknown", "没有足够的受体结构记录可供审查。", evidence=prepared_evidence or raw_evidence)]
     checks = [
         _check(
-            "receptor_continuity",
+            "receptor_pdbqt_geometry",
             "receptor",
-            "残基记录连续性",
-            "warning" if facts["interrupted_residues"] else "ok",
+            "受体 PDBQT 几何",
+            "ok" if pdbqt.get("has_3d_coordinates") else "unknown",
             (
-                f"检测到 {len(facts['interrupted_residues'])} 个残基记录被不连续片段打断，请在准备前修复。"
-                if facts["interrupted_residues"]
-                else "未检测到同一残基记录被分散在多个不连续片段。"
+                f"最终 PDBQT 含 {pdbqt.get('atom_count')} 个原子，全部原子均具有可解析三维坐标。"
+                if pdbqt.get("has_3d_coordinates")
+                else "最终 PDBQT 不存在，或部分原子的三维坐标无法解析。"
             ),
-            evidence=evidence,
+            evidence=prepared_evidence,
         ),
         _check(
             "receptor_chain_model",
@@ -557,16 +760,55 @@ def _receptor_checks(facts: dict[str, Any], evidence: str) -> list[dict[str, Any
             "warning" if facts["model_count"] > 1 else "ok",
             f"读取到 {len(facts['chains'])} 条链、{facts['model_count']} 个模型。" + (" 多模型输入需要人工确认实际使用范围。" if facts["model_count"] > 1 else ""),
             detail=", ".join(facts["chains"]),
-            evidence=evidence,
+            evidence=prepared_evidence or raw_evidence,
         ),
     ]
+    if raw:
+        interrupted = raw.get("interrupted_residues") or []
+        checks.append(
+            _check(
+                "receptor_continuity",
+                "receptor",
+                "残基记录连续性",
+                "warning" if interrupted else "ok",
+                (
+                    f"检测到 {len(interrupted)} 个残基记录被不连续片段打断，请在准备前修复。"
+                    if interrupted
+                    else "未检测到同一残基记录被分散在多个不连续片段。"
+                ),
+                evidence=raw_evidence,
+            ),
+        )
+    else:
+        checks.append(
+            _check(
+                "receptor_continuity",
+                "receptor",
+                "残基记录连续性",
+                "unknown",
+                "当前文件未包含足够化学信息；需要原始 PDB/mmCIF 才能检查残基记录连续性。",
+                evidence=prepared_evidence,
+            ),
+        )
     for key, name, count_key, noun in (
         ("receptor_water", "水分子", "water_residue_count", "个水残基"),
         ("receptor_metals", "金属离子", "metals", "个金属记录"),
         ("receptor_nonstandard", "非标准残基与辅因子", "nonstandard_residues", "个非标准残基/辅因子"),
         ("receptor_altloc", "替代构象", "alternate_locations", "种 altloc 标记"),
     ):
-        value = facts[count_key]
+        if not raw:
+            checks.append(
+                _check(
+                    key,
+                    "receptor",
+                    name,
+                    "unknown",
+                    f"当前文件未包含足够化学信息；需要原始 PDB/mmCIF 才能检查{name}。",
+                    evidence=prepared_evidence,
+                ),
+            )
+            continue
+        value = raw.get(count_key, [] if count_key != "water_residue_count" else 0)
         count = value if isinstance(value, int) else len(value)
         checks.append(
             _check(
@@ -576,7 +818,7 @@ def _receptor_checks(facts: dict[str, Any], evidence: str) -> list[dict[str, Any
                 "warning" if count else "ok",
                 f"检测到 {count} {noun}；请人工决定保留或处理策略。" if count else f"未检测到{name}记录。",
                 detail=json.dumps(value, ensure_ascii=False) if count else "",
-                evidence=evidence,
+                evidence=raw_evidence,
             ),
         )
     return checks
@@ -689,13 +931,18 @@ def build_structure_review(
     receptor_raw_path = _safe_project_file(project_root, receptor_raw_file)
     ligand_raw_path = _safe_project_file(project_root, ligand_raw_file)
 
-    receptor_source = receptor_raw_path or receptor_prepared_path
-    receptor_facts: dict[str, Any] = {}
-    if receptor_source is not None:
+    receptor_raw_facts: dict[str, Any] = {}
+    if receptor_raw_path is not None:
         try:
-            receptor_facts = _parse_cif_receptor(receptor_source) if receptor_source.suffix.lower() in {".cif", ".mmcif"} else _parse_pdb_receptor(receptor_source)
+            receptor_raw_facts = _parse_cif_receptor(receptor_raw_path) if receptor_raw_path.suffix.lower() in {".cif", ".mmcif"} else _parse_pdb_receptor(receptor_raw_path)
         except OSError:
-            receptor_facts = {}
+            receptor_raw_facts = {}
+    receptor_pdbqt_facts: dict[str, Any] = {}
+    if receptor_prepared_path is not None:
+        try:
+            receptor_pdbqt_facts = _parse_receptor_pdbqt(receptor_prepared_path)
+        except OSError:
+            receptor_pdbqt_facts = {}
 
     ligand_raw_facts: dict[str, Any] = {}
     if ligand_raw_path is not None and ligand_raw_path.suffix.lower() in {".sdf", ".mol"}:
@@ -710,19 +957,30 @@ def build_structure_review(
         except OSError:
             ligand_pdbqt_facts = {}
 
-    receptor_evidence = str((receptor_source or Path()).relative_to(project_root).as_posix()) if receptor_source else ""
+    receptor_raw_evidence = str(receptor_raw_path.relative_to(project_root).as_posix()) if receptor_raw_path else ""
+    receptor_prepared_evidence = str(receptor_prepared_path.relative_to(project_root).as_posix()) if receptor_prepared_path else ""
     ligand_raw_evidence = str(ligand_raw_path.relative_to(project_root).as_posix()) if ligand_raw_path else ""
     ligand_prepared_evidence = str(ligand_prepared_path.relative_to(project_root).as_posix()) if ligand_prepared_path else ""
-    checks = _receptor_checks(receptor_facts, receptor_evidence)
+    checks = _receptor_checks(
+        receptor_raw_facts,
+        receptor_pdbqt_facts,
+        receptor_raw_evidence,
+        receptor_prepared_evidence,
+    )
     checks.extend(_ligand_checks(ligand_raw_facts, ligand_pdbqt_facts, ligand_raw_evidence, ligand_prepared_evidence))
 
     return {
         "scientific_validation": False,
         "disclaimer": "这些检查只汇总文件中可观察的结构事实，不能自动判断质子化、互变异构、链选择或辅因子处理是否科学正确。",
         "receptor": {
-            "source_file": receptor_evidence,
-            "source_kind": "raw" if receptor_raw_path else ("prepared" if receptor_prepared_path else "missing"),
-            **receptor_facts,
+            "raw_file": receptor_raw_evidence,
+            "prepared_file": receptor_prepared_evidence,
+            "source_file": receptor_prepared_evidence or receptor_raw_evidence,
+            "source_kind": "prepared" if receptor_prepared_path else ("raw" if receptor_raw_path else "missing"),
+            "raw": receptor_raw_facts,
+            "pdbqt": receptor_pdbqt_facts,
+            # Keep the historical flattened view for report/API compatibility.
+            **(receptor_pdbqt_facts or receptor_raw_facts),
         },
         "ligand": {
             "raw_file": ligand_raw_evidence,

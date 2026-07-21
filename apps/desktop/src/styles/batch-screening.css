@@ -1,0 +1,215 @@
+.batch-screening-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 8px;
+  background: var(--ds-surface-panel);
+}
+
+.batch-screening-panel > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.batch-screening-panel > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.batch-screening-panel header span,
+.batch-screening-create-grid span,
+.batch-screening-metrics span {
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+}
+
+.batch-screening-panel h3,
+.batch-screening-panel p {
+  margin: 0;
+}
+
+.batch-screening-panel h3 {
+  color: var(--ds-text-primary);
+  font-size: 16px;
+}
+
+.batch-screening-panel header p,
+.batch-screening-create-grid small,
+.batch-screening-boundary {
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.batch-screening-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 7px;
+}
+
+.batch-screening-metrics > div {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border-right: 1px solid var(--ds-border-subtle);
+  background: var(--ds-surface-subtle);
+}
+
+.batch-screening-metrics > div:last-child {
+  border-right: 0;
+}
+
+.batch-screening-metrics strong {
+  color: var(--ds-text-primary);
+  font-size: 18px;
+}
+
+.batch-screening-create-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(104px, 0.35fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.batch-screening-create-grid > div,
+.batch-screening-create-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.batch-screening-create-grid strong {
+  overflow: hidden;
+  color: var(--ds-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-screening-create-grid input {
+  min-width: 0;
+  width: 100%;
+}
+
+.batch-screening-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.batch-screening-output {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 11px 12px;
+  border-left: 3px solid var(--ds-success);
+  background: var(--ds-success-soft);
+  color: var(--ds-success-text);
+}
+
+.batch-screening-output > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.batch-screening-output code {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-secondary);
+  font-size: 11px;
+}
+
+.batch-screening-results {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 7px;
+}
+
+.batch-screening-results > div {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) minmax(118px, auto);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--ds-border-subtle);
+}
+
+.batch-screening-results > div:first-child {
+  background: var(--ds-surface-subtle);
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.batch-screening-results > div:last-child {
+  border-bottom: 0;
+}
+
+.batch-screening-results strong,
+.batch-screening-results span,
+.batch-screening-results code {
+  min-width: 0;
+  color: var(--ds-text-primary);
+}
+
+.batch-screening-results span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-screening-results code {
+  text-align: right;
+}
+
+.batch-screening-message {
+  color: var(--ds-accent-text);
+  font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .batch-screening-create-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .batch-screening-create-grid > div {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 680px) {
+  .batch-screening-panel > header,
+  .batch-screening-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .batch-screening-metrics,
+  .batch-screening-create-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .batch-screening-actions button {
+    width: 100%;
+  }
+
+  .batch-screening-results > div {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .batch-screening-results > div > :last-child {
+    grid-column: 2;
+    text-align: left;
+  }
+}

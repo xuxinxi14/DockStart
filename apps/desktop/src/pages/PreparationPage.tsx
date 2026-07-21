@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle, FileArrowUp, FolderOpen, Info, Wrench } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
@@ -28,6 +28,25 @@ import {
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
 
 type PreparationMode = "existing" | "raw";
+type MacrocyclePreparationMode = "standard" | "auto" | "rigid";
+
+type MacrocyclePreparationState = {
+  mode: MacrocyclePreparationMode;
+  minRingSize: number;
+  doubleBondPenalty: number;
+  allowAromaticBreaks: boolean;
+  keepChordedRings: boolean;
+  keepEquivalentRings: boolean;
+};
+
+const defaultMacrocyclePreparation: MacrocyclePreparationState = {
+  mode: "standard",
+  minRingSize: 7,
+  doubleBondPenalty: 50,
+  allowAromaticBreaks: false,
+  keepChordedRings: false,
+  keepEquivalentRings: false,
+};
 
 type PreparationPageProps = {
   project: DockStartProject;
@@ -115,6 +134,35 @@ function formalChargeLabel(value: number | null): string {
   return value > 0 ? `+${value}` : String(value);
 }
 
+const RECEPTOR_RAW_REQUIRED = "当前文件未包含足够化学信息（需要原始 PDB/mmCIF）";
+
+function factArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function factStringList(value: unknown): string {
+  const items = factArray(value).map((item) => String(item)).filter(Boolean);
+  return items.length ? items.join("、") : "无";
+}
+
+function coordinateBoundsLabel(value: unknown): string {
+  const bounds = factRecord(value);
+  const labels = (["x", "y", "z"] as const).map((axis) => {
+    const range = factArray(bounds[axis]);
+    return range.length === 2 ? `${axis.toUpperCase()} ${range[0]}–${range[1]} Å` : "";
+  }).filter(Boolean);
+  return labels.length === 3 ? labels.join(" · ") : "PDBQT 坐标列无法完整解析";
+}
+
+function FactValue({ children, source }: { children: ReactNode; source: string }) {
+  return (
+    <dd className="preparation-fact-value">
+      <span>{children}</span>
+      <small className="preparation-fact-source">{source}</small>
+    </dd>
+  );
+}
+
 export default function PreparationPage({
   project: initialProject,
   onBack,
@@ -129,6 +177,7 @@ export default function PreparationPage({
   const [isBusy, setIsBusy] = useState(false);
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
+  const [macrocyclePreparation, setMacrocyclePreparation] = useState<MacrocyclePreparationState>(defaultMacrocyclePreparation);
   const [mode, setMode] = useState<PreparationMode>(
     initialProject.receptor.raw_file
       || initialProject.ligand.raw_file
@@ -328,6 +377,19 @@ export default function PreparationPage({
         project.project_dir,
         target,
         target === "receptor" ? overwriteReceptor : overwriteLigand,
+        target === "ligand" && macrocyclePreparation.mode !== "standard"
+          ? {
+              protocol: "meeko_macrocycle",
+              macrocycle: {
+                mode: macrocyclePreparation.mode,
+                min_ring_size: macrocyclePreparation.minRingSize,
+                double_bond_penalty: macrocyclePreparation.doubleBondPenalty,
+                allow_aromatic_breaks: macrocyclePreparation.allowAromaticBreaks,
+                keep_chorded_rings: macrocyclePreparation.keepChordedRings,
+                keep_equivalent_rings: macrocyclePreparation.keepEquivalentRings,
+              },
+            }
+          : undefined,
       );
       taskId = started.task_id;
       setMessage(started.deduplicated ? "同一准备任务已在运行，正在接收其进度。" : "准备任务已进入后台队列。界面可以继续响应。" );
@@ -410,6 +472,11 @@ export default function PreparationPage({
     const shouldLoadPreview = isReady && previewRequested[target];
     const review: StructureReviewPayload | undefined = response?.structure_review;
     const receptorFacts = factRecord(review?.receptor);
+    const receptorRawFacts = factRecord(receptorFacts.raw);
+    const receptorPdbqtFacts = factRecord(receptorFacts.pdbqt);
+    const receptorHasPdbqtFacts = Object.keys(receptorPdbqtFacts).length > 0;
+    const receptorDisplayFacts = receptorHasPdbqtFacts ? receptorPdbqtFacts : receptorRawFacts;
+    const receptorDisplaySource = receptorHasPdbqtFacts ? "最终 PDBQT" : "原始结构";
     const ligandFacts = factRecord(review?.ligand);
     const ligandRawFacts = factRecord(ligandFacts.raw);
     const ligandPdbqtFacts = factRecord(ligandFacts.pdbqt);
@@ -421,6 +488,12 @@ export default function PreparationPage({
     const heavyAtomCount = factNumber(sourceFacts, "heavy_atom_count");
     const torsdof = factNumber(ligandPdbqtFacts, "torsdof");
     const stereoEncoded = sourceFacts.stereochemistry_encoded === true;
+    const receptorMode = String(receptorPdbqtFacts.receptor_pdbqt_mode || "unknown");
+    const receptorRawAvailable = Object.keys(receptorRawFacts).length > 0;
+    const receptorIonComponents = factArray(receptorRawFacts.ion_non_polymer_components);
+    const receptorAltlocs = factArray(receptorRawFacts.alternate_locations);
+    const receptorPartialCharge = factNumber(receptorPdbqtFacts, "partial_charge_sum");
+    const receptorActiveTorsions = factNumber(receptorPdbqtFacts, "active_torsions");
 
     return (
       <article className="preparation-target-row">
@@ -435,16 +508,59 @@ export default function PreparationPage({
           </div>
           {isReady ? (
             <dl className="preparation-structure-facts" aria-label={`${label}结构事实`}>
-              <div><dt>连接组分</dt><dd>{isReceptor ? "无法从受体格式判定" : fragmentCount ?? "未记录"}</dd></div>
-              <div><dt>总形式电荷</dt><dd>{isReceptor ? "未可靠记录" : formalChargeLabel(formalCharge)}</dd></div>
-              <div><dt>重原子数</dt><dd>{heavyAtomCount ?? "未记录"}</dd></div>
-              <div><dt>包含盐</dt><dd>{isReceptor ? "不适用" : factBooleanLabel(sourceFacts.contains_salt)}</dd></div>
-              <div>
-                <dt>未定义立体信息</dt>
-                <dd>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</dd>
-              </div>
-              <div><dt>三维坐标</dt><dd>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</dd></div>
-              <div><dt>PDBQT 活动扭转</dt><dd>{isReceptor ? "不适用（刚性受体）" : torsdof ?? "未记录"}</dd></div>
+              {isReceptor ? (
+                <>
+                  <div><dt>总原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "atom_count") ?? "原子记录无法解析"}</FactValue></div>
+                  <div><dt>重原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "heavy_atom_count") ?? "原子类型无法解析"}</FactValue></div>
+                  <div><dt>氢原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "hydrogen_atom_count") ?? "原子类型无法解析"}</FactValue></div>
+                  <div><dt>三维坐标</dt><FactValue source={receptorDisplaySource}>{factBooleanLabel(receptorDisplayFacts.has_3d_coordinates, "坐标列无法完整解析")}</FactValue></div>
+                  <div><dt>坐标边界</dt><FactValue source={receptorDisplaySource}>{coordinateBoundsLabel(receptorDisplayFacts.coordinate_bounds)}</FactValue></div>
+                  <div><dt>链 ID</dt><FactValue source={receptorDisplaySource}>{factStringList(receptorDisplayFacts.chains)}</FactValue></div>
+                  <div><dt>残基数量</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "residue_count") ?? "残基记录无法解析"}</FactValue></div>
+                  <div><dt>AutoDock 类型</dt><FactValue source="最终 PDBQT">{receptorHasPdbqtFacts ? factStringList(receptorPdbqtFacts.autodock_atom_types) : "尚无最终 PDBQT"}</FactValue></div>
+                  <div>
+                    <dt>部分电荷总和</dt>
+                    <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorPartialCharge === null ? "PDBQT 部分电荷列无法完整解析" : receptorPartialCharge.toFixed(4)}</FactValue>
+                  </div>
+                  <div><dt>PDBQT 模式</dt><FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "flexible" ? "柔性受体" : receptorMode === "rigid" ? "刚性受体" : "无法判定"}</FactValue></div>
+                  <div>
+                    <dt>活动扭转</dt>
+                    <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "rigid" ? "不适用（刚性受体）" : receptorActiveTorsions ?? "柔性拓扑未给出扭转计数"}</FactValue>
+                  </div>
+                  <div>
+                    <dt>离子与非聚合物组分</dt>
+                    <FactValue source="原始结构">{receptorRawAvailable ? `${receptorIonComponents.length} 项` : RECEPTOR_RAW_REQUIRED}</FactValue>
+                  </div>
+                  <div><dt>替代构象</dt><FactValue source="原始结构">{receptorRawAvailable ? (receptorAltlocs.length ? receptorAltlocs.join("、") : "未检测到") : RECEPTOR_RAW_REQUIRED}</FactValue></div>
+                  <div>
+                    <dt>残基模板异常</dt>
+                    <FactValue source="Meeko">
+                      {receptorRawAvailable
+                        ? "当前准备记录未包含足够的 Meeko 残基模板校验信息"
+                        : RECEPTOR_RAW_REQUIRED}
+                    </FactValue>
+                  </div>
+                  <div>
+                    <dt>非标准手性或几何异常</dt>
+                    <FactValue source="原始结构">
+                      {receptorRawAvailable ? "原始结构已保留；尚未执行专用手性与几何模板校验" : RECEPTOR_RAW_REQUIRED}
+                    </FactValue>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div><dt>连接组分</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{fragmentCount ?? "无法可靠判定"}</FactValue></div>
+                  <div><dt>总形式电荷</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{formalChargeLabel(formalCharge)}</FactValue></div>
+                  <div><dt>重原子数</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{heavyAtomCount ?? "无法可靠判定"}</FactValue></div>
+                  <div><dt>包含盐</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.contains_salt)}</FactValue></div>
+                  <div>
+                    <dt>未定义立体信息</dt>
+                    <FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</FactValue>
+                  </div>
+                  <div><dt>三维坐标</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</FactValue></div>
+                  <div><dt>PDBQT 活动扭转</dt><FactValue source="最终 PDBQT">{torsdof ?? "无法从 TORSDOF 读取"}</FactValue></div>
+                </>
+              )}
             </dl>
           ) : null}
         </div>
@@ -567,13 +683,105 @@ export default function PreparationPage({
           </div>
 
           {mode === "raw" ? (
-            <div className="preparation-source-strip">
-              <div>
-                <Wrench aria-hidden="true" size={18} />
-                <span>还没有原始文件？可在线搜索，也可在获取页从电脑导入。转换会自动检查 Python、RDKit 与 Meeko。</span>
+            <>
+              <AdvancedDetails className="preparation-macrocycle-panel" summary="高级：Meeko 大环配体准备">
+                <div className="preparation-macrocycle-intro">
+                  <div>
+                    <strong>只影响下一次配体转换</strong>
+                    <p>标准准备保持现有行为；只有明确选择大环模式时才会启用专用参数，并写入准备快照。</p>
+                  </div>
+                  <label>
+                    <span>准备策略</span>
+                    <select
+                      disabled={interactionBusy}
+                      value={macrocyclePreparation.mode}
+                      onChange={(event) => setMacrocyclePreparation((current) => ({
+                        ...current,
+                        mode: event.target.value as MacrocyclePreparationMode,
+                      }))}
+                    >
+                      <option value="standard">标准准备（默认）</option>
+                      <option value="auto">大环自动断环</option>
+                      <option value="rigid">大环保持刚性</option>
+                    </select>
+                  </label>
+                </div>
+                {macrocyclePreparation.mode !== "standard" ? (
+                  <div className="preparation-macrocycle-settings">
+                    <label>
+                      <span>最小环尺寸</span>
+                      <input
+                        type="number"
+                        min={3}
+                        max={33}
+                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
+                        value={macrocyclePreparation.minRingSize}
+                        onChange={(event) => setMacrocyclePreparation((current) => ({
+                          ...current,
+                          minRingSize: Math.max(3, Math.min(33, Number(event.target.value) || 7)),
+                        }))}
+                      />
+                    </label>
+                    <label>
+                      <span>双键断裂惩罚</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1000}
+                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
+                        value={macrocyclePreparation.doubleBondPenalty}
+                        onChange={(event) => setMacrocyclePreparation((current) => ({
+                          ...current,
+                          doubleBondPenalty: Math.max(0, Math.min(1000, Number(event.target.value) || 0)),
+                        }))}
+                      />
+                    </label>
+                    <label className="checkbox-row compact">
+                      <input
+                        type="checkbox"
+                        checked={macrocyclePreparation.allowAromaticBreaks}
+                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
+                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, allowAromaticBreaks: event.target.checked }))}
+                      />
+                      允许芳香型 A 原子断环
+                    </label>
+                    <label className="checkbox-row compact">
+                      <input
+                        type="checkbox"
+                        checked={macrocyclePreparation.keepChordedRings}
+                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
+                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, keepChordedRings: event.target.checked }))}
+                      />
+                      保留弦环候选
+                    </label>
+                    <label className="checkbox-row compact">
+                      <input
+                        type="checkbox"
+                        checked={macrocyclePreparation.keepEquivalentRings}
+                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
+                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, keepEquivalentRings: event.target.checked }))}
+                      />
+                      保留等价环候选
+                    </label>
+                  </div>
+                ) : null}
+                <p className="preparation-macrocycle-note">
+                  {macrocyclePreparation.mode === "rigid"
+                    ? "刚性大环不会搜索环构象，结果依赖输入构象。"
+                    : macrocyclePreparation.mode === "auto"
+                      ? "输出仍需检查断环位置、G* 伪原子与闭环拓扑；已有 PDBQT 时请勾选配体覆盖。"
+                      : "在线下载后的自动转换继续使用标准模式，不会被这里的高级选项静默改变。"}
+                </p>
+              </AdvancedDetails>
+
+              <div className="preparation-source-strip">
+                <div>
+                  <Wrench aria-hidden="true" size={18} />
+                  <span>还没有原始文件？可在线搜索，也可在获取页从电脑导入。转换会自动检查 Python、RDKit 与 Meeko。</span>
+                </div>
+                <ActionButton variant="primary" onClick={onBack}>获取或导入原始结构</ActionButton>
               </div>
-              <ActionButton variant="primary" onClick={onBack}>获取或导入原始结构</ActionButton>
-            </div>
+            </>
           ) : (
             <button className="preparation-drop-zone" type="button" onClick={() => onOpenImportPdbqt(project)}>
               <FileArrowUp aria-hidden="true" size={20} />

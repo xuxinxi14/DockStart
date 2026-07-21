@@ -601,17 +601,20 @@ async fn get_preparation_tool_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
-async fn prepare_ligand_pdbqt(project_dir: String, overwrite: bool) -> String {
-    match run_backend_module_async(
-        "dockstart_core.preparation",
-        vec![
-            "prepare-ligand".to_string(),
-            project_dir,
-            overwrite.to_string(),
-        ],
-    )
-    .await
-    {
+async fn prepare_ligand_pdbqt(
+    project_dir: String,
+    overwrite: bool,
+    options_json: Option<String>,
+) -> String {
+    let mut args = vec![
+        "prepare-ligand".to_string(),
+        project_dir,
+        overwrite.to_string(),
+    ];
+    if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
+        args.push(options);
+    }
+    match run_backend_module_async("dockstart_core.preparation", args).await {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法自动准备 ligand PDBQT。", &error),
     }
@@ -1155,6 +1158,106 @@ async fn update_box_from_visualization(project_dir: String, box_json: String) ->
     }
 }
 
+#[tauri::command]
+async fn stage_screening_inputs(project_dir: String, files: Vec<String>) -> String {
+    let mut args = vec!["stage".to_string(), "--project".to_string(), project_dir];
+    for file in files {
+        args.push("--file".to_string());
+        args.push(file);
+    }
+    match run_backend_module_async("dockstart_core.screening", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导入批量筛选配体。", &error),
+    }
+}
+
+#[tauri::command]
+async fn create_screening(
+    project_dir: String,
+    receptor_file: String,
+    ligand_files: Vec<String>,
+    box_json: String,
+    vina_json: String,
+    max_retries: u32,
+    top_n: u32,
+) -> String {
+    let mut args = vec![
+        "create".to_string(),
+        "--project".to_string(),
+        project_dir,
+        "--receptor".to_string(),
+        receptor_file,
+        "--box-json".to_string(),
+        box_json,
+        "--vina-json".to_string(),
+        vina_json,
+        "--max-retries".to_string(),
+        max_retries.to_string(),
+        "--top-n".to_string(),
+        top_n.to_string(),
+    ];
+    for ligand in ligand_files {
+        args.push("--ligand".to_string());
+        args.push(ligand);
+    }
+    match run_backend_module_async("dockstart_core.screening", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法创建批量筛选任务。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_screening_status(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["status".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取批量筛选状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn request_screening_cancel(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["cancel".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法请求取消批量筛选。", &error),
+    }
+}
+
+#[tauri::command]
+async fn resume_screening(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["resume".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法恢复批量筛选。", &error),
+    }
+}
+
+#[tauri::command]
+async fn archive_screening(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["archive".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法归档批量筛选。", &error),
+    }
+}
+
 #[derive(Clone)]
 struct BackgroundJobSpec {
     kind: String,
@@ -1645,11 +1748,12 @@ fn payload_reports_cancelled(payload: &str) -> bool {
         value.get("stage"),
         value.pointer("/metadata/status"),
         value.pointer("/metadata/stage"),
+        value.pointer("/screening/status"),
     ]
     .into_iter()
     .flatten()
     .filter_map(serde_json::Value::as_str)
-    .any(|status| status == "cancelled");
+    .any(|status| matches!(status, "cancelled" | "canceled"));
     cancelled
 }
 
@@ -1811,6 +1915,7 @@ fn background_worker_loop() {
                     record.progress_message = match record.kind.as_str() {
                         "vina" => "正在启动 AutoDock Vina。",
                         "structure-fetch" => "正在获取原始结构并校验下载内容。",
+                        "screening" => "正在运行批量虚拟筛选队列。",
                         _ => "正在启动结构准备工具链。",
                     }
                     .to_string();
@@ -1922,6 +2027,7 @@ fn run_background_job(job: QueuedBackgroundJob) {
                 record.progress_message = match record.kind.as_str() {
                     "vina" => "AutoDock Vina 运行已结束。",
                     "structure-fetch" => "原始结构获取任务已结束。",
+                    "screening" => "批量虚拟筛选队列已结束。",
                     _ => "结构准备任务已结束。",
                 }
                 .to_string();
@@ -2026,11 +2132,7 @@ fn start_background_job(app: tauri::AppHandle, spec: BackgroundJobSpec) -> Strin
     background_task_status_json(&queued_record, false)
 }
 
-fn structure_fetch_task_key(
-    project_key: &str,
-    target: &str,
-    request_parts: &[&str],
-) -> String {
+fn structure_fetch_task_key(project_key: &str, target: &str, request_parts: &[&str]) -> String {
     let mut hasher = DefaultHasher::new();
     for part in request_parts {
         part.hash(&mut hasher);
@@ -2060,9 +2162,10 @@ fn preparation_task_key(project_dir: &str, target: &str) -> String {
                 let relative = Path::new(raw_file);
                 if !relative.is_absolute() {
                     let candidate = project_root.join(relative);
-                    if let (Ok(canonical_root), Ok(canonical_candidate)) =
-                        (fs::canonicalize(&project_root), fs::canonicalize(&candidate))
-                    {
+                    if let (Ok(canonical_root), Ok(canonical_candidate)) = (
+                        fs::canonicalize(&project_root),
+                        fs::canonicalize(&candidate),
+                    ) {
                         if canonical_candidate.starts_with(&canonical_root) {
                             hash_path_signature(&mut hasher, &canonical_candidate, true);
                         }
@@ -2078,12 +2181,38 @@ fn preparation_task_key(project_dir: &str, target: &str) -> String {
     )
 }
 
+fn preparation_task_key_with_options(
+    project_dir: &str,
+    target: &str,
+    overwrite: bool,
+    options_json: Option<&str>,
+) -> String {
+    let base_key = preparation_task_key(project_dir, target);
+    let mut hasher = DefaultHasher::new();
+    base_key.hash(&mut hasher);
+    overwrite.hash(&mut hasher);
+    match options_json
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(options) => {
+            let canonical = serde_json::from_str::<serde_json::Value>(options)
+                .and_then(|value| serde_json::to_string(&value))
+                .unwrap_or_else(|_| options.to_string());
+            canonical.hash(&mut hasher);
+        }
+        None => "standard".hash(&mut hasher),
+    }
+    format!("{base_key}|{:016x}", hasher.finish())
+}
+
 #[tauri::command]
 fn start_preparation_task(
     app: tauri::AppHandle,
     project_dir: String,
     target: String,
     overwrite: bool,
+    options_json: Option<String>,
 ) -> String {
     let normalized_target = target.trim().to_lowercase();
     if !matches!(normalized_target.as_str(), "receptor" | "ligand") {
@@ -2097,22 +2226,65 @@ fn start_preparation_task(
     } else {
         "prepare-ligand"
     };
-    let task_key = preparation_task_key(&project_dir, &normalized_target);
+    if normalized_target == "receptor"
+        && options_json
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        return fallback_project_error_json(
+            "受体准备不接受配体大环选项。",
+            "optionsJson is only valid for ligand preparation",
+        );
+    }
+    let task_key = preparation_task_key_with_options(
+        &project_dir,
+        &normalized_target,
+        overwrite,
+        options_json.as_deref(),
+    );
+    let mut args = vec![
+        command.to_string(),
+        project_dir.clone(),
+        overwrite.to_string(),
+    ];
+    if normalized_target == "ligand" {
+        if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
+            args.push(options);
+        }
+    }
     start_background_job(
         app,
         BackgroundJobSpec {
             kind: "preparation".to_string(),
             key: task_key,
             module: "dockstart_core.preparation".to_string(),
-            args: vec![
-                command.to_string(),
-                project_dir.clone(),
-                overwrite.to_string(),
-            ],
+            args,
             project_dir,
             run_id: String::new(),
             target: normalized_target,
             fallback_message: "结构准备任务失败，请查看 preparation 日志。".to_string(),
+        },
+    )
+}
+
+#[tauri::command]
+fn start_screening_task(app: tauri::AppHandle, project_dir: String) -> String {
+    let project_key = normalized_project_key(&project_dir);
+    start_background_job(
+        app,
+        BackgroundJobSpec {
+            kind: "screening".to_string(),
+            key: format!("screening|{project_key}"),
+            module: "dockstart_core.screening".to_string(),
+            args: vec![
+                "run".to_string(),
+                "--project".to_string(),
+                project_dir.clone(),
+            ],
+            project_dir,
+            run_id: String::new(),
+            target: "screening".to_string(),
+            fallback_message: "批量虚拟筛选失败，请查看 screening 记录。".to_string(),
         },
     )
 }
@@ -3525,7 +3697,14 @@ fn main() {
             load_docking_pose_for_viewer,
             load_pose_score_summary,
             get_box_visualization,
-            update_box_from_visualization
+            update_box_from_visualization,
+            stage_screening_inputs,
+            create_screening,
+            get_screening_status,
+            request_screening_cancel,
+            resume_screening,
+            archive_screening,
+            start_screening_task
         ])
         .run(tauri::generate_context!())
         .expect("error while running DockStart");
@@ -3610,12 +3789,39 @@ mod tests {
 
         let first = preparation_task_key(&test_root.to_string_lossy(), "receptor");
         let same = preparation_task_key(&test_root.to_string_lossy(), "receptor");
-        fs::write(raw_dir.join("receptor.pdb"), b"ATOM B with different length").unwrap();
+        fs::write(
+            raw_dir.join("receptor.pdb"),
+            b"ATOM B with different length",
+        )
+        .unwrap();
         let changed = preparation_task_key(&test_root.to_string_lossy(), "receptor");
 
         assert_eq!(first, same);
         assert_ne!(first, changed);
         let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn preparation_task_key_tracks_overwrite_and_protocol_options() {
+        let project = "project-key";
+        let standard = preparation_task_key_with_options(project, "ligand", false, None);
+        let overwrite = preparation_task_key_with_options(project, "ligand", true, None);
+        let macrocycle = preparation_task_key_with_options(
+            project,
+            "ligand",
+            false,
+            Some(r#"{"protocol":"meeko_macrocycle","macrocycle":{"mode":"auto"}}"#),
+        );
+        let same_macrocycle = preparation_task_key_with_options(
+            project,
+            "ligand",
+            false,
+            Some(r#"{"protocol":"meeko_macrocycle","macrocycle":{"mode":"auto"}}"#),
+        );
+
+        assert_ne!(standard, overwrite);
+        assert_ne!(standard, macrocycle);
+        assert_eq!(macrocycle, same_macrocycle);
     }
 
     #[test]
@@ -3941,6 +4147,9 @@ mod tests {
         ));
         assert!(payload_reports_cancelled(
             r#"{"ok":true,"stage":"cancelled"}"#
+        ));
+        assert!(payload_reports_cancelled(
+            r#"{"ok":true,"screening":{"status":"canceled"}}"#
         ));
         assert!(!payload_reports_cancelled(
             r#"{"ok":true,"metadata":{"status":"finished"}}"#

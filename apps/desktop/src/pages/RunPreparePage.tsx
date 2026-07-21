@@ -18,6 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import BatchScreeningPanel from "../components/BatchScreeningPanel";
 import RunBoxInspector, {
   type RunAxisSpacing,
   type RunBoxFieldKey,
@@ -1019,6 +1020,21 @@ export default function RunPreparePage({
             {message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{message}</p> : null}
             {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
           </section>
+
+          <BatchScreeningPanel
+            projectDir={project.project_dir}
+            receptorFile={project.receptor.file}
+            box={project.box}
+            vina={project.vina}
+            disabled={isBusy || isDirty || !preflight?.ready}
+            disabledReason={isBusy
+              ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
+              : isDirty
+                ? "请先保存当前 Box 与 Vina 参数，再创建可复现的筛选快照。"
+                : !preflight?.ready
+                  ? "请先处理运行前检查中的阻塞项。"
+                  : ""}
+          />
 
           <section className="run-cockpit-card run-history-card">
             <div className="run-cockpit-section-heading">

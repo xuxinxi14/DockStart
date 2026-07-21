@@ -72,13 +72,24 @@ export async function startPreparationTask(
   projectDir: string,
   target: "receptor" | "ligand",
   overwrite: boolean,
+  options?: Record<string, unknown>,
 ): Promise<BackgroundTaskStatus> {
-  const payload = await invoke<string>("start_preparation_task", { projectDir, target, overwrite });
+  const payload = await invoke<string>("start_preparation_task", {
+    projectDir,
+    target,
+    overwrite,
+    optionsJson: options ? JSON.stringify(options) : null,
+  });
   return assertStarted(normalizeTaskStatus(payload));
 }
 
 export async function startVinaRunTask(projectDir: string, runId: string): Promise<BackgroundTaskStatus> {
   const payload = await invoke<string>("start_vina_run_task", { projectDir, runId });
+  return assertStarted(normalizeTaskStatus(payload));
+}
+
+export async function startScreeningTask(projectDir: string): Promise<BackgroundTaskStatus> {
+  const payload = await invoke<string>("start_screening_task", { projectDir });
   return assertStarted(normalizeTaskStatus(payload));
 }
 

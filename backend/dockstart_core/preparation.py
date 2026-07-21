@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from adapters import meeko_adapter, rdkit_adapter, vina_adapter
+from dockstart_core.advanced_protocols import (
+    ProtocolValidationError,
+    build_meeko_macrocycle_plan,
+    inspect_meeko_ligand_pdbqt,
+    validate_macrocycle_options,
+)
 from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
 from dockstart_core.project import (
     _error,
@@ -48,6 +54,7 @@ RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.js
 PREPARATION_RECORD_ROOT = Path("preparation")
 PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
 PREPARATION_TOOLS_SNAPSHOT_ENV_VAR = "DOCKSTART_PREPARATION_TOOLS_JSON"
+MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES = 16 * 1024
 
 
 class PreparationPathError(RuntimeError):
@@ -590,6 +597,12 @@ def _build_preparation_metadata(
         "warnings": warnings or [],
         "error": error,
     }
+    if "protocol" in built:
+        payload["protocol"] = str(built.get("protocol") or "")
+        payload["options"] = copy.deepcopy(built.get("options", {}))
+    if "protocol_evidence" in built:
+        payload["protocol_evidence"] = copy.deepcopy(built.get("protocol_evidence"))
+    return payload
 
 
 def _attach_executor_identity(built: dict[str, Any]) -> None:
@@ -937,6 +950,24 @@ def _finalize_preparation(
 
     finished_at = _now_iso()
     candidate_ok = candidate_output_path.is_file() and candidate_output_path.stat().st_size > 0
+    if target == "ligand" and built.get("protocol") == "meeko_macrocycle" and candidate_ok:
+        try:
+            built["protocol_evidence"] = {
+                "ok": True,
+                "inspection": inspect_meeko_ligand_pdbqt(candidate_output_path),
+            }
+        except ProtocolValidationError as exc:
+            built["protocol_evidence"] = {"ok": False, "error": exc.to_dict()}
+        except (OSError, UnicodeError, ValueError) as exc:
+            built["protocol_evidence"] = {
+                "ok": False,
+                "error": {
+                    "code": "MACROCYCLE_EVIDENCE_READ_FAILED",
+                    "message": "无法读取大环 PDBQT 证据。",
+                    "detail": str(exc),
+                    "suggestion": "请检查候选 PDBQT 是否为完整 UTF-8 文本，并查看 Meeko stderr。",
+                },
+            }
     publication_error = ""
     restore_error = ""
     published = False
@@ -1287,7 +1318,7 @@ def get_preparation_status(
         receptor_metadata_file=project.preparation.receptor.metadata_file,
         ligand_metadata_file=project.preparation.ligand.metadata_file,
     )
-    return {
+    payload = {
         "ok": True,
         "project_dir": project.project_dir,
         "project": project.to_dict(),
@@ -1480,6 +1511,95 @@ if __name__ == "__main__":
 '''
 
 
+def _protocol_validation_error(exc: ProtocolValidationError) -> dict[str, Any]:
+    return _error(
+        exc.code,
+        exc.message,
+        raw_error=exc.detail,
+        suggestion=exc.suggestion,
+    )
+
+
+def _normalize_ligand_preparation_options(
+    options: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Normalize the opt-in ligand protocol without changing the legacy path."""
+
+    if options is None or not options:
+        return None, None
+    if not isinstance(options, Mapping):
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_INVALID",
+            "配体准备选项必须是 JSON 对象。",
+            raw_error=type(options).__name__,
+            suggestion="请传入包含 protocol 和 macrocycle 的 JSON 对象。",
+        )
+
+    raw = dict(options)
+    unknown = sorted(set(raw) - {"protocol", "macrocycle"})
+    if unknown:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_UNKNOWN",
+            "配体准备选项包含未支持的字段。",
+            raw_error=", ".join(unknown),
+            suggestion="当前仅支持 protocol 和 macrocycle 字段。",
+        )
+    protocol = str(raw.get("protocol") or "").strip()
+    if protocol != "meeko_macrocycle":
+        return None, _error(
+            "LIGAND_PREPARATION_PROTOCOL_INVALID",
+            "配体准备协议无效。",
+            raw_error=protocol or "（空）",
+            suggestion="显式大环准备请使用 protocol=meeko_macrocycle；普通准备请省略 options。",
+        )
+    macrocycle = raw.get("macrocycle")
+    if not isinstance(macrocycle, Mapping):
+        return None, _error(
+            "LIGAND_MACROCYCLE_OPTIONS_INVALID",
+            "大环准备参数必须是 JSON 对象。",
+            raw_error=type(macrocycle).__name__,
+            suggestion="请在 macrocycle 字段中传入 Meeko 大环参数对象。",
+        )
+    try:
+        normalized_macrocycle = validate_macrocycle_options(macrocycle)
+    except ProtocolValidationError as exc:
+        return None, _protocol_validation_error(exc)
+    return {
+        "protocol": "meeko_macrocycle",
+        "macrocycle": normalized_macrocycle,
+    }, None
+
+
+def _parse_ligand_options_json(raw: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    encoded_size = len(str(raw).encode("utf-8"))
+    if encoded_size > MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_TOO_LARGE",
+            "配体准备选项 JSON 超过大小限制。",
+            raw_error=f"{encoded_size} bytes",
+            suggestion=(
+                f"请将选项 JSON 控制在 {MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES} bytes 以内。"
+            ),
+        )
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_JSON_INVALID",
+            "配体准备选项不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请传入 UTF-8 JSON 对象，不要使用命令行表达式或拼接参数。",
+        )
+    if not isinstance(parsed, dict):
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_INVALID",
+            "配体准备选项必须是 JSON 对象。",
+            raw_error=type(parsed).__name__,
+            suggestion="请传入包含 protocol 和 macrocycle 的 JSON 对象。",
+        )
+    return parsed, None
+
+
 def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
     project, project_error = _load_project_model(project_dir)
     if project_error:
@@ -1581,7 +1701,11 @@ def build_ligand_preparation_command_or_script(
     project_dir: str,
     overwrite: bool = False,
     prep_id: str | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    normalized_options, options_error = _normalize_ligand_preparation_options(options)
+    if options_error:
+        return options_error
     validation = validate_ligand_preparation_input(project_dir, overwrite=overwrite)
     if not validation.get("ok"):
         return validation
@@ -1593,26 +1717,52 @@ def build_ligand_preparation_command_or_script(
     record_dir = paths["record_dir"]
     record_dir.mkdir(exist_ok=False)
     _safe_project_path(project_path, PREPARATION_RECORD_ROOT / selected_prep_id, allow_missing=False)
-    script_path = record_dir / "prepare_ligand_rdkit_meeko.py"
-    atomic_write_text(script_path, _ligand_preparation_script_text())
     candidate_output_path = record_dir / "candidate_ligand.pdbqt"
+    script_path: Path | None = None
+    protocol_fields: dict[str, Any] = {}
+    warnings = list(validation.get("warnings", []))
 
-    command = [
-        validation["tools"]["python"]["path"],
-        "-I",
-        "-B",
-        str(script_path),
-        validation["input_path"],
-        str(candidate_output_path),
-    ]
-    return {
+    if normalized_options is None:
+        script_path = record_dir / "prepare_ligand_rdkit_meeko.py"
+        atomic_write_text(script_path, _ligand_preparation_script_text())
+        command = [
+            validation["tools"]["python"]["path"],
+            "-I",
+            "-B",
+            str(script_path),
+            validation["input_path"],
+            str(candidate_output_path),
+        ]
+    else:
+        try:
+            plan = build_meeko_macrocycle_plan(
+                validation["tools"]["python"]["path"],
+                validation["input_path"],
+                candidate_output_path,
+                normalized_options["macrocycle"],
+            )
+        except ProtocolValidationError as exc:
+            try:
+                record_dir.rmdir()
+            except OSError:
+                pass
+            return _protocol_validation_error(exc)
+        command = list(plan["argv"])
+        warnings.extend(str(item) for item in plan.get("warnings", []))
+        protocol_fields = {
+            "protocol": "meeko_macrocycle",
+            "options": {"macrocycle": copy.deepcopy(plan["options"])},
+        }
+
+    built = {
         **validation,
         "prep_id": selected_prep_id,
         "record_dir": paths["record_dir_relative"],
         "command": command,
-        "script_file": _relative_path(script_path, project_path),
+        "script_file": _relative_path(script_path, project_path) if script_path is not None else "",
         "candidate_output_file": _relative_path(candidate_output_path, project_path),
         "candidate_output_path": str(candidate_output_path),
+        "warnings": warnings,
         "stdout_file": paths["stdout_file"],
         "stderr_file": paths["stderr_file"],
         "log_file": paths["metadata_file"],
@@ -1620,17 +1770,44 @@ def build_ligand_preparation_command_or_script(
         "command_file": paths["command_file"],
         "input_snapshot_file": paths["input_snapshot_file"],
         "output_check_file": paths["output_check_file"],
+        **protocol_fields,
     }
+    return built
 
 
-def prepare_ligand_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
-    _ = options or {}
+def prepare_ligand_pdbqt(
+    project_dir: str,
+    overwrite: bool = False,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_options, options_error = _normalize_ligand_preparation_options(options)
+    if options_error:
+        return options_error
+    if normalized_options is None:
+        builder = build_ligand_preparation_command_or_script
+        method = "rdkit_meeko"
+    else:
+        method = "meeko_macrocycle"
+
+        def builder(
+            nested_project_dir: str,
+            *,
+            overwrite: bool,
+            prep_id: str,
+        ) -> dict[str, Any]:
+            return build_ligand_preparation_command_or_script(
+                nested_project_dir,
+                overwrite=overwrite,
+                prep_id=prep_id,
+                options=normalized_options,
+            )
+
     return _prepare_target_pdbqt(
         project_dir,
         "ligand",
         overwrite=overwrite,
-        method="rdkit_meeko",
-        builder=build_ligand_preparation_command_or_script,
+        method=method,
+        builder=builder,
     )
 
 
@@ -2123,8 +2300,23 @@ def main() -> None:
         if len(sys.argv) < 3:
             _print_json(_error("LIGAND_PREPARATION_ARGS", "准备 ligand PDBQT 需要 project_dir 参数。"))
             return
+        if len(sys.argv) > 5:
+            _print_json(
+                _error(
+                    "LIGAND_PREPARATION_ARGS",
+                    "准备 ligand PDBQT 的参数数量无效。",
+                    suggestion="用法：prepare-ligand <project_dir> [overwrite] [options_json]。",
+                )
+            )
+            return
         overwrite = len(sys.argv) >= 4 and sys.argv[3].strip().lower() in {"1", "true", "yes", "y"}
-        _print_json(prepare_ligand_pdbqt(sys.argv[2], overwrite=overwrite))
+        options: dict[str, Any] | None = None
+        if len(sys.argv) >= 5:
+            options, options_error = _parse_ligand_options_json(sys.argv[4])
+            if options_error:
+                _print_json(options_error)
+                return
+        _print_json(prepare_ligand_pdbqt(sys.argv[2], overwrite=overwrite, options=options))
         return
 
     if command == "ligand-log":

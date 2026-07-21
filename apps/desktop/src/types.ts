@@ -470,10 +470,65 @@ export type StructureReviewCheck = {
   requires_manual_review: boolean;
 };
 
+export type CoordinateBounds = {
+  x: [number, number];
+  y: [number, number];
+  z: [number, number];
+};
+
+export type ReceptorPdbqtFacts = {
+  format?: "pdbqt";
+  atom_count?: number;
+  heavy_atom_count?: number;
+  hydrogen_atom_count?: number;
+  coordinate_count?: number;
+  has_3d_coordinates?: boolean;
+  coordinate_bounds?: CoordinateBounds | null;
+  chains?: string[];
+  residue_count?: number;
+  model_count?: number;
+  autodock_atom_types?: string[];
+  partial_charge_count?: number;
+  partial_charge_sum?: number | null;
+  receptor_pdbqt_mode?: "rigid" | "flexible" | "unknown";
+  active_torsions?: number | null;
+  activity_torsion_applicable?: boolean;
+  flexible_residue_count?: number;
+  branch_count?: number;
+  fact_sources?: Record<string, "最终 PDBQT">;
+};
+
+export type ReceptorRawFacts = {
+  atom_count?: number;
+  heavy_atom_count?: number;
+  hydrogen_atom_count?: number;
+  coordinate_count?: number;
+  has_3d_coordinates?: boolean;
+  coordinate_bounds?: CoordinateBounds | null;
+  chains?: string[];
+  residue_count?: number;
+  ion_non_polymer_components?: Array<Record<string, unknown>>;
+  alternate_locations?: string[];
+  residue_template_anomalies?: Array<Record<string, unknown>> | null;
+  residue_template_check_status?: "not_run" | "passed" | "warning" | "failed";
+  nonstandard_chirality_geometry?: null;
+  fact_sources?: Record<string, "原始结构" | "RDKit" | "Meeko" | "最终 PDBQT" | "准备快照">;
+  [key: string]: unknown;
+};
+
+export type ReceptorStructureReview = ReceptorPdbqtFacts & {
+  raw_file?: string;
+  prepared_file?: string;
+  source_file?: string;
+  source_kind?: "raw" | "prepared" | "missing";
+  raw?: ReceptorRawFacts;
+  pdbqt?: ReceptorPdbqtFacts;
+};
+
 export type StructureReviewPayload = {
   scientific_validation: false;
   disclaimer: string;
-  receptor: Record<string, unknown>;
+  receptor: ReceptorStructureReview;
   ligand: Record<string, unknown>;
   provenance: Record<string, unknown>;
   checks: StructureReviewCheck[];
