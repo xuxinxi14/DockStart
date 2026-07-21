@@ -1189,6 +1189,110 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(loaded["ok"])
             self.assertEqual(loaded["metadata"]["run_id"], "run_001")
 
+    def test_flexible_receptor_run_snapshots_flex_and_executes_with_flex_argument(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            raw = project_dir / "raw" / "receptor.pdb"
+            raw.write_text("ATOM      1  CA  ALA A  42       1.000   2.000   3.000\n", encoding="utf-8")
+            flex_root = project_dir / "prepared" / "flexible_receptor" / "flex_001"
+            flex_root.mkdir(parents=True)
+            rigid = flex_root / "receptor_rigid.pdbqt"
+            flex = flex_root / "receptor_flex.pdbqt"
+            receptor_json = flex_root / "receptor.json"
+            rigid.write_text("ATOM      1  CA  ALA A  42       1.000   2.000   3.000  1.00 20.00     0.000 C\n", encoding="utf-8")
+            flex.write_text("BEGIN_RES A ALA 42\nATOM      1  CA  ALA A  42       1.000   2.000   3.000  1.00 20.00     0.000 C\nEND_RES A ALA 42\n", encoding="utf-8")
+            receptor_json.write_text("{}\n", encoding="utf-8")
+
+            project_json = project_dir / "project.json"
+            payload = json.loads(project_json.read_text(encoding="utf-8"))
+            payload["receptor"]["raw_file"] = "raw/receptor.pdb"
+            payload["docking_protocol"] = {
+                "schema_version": 1,
+                "receptor_mode": "flexible",
+                "flexible_receptor": {
+                    "status": "ready",
+                    "preparation_id": "flex_001",
+                    "source_raw_file": "raw/receptor.pdb",
+                    "source_sha256": hashlib.sha256(raw.read_bytes()).hexdigest(),
+                    "selected_residues": [{"selector": "A:42", "residue_name": "ALA"}],
+                    "rigid_file": rigid.relative_to(project_dir).as_posix(),
+                    "flex_file": flex.relative_to(project_dir).as_posix(),
+                    "receptor_json_file": receptor_json.relative_to(project_dir).as_posix(),
+                    "sha256": {
+                        "rigid_pdbqt": hashlib.sha256(rigid.read_bytes()).hexdigest(),
+                        "flex_pdbqt": hashlib.sha256(flex.read_bytes()).hexdigest(),
+                        "receptor_json": hashlib.sha256(receptor_json.read_bytes()).hexdigest(),
+                    },
+                },
+            }
+            project_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            with unittest.mock.patch("dockstart_core.project.vina_adapter.detect", return_value=self._vina_ok_result()):
+                prepared = prepare_vina_run(str(project_dir))
+
+            self.assertTrue(prepared["ok"], prepared)
+            run_id = prepared["run_id"]
+            flex_snapshot = project_dir / "runs" / run_id / "inputs" / "flex.pdbqt"
+            self.assertTrue(flex_snapshot.is_file())
+            self.assertEqual(prepared["metadata"]["docking_protocol"]["mode"], "flexible")
+            self.assertEqual(
+                prepared["metadata"]["command"][-2:],
+                ["--flex", f"runs/{run_id}/inputs/flex.pdbqt"],
+            )
+
+            observed: list[list[str]] = []
+            executed = self._execute_with_mock_adapter(
+                project_dir,
+                run_id,
+                on_call=lambda command, _cwd: observed.append(command),
+            )
+            self.assertTrue(executed["ok"], executed)
+            self.assertEqual(observed[0][-2:], ["--flex", f"runs/{run_id}/inputs/flex.pdbqt"])
+
+    def test_run_attributes_macrocycle_preparation_only_when_ligand_hash_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            ligand = project_dir / "prepared" / "ligand.pdbqt"
+            prep_dir = project_dir / "preparation" / "ligand_001"
+            prep_dir.mkdir()
+            metadata_path = prep_dir / "metadata.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "prep_id": "ligand_001",
+                        "status": "finished",
+                        "method": "meeko_macrocycle",
+                        "protocol": "meeko_macrocycle",
+                        "options": {"macrocycle": {"mode": "auto"}},
+                        "protocol_evidence": {"ok": True, "inspection": {"embedded_topology": True}},
+                        "meeko_version": "0.7.1",
+                        "output": {"sha256": hashlib.sha256(ligand.read_bytes()).hexdigest()},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            project_json = project_dir / "project.json"
+            payload = json.loads(project_json.read_text(encoding="utf-8"))
+            payload["preparation"]["ligand"].update(
+                {
+                    "prep_id": "ligand_001",
+                    "status": "finished",
+                    "method": "meeko_macrocycle",
+                    "metadata_file": "preparation/ligand_001/metadata.json",
+                }
+            )
+            project_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            with unittest.mock.patch("dockstart_core.project.vina_adapter.detect", return_value=self._vina_ok_result()):
+                prepared = prepare_vina_run(str(project_dir))
+
+            self.assertTrue(prepared["ok"], prepared)
+            self.assertTrue(prepared["metadata"]["ligand_preparation"]["matched"])
+            self.assertEqual(prepared["metadata"]["ligand_preparation"]["protocol"], "meeko_macrocycle")
+            snapshot = project_dir / prepared["metadata"]["ligand_preparation_snapshot"]
+            self.assertTrue(snapshot.is_file())
+
     def test_prepare_vina_run_uses_resolved_bundled_vina_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_config_ready_project(temp_dir)

@@ -1,0 +1,71 @@
+.flexible-receptor-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.flexible-receptor-body,
+.flexible-receptor-ready {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: end;
+}
+
+.flexible-receptor-body p,
+.flexible-receptor-body small,
+.flexible-receptor-ready span,
+.flexible-receptor-message {
+  color: var(--ds-text-secondary);
+}
+
+.flexible-receptor-body label {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  color: var(--ds-text-primary);
+  font-weight: 650;
+}
+
+.flexible-receptor-body input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 8px;
+  background: var(--ds-surface-input);
+  color: var(--ds-text-primary);
+  padding: 0 12px;
+}
+
+.flexible-receptor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.flexible-receptor-ready {
+  align-items: center;
+  border-top: 1px solid var(--ds-border-subtle);
+  padding-top: 14px;
+}
+
+.flexible-receptor-ready > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.flexible-receptor-message {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .flexible-receptor-body,
+  .flexible-receptor-ready {
+    grid-template-columns: 1fr;
+  }
+
+  .flexible-receptor-actions {
+    justify-content: flex-start;
+  }
+}

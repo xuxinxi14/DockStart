@@ -909,6 +909,10 @@ export type DockStartProject = {
   };
   preparation: PreparationState;
   runs: Array<Record<string, unknown>>;
+  docking_protocol?: {
+    mode?: "rigid" | "flexible";
+    [key: string]: unknown;
+  };
 };
 
 export type PreparationStatusResponse = {

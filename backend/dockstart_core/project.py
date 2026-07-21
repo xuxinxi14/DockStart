@@ -1166,7 +1166,11 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
             "请检查 project.json 中 receptor、ligand、box 和 vina 字段是否完整。",
         )
 
-    _, receptor_error = _project_relative_file(project_path, project.receptor.file, "receptor")
+    receptor_inputs = _active_receptor_inputs(project_path, project)
+    if not receptor_inputs.get("ok"):
+        return receptor_inputs
+    receptor_file = str(receptor_inputs["receptor_file"])
+    _, receptor_error = _project_relative_file(project_path, receptor_file, "receptor")
     if receptor_error:
         return _prepared_input_hint(project, project_path, "receptor", receptor_error)
     _, ligand_error = _project_relative_file(project_path, project.ligand.file, "ligand")
@@ -1187,6 +1191,9 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
         "project": project.to_dict(),
         "box": box_validation["box"],
         "vina": vina_validation["vina"],
+        "receptor_file": receptor_file,
+        "flex_file": str(receptor_inputs.get("flex_file") or ""),
+        "docking_protocol": receptor_inputs,
         "warnings": vina_validation.get("warnings", []) + box_validation.get("warnings", []),
         "error": None,
     }
@@ -1201,7 +1208,7 @@ def build_vina_config_text(project_dir: str) -> dict[str, Any]:
     box = prerequisites["box"]
     vina = prerequisites["vina"]
     lines = [
-        f"receptor = {Path(project.receptor.file).as_posix()}",
+        f"receptor = {Path(prerequisites['receptor_file']).as_posix()}",
         f"ligand = {Path(project.ligand.file).as_posix()}",
         f"scoring = {vina['scoring']}",
         "",
@@ -2014,18 +2021,108 @@ def _status_from_error_code(code: str) -> str:
     return "missing" if code.endswith("_NOT_SET") or code.endswith("_NOT_FOUND") or code.endswith("_NOT_PREPARED") else "error"
 
 
+def _active_receptor_inputs(project_path: Path, project: DockStartProject) -> dict[str, Any]:
+    """Resolve a verified rigid/flexible receptor pair without changing legacy projects."""
+
+    protocol = project.preserved_data.get("docking_protocol")
+    if not isinstance(protocol, dict) or str(protocol.get("receptor_mode") or "rigid") != "flexible":
+        return {
+            "ok": True,
+            "mode": "rigid",
+            "receptor_file": Path(project.receptor.file).as_posix() if project.receptor.file else "",
+            "flex_file": "",
+            "selected_residues": [],
+        }
+
+    # Local import avoids a module cycle: flexible_receptor uses project
+    # persistence helpers, while the run chain only consumes its verified status.
+    from dockstart_core.flexible_receptor import get_flexible_receptor_status
+
+    status = get_flexible_receptor_status(str(project_path))
+    config = status.get("flexible_receptor") if isinstance(status.get("flexible_receptor"), dict) else {}
+    if not status.get("ok") or status.get("effective_mode") != "flexible":
+        issues = (status.get("integrity") or {}).get("issues") if isinstance(status.get("integrity"), dict) else []
+        return _error(
+            "FLEX_RECEPTOR_NOT_READY",
+            "项目选择了柔性侧链模式，但 rigid/flex 受体三件套未通过来源与 SHA256 校验。",
+            raw_error="；".join(str(item) for item in (issues or [])),
+            suggestion="请重新准备柔性受体，或切换回刚性受体模式。",
+        )
+    return {
+        "ok": True,
+        "mode": "flexible",
+        "receptor_file": Path(str(config.get("rigid_file") or "")).as_posix(),
+        "flex_file": Path(str(config.get("flex_file") or "")).as_posix(),
+        "receptor_json_file": Path(str(config.get("receptor_json_file") or "")).as_posix(),
+        "selected_residues": copy.deepcopy(config.get("selected_residues") or []),
+        "preparation_id": str(config.get("preparation_id") or ""),
+        "source_raw_file": str(config.get("source_raw_file") or ""),
+        "sha256": copy.deepcopy(config.get("sha256") or {}),
+    }
+
+
+def _matching_ligand_preparation(project_path: Path, project: DockStartProject) -> dict[str, Any]:
+    """Attribute the active ligand only when preparation evidence matches its bytes."""
+
+    metadata_file = str(project.preparation.ligand.metadata_file or "")
+    ligand_file = str(project.ligand.file or "")
+    if not metadata_file or not ligand_file:
+        return {"matched": False, "reason": "没有可匹配的配体准备记录。"}
+    metadata_path, metadata_error = _project_relative_existing_file(
+        project_path,
+        metadata_file,
+        "LIGAND_PREPARATION_METADATA",
+        "配体准备 metadata.json",
+    )
+    ligand_path, ligand_error = _project_relative_existing_file(
+        project_path,
+        ligand_file,
+        "LIGAND_FILE",
+        "ligand.pdbqt",
+    )
+    if metadata_error or ligand_error or metadata_path is None or ligand_path is None:
+        return {"matched": False, "reason": "配体准备记录或当前 PDBQT 不可读取。"}
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"matched": False, "reason": "配体准备 metadata.json 无法解析。"}
+    output = metadata.get("output") if isinstance(metadata.get("output"), dict) else {}
+    expected = str(output.get("sha256") or "")
+    actual = _sha256_file(ligand_path)
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected) or expected.lower() != actual.lower():
+        return {"matched": False, "reason": "当前 ligand.pdbqt 与准备记录 SHA256 不一致。"}
+    return {
+        "matched": True,
+        "metadata_file": Path(metadata_file).as_posix(),
+        "metadata_sha256": _sha256_file(metadata_path),
+        "ligand_sha256": actual,
+        "prep_id": str(metadata.get("prep_id") or ""),
+        "method": str(metadata.get("method") or "external_manual"),
+        "protocol": str(metadata.get("protocol") or "standard"),
+        "options": copy.deepcopy(metadata.get("options") or {}),
+        "protocol_evidence": copy.deepcopy(metadata.get("protocol_evidence") or {}),
+        "meeko_version": str(metadata.get("meeko_version") or ""),
+        "rdkit_version": str(metadata.get("rdkit_version") or ""),
+        "python_source": str(metadata.get("python_source") or "unknown"),
+    }
+
+
 def _build_vina_command(
     vina_path: str,
     config_file: str,
     run_id: str,
+    flex_file: str = "",
 ) -> list[str]:
-    return [
+    command = [
         vina_path or "vina",
         "--config",
         Path(config_file).as_posix(),
         "--out",
         Path("runs", run_id, "out.pdbqt").as_posix(),
     ]
+    if flex_file:
+        command.extend(["--flex", Path(flex_file).as_posix()])
+    return command
 
 
 def _build_run_snapshot_config(project: DockStartProject, run_id: str) -> str:
@@ -2084,7 +2181,28 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
     project = _project_from_dict(loaded["project"], project_path)
     checks.append(_run_check("project_json", "project.json", "ok", "已读取项目配置。", "project.json"))
 
-    receptor_path, receptor_error = _project_relative_file(project_path, project.receptor.file, "receptor")
+    receptor_inputs = _active_receptor_inputs(project_path, project)
+    if not receptor_inputs.get("ok"):
+        error = receptor_inputs.get("error", {})
+        checks.append(
+            _run_check(
+                "flexible_receptor",
+                "柔性侧链受体",
+                "error",
+                str(error.get("message") or "柔性侧链受体不可用。"),
+                raw_error=str(error.get("raw_error") or ""),
+            )
+        )
+        return _run_error(
+            str(error.get("code") or "FLEX_RECEPTOR_NOT_READY"),
+            str(error.get("message") or "柔性侧链受体不可用。"),
+            checks,
+            str(error.get("raw_error") or ""),
+            str(error.get("suggestion") or ""),
+        )
+    receptor_file = str(receptor_inputs["receptor_file"])
+    flex_file = str(receptor_inputs.get("flex_file") or "")
+    receptor_path, receptor_error = _project_relative_file(project_path, receptor_file, "receptor")
     if receptor_error:
         receptor_error = _prepared_input_hint(project, project_path, "receptor", receptor_error)
         error = receptor_error["error"]
@@ -2094,7 +2212,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
                 "receptor.pdbqt",
                 _status_from_error_code(error["code"]),
                 error["message"],
-                project.receptor.file,
+                receptor_file,
                 raw_error=error.get("raw_error", ""),
             ),
         )
@@ -2106,7 +2224,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
                 "receptor.pdbqt",
                 "error",
                 "受体 PDBQT 文件为空，无法准备运行记录。",
-                project.receptor.file,
+                receptor_file,
                 raw_error=str(receptor_path),
             ),
         )
@@ -2117,7 +2235,37 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
             str(receptor_path),
             "请重新导入非空的 receptor.pdbqt。",
         )
-    checks.append(_run_check("receptor", "receptor.pdbqt", "ok", "已找到受体 PDBQT 文件。", project.receptor.file))
+    checks.append(_run_check("receptor", "receptor.pdbqt", "ok", "已找到受体 PDBQT 文件。", receptor_file))
+    if flex_file:
+        flex_path, flex_error = _project_relative_file(project_path, flex_file, "flex")
+        if flex_error or flex_path is None or flex_path.stat().st_size <= 0:
+            error = (flex_error or _error("FLEX_RECEPTOR_FILE_EMPTY", "柔性侧链 PDBQT 为空。"))["error"]
+            checks.append(
+                _run_check(
+                    "flexible_receptor",
+                    "柔性侧链 PDBQT",
+                    "error",
+                    str(error.get("message") or "柔性侧链 PDBQT 不可用。"),
+                    flex_file,
+                    raw_error=str(error.get("raw_error") or ""),
+                )
+            )
+            return _run_error(
+                str(error.get("code") or "FLEX_RECEPTOR_FILE_NOT_READY"),
+                str(error.get("message") or "柔性侧链 PDBQT 不可用。"),
+                checks,
+                str(error.get("raw_error") or ""),
+                "请重新准备柔性受体，或切换回刚性模式。",
+            )
+        checks.append(
+            _run_check(
+                "flexible_receptor",
+                "柔性侧链 PDBQT",
+                "ok",
+                "柔性侧链受体已通过来源与 SHA256 校验。",
+                flex_file,
+            )
+        )
 
     ligand_path, ligand_error = _project_relative_file(project_path, project.ligand.file, "ligand")
     if ligand_error:
@@ -2220,7 +2368,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
     )
 
     next_run_id = get_next_run_id(project.project_dir)
-    command = _build_vina_command(vina_detection.path, config_file, next_run_id)
+    command = _build_vina_command(vina_detection.path, config_file, next_run_id, flex_file)
     warnings = box_validation.get("warnings", []) + vina_validation.get("warnings", [])
     return {
         "ok": True,
@@ -2234,6 +2382,9 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
         "vina": vina_dict,
         "vina_path": vina_detection.path,
         "vina_version": vina_detection.version,
+        "receptor_file": receptor_file,
+        "flex_file": flex_file,
+        "docking_protocol": receptor_inputs,
         "command": command,
         "command_preview": _format_command_preview(command),
         "message": "运行前检查通过，可以准备运行记录。",
@@ -2279,7 +2430,12 @@ def build_vina_command_preview(project_dir: str, run_id: str) -> dict[str, Any]:
     if not prerequisites.get("ok"):
         return prerequisites
 
-    command = _build_vina_command(prerequisites["vina_path"], prerequisites["config_file"], run_id)
+    command = _build_vina_command(
+        prerequisites["vina_path"],
+        prerequisites["config_file"],
+        run_id,
+        str(prerequisites.get("flex_file") or ""),
+    )
     return {
         "ok": True,
         "project_dir": prerequisites["project_dir"],
@@ -2334,21 +2490,56 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
         config_snapshot_file = Path("runs", run_id, "config_snapshot.txt").as_posix()
         receptor_snapshot_file = Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()
         ligand_snapshot_file = Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix()
+        flex_snapshot_file = (
+            Path("runs", run_id, "inputs", "flex.pdbqt").as_posix()
+            if prerequisites.get("flex_file")
+            else ""
+        )
         output_file = Path("runs", run_id, "out.pdbqt").as_posix()
         log_file = Path("runs", run_id, "log.txt").as_posix()
-        command = _build_vina_command(prerequisites["vina_path"], config_snapshot_file, run_id)
-        receptor_path = project_root / project.receptor.file
+        command = _build_vina_command(
+            prerequisites["vina_path"],
+            config_snapshot_file,
+            run_id,
+            flex_snapshot_file,
+        )
+        receptor_source_file = str(prerequisites.get("receptor_file") or project.receptor.file)
+        receptor_path = project_root / receptor_source_file
         ligand_path = project_root / project.ligand.file
         receptor_snapshot_path = project_root / receptor_snapshot_file
         ligand_snapshot_path = project_root / ligand_snapshot_file
+        flex_snapshot_path = project_root / flex_snapshot_file if flex_snapshot_file else None
         config_snapshot_path = project_root / config_snapshot_file
         shutil.copyfile(receptor_path, receptor_snapshot_path)
         shutil.copyfile(ligand_path, ligand_snapshot_path)
+        if flex_snapshot_path is not None:
+            shutil.copyfile(project_root / str(prerequisites["flex_file"]), flex_snapshot_path)
         _atomic_write_text(config_snapshot_path, _build_run_snapshot_config(project, run_id))
         receptor_snapshot = _parse_pdbqt_stats(receptor_snapshot_path, receptor_snapshot_file)
-        receptor_snapshot["source_relative_path"] = Path(project.receptor.file).as_posix()
+        receptor_snapshot["source_relative_path"] = Path(receptor_source_file).as_posix()
         ligand_snapshot = _parse_pdbqt_stats(ligand_snapshot_path, ligand_snapshot_file, ligand=True)
         ligand_snapshot["source_relative_path"] = Path(project.ligand.file).as_posix()
+        ligand_preparation = _matching_ligand_preparation(project_root, project)
+        ligand_preparation_snapshot_file = ""
+        ligand_preparation_snapshot = None
+        if ligand_preparation.get("matched"):
+            ligand_preparation_snapshot_file = Path(
+                "runs", run_id, "inputs", "ligand_preparation.json"
+            ).as_posix()
+            ligand_preparation_snapshot_path = project_root / ligand_preparation_snapshot_file
+            _atomic_write_text(
+                ligand_preparation_snapshot_path,
+                json.dumps(ligand_preparation, ensure_ascii=False, indent=2) + "\n",
+            )
+            ligand_preparation_snapshot = {
+                "relative_path": ligand_preparation_snapshot_file,
+                "sha256": _sha256_file(ligand_preparation_snapshot_path),
+                "size_bytes": ligand_preparation_snapshot_path.stat().st_size,
+            }
+        flex_snapshot = None
+        if flex_snapshot_path is not None:
+            flex_snapshot = _parse_pdbqt_stats(flex_snapshot_path, flex_snapshot_file)
+            flex_snapshot["source_relative_path"] = Path(str(prerequisites["flex_file"])).as_posix()
         config_sha256 = _sha256_file(config_snapshot_path)
         system_snapshot = _system_snapshot()
         vina_source = str((prerequisites.get("vina") or {}).get("source") or "unknown")
@@ -2382,7 +2573,11 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             "config_file": Path(config_file).as_posix(),
             "config_snapshot": config_snapshot_file,
             "snapshots": {
-                "inputs": {"receptor": receptor_snapshot, "ligand": ligand_snapshot},
+                "inputs": {
+                    "receptor": receptor_snapshot,
+                    "ligand": ligand_snapshot,
+                    **({"flex": flex_snapshot} if flex_snapshot is not None else {}),
+                },
                 "config": {
                     "source_relative_path": Path(config_file).as_posix(),
                     "relative_path": config_snapshot_file,
@@ -2390,6 +2585,11 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                     "sha256": config_sha256,
                     "size_bytes": config_snapshot_path.stat().st_size,
                 },
+                **(
+                    {"ligand_preparation": ligand_preparation_snapshot}
+                    if ligand_preparation_snapshot is not None
+                    else {}
+                ),
                 "box": asdict(project.box),
                 "vina": asdict(project.vina),
             },
@@ -2397,7 +2597,11 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                 "receptor": receptor_snapshot["sha256"],
                 "ligand": ligand_snapshot["sha256"],
                 "config": config_sha256,
+                **({"flex": flex_snapshot["sha256"]} if flex_snapshot is not None else {}),
             },
+            "docking_protocol": copy.deepcopy(prerequisites.get("docking_protocol") or {"mode": "rigid"}),
+            "ligand_preparation": ligand_preparation,
+            "ligand_preparation_snapshot": ligand_preparation_snapshot_file,
             "box_snapshot": asdict(project.box),
             "vina_snapshot": asdict(project.vina),
             "output_file": output_file,
@@ -3367,6 +3571,7 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
 
     receptor_file = _run_input_snapshot_file(metadata, "receptor", project.receptor.file)
     ligand_file = _run_input_snapshot_file(metadata, "ligand", project.ligand.file)
+    flex_file = _run_input_snapshot_file(metadata, "flex", "")
     receptor_path, receptor_error = _project_relative_existing_file(
         project_path,
         receptor_file,
@@ -3406,6 +3611,7 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         "receptor_path": str(receptor_path) if receptor_path else "",
         "ligand_file": ligand_file,
         "ligand_path": str(ligand_path) if ligand_path else "",
+        "flex_file": flex_file,
         "config_file": config_file,
         "config_path": str(config_path) if config_path else "",
         "box_snapshot": _run_snapshot_mapping(metadata, "box") or asdict(project.box),
@@ -3429,6 +3635,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     input_rows = [
         ["receptor 文件", context["receptor_file"]],
         ["ligand 文件", context["ligand_file"]],
+        *([["flex 侧链文件", context["flex_file"]]] if context.get("flex_file") else []),
         ["vina_config.txt", context["config_file"]],
         ["log.txt", str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())],
         ["out.pdbqt", str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())],
@@ -3466,8 +3673,25 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["Vina binary SHA256", metadata.get("vina_sha256") or vina_tool.get("sha256")],
         ["receptor SHA256", input_sha256.get("receptor")],
         ["ligand SHA256", input_sha256.get("ligand")],
+        *([["flex SHA256", input_sha256.get("flex")]] if input_sha256.get("flex") else []),
         ["config SHA256", input_sha256.get("config")],
         ["system fingerprint", system.get("fingerprint")],
+    ]
+    docking_protocol = metadata.get("docking_protocol") if isinstance(metadata.get("docking_protocol"), dict) else {}
+    ligand_preparation = metadata.get("ligand_preparation") if isinstance(metadata.get("ligand_preparation"), dict) else {}
+    protocol_rows = [
+        ["受体模式", "有限柔性侧链" if docking_protocol.get("mode") == "flexible" else "刚性受体"],
+        [
+            "柔性残基",
+            ", ".join(
+                str(item.get("selector") or item) if isinstance(item, dict) else str(item)
+                for item in docking_protocol.get("selected_residues", [])
+            ) or "不适用",
+        ],
+        ["柔性准备记录", docking_protocol.get("preparation_id") or "不适用"],
+        ["配体准备协议", ligand_preparation.get("protocol") if ligand_preparation.get("matched") else "外部或未匹配"],
+        ["配体准备记录", ligand_preparation.get("prep_id") or "不适用"],
+        ["Meeko 版本", ligand_preparation.get("meeko_version") or "未记录"],
     ]
     reference_rmsd = metadata.get("reference_rmsd") if isinstance(metadata.get("reference_rmsd"), dict) else {}
     if reference_rmsd:
@@ -3594,6 +3818,10 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "## 4. Vina 参数",
             "",
             _markdown_table(["参数", "值"], vina_rows),
+            "",
+            "### 受体对接协议",
+            "",
+            _markdown_table(["项目", "记录值"], protocol_rows),
             "",
             "## 5. 运行信息",
             "",
@@ -3915,6 +4143,9 @@ def _validate_execute_prerequisites(
         "stdout": Path("runs", run_id, "stdout.txt").as_posix(),
         "stderr": Path("runs", run_id, "stderr.txt").as_posix(),
     }
+    protocol = metadata.get("docking_protocol") if isinstance(metadata.get("docking_protocol"), dict) else {}
+    if str(protocol.get("mode") or "rigid") == "flexible":
+        fixed_relative_paths["flex"] = Path("runs", run_id, "inputs", "flex.pdbqt").as_posix()
     try:
         run_dir = _safe_run_directory(project_path, run_id)
     except Exception as exc:  # noqa: BLE001 - reject symlinked/reparsed run roots.
@@ -3950,7 +4181,7 @@ def _validate_execute_prerequisites(
                 f"固定运行路径 {key} 越出项目目录，拒绝执行。",
                 raw_error=f"{lexical_path}: {exc}",
             )
-        expected_parent = run_dir / "inputs" if key in {"receptor", "ligand"} else run_dir
+        expected_parent = run_dir / "inputs" if key in {"receptor", "ligand", "flex"} else run_dir
         if resolved.parent != expected_parent or resolved != lexical_path.absolute():
             return _error(
                 "RUN_PATH_REPARSE_UNSAFE",
@@ -3960,7 +4191,10 @@ def _validate_execute_prerequisites(
             )
         fixed_paths[key] = resolved
 
-    for key in ("receptor", "ligand", "config"):
+    required_inputs = ["receptor", "ligand", "config"]
+    if "flex" in fixed_paths:
+        required_inputs.append("flex")
+    for key in required_inputs:
         path = fixed_paths[key]
         if not path.is_file() or path.stat().st_size <= 0:
             return _error(
@@ -3978,6 +4212,12 @@ def _validate_execute_prerequisites(
         "ligand": str((inputs.get("ligand") or {}).get("sha256") or "") if isinstance(inputs.get("ligand"), dict) else "",
         "config": str(config_snapshot.get("sha256") or ""),
     }
+    if "flex" in fixed_paths:
+        expected_hashes["flex"] = (
+            str((inputs.get("flex") or {}).get("sha256") or "")
+            if isinstance(inputs.get("flex"), dict)
+            else ""
+        )
     for key, expected in expected_hashes.items():
         if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
             return _error(
@@ -4012,6 +4252,7 @@ def _validate_execute_prerequisites(
         "config_path": str(fixed_paths["config"]),
         "receptor_file": fixed_relative_paths["receptor"],
         "ligand_file": fixed_relative_paths["ligand"],
+        "flex_file": fixed_relative_paths.get("flex", ""),
         "output_file": fixed_relative_paths["output"],
         "output_path": str(fixed_paths["output"]),
         "log_file": fixed_relative_paths["log"],
@@ -5061,7 +5302,12 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     stderr_path = Path(prerequisites["stderr_path"])
     log_path = Path(prerequisites["log_path"])
     output_path = Path(prerequisites["output_path"])
-    command = _build_vina_command(detection.path, config_file, run_id)
+    command = _build_vina_command(
+        detection.path,
+        config_file,
+        run_id,
+        str(prerequisites.get("flex_file") or ""),
+    )
     started_at = _now_iso()
     launch_token = f"{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
     executor_pid = os.getpid()

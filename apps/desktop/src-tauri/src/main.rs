@@ -601,6 +601,79 @@ async fn get_preparation_tool_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+async fn get_flexible_receptor_status(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.flexible_receptor",
+        vec!["status".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取柔性侧链受体状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn validate_flexible_receptor(
+    project_dir: String,
+    residues: Vec<String>,
+    max_residues: u8,
+) -> String {
+    let mut args = vec![
+        "validate".to_string(),
+        "--project".to_string(),
+        project_dir,
+        "--max-residues".to_string(),
+        max_residues.to_string(),
+    ];
+    for residue in residues {
+        args.extend(["--residue".to_string(), residue]);
+    }
+    match run_backend_module_async("dockstart_core.flexible_receptor", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("柔性残基检查失败。", &error),
+    }
+}
+
+#[tauri::command]
+async fn set_receptor_docking_mode(project_dir: String, mode: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.flexible_receptor",
+        vec![
+            "set-mode".to_string(),
+            "--project".to_string(),
+            project_dir,
+            "--mode".to_string(),
+            mode,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法切换受体刚性/柔性模式。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_result_export_status(project_dir: String, run_id: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.result_export",
+        vec![
+            "status".to_string(),
+            "--project".to_string(),
+            project_dir,
+            "--run".to_string(),
+            run_id,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 Meeko SDF 导出状态。", &error),
+    }
+}
+
+#[tauri::command]
 async fn prepare_ligand_pdbqt(
     project_dir: String,
     overwrite: bool,
@@ -2290,6 +2363,80 @@ fn start_screening_task(app: tauri::AppHandle, project_dir: String) -> String {
 }
 
 #[tauri::command]
+fn start_flexible_receptor_task(
+    app: tauri::AppHandle,
+    project_dir: String,
+    residues: Vec<String>,
+    max_residues: u8,
+) -> String {
+    if residues.is_empty() {
+        return fallback_project_error_json(
+            "请至少选择一个柔性残基。",
+            "residues must not be empty",
+        );
+    }
+    let project_key = normalized_project_key(&project_dir);
+    let mut normalized = residues
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    let mut hasher = DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    max_residues.hash(&mut hasher);
+    let mut args = vec![
+        "prepare".to_string(),
+        "--project".to_string(),
+        project_dir.clone(),
+        "--max-residues".to_string(),
+        max_residues.to_string(),
+    ];
+    for residue in &normalized {
+        args.extend(["--residue".to_string(), residue.clone()]);
+    }
+    start_background_job(
+        app,
+        BackgroundJobSpec {
+            kind: "flexible_receptor".to_string(),
+            key: format!("flexible-receptor|{project_key}|{:016x}", hasher.finish()),
+            module: "dockstart_core.flexible_receptor".to_string(),
+            args,
+            project_dir,
+            run_id: String::new(),
+            target: "receptor".to_string(),
+            fallback_message: "柔性侧链受体准备失败，请查看 preparation/flexible_receptor 记录。"
+                .to_string(),
+        },
+    )
+}
+
+#[tauri::command]
+fn start_result_export_task(app: tauri::AppHandle, project_dir: String, run_id: String) -> String {
+    let project_key = normalized_project_key(&project_dir);
+    start_background_job(
+        app,
+        BackgroundJobSpec {
+            kind: "result_export".to_string(),
+            key: format!("result-export|{project_key}|{run_id}"),
+            module: "dockstart_core.result_export".to_string(),
+            args: vec![
+                "export".to_string(),
+                "--project".to_string(),
+                project_dir.clone(),
+                "--run".to_string(),
+                run_id.clone(),
+            ],
+            project_dir,
+            run_id,
+            target: "result_sdf".to_string(),
+            fallback_message: "Meeko SDF 导出失败，请查看 run exports 记录。".to_string(),
+        },
+    )
+}
+
+#[tauri::command]
 fn start_pdb_fetch_task(
     app: tauri::AppHandle,
     project_dir: String,
@@ -3655,7 +3802,13 @@ fn main() {
             get_preparation_status,
             validate_preparation_prerequisites,
             get_preparation_tool_status,
+            get_flexible_receptor_status,
+            validate_flexible_receptor,
+            set_receptor_docking_mode,
+            get_result_export_status,
             start_preparation_task,
+            start_flexible_receptor_task,
+            start_result_export_task,
             start_pdb_fetch_task,
             start_pubchem_fetch_task,
             prepare_ligand_pdbqt,

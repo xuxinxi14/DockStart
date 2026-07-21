@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer, TrayArrowDown } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -10,6 +10,7 @@ import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, ScoreRow } from "../types";
+import { startResultExportTask, waitForBackgroundTask } from "../utils/backgroundTasks";
 
 const PoseStructurePreview = lazy(() => import("../components/PoseStructurePreview"));
 
@@ -90,6 +91,13 @@ function metadataReferenceRmsd(metadata: Record<string, unknown> | null): Refere
   };
 }
 
+function latestResultSdf(metadata: Record<string, unknown> | null): string {
+  const exports = metadata?.result_exports;
+  if (!Array.isArray(exports)) return "";
+  const latest = [...exports].reverse().find((item) => item && typeof item === "object") as Record<string, unknown> | undefined;
+  return typeof latest?.output_file === "string" ? latest.output_file : "";
+}
+
 function formatScoreValue(value: number): string {
   return Number.isFinite(value) ? String(value) : "";
 }
@@ -140,6 +148,7 @@ export default function ResultPage({
   const displayedReportFile = metadataString(metadata, "report_file") || metadataString(metadata, "project_report_file");
   const reportReady = Boolean(displayedReportFile);
   const referenceRmsd = metadataReferenceRmsd(metadata);
+  const resultSdf = latestResultSdf(metadata);
 
   useEffect(() => {
     setViewerMode(null);
@@ -315,6 +324,38 @@ export default function ResultPage({
     }
   };
 
+  const exportTopologySdf = async () => {
+    setIsBusy(true);
+    setMessage("");
+    setRawError("");
+    try {
+      const statusPayload = JSON.parse(await invoke<string>("get_result_export_status", {
+        projectDir: project.project_dir,
+        runId,
+      })) as { ok?: boolean; ready?: boolean; message?: string; error?: { message?: string; raw_error?: string } };
+      if (!statusPayload.ok || !statusPayload.ready) {
+        throw new Error(statusPayload.error?.message || statusPayload.message || "当前结果缺少 Meeko 原始拓扑，不能安全导出 SDF。");
+      }
+      const task = await startResultExportTask(project.project_dir, runId);
+      const completed = await waitForBackgroundTask(task.task_id, (next) => {
+        if (mountedRef.current) setMessage(next.progress.message || "正在通过 Meeko 恢复 SDF…");
+      });
+      const result = completed.result_json
+        ? JSON.parse(completed.result_json) as { ok?: boolean; message?: string; error?: { message?: string; raw_error?: string } }
+        : null;
+      if (completed.status !== "finished" || !result?.ok) {
+        throw new Error(result?.error?.message || completed.error || "SDF 导出失败。");
+      }
+      setMessage(result.message || "SDF 已导出。未根据原子距离猜测键级。");
+      await reloadRunMetadata();
+    } catch (error) {
+      setMessage("无法安全导出拓扑 SDF。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   return (
     <PageShell labelledBy="result-title" className="result-analysis-page">
       <PageHero
@@ -456,6 +497,7 @@ export default function ResultPage({
             <div><FileText aria-hidden="true" size={18} /><span><strong>log.txt</strong><small>{logPath}</small></span></div>
             <div><FileText aria-hidden="true" size={18} /><span><strong>scores.csv</strong><small>{displayedScoresFile || "未生成"}</small></span></div>
             <div><FileText aria-hidden="true" size={18} /><span><strong>docking_report.md</strong><small>{displayedReportFile || "未生成"}</small></span></div>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>poses.sdf</strong><small>{resultSdf || "未导出"}</small></span></div>
           </section>
           <section className="result-reference-rmsd">
             <h2><Ruler aria-hidden="true" size={18} /> 共晶姿势验证</h2>
@@ -474,6 +516,9 @@ export default function ResultPage({
             <small>此值不同于列表中相对 Mode 1 的 RMSD；化学连接不一致时不会强行比较。</small>
           </section>
           <section className="result-rail-actions">
+            <ActionButton disabled={isBusy || status !== "finished"} onClick={() => void exportTopologySdf()}>
+              <TrayArrowDown aria-hidden="true" size={17} /> {resultSdf ? "重新导出拓扑 SDF" : "导出拓扑 SDF"}
+            </ActionButton>
             <ActionButton variant="primary" disabled={!(scores.length || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
               <FileText aria-hidden="true" size={17} /> {reportReady ? "查看分析报告" : "生成分析报告"}
             </ActionButton>

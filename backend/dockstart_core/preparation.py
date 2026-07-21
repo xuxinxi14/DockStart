@@ -563,7 +563,7 @@ def _build_preparation_metadata(
         # Reuse the exact launch-time observation at finalization.  Rehashing
         # the path later could silently attribute replacement bytes to a run.
         built["python_executable_snapshot"] = python_snapshot
-    return {
+    payload = {
         "prep_id": prep_id,
         "target": target,
         "status": status,
@@ -1334,6 +1334,7 @@ def get_preparation_status(
         "message": "PDBQT 自动准备状态已读取。",
         "error": None,
     }
+    return payload
 
 
 def validate_preparation_prerequisites(project_dir: str, target: str) -> dict[str, Any]:

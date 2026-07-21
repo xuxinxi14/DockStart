@@ -19,6 +19,7 @@ import {
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
+import FlexibleReceptorPanel from "../components/FlexibleReceptorPanel";
 import RunBoxInspector, {
   type RunAxisSpacing,
   type RunBoxFieldKey,
@@ -1021,13 +1022,24 @@ export default function RunPreparePage({
             {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
           </section>
 
+          <FlexibleReceptorPanel
+            project={project}
+            disabled={isBusy || isDirty}
+            onProjectChange={(nextProject) => {
+              commitProject(nextProject, true);
+              void refreshPreflight(true);
+            }}
+          />
+
           <BatchScreeningPanel
             projectDir={project.project_dir}
             receptorFile={project.receptor.file}
             box={project.box}
             vina={project.vina}
-            disabled={isBusy || isDirty || !preflight?.ready}
-            disabledReason={isBusy
+            disabled={isBusy || isDirty || !preflight?.ready || project.docking_protocol?.mode === "flexible"}
+            disabledReason={project.docking_protocol?.mode === "flexible"
+              ? "批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
+              : isBusy
               ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
               : isDirty
                 ? "请先保存当前 Box 与 Vina 参数，再创建可复现的筛选快照。"

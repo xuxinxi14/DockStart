@@ -93,6 +93,27 @@ export async function startScreeningTask(projectDir: string): Promise<Background
   return assertStarted(normalizeTaskStatus(payload));
 }
 
+export async function startFlexibleReceptorTask(
+  projectDir: string,
+  residues: string[],
+  maxResidues = 8,
+): Promise<BackgroundTaskStatus> {
+  const payload = await invoke<string>("start_flexible_receptor_task", {
+    projectDir,
+    residues,
+    maxResidues,
+  });
+  return assertStarted(normalizeTaskStatus(payload));
+}
+
+export async function startResultExportTask(
+  projectDir: string,
+  runId: string,
+): Promise<BackgroundTaskStatus> {
+  const payload = await invoke<string>("start_result_export_task", { projectDir, runId });
+  return assertStarted(normalizeTaskStatus(payload));
+}
+
 export async function startPdbFetchTask(
   projectDir: string,
   pdbId: string,
