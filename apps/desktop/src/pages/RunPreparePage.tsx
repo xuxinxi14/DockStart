@@ -43,6 +43,7 @@ import {
   waitForBackgroundTask,
   type BackgroundTaskStatus,
 } from "../utils/backgroundTasks";
+import { readDockingWorkspaceMode, writeDockingWorkspaceMode, type DockingWorkspaceMode } from "../utils/dockingMode";
 
 const RunStructurePreview = lazy(() => import("../components/RunStructurePreview"));
 
@@ -261,6 +262,10 @@ export default function RunPreparePage({
   const [axisSpacing, setAxisSpacing] = useState<RunAxisSpacing>("standard");
   const [boxPlacementMessage, setBoxPlacementMessage] = useState("");
   const [previewFitRequestKey, setPreviewFitRequestKey] = useState(0);
+  const [workspaceMode, setWorkspaceMode] = useState<DockingWorkspaceMode>(() => readDockingWorkspaceMode(initialProject.project_dir));
+  const [residueSelectionActive, setResidueSelectionActive] = useState(false);
+  const [flexibleResidues, setFlexibleResidues] = useState<string[]>([]);
+  const [pickedResidue, setPickedResidue] = useState({ selector: "", token: 0 });
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
   const preflightRequestRef = useRef(0);
@@ -291,6 +296,19 @@ export default function RunPreparePage({
       dirtyRef.current = false;
     }
   }, [onProjectChange]);
+
+  const selectWorkspaceMode = useCallback((mode: DockingWorkspaceMode) => {
+    setWorkspaceMode(mode);
+    writeDockingWorkspaceMode(project.project_dir, mode);
+  }, [project.project_dir]);
+  const handleBatchModeDetected = useCallback(() => selectWorkspaceMode("batch"), [selectWorkspaceMode]);
+  const handleResidueSelect = useCallback((selector: string) => {
+    setPickedResidue((current) => ({ selector, token: current.token + 1 }));
+  }, []);
+
+  useEffect(() => {
+    setWorkspaceMode(readDockingWorkspaceMode(initialProject.project_dir));
+  }, [initialProject.project_dir]);
 
   const refreshPreflight = useCallback(async (syncForms = false): Promise<RunPreflightResponse | null> => {
     if (!mountedRef.current) return null;
@@ -735,20 +753,26 @@ export default function RunPreparePage({
   const stageText = stageLabels[stage] ?? stage;
 
   return (
-    <section className="run-cockpit-page" aria-labelledby="run-cockpit-title">
+    <section className={`run-cockpit-page is-${workspaceMode}-mode`} aria-labelledby="run-cockpit-title">
       <header className="run-cockpit-header">
         <div>
           <span>对接工作台 · DOCKING CONSOLE</span>
-          <h1 id="run-cockpit-title">搜索范围与运行</h1>
-          <p>可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。</p>
+          <h1 id="run-cockpit-title">{workspaceMode === "batch" ? "多配体搜索范围与运行" : "搜索范围与运行"}</h1>
+          <p>{workspaceMode === "batch" ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建可恢复的多配体队列。" : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
         </div>
         <div className="run-cockpit-header-actions">
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
-            {isDirty ? "开始时将保存并复核" : preflight?.ready ? "可开始对接" : preflight ? `${preflight.blockers.length} 个阻塞项` : "检查中"}
+            {isDirty ? "参数待保存" : preflight?.ready ? (workspaceMode === "batch" ? "可创建队列" : "可开始对接") : preflight ? `${preflight.blockers.length} 个阻塞项` : "检查中"}
           </StatusBadge>
           <ActionButton variant="text" onClick={onBack}>返回格式转换</ActionButton>
         </div>
       </header>
+
+      <nav className="run-workspace-mode" aria-label="配体运行模式">
+        <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>单配体对接</button>
+        <button type="button" className={workspaceMode === "batch" ? "active" : ""} aria-pressed={workspaceMode === "batch"} onClick={() => selectWorkspaceMode("batch")}>多配体对接</button>
+        <span>{workspaceMode === "batch" ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。" : "一个受体与一个配体的标准对接流程。"}</span>
+      </nav>
 
       <div className="run-cockpit-layout">
         <main className="run-cockpit-main">
@@ -765,10 +789,14 @@ export default function RunPreparePage({
                   projectDir={project.project_dir}
                   box={displayBox}
                   fitRequestKey={previewFitRequestKey}
-                  wheelBinding={isBusy ? null : boxWheelBinding}
+                  wheelBinding={isBusy || residueSelectionActive ? null : boxWheelBinding}
                   onWheelAdjust={adjustBoundBoxField}
                   boxLineThickness={boxLineThickness}
                   axisSpacing={axisSpacing}
+                  residueSelectionActive={residueSelectionActive}
+                  selectedResidues={flexibleResidues}
+                  onResidueSelect={handleResidueSelect}
+                  onResidueSelectionComplete={() => setResidueSelectionActive(false)}
                   fullscreenInspector={(
                     <RunBoxInspector
                       boxForm={boxForm}
@@ -820,7 +848,7 @@ export default function RunPreparePage({
             <div className="run-cockpit-section-heading">
               <div>
                 <span className="run-cockpit-kicker">运行设置</span>
-                <h2>输入、参数与输出</h2>
+                <h2>{workspaceMode === "batch" ? "共享输入、参数与输出" : "输入、参数与输出"}</h2>
               </div>
               <span className={`run-save-state ${isDirty ? "dirty" : "saved"}`}>
                 <FloppyDisk aria-hidden="true" size={15} />
@@ -838,9 +866,15 @@ export default function RunPreparePage({
                   <button type="button" onClick={() => onNavigate("import-pdbqt")}>查看</button>
                 </div>
                 <div className="run-ledger-row">
-                  <span>配体 PDBQT</span>
+                  <span>{workspaceMode === "batch" ? "当前预览配体" : "配体 PDBQT"}</span>
                   <strong>{project.ligand.file || "未导入"}</strong>
-                  <small>{ligand ? `${ligand.atom_count.toLocaleString()} 原子 · PDBQT 活性扭转 ${ligand.torsdof ?? "未记录"}` : "等待检查"}</small>
+                  <small>{workspaceMode === "batch"
+                    ? ligand
+                      ? `${ligand.atom_count.toLocaleString()} 原子 · 其余配体在下方队列中管理`
+                      : "用于 3D 预览；完整配体库在下方队列中管理"
+                    : ligand
+                      ? `${ligand.atom_count.toLocaleString()} 原子 · PDBQT 活性扭转 ${ligand.torsdof ?? "未记录"}`
+                      : "等待检查"}</small>
                   <button type="button" onClick={() => onNavigate("import-pdbqt")}>查看</button>
                 </div>
               </div>
@@ -872,6 +906,7 @@ export default function RunPreparePage({
                   })}
                 </div>
                 <p className="run-science-note">Vina 使用随机搜索与局部优化；界面不将其错误描述为遗传算法。不同评分函数的分值不能直接横向比较。</p>
+                {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到每个配体任务中；修改后需要重新创建队列。</p> : null}
                 <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
                   <div>
                     <FloppyDisk aria-hidden="true" size={18} weight="duotone" />
@@ -953,7 +988,7 @@ export default function RunPreparePage({
               </WarningCallout>
             ) : null}
 
-            {runtime || running || stage === "finished" || stage === "failed" || stage === "cancelled" ? (
+            {workspaceMode === "single" && (runtime || running || stage === "finished" || stage === "failed" || stage === "cancelled") ? (
               <section className={`run-monitor run-monitor-${stage}`} aria-live="polite">
                 <div className="run-monitor-heading">
                   <div>
@@ -978,7 +1013,7 @@ export default function RunPreparePage({
               </section>
             ) : null}
 
-            <div className="run-action-bar">
+            {workspaceMode === "single" ? <div className="run-action-bar">
               <div className="run-action-context">
                 <span className={`run-action-save-status ${isDirty ? "dirty" : "saved"}`}>
                   <FloppyDisk aria-hidden="true" size={15} />
@@ -1017,38 +1052,48 @@ export default function RunPreparePage({
                   </span>
                 </div>
               </div>
-            </div>
-            {message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{message}</p> : null}
+            </div> : null}
+            {workspaceMode === "single" && message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{message}</p> : null}
             {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
           </section>
 
-          <FlexibleReceptorPanel
+          {workspaceMode === "single" ? <FlexibleReceptorPanel
             project={project}
             disabled={isBusy || isDirty}
+            pickedResidue={pickedResidue.selector}
+            pickedResidueToken={pickedResidue.token}
+            selectionActive={residueSelectionActive}
+            onSelectionActiveChange={setResidueSelectionActive}
+            onResiduesChange={setFlexibleResidues}
             onProjectChange={(nextProject) => {
               commitProject(nextProject, true);
               void refreshPreflight(true);
             }}
-          />
+          /> : null}
 
           <BatchScreeningPanel
             projectDir={project.project_dir}
             receptorFile={project.receptor.file}
             box={project.box}
             vina={project.vina}
-            disabled={isBusy || isDirty || !preflight?.ready || project.docking_protocol?.mode === "flexible"}
+            disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible"}
             disabledReason={project.docking_protocol?.mode === "flexible"
               ? "批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
               : isBusy
               ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
               : isDirty
                 ? "请先保存当前 Box 与 Vina 参数，再创建可复现的筛选快照。"
-                : !preflight?.ready
-                  ? "请先处理运行前检查中的阻塞项。"
+                : !project.receptor.file
+                  ? "请先导入受体 PDBQT。"
+                : !formIsValid
+                    ? "请先修正 Box 与 Vina 参数。"
+                    : !preflight?.ready
+                      ? "请先处理右侧运行前检查中的阻塞项。"
                   : ""}
+            onBatchModeDetected={handleBatchModeDetected}
           />
 
-          <section className="run-cockpit-card run-history-card">
+          {workspaceMode === "single" ? <section className="run-cockpit-card run-history-card">
             <div className="run-cockpit-section-heading">
               <div>
                 <span className="run-cockpit-kicker">项目记录</span>
@@ -1077,14 +1122,14 @@ export default function RunPreparePage({
                 </table>
               </div>
             ) : <p className="run-history-empty">尚无运行记录。首次完整运行后，这里会保存状态、耗时和最佳评分。</p>}
-          </section>
+          </section> : null}
         </main>
 
         <aside className="run-preflight-rail" aria-label="运行前检查">
           <header>
             <div>
               <span>Preflight</span>
-              <h2>运行前检查</h2>
+              <h2>{workspaceMode === "batch" ? "多配体运行前检查" : "运行前检查"}</h2>
             </div>
             <button type="button" disabled={isRefreshing || isBusy} onClick={() => void (isDirty ? saveAndRefresh() : refreshPreflight())}>
               <ArrowRight className={isRefreshing ? "run-monitor-spinner" : ""} size={16} /> {isDirty ? "保存并检查" : "重新检查"}
@@ -1094,8 +1139,8 @@ export default function RunPreparePage({
           <section className={`run-readiness-summary ${preflight?.ready && !isDirty ? "ready" : "blocked"}`}>
             {preflight?.ready && !isDirty ? <CheckCircle size={25} weight="fill" /> : <WarningCircle size={25} weight="fill" />}
             <div>
-              <strong>{isDirty ? "屏幕参数尚未保存" : preflight?.ready ? "执行条件已满足" : preflight ? "仍有阻塞项" : "正在检查"}</strong>
-              <p>{isDirty ? "开始对接或点击保存检查时会先写入并重新校验。" : preflight?.ready ? "表示当前文件与环境可执行，不代表结构方案科学正确。" : preflight?.blockers?.[0] || "正在读取本机状态。"}</p>
+              <strong>{isDirty ? "屏幕参数尚未保存" : preflight?.ready ? (workspaceMode === "batch" ? "共享运行条件已满足" : "执行条件已满足") : preflight ? "仍有阻塞项" : "正在检查"}</strong>
+              <p>{isDirty ? "请先保存 Box 与 Vina 参数，再创建多配体队列。" : preflight?.ready ? (workspaceMode === "batch" ? "受体、Box、Vina 与输出环境可用；配体队列状态请看主工作区。" : "表示当前文件与环境可执行，不代表结构方案科学正确。") : preflight?.blockers?.[0] || "正在读取本机状态。"}</p>
             </div>
           </section>
 

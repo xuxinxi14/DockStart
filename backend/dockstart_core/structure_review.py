@@ -56,15 +56,84 @@ def _check(
 def _safe_project_file(project_root: Path, relative_path: str) -> Path | None:
     if not relative_path:
         return None
-    relative = Path(relative_path)
-    if relative.is_absolute():
-        return None
-    candidate = (project_root / relative).resolve()
+    supplied = Path(relative_path).expanduser()
+    candidate = supplied.resolve() if supplied.is_absolute() else (project_root / supplied).resolve()
     try:
         candidate.relative_to(project_root)
     except ValueError:
         return None
     return candidate if candidate.is_file() else None
+
+
+def _role_file_candidates(
+    project_root: Path,
+    *,
+    role: str,
+    suffixes: set[str],
+    explicit_file: str = "",
+    lineage_files: Iterable[str] = (),
+) -> list[tuple[Path, str]]:
+    """Resolve recorded representations first, then one unambiguous role file.
+
+    A directory scan is deliberately limited to the project root plus ``raw``
+    and ``prepared``.  Run snapshots are excluded so a stale run cannot become
+    the source of current structure facts.  An inferred candidate is accepted
+    only when it is the sole matching file for that role.
+    """
+
+    candidates: list[tuple[Path, str]] = []
+    seen: set[Path] = set()
+
+    def append(value: str, source: str) -> None:
+        path = _safe_project_file(project_root, value)
+        if path is None or path.suffix.lower() not in suffixes or path in seen:
+            return
+        seen.add(path)
+        candidates.append((path, source))
+
+    append(explicit_file, "项目记录")
+    for value in lineage_files:
+        append(value, "准备快照")
+
+    role_tokens = {role, "receptor" if role == "receptor" else "ligand"}
+    inferred: list[Path] = []
+    for directory in (project_root, project_root / "raw", project_root / "prepared"):
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if not path.is_file() or path.suffix.lower() not in suffixes or path.resolve() in seen:
+                continue
+            stem = path.stem.lower()
+            parent = path.parent.name.lower()
+            if any(token in stem for token in role_tokens) or parent == role:
+                inferred.append(path.resolve())
+    inferred = sorted(set(inferred))
+    if len(inferred) == 1:
+        candidates.append((inferred[0], "项目目录唯一候选"))
+    return candidates
+
+
+def _first_parsed(
+    candidates: Iterable[tuple[Path, str]],
+    parser: Any,
+) -> tuple[dict[str, Any], Path | None, str]:
+    """Return the first representation containing actual atom records."""
+
+    fallback_path: Path | None = None
+    fallback_source = ""
+    for path, source in candidates:
+        try:
+            facts = parser(path)
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if fallback_path is None:
+            fallback_path = path
+            fallback_source = source
+        if int(facts.get("atom_count") or 0) > 0:
+            return facts, path, source
+    # Keep the attempted representation visible, but do not let an empty or
+    # malformed file mask a valid alternate format for the same role.
+    return {}, fallback_path, fallback_source
 
 
 def _element_from_pdb_line(line: str) -> str:
@@ -926,36 +995,54 @@ def build_structure_review(
     """Build non-blocking, Chinese-friendly structure diagnostics."""
 
     project_root = Path(project_dir).expanduser().resolve()
-    receptor_prepared_path = _safe_project_file(project_root, receptor_file)
-    ligand_prepared_path = _safe_project_file(project_root, ligand_file)
-    receptor_raw_path = _safe_project_file(project_root, receptor_raw_file)
-    ligand_raw_path = _safe_project_file(project_root, ligand_raw_file)
+    receptor_provenance = _load_preparation_provenance(project_root, receptor_metadata_file)
+    ligand_provenance = _load_preparation_provenance(project_root, ligand_metadata_file)
 
-    receptor_raw_facts: dict[str, Any] = {}
-    if receptor_raw_path is not None:
-        try:
-            receptor_raw_facts = _parse_cif_receptor(receptor_raw_path) if receptor_raw_path.suffix.lower() in {".cif", ".mmcif"} else _parse_pdb_receptor(receptor_raw_path)
-        except OSError:
-            receptor_raw_facts = {}
-    receptor_pdbqt_facts: dict[str, Any] = {}
-    if receptor_prepared_path is not None:
-        try:
-            receptor_pdbqt_facts = _parse_receptor_pdbqt(receptor_prepared_path)
-        except OSError:
-            receptor_pdbqt_facts = {}
+    receptor_raw_candidates = _role_file_candidates(
+        project_root,
+        role="receptor",
+        suffixes={".pdb", ".cif", ".mmcif"},
+        explicit_file=receptor_raw_file,
+        lineage_files=[str(receptor_provenance.get("input_file") or "")],
+    )
+    receptor_prepared_candidates = _role_file_candidates(
+        project_root,
+        role="receptor",
+        suffixes={".pdbqt"},
+        explicit_file=receptor_file,
+        lineage_files=[str(receptor_provenance.get("output_file") or "")],
+    )
+    ligand_raw_candidates = _role_file_candidates(
+        project_root,
+        role="ligand",
+        suffixes={".sdf", ".mol"},
+        explicit_file=ligand_raw_file,
+        lineage_files=[str(ligand_provenance.get("input_file") or "")],
+    )
+    ligand_prepared_candidates = _role_file_candidates(
+        project_root,
+        role="ligand",
+        suffixes={".pdbqt"},
+        explicit_file=ligand_file,
+        lineage_files=[str(ligand_provenance.get("output_file") or "")],
+    )
 
-    ligand_raw_facts: dict[str, Any] = {}
-    if ligand_raw_path is not None and ligand_raw_path.suffix.lower() in {".sdf", ".mol"}:
-        try:
-            ligand_raw_facts = _parse_ligand_mol(ligand_raw_path)
-        except OSError:
-            ligand_raw_facts = {}
-    ligand_pdbqt_facts: dict[str, Any] = {}
-    if ligand_prepared_path is not None:
-        try:
-            ligand_pdbqt_facts = _parse_ligand_pdbqt(ligand_prepared_path)
-        except OSError:
-            ligand_pdbqt_facts = {}
+    receptor_raw_facts, receptor_raw_path, receptor_raw_resolution = _first_parsed(
+        receptor_raw_candidates,
+        lambda path: _parse_cif_receptor(path) if path.suffix.lower() in {".cif", ".mmcif"} else _parse_pdb_receptor(path),
+    )
+    receptor_pdbqt_facts, receptor_prepared_path, receptor_prepared_resolution = _first_parsed(
+        receptor_prepared_candidates,
+        _parse_receptor_pdbqt,
+    )
+    ligand_raw_facts, ligand_raw_path, ligand_raw_resolution = _first_parsed(
+        ligand_raw_candidates,
+        _parse_ligand_mol,
+    )
+    ligand_pdbqt_facts, ligand_prepared_path, ligand_prepared_resolution = _first_parsed(
+        ligand_prepared_candidates,
+        _parse_ligand_pdbqt,
+    )
 
     receptor_raw_evidence = str(receptor_raw_path.relative_to(project_root).as_posix()) if receptor_raw_path else ""
     receptor_prepared_evidence = str(receptor_prepared_path.relative_to(project_root).as_posix()) if receptor_prepared_path else ""
@@ -979,6 +1066,16 @@ def build_structure_review(
             "source_kind": "prepared" if receptor_prepared_path else ("raw" if receptor_raw_path else "missing"),
             "raw": receptor_raw_facts,
             "pdbqt": receptor_pdbqt_facts,
+            "representations": [
+                *(
+                    [{"file": receptor_raw_evidence, "format": receptor_raw_path.suffix.lower().lstrip("."), "source": receptor_raw_resolution}]
+                    if receptor_raw_path else []
+                ),
+                *(
+                    [{"file": receptor_prepared_evidence, "format": "pdbqt", "source": receptor_prepared_resolution}]
+                    if receptor_prepared_path else []
+                ),
+            ],
             # Keep the historical flattened view for report/API compatibility.
             **(receptor_pdbqt_facts or receptor_raw_facts),
         },
@@ -987,10 +1084,20 @@ def build_structure_review(
             "prepared_file": ligand_prepared_evidence,
             "raw": ligand_raw_facts,
             "pdbqt": ligand_pdbqt_facts,
+            "representations": [
+                *(
+                    [{"file": ligand_raw_evidence, "format": ligand_raw_path.suffix.lower().lstrip("."), "source": ligand_raw_resolution}]
+                    if ligand_raw_path else []
+                ),
+                *(
+                    [{"file": ligand_prepared_evidence, "format": "pdbqt", "source": ligand_prepared_resolution}]
+                    if ligand_prepared_path else []
+                ),
+            ],
         },
         "provenance": {
-            "receptor": _load_preparation_provenance(project_root, receptor_metadata_file),
-            "ligand": _load_preparation_provenance(project_root, ligand_metadata_file),
+            "receptor": receptor_provenance,
+            "ligand": ligand_provenance,
         },
         "checks": checks,
         "warning_count": sum(item["status"] == "warning" for item in checks),

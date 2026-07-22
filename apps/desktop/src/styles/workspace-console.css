@@ -616,6 +616,8 @@
   grid-template-columns: minmax(0, 1fr) minmax(260px, 300px);
   gap: 14px;
   align-items: stretch;
+  width: 100%;
+  min-width: 0;
 }
 
 .result-analysis-main {
@@ -793,7 +795,24 @@
 .result-score-ledger {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 14px;
+}
+
+.result-run-files,
+.result-run-files .advanced-details,
+.result-run-files .advanced-details-content,
+.result-run-files .advanced-details pre {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.result-run-files .advanced-details pre {
+  box-sizing: border-box;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .result-score-actions {
@@ -914,6 +933,45 @@
   font-size: 10px;
 }
 
+.result-run-file-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 7px;
+}
+
+.result-run-file-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-right: 1px solid var(--ds-on-dark-border-subtle);
+  border-bottom: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.result-run-file-grid > div:nth-child(2n) {
+  border-right: 0;
+}
+
+.result-run-file-grid dt,
+.result-run-file-grid dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.result-run-file-grid dt {
+  color: var(--ds-text-on-dark-muted);
+  font-size: 11px;
+}
+
+.result-run-file-grid dd {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
 .preparation-structure-facts {
   display: grid;
   gap: 0;
@@ -927,10 +985,11 @@
 
 .preparation-structure-facts > div {
   display: grid;
-  grid-template-columns: minmax(82px, 0.8fr) minmax(0, 1.2fr);
-  gap: 8px;
+  grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 7px 9px;
   border-bottom: 1px solid var(--ds-on-dark-border-subtle);
 }
 
@@ -953,28 +1012,82 @@
 .preparation-structure-facts dd {
   overflow-wrap: anywhere;
   color: var(--ds-text-on-dark-secondary);
-  text-align: right;
+  text-align: left;
 }
 
 .preparation-fact-value {
-  display: grid;
-  justify-items: end;
-  gap: 3px;
+  display: block;
 }
 
-.preparation-fact-source {
-  display: inline-flex;
-  width: fit-content;
-  justify-self: end;
-  border: 1px solid var(--ds-brand-border-on-dark);
-  border-radius: 999px;
+.preparation-fact-text {
+  min-width: 0;
+}
+
+.preparation-representation-row {
   background: var(--ds-brand-hover-on-dark);
-  color: var(--ds-brand-on-dark);
-  padding: 1px 6px;
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.35;
+}
+
+.multi-ligand-file-picker {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.multi-ligand-file-picker > span,
+.multi-ligand-file-picker > code {
+  overflow: hidden;
+  color: var(--ds-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.run-workspace-mode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 14px;
+  width: min(100% - 36px, 1160px);
+  border-bottom: 1px solid var(--ds-on-dark-border-default);
+  padding: 0 0 10px;
+}
+
+.run-workspace-mode button {
+  min-height: 36px;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ds-text-on-dark-secondary);
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.run-workspace-mode button.active {
+  border-color: var(--ds-brand-border-on-dark);
+  background: var(--ds-brand-hover-on-dark);
+  color: var(--ds-text-on-dark);
+}
+
+.run-workspace-mode > span {
+  margin-left: 8px;
+  color: var(--ds-text-on-dark-muted);
+  font-size: 11px;
+}
+
+.run-cockpit-page.is-single-mode .batch-screening-panel {
+  display: none;
+}
+
+.run-batch-shared-note {
+  margin: 0;
+  border-left: 3px solid var(--ds-brand-on-dark);
+  background: var(--ds-brand-hover-on-dark);
+  padding: 8px 10px;
+  color: var(--ds-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .result-reference-rmsd {

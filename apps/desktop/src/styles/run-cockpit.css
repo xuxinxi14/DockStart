@@ -1484,6 +1484,21 @@
   left: calc((100vw - 322px) / 2);
 }
 
+.run-residue-selection-controls {
+  min-width: 248px;
+  justify-content: space-between;
+}
+
+.run-residue-selection-controls > span {
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.run-residue-selection-controls > span strong {
+  color: var(--ds-text-on-dark);
+}
+
 .fullscreen-toggles {
   display: flex;
   align-items: center;

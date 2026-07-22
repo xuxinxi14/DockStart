@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any, Callable
 
 from adapters import vina_adapter
 from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
+from dockstart_core.preparation import _ligand_preparation_script_text, get_preparation_tool_status
 from dockstart_core.screening_models import (
     SCREENING_SCHEMA_VERSION,
     ScreeningItem,
@@ -252,13 +254,38 @@ def _looks_like_pdbqt(path: Path) -> bool:
         return any(line.startswith(("ATOM  ", "HETATM")) for line in handle)
 
 
+def _prepare_raw_screening_ligand(root: Path, source: Path, python_path: str) -> Path:
+    """Prepare one SDF/MOL into an isolated staging candidate."""
+
+    staging_root = root / STAGING_RELATIVE_PATH
+    staging_root.mkdir(parents=True, exist_ok=True)
+    script = staging_root / "prepare_ligand_rdkit_meeko.py"
+    if not script.is_file():
+        atomic_write_text(script, _ligand_preparation_script_text())
+    source_digest = _sha256(source)
+    candidate = staging_root / f".{source_digest}.candidate.pdbqt"
+    completed = subprocess.run(
+        [python_path, "-I", "-B", str(script), str(source), str(candidate)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if completed.returncode != 0 or not candidate.is_file() or not _looks_like_pdbqt(candidate):
+        candidate.unlink(missing_ok=True)
+        detail = "\n".join(value for value in (completed.stderr.strip(), completed.stdout.strip()) if value)
+        raise ValueError(f"{source.name} 自动准备 PDBQT 失败：{detail or '未生成有效 PDBQT'}")
+    return candidate
+
+
 def stage_screening_inputs(
     project_dir: str,
     files: list[str],
     *,
     resource_limits: dict[str, Any] | ScreeningResourceLimits | None = None,
 ) -> dict[str, Any]:
-    """Atomically import external PDBQT files into content-addressed staging."""
+    """Import PDBQT or prepare SDF/MOL into content-addressed staging."""
 
     try:
         root = _project_root(project_dir)
@@ -268,12 +295,33 @@ def stage_screening_inputs(
             else ScreeningResourceLimits.from_dict(resource_limits)
         )
         if not files:
-            raise ValueError("至少需要一个待导入的 PDBQT 文件。")
+            raise ValueError("至少需要一个待导入的配体文件。")
 
-        sources: list[tuple[Path, str, int]] = []
+        raw_values = [value for value in files if Path(value).suffix.lower() in {".sdf", ".mol"}]
+        python_path = ""
+        if raw_values:
+            tool_status = get_preparation_tool_status(str(root))
+            tools = tool_status.get("tools") if isinstance(tool_status.get("tools"), dict) else {}
+            python_tool = tools.get("python") if isinstance(tools.get("python"), dict) else {}
+            rdkit_tool = tools.get("rdkit") if isinstance(tools.get("rdkit"), dict) else {}
+            meeko_tool = tools.get("meeko") if isinstance(tools.get("meeko"), dict) else {}
+            if not tool_status.get("ok") or any(tool.get("status") != "ok" for tool in (python_tool, rdkit_tool, meeko_tool)):
+                raise ValueError("SDF/MOL 自动准备需要可用的内置 Python、RDKit 与 Meeko。")
+            python_path = str(python_tool.get("path") or "")
+
+        sources: list[tuple[Path, Path, str, int]] = []
         unique_bytes: dict[str, int] = {}
         for value in files:
-            source = _pdbqt_file(value, label="筛选输入")
+            original = Path(value).expanduser().resolve(strict=True)
+            if not original.is_file() or original.stat().st_size <= 0:
+                raise ValueError(f"配体文件不可用：{original}")
+            suffix = original.suffix.lower()
+            if suffix == ".pdbqt":
+                source = _pdbqt_file(original, label="筛选输入")
+            elif suffix in {".sdf", ".mol"}:
+                source = _prepare_raw_screening_ligand(root, original, python_path)
+            else:
+                raise ValueError(f"暂不支持的批量配体格式：{suffix or '无扩展名'}")
             size_bytes = source.stat().st_size
             if size_bytes > limits.max_staged_file_bytes:
                 raise ValueError(
@@ -284,7 +332,7 @@ def stage_screening_inputs(
                 raise ValueError(f"文件 {source.name} 未包含 PDBQT 原子记录。")
             digest = _sha256(source)
             unique_bytes.setdefault(digest, size_bytes)
-            sources.append((source, digest, size_bytes))
+            sources.append((original, source, digest, size_bytes))
         if sum(unique_bytes.values()) > limits.max_total_input_bytes:
             raise ValueError("待导入文件总大小超过批量筛选资源上限。")
 
@@ -301,7 +349,7 @@ def stage_screening_inputs(
             index = loaded
 
         staged: list[dict[str, Any]] = []
-        for source, digest, size_bytes in sources:
+        for original, source, digest, size_bytes in sources:
             relative = STAGING_RELATIVE_PATH / f"{digest}.pdbqt"
             destination = root / relative
             if destination.exists() and (
@@ -318,13 +366,18 @@ def stage_screening_inputs(
 
             record = ScreeningStagedInput(
                 file=relative.as_posix(),
-                original_name=source.name,
+                original_name=original.name,
                 sha256=digest,
                 size_bytes=size_bytes,
             ).to_dict()
+            record["source_file"] = str(original)
+            record["source_format"] = original.suffix.lower().lstrip(".")
+            record["prepared_during_import"] = original.suffix.lower() != ".pdbqt"
             record["staged_at"] = _now_iso()
             index["files"][digest] = record
             staged.append(record)
+            if source.name.startswith(".") and source.name.endswith(".candidate.pdbqt"):
+                source.unlink(missing_ok=True)
 
         index["updated_at"] = _now_iso()
         atomic_write_json(index_path, index)
@@ -332,13 +385,13 @@ def stage_screening_inputs(
             "ok": True,
             "project_dir": str(root),
             "staged": staged,
-            "message": f"已安全导入 {len(staged)} 个 PDBQT 文件。",
+            "message": f"已准备并安全导入 {len(staged)} 个配体 PDBQT 快照。",
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - workflow boundary returns structured errors.
         return _error(
             "SCREENING_STAGE_ERROR",
-            "导入批量筛选 PDBQT 失败。",
+            "导入批量筛选配体失败。",
             str(exc),
             "请检查文件格式、大小和项目目录写入权限。",
         )
@@ -505,13 +558,22 @@ def create_screening(
 def get_screening_status(project_dir: str) -> dict[str, Any]:
     try:
         root = _project_root(project_dir)
-        state = _read_state(root)
+        index_path = root / STAGING_INDEX_RELATIVE_PATH
+        staged: list[dict[str, Any]] = []
+        if index_path.is_file():
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+            files = index.get("files") if isinstance(index, dict) else None
+            if isinstance(files, dict):
+                staged = [item for item in files.values() if isinstance(item, dict)]
+        state = _read_state(root) if _state_path(root).is_file() else None
         return {
             "ok": True,
             "project_dir": str(root),
-            "state_file": STATE_RELATIVE_PATH.as_posix(),
+            "state_file": STATE_RELATIVE_PATH.as_posix() if state else "",
             "screening": state,
-            "message": "批量筛选状态已读取。",
+            "staged": staged,
+            "mode": "batch" if len(staged) > 1 or state else "single",
+            "message": "批量筛选状态已读取。" if state else f"已读取 {len(staged)} 个待筛选配体快照。",
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001

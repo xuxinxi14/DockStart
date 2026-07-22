@@ -7,6 +7,7 @@ import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRai
 import PathInput from "../components/PathInput";
 import type { PageId, StartMode } from "../navigation/pages";
 import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
+import { writeDockingWorkspaceMode } from "../utils/dockingMode";
 
 type ProjectCreatePageProps = {
   openExistingRequestKey?: number;
@@ -164,9 +165,9 @@ export default function ProjectCreatePage({
   const [baseDir, setBaseDir] = useState("");
   const [existingProjectDir, setExistingProjectDir] = useState("");
   const [receptorPdbqtPath, setReceptorPdbqtPath] = useState("");
-  const [ligandPdbqtPath, setLigandPdbqtPath] = useState("");
+  const [ligandPdbqtPaths, setLigandPdbqtPaths] = useState<string[]>([]);
   const [receptorRawPath, setReceptorRawPath] = useState("");
-  const [ligandRawPath, setLigandRawPath] = useState("");
+  const [ligandRawPaths, setLigandRawPaths] = useState<string[]>([]);
   const [assistedSource, setAssistedSource] = useState<AssistedSource>("online");
   const [showExistingProject, setShowExistingProject] = useState(false);
   const [message, setMessage] = useState("");
@@ -244,9 +245,17 @@ export default function ProjectCreatePage({
         );
         project = await runProjectCommand(
           "import_ligand_pdbqt",
-          { projectDir: project.project_dir, sourcePath: ligandPdbqtPath },
+          { projectDir: project.project_dir, sourcePath: ligandPdbqtPaths[0] ?? "" },
           "配体 PDBQT 导入失败。",
         );
+        if (ligandPdbqtPaths.length > 1) {
+          const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+            projectDir: project.project_dir,
+            files: ligandPdbqtPaths,
+          })) as { ok?: boolean; error?: { message?: string } };
+          if (!staged.ok) throw new Error(staged.error?.message || "多配体导入失败。");
+          writeDockingWorkspaceMode(project.project_dir, "batch");
+        }
         onCreated(project, "import-pdbqt");
         return;
       }
@@ -261,11 +270,25 @@ export default function ProjectCreatePage({
           { projectDir: project.project_dir, sourcePath: receptorRawPath },
           "受体结构文件导入失败。",
         );
-        project = await runProjectCommand(
-          "import_ligand_raw_file",
-          { projectDir: project.project_dir, sourcePath: ligandRawPath },
-          "配体结构文件导入失败。",
-        );
+        if (ligandRawPaths.length > 1) {
+          const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+            projectDir: project.project_dir,
+            files: ligandRawPaths,
+          })) as { ok?: boolean; staged?: Array<{ file?: string }>; error?: { message?: string } };
+          if (!staged.ok || !staged.staged?.length) throw new Error(staged.error?.message || "多个配体自动准备失败。");
+          project = await runProjectCommand(
+            "import_ligand_pdbqt",
+            { projectDir: project.project_dir, sourcePath: `${project.project_dir}\\${String(staged.staged[0].file || "").replace(/\//g, "\\")}` },
+            "首个配体预览文件导入失败。",
+          );
+          writeDockingWorkspaceMode(project.project_dir, "batch");
+        } else {
+          project = await runProjectCommand(
+            "import_ligand_raw_file",
+            { projectDir: project.project_dir, sourcePath: ligandRawPaths[0] ?? "" },
+            "配体结构文件导入失败。",
+          );
+        }
         onCreated(project, "preparation");
         return;
       }
@@ -285,8 +308,8 @@ export default function ProjectCreatePage({
   }, [
     baseDir,
     assistedSource,
-    ligandPdbqtPath,
-    ligandRawPath,
+    ligandPdbqtPaths,
+    ligandRawPaths,
     onCreated,
     projectName,
     receptorPdbqtPath,
@@ -369,6 +392,20 @@ export default function ProjectCreatePage({
     }
   }, [baseDir]);
 
+  const pickLigandFiles = useCallback(async (kind: "pdbqt" | "raw") => {
+    const selected = await open({
+      directory: false,
+      multiple: true,
+      title: kind === "pdbqt" ? "选择一个或多个配体 PDBQT" : "选择一个或多个配体 SDF / MOL",
+      filters: [kind === "pdbqt"
+        ? { name: "AutoDock PDBQT", extensions: ["pdbqt"] }
+        : { name: "Ligand structure", extensions: ["sdf", "mol"] }],
+    });
+    const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
+    if (kind === "pdbqt") setLigandPdbqtPaths(files);
+    else setLigandRawPaths(files);
+  }, []);
+
   const createDemo = useCallback(
     async (demo: DemoProjectSummary) => {
       setIsBusy(true);
@@ -400,12 +437,12 @@ export default function ProjectCreatePage({
   );
 
   const canCreateBasic = Boolean(
-    projectName.trim() && baseDir.trim() && receptorPdbqtPath.trim() && ligandPdbqtPath.trim(),
+    projectName.trim() && baseDir.trim() && receptorPdbqtPath.trim() && ligandPdbqtPaths.length,
   );
   const canCreateAssisted = Boolean(
     projectName.trim()
       && baseDir.trim()
-      && (assistedSource === "online" || (receptorRawPath.trim() && ligandRawPath.trim())),
+      && (assistedSource === "online" || (receptorRawPath.trim() && ligandRawPaths.length)),
   );
   const canCreate = startMode === "basic" ? canCreateBasic : canCreateAssisted;
 
@@ -511,16 +548,11 @@ export default function ProjectCreatePage({
               </div>
 
               <div className="form-field" data-layout="form-row">
-                <label htmlFor="ligand-pdbqt">配体 PDBQT 文件</label>
-                <PathInput
-                  id="ligand-pdbqt"
-                  value={ligandPdbqtPath}
-                  onChange={setLigandPdbqtPath}
-                  mode="file"
-                  title="选择 ligand.pdbqt"
-                  placeholder="选择 ligand.pdbqt"
-                  filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
-                />
+                <label>配体 PDBQT 文件</label>
+                <div className="multi-ligand-file-picker">
+                  <ActionButton onClick={() => void pickLigandFiles("pdbqt")}>选择一个或多个 PDBQT</ActionButton>
+                  <span>{ligandPdbqtPaths.length ? `已选择 ${ligandPdbqtPaths.length} 个；${ligandPdbqtPaths.length > 1 ? "将进入多配体模式" : "将进入单配体模式"}` : "尚未选择"}</span>
+                </div>
               </div>
             </>
           ) : (
@@ -567,16 +599,11 @@ export default function ProjectCreatePage({
                   </div>
 
                   <div className="form-field" data-layout="form-row">
-                    <label htmlFor="ligand-raw">配体原始结构：SDF / MOL</label>
-                    <PathInput
-                      id="ligand-raw"
-                      value={ligandRawPath}
-                      onChange={setLigandRawPath}
-                      mode="file"
-                      title="选择配体 SDF / MOL"
-                      placeholder="选择配体 SDF / MOL"
-                      filters={[{ name: "Ligand structure", extensions: ["sdf", "mol"] }]}
-                    />
+                    <label>配体原始结构：SDF / MOL</label>
+                    <div className="multi-ligand-file-picker">
+                      <ActionButton onClick={() => void pickLigandFiles("raw")}>选择一个或多个 SDF / MOL</ActionButton>
+                      <span>{ligandRawPaths.length ? `已选择 ${ligandRawPaths.length} 个；${ligandRawPaths.length > 1 ? "将自动准备并进入多配体模式" : "将进入单配体准备"}` : "尚未选择"}</span>
+                    </div>
                   </div>
                 </>
               ) : (

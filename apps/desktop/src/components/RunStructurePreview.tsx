@@ -10,6 +10,7 @@ import {
   CornersOut,
   CornersIn,
   Crosshair,
+  CheckCircle,
 } from "@phosphor-icons/react";
 import type { BoxVisualizationPayload, DockStartProject, ViewerStructureResult } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
@@ -36,6 +37,10 @@ type RunStructurePreviewProps = {
   boxLineThickness?: RunBoxLineThickness;
   axisSpacing?: RunAxisSpacing;
   fitRequestKey?: number;
+  residueSelectionActive?: boolean;
+  selectedResidues?: string[];
+  onResidueSelect?: (selector: string) => void;
+  onResidueSelectionComplete?: () => void;
 };
 
 type PreviewStructures = {
@@ -133,6 +138,10 @@ export default function RunStructurePreview({
   boxLineThickness = "standard",
   axisSpacing = "standard",
   fitRequestKey = 0,
+  residueSelectionActive = false,
+  selectedResidues = [],
+  onResidueSelect,
+  onResidueSelectionComplete,
 }: RunStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
@@ -155,7 +164,22 @@ export default function RunStructurePreview({
   const [showLigand, setShowLigand] = useState(true);
   const [showBox, setShowBox] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [manualFullscreen, setManualFullscreen] = useState(false);
+  const isFullscreen = manualFullscreen || residueSelectionActive;
+  const showFullscreenInspector = Boolean(fullscreenInspector) && !residueSelectionActive;
+
+  const finishResidueSelection = useCallback(() => {
+    setManualFullscreen(false);
+    onResidueSelectionComplete?.();
+  }, [onResidueSelectionComplete]);
+
+  const closeFullscreen = useCallback(() => {
+    if (residueSelectionActive) {
+      finishResidueSelection();
+      return;
+    }
+    setManualFullscreen(false);
+  }, [finishResidueSelection, residueSelectionActive]);
 
   const ensureViewer = useCallback(async () => {
     if (viewerRef.current) return viewerRef.current;
@@ -195,6 +219,44 @@ export default function RunStructurePreview({
     }
     if (showReceptor) receptorModelRef.current?.model.show();
     else receptorModelRef.current?.model.hide();
+    if (receptorModelRef.current) {
+      const receptorModel = receptorModelRef.current.model as unknown as {
+        setStyle: (selection: Record<string, unknown>, style: Record<string, unknown>, add?: boolean) => void;
+        setClickable?: (
+          selection: Record<string, unknown>,
+          clickable: boolean,
+          callback?: (atom: { chain?: string; resi?: number | string; icode?: string; resn?: string }) => void,
+        ) => void;
+      };
+      receptorModel.setStyle({}, {
+        cartoon: { color: "spectrum", opacity: 0.74 },
+        stick: { radius: 0.1, colorscheme: "Jmol" },
+      });
+      for (const selector of selectedResidues) {
+        const [chain, residueNumber] = selector.split(":");
+        if (!chain || !residueNumber) continue;
+        receptorModel.setStyle(
+          { chain, resi: Number.isFinite(Number(residueNumber)) ? Number(residueNumber) : residueNumber },
+          { stick: { radius: 0.3, color: "#f4c95d" }, sphere: { scale: 0.22, color: "#f4c95d" } },
+          true,
+        );
+      }
+      receptorModel.setClickable?.({}, residueSelectionActive, residueSelectionActive ? (atom) => {
+        const chain = String(atom.chain || "").trim();
+        const residue = String(atom.resi ?? "").trim();
+        if (!chain || !residue) {
+          setMessage("该原子缺少链 ID 或残基编号，不能作为柔性残基选择。");
+          return;
+        }
+        const selector = `${chain}:${residue}${atom.icode ? `:${String(atom.icode).trim()}` : ""}`;
+        if (!selectedResidues.includes(selector) && selectedResidues.length >= 8) {
+          setMessage("最多选择 8 个柔性残基。");
+          return;
+        }
+        onResidueSelect?.(selector);
+        setMessage(`已点选 ${selector}${atom.resn ? ` ${atom.resn}` : ""}；可继续点选或进入柔性准备。`);
+      } : undefined);
+    }
 
     const ligandFingerprint = structures.ligand?.ok
       ? structureFingerprint(structures.ligand.content, structures.ligand.format, `${structures.ligand.relative_path}:${refreshKey}`)
@@ -225,7 +287,7 @@ export default function RunStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [axisSpacing, boxLineThickness, ensureViewer, refreshKey, showAxes, showBox, showLigand, showReceptor, structures]);
+  }, [axisSpacing, boxLineThickness, ensureViewer, onResidueSelect, refreshKey, residueSelectionActive, selectedResidues, showAxes, showBox, showLigand, showReceptor, structures]);
 
   const refreshBoxOverlay = useCallback(async () => {
     const sceneGeneration = sceneGenerationRef.current;
@@ -363,6 +425,10 @@ export default function RunStructurePreview({
 
   // 全屏变化时的自适应调整
   useEffect(() => {
+    if (residueSelectionActive) setShowReceptor(true);
+  }, [residueSelectionActive]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       if (viewerRef.current) {
         viewerRef.current.resize();
@@ -376,7 +442,7 @@ export default function RunStructurePreview({
     if (!isFullscreen) return;
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsFullscreen(false);
+      if (event.key === "Escape") closeFullscreen();
     };
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", handleKeyDown);
@@ -384,7 +450,7 @@ export default function RunStructurePreview({
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isFullscreen]);
+  }, [closeFullscreen, isFullscreen]);
 
   useEffect(() => () => {
     const viewer = viewerRef.current as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null;
@@ -411,16 +477,20 @@ export default function RunStructurePreview({
   };
 
   const toggleFullscreen = () => {
-    setIsFullscreen((prev) => !prev);
+    if (residueSelectionActive) {
+      finishResidueSelection();
+      return;
+    }
+    setManualFullscreen((current) => !current);
   };
 
   return (
     <section
-      className={`run-preview ${isFullscreen ? "is-fullscreen" : ""} ${fullscreenInspector ? "has-fullscreen-inspector" : ""}`.trim()}
+      className={`run-preview ${isFullscreen ? "is-fullscreen" : ""} ${showFullscreenInspector ? "has-fullscreen-inspector" : ""} ${residueSelectionActive ? "is-residue-selection" : ""}`.trim()}
       aria-label="运行前结构预览"
     >
       <div
-        className="run-preview-canvas"
+        className={`run-preview-canvas ${residueSelectionActive ? "is-residue-picking" : ""}`.trim()}
         data-wheel-bound={wheelBinding || undefined}
         ref={containerRef}
         tabIndex={0}
@@ -457,58 +527,67 @@ export default function RunStructurePreview({
         <button
           type="button"
           onClick={toggleFullscreen}
-          title={isFullscreen ? "关闭全屏" : "全屏查看"}
-          aria-label={isFullscreen ? "关闭全屏" : "全屏查看"}
+          title={residueSelectionActive ? "选择完成" : isFullscreen ? "关闭全屏" : "全屏查看"}
+          aria-label={residueSelectionActive ? "完成柔性残基点选" : isFullscreen ? "关闭全屏" : "全屏查看"}
         >
-          {isFullscreen ? <CornersIn size={18} /> : <CornersOut size={18} />}
+          {residueSelectionActive ? <CheckCircle size={18} /> : isFullscreen ? <CornersIn size={18} /> : <CornersOut size={18} />}
         </button>
       </div>
 
       {isFullscreen ? (
         <>
-          {fullscreenInspector}
-          <div className="run-preview-fullscreen-controls">
-            <div className="fullscreen-toggles">
-              <button
-                type="button"
-                className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
-                onClick={() => setShowReceptor(!showReceptor)}
-                title={showReceptor ? "隐藏受体" : "显示受体"}
-                aria-pressed={showReceptor}
-              >
-                <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-                受体
-              </button>
-              <button
-                type="button"
-                className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
-                onClick={() => setShowLigand(!showLigand)}
-                title={showLigand ? "隐藏配体" : "显示配体"}
-                aria-pressed={showLigand}
-              >
-                <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
-                配体
-              </button>
-              <button
-                type="button"
-                className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
-                onClick={() => setShowBox(!showBox)}
-                title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
-                aria-pressed={showBox}
-              >
-                <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
-                搜索范围
+          {showFullscreenInspector ? fullscreenInspector : null}
+          {residueSelectionActive ? (
+            <div className="run-preview-fullscreen-controls run-residue-selection-controls" aria-live="polite">
+              <span>已选择 <strong>{selectedResidues.length}</strong>/8</span>
+              <button type="button" onClick={finishResidueSelection} className="primary-button compact-btn fullscreen-close-btn">
+                <CheckCircle size={15} /> 选择完成
               </button>
             </div>
-            <div className="fullscreen-actions">
-              <button type="button" onClick={() => renderScene(true)} className="secondary-button compact-btn">
-                适应视图
-              </button>
-              <button type="button" onClick={toggleFullscreen} className="primary-button compact-btn fullscreen-close-btn">
-                <CornersIn size={14} /> 关闭全屏
-              </button>
+          ) : (
+            <div className="run-preview-fullscreen-controls">
+              <div className="fullscreen-toggles">
+                <button
+                  type="button"
+                  className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
+                  onClick={() => setShowReceptor(!showReceptor)}
+                  title={showReceptor ? "隐藏受体" : "显示受体"}
+                  aria-pressed={showReceptor}
+                >
+                  <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
+                  受体
+                </button>
+                <button
+                  type="button"
+                  className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
+                  onClick={() => setShowLigand(!showLigand)}
+                  title={showLigand ? "隐藏配体" : "显示配体"}
+                  aria-pressed={showLigand}
+                >
+                  <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
+                  配体
+                </button>
+                <button
+                  type="button"
+                  className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
+                  onClick={() => setShowBox(!showBox)}
+                  title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
+                  aria-pressed={showBox}
+                >
+                  <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
+                  搜索范围
+                </button>
+              </div>
+              <div className="fullscreen-actions">
+                <button type="button" onClick={() => renderScene(true)} className="secondary-button compact-btn">
+                  适应视图
+                </button>
+                <button type="button" onClick={toggleFullscreen} className="primary-button compact-btn fullscreen-close-btn">
+                  <CornersIn size={14} /> 关闭全屏
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </>
       ) : (
         <div className="run-preview-legend" aria-live="polite">

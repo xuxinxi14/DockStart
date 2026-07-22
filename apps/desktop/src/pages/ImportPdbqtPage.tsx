@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import BasicModeGuide from "../components/BasicModeGuide";
@@ -9,6 +10,7 @@ import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, PreparationStatusResponse, ProjectFileRef, ProjectResponse } from "../types";
+import { writeDockingWorkspaceMode } from "../utils/dockingMode";
 
 type ImportPdbqtPageProps = {
   project: DockStartProject;
@@ -42,7 +44,7 @@ export default function ImportPdbqtPage({
 }: ImportPdbqtPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
   const [receptorPath, setReceptorPath] = useState("");
-  const [ligandPath, setLigandPath] = useState("");
+  const [ligandPaths, setLigandPaths] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -100,12 +102,24 @@ export default function ImportPdbqtPage({
     setMessage("");
     setRawError("");
     try {
+      const ligandPath = ligandPaths[0] ?? "";
       const rawPayload = await invoke<string>(role === "receptor" ? "import_receptor_pdbqt" : "import_ligand_pdbqt", {
         projectDir: project.project_dir,
         sourcePath: role === "receptor" ? receptorPath : ligandPath,
       });
       const response = parseProjectResponse(rawPayload);
       applyProjectResponse(response, role === "receptor" ? "受体 PDBQT 已导入。" : "配体 PDBQT 已导入。");
+      if (response.ok && role === "ligand" && ligandPaths.length > 1) {
+        const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+          projectDir: project.project_dir,
+          files: ligandPaths,
+        })) as { ok?: boolean; staged?: unknown[]; error?: { message?: string; raw_error?: string } };
+        if (!staged.ok) throw new Error(staged.error?.raw_error || staged.error?.message || "多配体快照导入失败。");
+        writeDockingWorkspaceMode(project.project_dir, "batch");
+        setMessage(`已导入 ${staged.staged?.length ?? ligandPaths.length} 个配体，并自动切换为多配体模式；首个配体用于搜索范围预览。`);
+      } else if (response.ok && role === "ligand") {
+        writeDockingWorkspaceMode(project.project_dir, "single");
+      }
       if (response.ok) await refreshPreparedStatus();
     } catch (error) {
       setMessage(role === "receptor" ? "无法导入受体 PDBQT。" : "无法导入配体 PDBQT。");
@@ -115,13 +129,23 @@ export default function ImportPdbqtPage({
     }
   };
 
+  const chooseLigands = async () => {
+    const selected = await open({
+      directory: false,
+      multiple: true,
+      title: "选择一个或多个配体 PDBQT",
+      filters: [{ name: "AutoDock PDBQT", extensions: ["pdbqt"] }],
+    });
+    const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
+    if (files.length) setLigandPaths(files);
+  };
+
   const readyForBox = readyFiles.receptor && readyFiles.ligand;
 
   const renderImportCard = (role: "receptor" | "ligand") => {
     const isReceptor = role === "receptor";
     const fileRef = isReceptor ? project.receptor : project.ligand;
-    const sourcePath = isReceptor ? receptorPath : ligandPath;
-    const setSourcePath = isReceptor ? setReceptorPath : setLigandPath;
+    const sourcePath = isReceptor ? receptorPath : ligandPaths[0] ?? "";
     const isReady = isReceptor ? readyFiles.receptor : readyFiles.ligand;
     return (
       <article className="task-card" data-layout="task-card">
@@ -130,17 +154,25 @@ export default function ImportPdbqtPage({
           <StatusBadge tone={isReady ? "ok" : "warning"}>{isReady ? "已完成" : "缺失"}</StatusBadge>
         </div>
         <p className="muted-path">{isReady ? fileText(fileRef) : "未导入可用 PDBQT"}</p>
-        <PathInput
-          value={sourcePath}
-          onChange={setSourcePath}
-          mode="file"
-          title={isReceptor ? "选择受体 PDBQT 文件" : "选择配体 PDBQT 文件"}
-          placeholder={isReceptor ? "选择 receptor.pdbqt" : "选择 ligand.pdbqt"}
-          ariaLabel={isReceptor ? "受体 PDBQT 源文件路径" : "配体 PDBQT 源文件路径"}
-          filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
-        />
+        {isReceptor ? (
+          <PathInput
+            value={sourcePath}
+            onChange={setReceptorPath}
+            mode="file"
+            title="选择受体 PDBQT 文件"
+            placeholder="选择 receptor.pdbqt"
+            ariaLabel="受体 PDBQT 源文件路径"
+            filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
+          />
+        ) : (
+          <div className="multi-ligand-file-picker">
+            <ActionButton onClick={() => void chooseLigands()}>选择一个或多个 PDBQT</ActionButton>
+            <span>{ligandPaths.length ? `已选择 ${ligandPaths.length} 个文件` : "选择 1 个进入单配体模式，选择多个自动进入多配体模式"}</span>
+            {ligandPaths.length ? <code title={ligandPaths.join("\n")}>{ligandPaths.map((path) => path.split(/[\\/]/).pop()).join("、")}</code> : null}
+          </div>
+        )}
         <ActionButton variant="primary" disabled={isBusy || !sourcePath.trim()} onClick={() => void importFile(role)}>
-          {isReceptor ? "导入受体" : "导入配体"}
+          {isReceptor ? "导入受体" : ligandPaths.length > 1 ? `导入 ${ligandPaths.length} 个配体` : "导入配体"}
         </ActionButton>
       </article>
     );

@@ -668,6 +668,7 @@ summary:focus-visible {
 /* Page canvas */
 
 .app-content {
+  box-sizing: border-box;
   width: 100%;
   max-width: none;
   min-height: 0;

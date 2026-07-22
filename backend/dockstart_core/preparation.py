@@ -1337,6 +1337,29 @@ def get_preparation_status(
     return payload
 
 
+def get_structure_review_status(project_dir: str) -> dict[str, Any]:
+    """Read structure facts without probing Python/RDKit/Meeko capabilities."""
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "structure_review": build_structure_review(
+            project.project_dir,
+            receptor_file=project.receptor.file,
+            ligand_file=project.ligand.file,
+            receptor_raw_file=project.receptor.raw_file,
+            ligand_raw_file=project.ligand.raw_file,
+            receptor_metadata_file=project.preparation.receptor.metadata_file,
+            ligand_metadata_file=project.preparation.ligand.metadata_file,
+        ),
+        "error": None,
+    }
+
+
 def validate_preparation_prerequisites(project_dir: str, target: str) -> dict[str, Any]:
     normalized_target = _normalize_target(target)
     if normalized_target is None:
@@ -2281,6 +2304,13 @@ def main() -> None:
             _print_json(_error("PREPARATION_STATUS_ARGS", "读取准备状态需要 project_dir 参数。"))
             return
         _print_json(get_preparation_status(sys.argv[2]))
+        return
+
+    if command == "structure-review":
+        if len(sys.argv) < 3:
+            _print_json(_error("STRUCTURE_REVIEW_ARGS", "读取结构信息需要 project_dir 参数。"))
+            return
+        _print_json(get_structure_review_status(sys.argv[2]))
         return
 
     if command == "validate":

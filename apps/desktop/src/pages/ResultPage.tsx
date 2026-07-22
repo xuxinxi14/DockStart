@@ -134,6 +134,7 @@ export default function ResultPage({
   const [analyzedAt, setAnalyzedAt] = useState("");
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const [detailTab, setDetailTab] = useState<"scores" | "run-files">("scores");
   const [isBusy, setIsBusy] = useState(false);
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
@@ -162,6 +163,7 @@ export default function ResultPage({
     setAnalyzedAt("");
     setMessage("");
     setRawError("");
+    setDetailTab("scores");
   }, [runId]);
 
   const applyResponse = useCallback(
@@ -444,12 +446,12 @@ export default function ResultPage({
           </section>
 
           <nav className="result-tabs" aria-label="结果详情">
-            <button className="active" type="button">评分</button>
-            <button type="button" onClick={() => void reloadRunMetadata()}>运行记录</button>
-            <button type="button" onClick={() => onOpenReportPage(project, runId)}>实验记录</button>
+            <button className={detailTab === "scores" ? "active" : ""} type="button" aria-pressed={detailTab === "scores"} onClick={() => setDetailTab("scores")}>评分</button>
+            <button className={detailTab === "run-files" ? "active" : ""} type="button" aria-pressed={detailTab === "run-files"} onClick={() => setDetailTab("run-files")}>运行日志与文件</button>
+            <button type="button" onClick={() => onOpenReportPage(project, runId)}>分析报告</button>
           </nav>
 
-          <section className="result-score-ledger">
+          {detailTab === "scores" ? <section className="result-score-ledger">
             <div className="result-score-actions">
               <div><strong>scores.csv</strong><span>{displayedScoresFile || "尚未生成"}</span></div>
               <div>
@@ -484,7 +486,28 @@ export default function ResultPage({
               </dl>
             </AdvancedDetails>
             {message || rawError ? <CommandResultPanel title="结果状态" message={message} rawError={rawError} /> : null}
-          </section>
+          </section> : (
+            <section className="result-score-ledger result-run-files" aria-label="运行日志与文件">
+              <div className="result-score-actions">
+                <div><strong>{runId} · 可复现运行记录</strong><span>这里展示已保存记录；“刷新结果”才会重新读取磁盘。</span></div>
+                <ActionButton disabled={isBusy} onClick={() => void reloadRunMetadata()}>刷新运行文件</ActionButton>
+              </div>
+              <dl className="result-run-file-grid">
+                <div><dt>运行状态</dt><dd>{runStatusText[status] ?? status}</dd></div>
+                <div><dt>Vina 版本</dt><dd>{vinaDisplay}</dd></div>
+                <div><dt>开始时间</dt><dd>{formatTimestamp(startedAt)}</dd></div>
+                <div><dt>结束时间</dt><dd>{formatTimestamp(metadataFinishedAt)}</dd></div>
+                <div><dt>配置文件</dt><dd><code>{metadataString(metadata, "config_file") || "未记录"}</code></dd></div>
+                <div><dt>输出构象</dt><dd><code>{metadataString(metadata, "output_file") || "未记录"}</code></dd></div>
+                <div><dt>运行日志</dt><dd><code>{logPath}</code></dd></div>
+                <div><dt>评分表</dt><dd><code>{displayedScoresFile || "未生成"}</code></dd></div>
+              </dl>
+              <AdvancedDetails summary="完整 metadata 快照">
+                <pre>{metadata ? JSON.stringify(metadata, null, 2) : "尚未读取 metadata.json。"}</pre>
+              </AdvancedDetails>
+              {message || rawError ? <CommandResultPanel title="运行文件状态" message={message} rawError={rawError} /> : null}
+            </section>
+          )}
         </main>
 
         <aside className="result-analysis-rail">

@@ -265,6 +265,80 @@ class StructureReviewTests(unittest.TestCase):
             self.assertIn("ligand_structure_review", keys)
             self.assertTrue(all(not item["blocking"] for item in response["checks"] if item["key"].endswith("structure_review")))
 
+    def test_discovers_unique_related_representations_when_project_record_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "raw").mkdir()
+            (root / "prepared").mkdir()
+            (root / "raw" / "sample_receptor.pdb").write_text(
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 1, "C"),
+                encoding="utf-8",
+            )
+            prepared = root / "prepared" / "receptor.pdbqt"
+            prepared.write_text(
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 1, "C").rstrip("\n") + "  0.000 C\n",
+                encoding="utf-8",
+            )
+
+            review = build_structure_review(
+                root,
+                receptor_file=str(prepared),
+                ligand_file="",
+                receptor_raw_file="raw/missing.pdb",
+            )
+
+            self.assertEqual(review["receptor"]["pdbqt"]["atom_count"], 1)
+            self.assertTrue(review["receptor"]["pdbqt"]["has_3d_coordinates"])
+            self.assertEqual(review["receptor"]["raw"]["atom_count"], 1)
+            self.assertEqual(
+                {item["source"] for item in review["receptor"]["representations"]},
+                {"项目记录", "项目目录唯一候选"},
+            )
+
+    def test_does_not_guess_between_ambiguous_raw_receptor_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "raw").mkdir()
+            for name in ("alpha_receptor.pdb", "beta_receptor.pdb"):
+                (root / "raw" / name).write_text(
+                    _pdb_line("ATOM", 1, "CA", "ALA", "A", 1, "C"),
+                    encoding="utf-8",
+                )
+
+            review = build_structure_review(root, receptor_file="", ligand_file="")
+
+            self.assertEqual(review["receptor"]["raw"], {})
+            self.assertEqual(review["receptor"]["representations"], [])
+
+    def test_valid_raw_representation_is_used_when_recorded_pdbqt_has_no_atoms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "raw").mkdir()
+            (root / "prepared").mkdir()
+            (root / "raw" / "receptor.pdb").write_text(
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 1, "C"),
+                encoding="utf-8",
+            )
+            (root / "prepared" / "receptor.pdbqt").write_text(
+                "REMARK malformed export without atom records\n",
+                encoding="utf-8",
+            )
+
+            review = build_structure_review(
+                root,
+                receptor_file="prepared/receptor.pdbqt",
+                receptor_raw_file="raw/receptor.pdb",
+                ligand_file="",
+            )
+
+            self.assertEqual(review["receptor"]["pdbqt"], {})
+            self.assertEqual(review["receptor"]["raw"]["atom_count"], 1)
+            self.assertEqual(review["receptor"]["atom_count"], 1)
+            self.assertEqual(
+                {item["format"] for item in review["receptor"]["representations"]},
+                {"pdb", "pdbqt"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

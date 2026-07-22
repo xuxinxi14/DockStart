@@ -36,6 +36,7 @@ import {
 } from "../utils/backgroundTasks";
 import { PageOperationScope, type PageOperationToken } from "../utils/pageOperationScope";
 import { runRawToPreparedWorkflow } from "../utils/rawToPreparedWorkflow";
+import { writeDockingWorkspaceMode } from "../utils/dockingMode";
 
 const CandidateStructurePreview = lazy(() => import("../components/CandidateStructurePreview"));
 
@@ -1021,13 +1022,14 @@ export default function StructureFetchPage({
     try {
       const selected = await open({
         directory: false,
-        multiple: false,
-        title: isReceptor ? "选择受体 PDB / CIF" : "选择配体 SDF / MOL",
+        multiple: !isReceptor,
+        title: isReceptor ? "选择受体 PDB / CIF" : "选择一个或多个配体 SDF / MOL",
         filters: [isReceptor
           ? { name: "受体原始结构", extensions: ["pdb", "cif"] }
           : { name: "配体原始结构", extensions: ["sdf", "mol"] }],
       });
-      const sourcePath = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
+      const selectedPaths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+      const sourcePath = selectedPaths[0] ?? "";
       if (!sourcePath) return;
 
       operationScope.commit(token, () => {
@@ -1035,6 +1037,26 @@ export default function StructureFetchPage({
         setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
         setMessage(`正在导入${label}原始结构…`);
       });
+      if (!isReceptor && selectedPaths.length > 1) {
+        const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+          projectDir: project.project_dir,
+          files: selectedPaths,
+        })) as { ok?: boolean; staged?: Array<{ file?: string }>; error?: { message?: string; raw_error?: string } };
+        if (!staged.ok || !staged.staged?.length) {
+          throw new Error(staged.error?.raw_error || staged.error?.message || "多个配体自动准备失败。");
+        }
+        const firstSnapshot = `${project.project_dir}\\${String(staged.staged[0].file || "").replace(/\//g, "\\")}`;
+        const imported = parseProjectResponse(await invoke<string>("import_ligand_pdbqt", {
+          projectDir: project.project_dir,
+          sourcePath: firstSnapshot,
+        }));
+        if (!imported.ok) throw new Error(imported.error?.raw_error || imported.error?.message || "无法载入首个配体预览。");
+        applyProjectResponse(imported, "多个配体已准备。", true, token);
+        writeDockingWorkspaceMode(project.project_dir, "batch");
+        operationScope.commit(token, () => setMessage(`已准备 ${staged.staged?.length} 个配体并自动进入多配体模式；首个配体用于搜索范围预览。`));
+        await refreshRawStatus(token, false);
+        return;
+      }
       await runRawToPreparedWorkflow({
         acquireRaw: async () => {
           const rawPayload = await invoke<string>(
@@ -1053,6 +1075,7 @@ export default function StructureFetchPage({
         prepareRaw: (overwritePrepared) => prepareRaw(target, token, overwritePrepared),
       });
       if (operationScope.isCurrent(token)) {
+        if (!isReceptor) writeDockingWorkspaceMode(project.project_dir, "single");
         await refreshRawStatus(token, false);
       }
     } catch (error) {

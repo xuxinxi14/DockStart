@@ -134,7 +134,7 @@ function formalChargeLabel(value: number | null): string {
   return value > 0 ? `+${value}` : String(value);
 }
 
-const RECEPTOR_RAW_REQUIRED = "当前文件未包含足够化学信息（需要原始 PDB/mmCIF）";
+const RECEPTOR_RAW_REQUIRED = "需原始 PDB/mmCIF；当前文件化学信息不足";
 
 function factArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
@@ -156,9 +156,12 @@ function coordinateBoundsLabel(value: unknown): string {
 
 function FactValue({ children, source }: { children: ReactNode; source: string }) {
   return (
-    <dd className="preparation-fact-value">
-      <span>{children}</span>
-      <small className="preparation-fact-source">{source}</small>
+    <dd
+      aria-label={`${String(children)}；数据来源：${source}`}
+      className="preparation-fact-value"
+      title={`数据来源：${source}`}
+    >
+      <span className="preparation-fact-text">{children}</span>
     </dd>
   );
 }
@@ -306,10 +309,18 @@ export default function PreparationPage({
   const reloadStatus = useCallback(async () => {
     setIsBusy(true);
     try {
-      const rawPayload = await invoke<string>("get_preparation_status", {
-        projectDir: project.project_dir,
-      });
+      const [rawPayload, rawReviewPayload] = await Promise.all([
+        invoke<string>("get_preparation_status", { projectDir: project.project_dir }),
+        invoke<string>("get_structure_review", { projectDir: project.project_dir }),
+      ]);
       const parsed = parsePreparationResponse(rawPayload);
+      const reviewResponse = JSON.parse(rawReviewPayload) as {
+        ok?: boolean;
+        structure_review?: StructureReviewPayload;
+      };
+      if (reviewResponse.ok && reviewResponse.structure_review) {
+        parsed.structure_review = reviewResponse.structure_review;
+      }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
       setMessage("无法读取准备状态。");
@@ -494,6 +505,7 @@ export default function PreparationPage({
     const receptorAltlocs = factArray(receptorRawFacts.alternate_locations);
     const receptorPartialCharge = factNumber(receptorPdbqtFacts, "partial_charge_sum");
     const receptorActiveTorsions = factNumber(receptorPdbqtFacts, "active_torsions");
+    const receptorRepresentations = factArray(receptorFacts.representations);
 
     return (
       <article className="preparation-target-row">
@@ -561,6 +573,14 @@ export default function PreparationPage({
                   <div><dt>PDBQT 活动扭转</dt><FactValue source="最终 PDBQT">{torsdof ?? "无法从 TORSDOF 读取"}</FactValue></div>
                 </>
               )}
+              {isReceptor && receptorRepresentations.length > 1 ? (
+                <div className="preparation-representation-row">
+                  <dt>关联格式</dt>
+                  <FactValue source="准备快照">
+                    {receptorRepresentations.map((item) => String(factRecord(item).format || "").toUpperCase()).filter(Boolean).join(" + ")}
+                  </FactValue>
+                </div>
+              ) : null}
             </dl>
           ) : null}
         </div>

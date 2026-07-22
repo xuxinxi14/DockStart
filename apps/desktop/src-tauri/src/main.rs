@@ -574,6 +574,19 @@ async fn get_preparation_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+async fn get_structure_review(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.preparation",
+        vec!["structure-review".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取结构文件信息。", &error),
+    }
+}
+
+#[tauri::command]
 async fn validate_preparation_prerequisites(project_dir: String, target: String) -> String {
     match run_backend_module_async(
         "dockstart_core.preparation",
@@ -3800,6 +3813,7 @@ fn main() {
             clear_receptor_raw_record,
             clear_ligand_raw_record,
             get_preparation_status,
+            get_structure_review,
             validate_preparation_prerequisites,
             get_preparation_tool_status,
             get_flexible_receptor_status,

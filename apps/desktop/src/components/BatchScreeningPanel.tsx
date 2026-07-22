@@ -36,7 +36,7 @@ type ScreeningState = {
 type ScreeningResponse = {
   ok: boolean;
   screening?: ScreeningState;
-  staged?: Array<{ file: string; source_file?: string }>;
+  staged?: Array<{ file: string; original_name?: string; source_file?: string }>;
   message?: string;
   error?: { code?: string; message?: string; raw_error?: string; suggestion?: string };
 };
@@ -48,6 +48,7 @@ type BatchScreeningPanelProps = {
   vina: DockStartProject["vina"];
   disabled?: boolean;
   disabledReason?: string;
+  onBatchModeDetected?: () => void;
 };
 
 function parseResponse(raw: string): ScreeningResponse {
@@ -83,9 +84,11 @@ export default function BatchScreeningPanel({
   vina,
   disabled = false,
   disabledReason = "",
+  onBatchModeDetected,
 }: BatchScreeningPanelProps) {
   const [state, setState] = useState<ScreeningState | null>(null);
   const [stagedFiles, setStagedFiles] = useState<string[]>([]);
+  const [stagedLabels, setStagedLabels] = useState<Record<string, string>>({});
   const [maxRetries, setMaxRetries] = useState(1);
   const [topN, setTopN] = useState(20);
   const [cpuPerTask, setCpuPerTask] = useState(Math.max(1, vina.cpu || 1));
@@ -96,20 +99,30 @@ export default function BatchScreeningPanel({
   const refresh = useCallback(async (quiet = false) => {
     try {
       const parsed = parseResponse(await invoke<string>("get_screening_status", { projectDir }));
+      const staged = (parsed.staged ?? []).map((item) => item.file).filter(Boolean);
+      if (staged.length) setStagedFiles(staged);
+      if (parsed.staged?.length) {
+        setStagedLabels(Object.fromEntries(parsed.staged.map((item) => [
+          item.file,
+          item.original_name || item.source_file?.split(/[\\/]/).pop() || item.file.split(/[\\/]/).pop() || item.file,
+        ])));
+      }
+      if (staged.length > 1 || parsed.screening) onBatchModeDetected?.();
       if (parsed.ok && parsed.screening) {
         setState(parsed.screening);
         if (!quiet) setMessage(parsed.message || "批量筛选状态已刷新。");
-      } else if (parsed.error?.code !== "SCREENING_READ_ERROR") {
+      } else if (!parsed.ok) {
         setRawError(parsed.error?.raw_error || parsed.error?.message || "无法读取批量筛选状态。");
       }
     } catch (error) {
       if (!quiet) setRawError(error instanceof Error ? error.message : String(error));
     }
-  }, [projectDir]);
+  }, [onBatchModeDetected, projectDir]);
 
   useEffect(() => {
     setState(null);
     setStagedFiles([]);
+    setStagedLabels({});
     setMessage("");
     setRawError("");
     void refresh(true);
@@ -137,7 +150,8 @@ export default function BatchScreeningPanel({
     const selected = await open({
       multiple: true,
       directory: false,
-      filters: [{ name: "AutoDock PDBQT", extensions: ["pdbqt"] }],
+      title: "选择一个或多个配体",
+      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol"] }],
     });
     const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
     if (!files.length) return;
@@ -148,7 +162,12 @@ export default function BatchScreeningPanel({
       if (!parsed.ok) throw new Error(parsed.error?.message || "配体导入失败。");
       const staged = (parsed.staged ?? []).map((item) => item.file).filter(Boolean);
       setStagedFiles(staged);
-      setMessage(`已导入 ${staged.length} 个配体快照；尚未开始对接。`);
+      setStagedLabels(Object.fromEntries((parsed.staged ?? []).map((item) => [
+        item.file,
+        item.original_name || item.source_file?.split(/[\\/]/).pop() || item.file.split(/[\\/]/).pop() || item.file,
+      ])));
+      if (staged.length > 1) onBatchModeDetected?.();
+      setMessage(`已导入 ${staged.length} 个配体快照${files.some((file) => !file.toLowerCase().endsWith(".pdbqt")) ? "，原始结构已自动准备为 PDBQT" : ""}；尚未开始对接。`);
     } catch (error) {
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -156,8 +175,8 @@ export default function BatchScreeningPanel({
     }
   };
 
-  const create = async () => {
-    if (!receptorFile || !stagedFiles.length) return;
+  const create = async (): Promise<boolean> => {
+    if (!receptorFile || !stagedFiles.length) return false;
     setBusy(true);
     setRawError("");
     try {
@@ -173,11 +192,17 @@ export default function BatchScreeningPanel({
       if (!parsed.ok || !parsed.screening) throw new Error(parsed.error?.message || "批量筛选任务创建失败。");
       setState(parsed.screening);
       setMessage(parsed.message || "批量筛选任务已创建。");
+      return true;
     } catch (error) {
       setRawError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  const createAndRun = async () => {
+    if (await create()) await run();
   };
 
   const run = async () => {
@@ -219,73 +244,79 @@ export default function BatchScreeningPanel({
   };
 
   return (
-    <section className="batch-screening-panel" aria-labelledby="batch-screening-title">
-      <header>
+    <section className="run-cockpit-card batch-screening-panel" aria-labelledby="batch-screening-title">
+      <div className="run-cockpit-section-heading">
         <div>
-          <span>LEVEL 2 · SERIAL SCREENING</span>
-          <h3 id="batch-screening-title">单受体 · 多配体批量筛选</h3>
-          <p>每次只运行一个 Vina 子任务；CPU 表示单任务线程数，不是并发数量。</p>
+          <span className="run-cockpit-kicker">多配体任务</span>
+          <h2 id="batch-screening-title">配体队列与批量运行</h2>
         </div>
         <StatusBadge tone={tone(state?.status || "idle")}>{state ? statusLabels[state.status] || state.status : "尚未创建"}</StatusBadge>
-      </header>
+      </div>
 
-      {state ? (
-        <>
-          <div className="batch-screening-metrics">
-            <div><span>总数</span><strong>{counts.total}</strong></div>
-            <div><span>成功</span><strong>{counts.succeeded}</strong></div>
-            <div><span>待处理</span><strong>{counts.pending}</strong></div>
-            <div><span>失败</span><strong>{counts.failed}</strong></div>
-          </div>
-          <div className="batch-screening-actions">
-            {state.status === "ready" ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void run()}><Play size={16} weight="fill" />开始串行筛选</ActionButton> : null}
-            {state.status === "running" || state.status === "cancel_requested" ? <ActionButton variant="secondary" disabled={state.status === "cancel_requested"} onClick={() => void invokeStateCommand("request_screening_cancel")}><Stop size={16} />{state.status === "cancel_requested" ? "等待当前配体结束" : "安全取消"}</ActionButton> : null}
-            {["canceled", "interrupted"].includes(state.status) ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void invokeStateCommand("resume_screening")}><Play size={16} />恢复队列</ActionButton> : null}
-            {terminal(state.status) ? <ActionButton variant="secondary" disabled={busy || disabled} onClick={() => void invokeStateCommand("archive_screening")}><TrayArrowDown size={16} />归档本次筛选</ActionButton> : null}
-            <ActionButton variant="text" disabled={busy} onClick={() => void refresh()}>{busy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}刷新状态</ActionButton>
-          </div>
-          {state.outputs?.summary_csv ? (
-            <div className="batch-screening-output">
-              <CheckCircle aria-hidden="true" size={18} weight="fill" />
-              <div><strong>结果汇总已写入项目</strong><code>{state.outputs.summary_csv}</code><code>{state.outputs.top_n_csv}</code></div>
-            </div>
-          ) : null}
-          {rankedItems.length ? (
-            <div className="batch-screening-results" aria-label="批量筛选最佳结果">
-              <div><span>排名</span><span>配体</span><span>最佳评分</span></div>
-              {rankedItems.map((item, index) => (
-                <div key={item.item_id}>
-                  <strong>{index + 1}</strong>
-                  <span title={item.source_file || item.item_id}>{item.source_file || item.item_id}</span>
-                  <code>{item.best_affinity_kcal_mol?.toFixed(3)} kcal/mol</code>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {state.outputs?.sdf && !state.outputs.sdf.generated ? <p className="batch-screening-boundary">未生成 SDF：{state.outputs.sdf.reason}</p> : null}
-        </>
-      ) : (
-        <>
-          <div className="batch-screening-create-grid">
-            <div>
-              <span>配体 PDBQT</span>
-              <strong>{stagedFiles.length ? `${stagedFiles.length} 个项目内快照` : "尚未导入"}</strong>
-              <small>外部文件会原子复制到项目 screening/staging，不覆盖单配体输入。</small>
-            </div>
-            <label><span>单任务 CPU</span><input type="number" min={1} max={64} value={cpuPerTask} disabled={disabled || busy} onChange={(event) => setCpuPerTask(Math.max(1, Number(event.target.value) || 1))} /></label>
-            <label><span>失败重试</span><input type="number" min={0} max={10} value={maxRetries} disabled={disabled || busy} onChange={(event) => setMaxRetries(Math.max(0, Number(event.target.value) || 0))} /></label>
-            <label><span>汇总 Top N</span><input type="number" min={1} max={10000} value={topN} disabled={disabled || busy} onChange={(event) => setTopN(Math.max(1, Number(event.target.value) || 1))} /></label>
-          </div>
-          <div className="batch-screening-actions">
-            <ActionButton variant="secondary" disabled={disabled || busy} onClick={() => void chooseLigands()}><FolderOpen size={16} />选择多个 PDBQT</ActionButton>
-            <ActionButton variant="primary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void create()}>创建可恢复队列</ActionButton>
-          </div>
-        </>
-      )}
+      <div className="batch-screening-content">
+        <p className="batch-screening-intro">全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。</p>
 
-      {disabled && disabledReason ? <p className="batch-screening-boundary">{disabledReason}</p> : null}
-      {message ? <p className="batch-screening-message" role="status">{message}</p> : null}
-      {rawError ? <AdvancedDetails summary="查看批量筛选诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+        {state ? (
+          <>
+            <div className="batch-screening-metrics">
+              <div><span>总数</span><strong>{counts.total}</strong></div>
+              <div><span>成功</span><strong>{counts.succeeded}</strong></div>
+              <div><span>待处理</span><strong>{counts.pending}</strong></div>
+              <div><span>失败</span><strong>{counts.failed}</strong></div>
+            </div>
+            <div className="batch-screening-actions">
+              {state.status === "ready" ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void run()}><Play size={16} weight="fill" />开始多配体对接</ActionButton> : null}
+              {state.status === "running" || state.status === "cancel_requested" ? <ActionButton variant="secondary" disabled={state.status === "cancel_requested"} onClick={() => void invokeStateCommand("request_screening_cancel")}><Stop size={16} />{state.status === "cancel_requested" ? "等待当前配体结束" : "安全取消"}</ActionButton> : null}
+              {["canceled", "interrupted"].includes(state.status) ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void invokeStateCommand("resume_screening")}><Play size={16} />恢复队列</ActionButton> : null}
+              {terminal(state.status) ? <ActionButton variant="secondary" disabled={busy || disabled} onClick={() => void invokeStateCommand("archive_screening")}><TrayArrowDown size={16} />归档本次筛选</ActionButton> : null}
+              <ActionButton variant="text" disabled={busy} onClick={() => void refresh()}>{busy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}刷新状态</ActionButton>
+            </div>
+            {state.outputs?.summary_csv ? (
+              <div className="batch-screening-output">
+                <CheckCircle aria-hidden="true" size={18} weight="fill" />
+                <div><strong>结果汇总已写入项目</strong><code>{state.outputs.summary_csv}</code><code>{state.outputs.top_n_csv}</code></div>
+              </div>
+            ) : null}
+            {rankedItems.length ? (
+              <div className="batch-screening-results" aria-label="批量筛选最佳结果">
+                <div><span>排名</span><span>配体</span><span>最佳评分</span></div>
+                {rankedItems.map((item, index) => (
+                  <div key={item.item_id}>
+                    <strong>{index + 1}</strong>
+                    <span title={item.source_file || item.item_id}>{stagedLabels[item.source_file || ""] || item.source_file?.split(/[\\/]/).pop() || item.item_id}</span>
+                    <code>{item.best_affinity_kcal_mol?.toFixed(3)} kcal/mol</code>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {state.outputs?.sdf && !state.outputs.sdf.generated ? <p className="batch-screening-boundary">未生成 SDF：{state.outputs.sdf.reason}</p> : null}
+          </>
+        ) : (
+          <>
+            <div className="batch-screening-library">
+              <div>
+                <span>配体库</span>
+                <strong>{stagedFiles.length ? `已导入 ${stagedFiles.length} 个配体` : "尚未导入配体"}</strong>
+                <small>{stagedFiles.length ? "队列会使用上方已经保存的受体、Box 与 Vina 参数。" : "可从项目创建、PDBQT 导入或原始结构导入页面一次选择多个配体。"}</small>
+              </div>
+              <ActionButton variant="secondary" disabled={disabled || busy} onClick={() => void chooseLigands()}><FolderOpen size={16} />{stagedFiles.length ? "重新选择配体" : "选择多个配体"}</ActionButton>
+            </div>
+            <div className="batch-screening-create-grid">
+              <label><span>单任务 CPU</span><input type="number" min={1} max={64} value={cpuPerTask} disabled={disabled || busy} onChange={(event) => setCpuPerTask(Math.max(1, Number(event.target.value) || 1))} /><small>每次只运行一个配体</small></label>
+              <label><span>失败重试</span><input type="number" min={0} max={10} value={maxRetries} disabled={disabled || busy} onChange={(event) => setMaxRetries(Math.max(0, Number(event.target.value) || 0))} /><small>只重试失败项</small></label>
+              <label><span>汇总 Top N</span><input type="number" min={1} max={10000} value={topN} disabled={disabled || busy} onChange={(event) => setTopN(Math.max(1, Number(event.target.value) || 1))} /><small>用于结果排行</small></label>
+            </div>
+            <div className="batch-screening-actions">
+              <ActionButton variant="secondary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void create()}>仅创建队列</ActionButton>
+              <ActionButton variant="primary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void createAndRun()}><Play size={16} weight="fill" />创建并开始对接</ActionButton>
+            </div>
+          </>
+        )}
+
+        {disabled && disabledReason ? <p className="batch-screening-boundary">{disabledReason}</p> : null}
+        {message ? <p className="batch-screening-message" role="status">{message}</p> : null}
+        {rawError ? <AdvancedDetails summary="查看批量筛选诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+      </div>
     </section>
   );
 }
