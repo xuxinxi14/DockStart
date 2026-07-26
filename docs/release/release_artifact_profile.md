@@ -1,6 +1,6 @@
 # Release Artifact Capability Profile
 
-DockStart v0.10.2 保留两个隔离的 Windows x86_64 发布 profile。二者都包含桌面端、
+DockStart v0.12.0 保留两个隔离的 Windows x86_64 发布 profile。二者都包含桌面端、
 AutoDock Vina 1.2.7、DockStart 后端和小型示例，但 Python 工具链边界不同。
 安装包文件名必须包含 `Basic` 或 `Assisted`；两个 profile 使用同一应用身份，不能并行安装。
 
@@ -8,7 +8,7 @@ AutoDock Vina 1.2.7、DockStart 后端和小型示例，但 Python 工具链边�
 
 ```json
 {
-  "app_version": "0.10.2",
+  "app_version": "0.12.0",
   "release_profile": "basic_stable",
   "includes_bundled_vina": true,
   "includes_bundled_python": true,
@@ -27,7 +27,7 @@ Basic Stable 面向已有 `prepared/receptor.pdbqt` 与 `prepared/ligand.pdbqt` 
 
 ```json
 {
-  "app_version": "0.10.2",
+  "app_version": "0.12.0",
   "release_profile": "assisted_stable",
   "includes_bundled_vina": true,
   "includes_bundled_python": true,
@@ -63,6 +63,7 @@ Assisted 产物只有在以下三道门禁均为 `passed` 且
 
 ## 两个 profile 都不包含
 
+- AutoGrid4；AutoDock4 maps 协议只调用用户自行安装的外部 GPL 工具；
 - Open Babel、MGLTools、PLIP 或 ProLIF；
 - pocket prediction、分子动力学、批量虚拟筛选或 AI 药效预测；
 - 对 AutoDock Vina 算法或 scoring function 的修改；

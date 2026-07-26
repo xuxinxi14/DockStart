@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.11.2-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.12.0-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,7 +31,7 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码版本为 **v0.11.2**。v0.11.2 是本轮 Windows 发布候选；在四个安装包完成构建和安装态验收前，最近一次完整验收基线仍以发布清单记录为准。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
+> 当前源码版本为 **v0.12.0**。本版新增独立 AutoDock4 maps 工作流。AutoGrid4 是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
 
 ## 为什么使用 DockStart
 
@@ -53,6 +53,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 | 内置 RDKit / Meeko | 否 | 是，RDKit 2026.3.3 / Meeko 0.7.1 |
 | PDB/SDF/MOL → PDBQT | 不提供 | 可离线尝试准备 |
 | PDBQT 对接完整流程 | 支持 | 支持 |
+| AutoDock4 maps 工作流 | 支持，需外部 AutoGrid4 | 支持，需外部 AutoGrid4 |
 | 典型安装包体积 | 较小 | 较大 |
 
 如果不确定：
@@ -85,6 +86,8 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 4. **配置运行**：设置搜索彻底程度、构象数量、能量范围、CPU 和随机种子。
 5. **开始对接**：运行前检查会确认项目文件、PDBQT、Box、Vina 参数、工具和输出目录。
 6. **查看结果**：比较 pose、affinity 与 RMSD，查看输出文件并导出 Markdown 报告。
+
+高级用户可在对接工作台切换到独立的 **AutoDock4（maps）** 协议，生成或导入 affinity maps 后运行。该协议的 scores 与报告独立保存，不能与 Vina/Vinardo 分值直接比较。AutoGrid4 需要用户自行安装并在设置页配置。
 
 Box 的“定位到受体”只使用受体原子坐标范围的几何中心，不预测结合口袋，也不会自动判断 Box 是否适合研究目标。
 

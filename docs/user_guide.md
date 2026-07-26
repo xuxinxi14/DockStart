@@ -594,4 +594,20 @@ V0.5.9 进行了一轮真实前端可用性验收和小修：
 - Meeko 是否可导入；
 - 下一步建议是配置 Vina、配置 Python 工具链，还是创建项目。
 
-工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。v0.10.2 Assisted 已随附 RDKit/Meeko fallback；DockStart 运行时不会联网安装包，也不会自动修改系统 PATH。
+工具链页提供“复制当前 Python 路径”按钮，并解释 bundled、configured、PATH/current_environment 的含义。v0.12.0 Assisted 已随附 RDKit/Meeko fallback；DockStart 运行时不会联网安装包，也不会自动修改系统 PATH。
+
+## V0.12.0 AutoDock4（maps）工作流
+
+该功能面向已经理解 PDBQT、Box 和 AutoDock4 原子类型的用户，不替代默认 Vina 流程。
+
+1. 自行安装 AutoGrid4 4.2.6，在“设置 → 工具路径”配置 `autogrid4.exe`。
+2. 创建项目并准备受体、配体 PDBQT，在对接工作台设置并保存 Box。
+3. 在“评分协议”选择 `AutoDock4（maps）`。
+4. 检查 spacing、X/Y/Z 偶数点数、受体/配体原子类型；需要自定义参数库时选择参数文件。
+5. 点击“生成并校验 maps”，或导入 `.maps.fld`。导入目录必须同时包含对应 GPF、受体来源文件及全部 map 文件。
+6. maps 状态显示就绪后开始对接。DockStart 会把 maps 复制到 run 内，并在执行前复查路径和 SHA256。
+7. AD4 项目汇总位于 `results/ad4_scores.csv`，报告位于 `reports/ad4_docking_report.md`。
+
+受体或 Box 改变、map 文件被修改、当前配体出现未覆盖的原子类型时，旧 maps 会失效并阻止运行。
+v0.12.0 只支持非金属刚性受体和单配体；Zn 体系、其他金属、柔性受体 AD4 与批量 AD4 不在当前范围。
+AutoDock4、Vina 与 Vinardo 分值不可直接比较。

@@ -5,6 +5,7 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import BasicModeGuide from "../components/BasicModeGuide";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import PathInput from "../components/PathInput";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -48,6 +49,10 @@ export default function ImportPdbqtPage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [busyOperation, setBusyOperation] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
   const [readyFiles, setReadyFiles] = useState({ receptor: false, ligand: false });
 
   useEffect(() => {
@@ -83,6 +88,10 @@ export default function ImportPdbqtPage({
 
   const reloadProject = useCallback(async () => {
     setIsBusy(true);
+    setBusyOperation({
+      title: "正在刷新项目",
+      message: "正在核对受体、配体与项目记录。",
+    });
     try {
       const rawPayload = await invoke<string>("load_project", {
         projectDir: project.project_dir,
@@ -93,12 +102,19 @@ export default function ImportPdbqtPage({
       setMessage("无法读取项目。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      setBusyOperation(null);
       setIsBusy(false);
     }
   }, [project.project_dir, refreshPreparedStatus]);
 
   const importFile = async (role: "receptor" | "ligand") => {
     setIsBusy(true);
+    setBusyOperation({
+      title: role === "receptor" ? "正在导入受体 PDBQT" : "正在导入配体 PDBQT",
+      message: role === "ligand" && ligandPaths.length > 1
+        ? `正在复制并检查 ${ligandPaths.length} 个配体文件。`
+        : "正在复制文件并更新项目记录。",
+    });
     setMessage("");
     setRawError("");
     try {
@@ -125,6 +141,7 @@ export default function ImportPdbqtPage({
       setMessage(role === "receptor" ? "无法导入受体 PDBQT。" : "无法导入配体 PDBQT。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      setBusyOperation(null);
       setIsBusy(false);
     }
   };
@@ -180,6 +197,12 @@ export default function ImportPdbqtPage({
 
   return (
     <PageShell labelledBy="import-pdbqt-title">
+      <OperationLoadingDialog
+        open={Boolean(busyOperation)}
+        title={busyOperation?.title ?? ""}
+        message={busyOperation?.message ?? ""}
+        detail="文件只会写入当前项目。"
+      />
       <PageHero
         eyebrow="Vina 输入"
         title="导入已有 PDBQT"

@@ -15,6 +15,7 @@ const emptySettings: DockStartSettings = {
   tool_paths: {
     vina: "",
     python: "",
+    autogrid4: "",
   },
   project: {
     default_project_dir: "",
@@ -26,6 +27,7 @@ function normalizeSettings(settings: Partial<DockStartSettings> | null | undefin
     tool_paths: {
       vina: settings?.tool_paths?.vina ?? "",
       python: settings?.tool_paths?.python ?? "",
+      autogrid4: settings?.tool_paths?.autogrid4 ?? "",
     },
     project: {
       default_project_dir: settings?.project?.default_project_dir ?? "",
@@ -89,7 +91,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
     }));
   };
 
-  const saveToolPath = async (toolKey: "vina" | "python", path: string, successMessage: string) => {
+  const saveToolPath = async (toolKey: "vina" | "python" | "autogrid4", path: string, successMessage: string) => {
     setIsBusy(true);
     try {
       const rawPayload = await invoke<string>("update_tool_path", { toolKey, path });
@@ -117,7 +119,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
     }
   };
 
-  const clearToolPath = (toolKey: "vina" | "python", successMessage: string) => {
+  const clearToolPath = (toolKey: "vina" | "python" | "autogrid4", successMessage: string) => {
     void saveToolPath(toolKey, "", successMessage);
   };
 
@@ -138,7 +140,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
         eyebrow="本机路径"
         title="工具路径配置"
         titleId="settings-title"
-        description="指定 DockStart 使用的 Vina、Python 和默认项目目录；留空时继续自动检测。"
+        description="指定 DockStart 使用的 Vina、AutoGrid4、Python 和默认项目目录；留空时继续自动检测。"
         actions={
           <>
             <ActionButton variant="text" onClick={onBack}>
@@ -183,6 +185,31 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                     variant="text"
                     disabled={isBusy}
                     onClick={() => clearToolPath("vina", "AutoDock Vina 路径已清空。")}
+                  >
+                    清空
+                  </ActionButton>
+                </div>
+
+                <div className="setting-row">
+                  <label htmlFor="autogrid4-path">AutoGrid4 路径</label>
+                  <PathInput
+                    id="autogrid4-path"
+                    value={settings.tool_paths.autogrid4}
+                    onChange={(value) => updateField("tool_paths", "autogrid4", value)}
+                    mode="file"
+                    title="选择外部 AutoGrid4 可执行文件"
+                    placeholder="例如 autogrid4.exe；仅 AutoDock4 maps 协议需要"
+                  />
+                  <ActionButton
+                    disabled={isBusy}
+                    onClick={() => saveToolPath("autogrid4", settings.tool_paths.autogrid4, "AutoGrid4 路径已保存。")}
+                  >
+                    保存
+                  </ActionButton>
+                  <ActionButton
+                    variant="text"
+                    disabled={isBusy}
+                    onClick={() => clearToolPath("autogrid4", "AutoGrid4 路径已清空。")}
                   >
                     清空
                   </ActionButton>
@@ -254,6 +281,10 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                 <dd>{settings.tool_paths.vina.trim() ? "使用指定路径" : "从内置工具或 PATH 检测"}</dd>
               </div>
               <div>
+                <dt>AutoGrid4</dt>
+                <dd>{settings.tool_paths.autogrid4.trim() ? "使用指定外部工具" : "从 PATH 检测（不随安装包内置）"}</dd>
+              </div>
+              <div>
                 <dt>Python</dt>
                 <dd>{settings.tool_paths.python.trim() ? "使用指定路径" : "使用可用运行环境"}</dd>
               </div>
@@ -265,7 +296,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
           </RightRailSection>
 
           <RightRailSection title="保存说明">
-            <p>设置只保存在本机，不会修改系统 PATH，也不会自动安装 Vina、RDKit 或 Meeko。</p>
+            <p>设置只保存在本机，不会修改系统 PATH。AutoGrid4 是 GPL 外部工具，DockStart 不随安装包分发。</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

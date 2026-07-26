@@ -13,7 +13,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from adapters import meeko_adapter, python_adapter, rdkit_adapter, vina_adapter  # noqa: E402
+from adapters import autogrid_adapter, meeko_adapter, python_adapter, rdkit_adapter, vina_adapter  # noqa: E402
 from adapters.python_adapter import detect as detect_python  # noqa: E402
 from dockstart_core.models import ToolCheckResult  # noqa: E402
 from dockstart_core.settings import (  # noqa: E402
@@ -66,13 +66,18 @@ class ToolCheckTests(unittest.TestCase):
 
         self.assertEqual(settings.tool_paths.vina, "")
         self.assertEqual(settings.tool_paths.python, "")
+        self.assertEqual(settings.tool_paths.autogrid4, "")
         self.assertEqual(settings.project.default_project_dir, "")
 
     def test_settings_saves_and_loads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             settings_path = Path(temp_dir) / "dockstart_settings.json"
             expected = DockStartSettings(
-                tool_paths=ToolPaths(vina="C:/tools/vina.exe", python="C:/Python/python.exe"),
+                tool_paths=ToolPaths(
+                    vina="C:/tools/vina.exe",
+                    python="C:/Python/python.exe",
+                    autogrid4="C:/tools/autogrid4.exe",
+                ),
             )
             with patch.dict(os.environ, {SETTINGS_ENV_VAR: str(settings_path)}):
                 save_settings(expected)
@@ -81,7 +86,26 @@ class ToolCheckTests(unittest.TestCase):
 
         self.assertEqual(loaded.tool_paths.vina, "C:/tools/vina.exe")
         self.assertEqual(loaded.tool_paths.python, "C:/Python/python.exe")
+        self.assertEqual(loaded.tool_paths.autogrid4, "C:/tools/autogrid4.exe")
         self.assertEqual(resolved_path, settings_path)
+
+    def test_autogrid_detection_is_external_and_structured(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoGrid 4.2.6\n",
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            executable = Path(temp_dir) / "autogrid4.exe"
+            executable.write_bytes(b"mock")
+            with patch.object(autogrid_adapter.subprocess, "run", return_value=completed) as run_mock:
+                result = autogrid_adapter.detect(str(executable))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.version, "4.2.6")
+        self.assertEqual(result.source, "configured")
+        self.assertFalse(result.is_bundled)
+        self.assertEqual(run_mock.call_args[0][0][0], str(executable.resolve()))
 
     def test_python_detection_returns_structured_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -212,6 +236,32 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(rdkit_result.source, "bundled")
         self.assertEqual(meeko_run.call_args[0][0][0], str(bundled_path.resolve()))
         self.assertEqual(rdkit_run.call_args[0][0][0], str(bundled_path.resolve()))
+
+    def test_scientific_import_probes_allow_slow_assisted_cold_start(self) -> None:
+        import_completed = SimpleNamespace(returncode=0, stdout="0.7.1\n", stderr="")
+        capability_completed = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "import_available": True,
+                    "version": "0.7.1",
+                    "capabilities": {"import": {"status": "ok", "message": "可导入"}},
+                },
+            ),
+            stderr="",
+        )
+
+        with patch.object(meeko_adapter.subprocess, "run", return_value=import_completed) as meeko_run:
+            meeko_adapter.detect(sys.executable, "configured")
+        with patch.object(rdkit_adapter.subprocess, "run", return_value=import_completed) as rdkit_run:
+            rdkit_adapter.detect(sys.executable, "configured")
+        with patch.object(meeko_adapter.subprocess, "run", return_value=capability_completed) as meeko_capability_run:
+            meeko_adapter.detect_meeko_capabilities(sys.executable, "configured")
+        with patch.object(rdkit_adapter.subprocess, "run", return_value=capability_completed) as rdkit_capability_run:
+            rdkit_adapter.detect_rdkit_capabilities(sys.executable, "configured")
+
+        for run_mock in (meeko_run, rdkit_run, meeko_capability_run, rdkit_capability_run):
+            self.assertGreaterEqual(run_mock.call_args.kwargs["timeout"], 30)
 
     def test_meeko_and_rdkit_use_configured_python_when_user_sets_one(self) -> None:
         python_completed = SimpleNamespace(returncode=0, stdout="Python 3.11.15\n", stderr="")

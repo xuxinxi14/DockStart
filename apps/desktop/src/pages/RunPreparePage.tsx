@@ -18,6 +18,7 @@ import {
 } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
+import AutoGridMapsPanel from "../components/AutoGridMapsPanel";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
 import FlexibleReceptorPanel from "../components/FlexibleReceptorPanel";
 import RunBoxInspector, {
@@ -225,11 +226,12 @@ function checkIcon(check: RunPreflightCheck) {
 
 function safeRepairPage(check: RunPreflightCheck): PageId | null {
   const page = check.action_page;
-  const supported = new Set<PageId>(["import-pdbqt", "box-setup", "vina-param", "vina-config", "settings", "toolchain-status"]);
+  const supported = new Set<PageId>(["import-pdbqt", "box-setup", "vina-param", "vina-config", "run-prepare", "settings", "toolchain-status"]);
   if (page && supported.has(page as PageId)) return page as PageId;
   if (check.key === "receptor" || check.key === "ligand") return "import-pdbqt";
   if (check.key === "box") return "box-setup";
   if (check.key === "vina_params" || check.key === "cpu") return "vina-param";
+  if (check.key === "ad4_maps") return "run-prepare";
   if (check.key === "vina") return "settings";
   return null;
 }
@@ -281,6 +283,7 @@ export default function RunPreparePage({
   const displayBox = parsedBox ?? project.box;
   const volume = displayBox.size_x * displayBox.size_y * displayBox.size_z;
   const running = stage === "starting" || stage === "running" || stage === "cancelling" || stage === "cancel_pending";
+  const isAd4Maps = project.docking_protocol?.engine === "ad4_maps";
   const progress = runtime?.progress?.percent ?? (stage === "finished" ? 100 : 0);
   const receptorCenter = preflight?.input_stats?.receptor?.coordinate_center ?? null;
   const canResetBox = !boxFormsEqual(boxForm, initialBoxSnapshotRef.current.form);
@@ -309,6 +312,13 @@ export default function RunPreparePage({
   useEffect(() => {
     setWorkspaceMode(readDockingWorkspaceMode(initialProject.project_dir));
   }, [initialProject.project_dir]);
+
+  useEffect(() => {
+    if (isAd4Maps && workspaceMode === "batch") {
+      setWorkspaceMode("single");
+      writeDockingWorkspaceMode(project.project_dir, "single");
+    }
+  }, [isAd4Maps, project.project_dir, workspaceMode]);
 
   const refreshPreflight = useCallback(async (syncForms = false): Promise<RunPreflightResponse | null> => {
     if (!mountedRef.current) return null;
@@ -758,7 +768,7 @@ export default function RunPreparePage({
         <div>
           <span>对接工作台 · DOCKING CONSOLE</span>
           <h1 id="run-cockpit-title">{workspaceMode === "batch" ? "多配体搜索范围与运行" : "搜索范围与运行"}</h1>
-          <p>{workspaceMode === "batch" ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建可恢复的多配体队列。" : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
+          <p>{workspaceMode === "batch" ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建可恢复的多配体队列。" : isAd4Maps ? "复核网格范围与 AutoDock4 maps，检查运行条件并开始本地对接。" : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
         </div>
         <div className="run-cockpit-header-actions">
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
@@ -770,12 +780,26 @@ export default function RunPreparePage({
 
       <nav className="run-workspace-mode" aria-label="配体运行模式">
         <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>单配体对接</button>
-        <button type="button" className={workspaceMode === "batch" ? "active" : ""} aria-pressed={workspaceMode === "batch"} onClick={() => selectWorkspaceMode("batch")}>多配体对接</button>
-        <span>{workspaceMode === "batch" ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。" : "一个受体与一个配体的标准对接流程。"}</span>
+        <button type="button" className={workspaceMode === "batch" ? "active" : ""} aria-pressed={workspaceMode === "batch"} disabled={isAd4Maps} title={isAd4Maps ? "多配体队列当前仅支持 Vina / Vinardo 协议" : undefined} onClick={() => selectWorkspaceMode("batch")}>多配体对接</button>
+        <span>{workspaceMode === "batch" ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。" : isAd4Maps ? "一个受体与一个配体使用预计算 AutoDock4 maps。" : "一个受体与一个配体的标准对接流程。"}</span>
       </nav>
 
       <div className="run-cockpit-layout">
         <main className="run-cockpit-main">
+          {workspaceMode === "single" ? (
+            <AutoGridMapsPanel
+              project={project}
+              disabled={isBusy || isDirty}
+              disabledReason={isDirty ? "请先保存当前 Box 与 Vina 参数，再切换协议或处理 maps。" : isBusy ? "当前运行流程尚未结束。" : ""}
+              onProjectChange={(nextProject) => {
+                commitProject(nextProject, true);
+              }}
+              onStatusChange={() => {
+                void refreshPreflight(true);
+              }}
+            />
+          ) : null}
+
           <section className="run-cockpit-card run-preview-card">
             <div className="run-cockpit-section-heading">
               <div>
@@ -880,16 +904,19 @@ export default function RunPreparePage({
               </div>
 
               <div className="run-ledger-group">
-                <h3>AutoDock Vina 参数</h3>
+                <h3>{isAd4Maps ? "AutoDock4 运行参数" : "AutoDock Vina 参数"}</h3>
                 <div className="run-vina-fields">
                   <label>
-                    <span>评分函数</span>
-                    <select disabled={isBusy} value={vinaForm.scoring} onChange={(event) => updateVinaField("scoring", event.target.value)}>
-                      <option value="vina">Vina</option>
-                      <option value="vinardo">Vinardo</option>
-                      <option value="ad4" disabled>AutoDock4（需要 maps）</option>
-                    </select>
-                    <small>分值不可跨函数比较</small>
+                    <span>评分协议</span>
+                    {isAd4Maps ? (
+                      <input aria-label="评分协议" disabled value="AutoDock4 (maps)" />
+                    ) : (
+                      <select disabled={isBusy} value={vinaForm.scoring} onChange={(event) => updateVinaField("scoring", event.target.value)}>
+                        <option value="vina">Vina</option>
+                        <option value="vinardo">Vinardo</option>
+                      </select>
+                    )}
+                    <small>{isAd4Maps ? "与 Vina / Vinardo 评分不可直接比较" : "Vina 与 Vinardo 分值不可直接比较"}</small>
                   </label>
                   {vinaFields.map((field) => {
                     const value = vinaForm[field.key];
@@ -905,7 +932,11 @@ export default function RunPreparePage({
                     );
                   })}
                 </div>
-                <p className="run-science-note">Vina 使用随机搜索与局部优化；界面不将其错误描述为遗传算法。不同评分函数的分值不能直接横向比较。</p>
+                <p className="run-science-note">
+                  {isAd4Maps
+                    ? "当前运行使用预计算 AutoDock4 网格图；AD4、Vina 与 Vinardo 的分值不能直接横向比较。"
+                    : "Vina 使用随机搜索与局部优化；界面不将其错误描述为遗传算法。不同评分函数的分值不能直接横向比较。"}
+                </p>
                 {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到每个配体任务中；修改后需要重新创建队列。</p> : null}
                 <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
                   <div>
@@ -1057,7 +1088,7 @@ export default function RunPreparePage({
             {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
           </section>
 
-          {workspaceMode === "single" ? <FlexibleReceptorPanel
+          {workspaceMode === "single" && !isAd4Maps ? <FlexibleReceptorPanel
             project={project}
             disabled={isBusy || isDirty}
             pickedResidue={pickedResidue.selector}
@@ -1076,8 +1107,10 @@ export default function RunPreparePage({
             receptorFile={project.receptor.file}
             box={project.box}
             vina={project.vina}
-            disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible"}
-            disabledReason={project.docking_protocol?.mode === "flexible"
+            disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible" || isAd4Maps}
+            disabledReason={isAd4Maps
+              ? "多配体筛选当前只支持 Vina / Vinardo。请先切换评分协议。"
+              : project.docking_protocol?.mode === "flexible"
               ? "批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
               : isBusy
               ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
@@ -1104,11 +1137,12 @@ export default function RunPreparePage({
             {history.length ? (
               <div className="run-history-table-wrap">
                 <table className="run-history-table">
-                  <thead><tr><th>Run</th><th>状态</th><th>开始时间</th><th>耗时</th><th>最佳评分</th><th>操作</th></tr></thead>
+                  <thead><tr><th>Run</th><th>协议</th><th>状态</th><th>开始时间</th><th>耗时</th><th>最佳评分</th><th>操作</th></tr></thead>
                   <tbody>
                     {history.slice(0, 8).map((run) => (
                       <tr key={run.run_id}>
                         <td><strong>{run.run_id}</strong></td>
+                        <td>{run.scoring_protocol === "ad4_maps" ? "AD4 maps" : run.scoring_function === "vinardo" ? "Vinardo" : "Vina"}</td>
                         <td><StatusBadge tone={statusTone(run.status)}>{run.status}</StatusBadge></td>
                         <td>{formatTime(run.started_at || run.created_at)}</td>
                         <td>{formatDuration(run.duration_seconds)}</td>

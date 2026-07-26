@@ -888,6 +888,73 @@ async fn generate_vina_config(project_dir: String) -> String {
 }
 
 #[tauri::command]
+async fn get_autogrid_maps_defaults(project_dir: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.autogrid",
+        vec!["defaults".to_string(), project_dir],
+        Duration::from_millis(200),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 AutoGrid4 maps 默认参数。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_autogrid_maps_status(project_dir: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.autogrid",
+        vec!["status".to_string(), project_dir],
+        Duration::from_millis(200),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 AutoDock4 maps 状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn set_scoring_protocol(project_dir: String, protocol: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.autogrid",
+        vec!["set-protocol".to_string(), project_dir, protocol],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法切换对接评分协议。", &error),
+    }
+}
+
+#[tauri::command]
+async fn generate_autogrid_maps(project_dir: String, options_json: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.autogrid",
+        vec!["generate".to_string(), project_dir, options_json],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成 AutoDock4 affinity maps。", &error),
+    }
+}
+
+#[tauri::command]
+async fn import_autogrid_maps(project_dir: String, fld_file: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.autogrid",
+        vec!["import".to_string(), project_dir, fld_file],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导入 AutoDock4 affinity maps。", &error),
+    }
+}
+
+#[tauri::command]
 async fn validate_run_prerequisites(project_dir: String) -> String {
     match run_backend_module_cached_async(
         "dockstart_core.project",
@@ -3047,6 +3114,7 @@ fn load_project_snapshot_value(project_dir: &str) -> Result<serde_json::Value, S
 
 fn cached_preparation_tools(project_dir: &str) -> Result<serde_json::Value, String> {
     let project_dir = project_dir.to_string();
+    let cached_project_dir = project_dir.clone();
     let payload = run_backend_module_cached_with(
         "dockstart.runtime.preparation-tools",
         Vec::new(),
@@ -3054,14 +3122,38 @@ fn cached_preparation_tools(project_dir: &str) -> Result<serde_json::Value, Stri
         move |_, _| {
             let raw = run_backend_module_uncached(
                 "dockstart_core.preparation",
-                vec!["tool-status".to_string(), project_dir],
+                vec!["tool-status".to_string(), cached_project_dir],
             )?;
             let value = backend_payload_value(&raw, "准备工具能力检测")?;
             serde_json::to_string(value.get("tools").unwrap_or(&serde_json::Value::Null))
                 .map_err(|error| error.to_string())
         },
     )?;
-    serde_json::from_str(&payload).map_err(|error| format!("准备工具能力缓存损坏：{error}"))
+    let cached_tools = serde_json::from_str::<serde_json::Value>(&payload)
+        .map_err(|error| format!("准备工具能力缓存损坏：{error}"))?;
+    if preparation_tools_ready(&cached_tools) {
+        return Ok(cached_tools);
+    }
+
+    // A cold-start import timeout must not remain sticky for the full runtime
+    // cache TTL and block every later conversion attempt. Retry once without
+    // the cache; genuine missing-tool results remain structured and visible.
+    invalidate_backend_cache(CacheInvalidation::Runtime);
+    let fresh_payload = run_backend_module_uncached(
+        "dockstart_core.preparation",
+        vec!["tool-status".to_string(), project_dir],
+    )?;
+    let fresh_value = backend_payload_value(&fresh_payload, "准备工具能力复检")?;
+    Ok(fresh_value
+        .get("tools")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+fn preparation_tools_ready(tools: &serde_json::Value) -> bool {
+    ["/python/status", "/rdkit/status", "/meeko/status"]
+        .iter()
+        .all(|pointer| tools.pointer(pointer).and_then(serde_json::Value::as_str) == Some("ok"))
 }
 
 fn safe_project_file_status(
@@ -3557,6 +3649,9 @@ fn runtime_fingerprint() -> String {
     if let Some(configured_vina) = configured_tool_from_settings("vina") {
         hash_path_signature(&mut hasher, Path::new(&configured_vina), false);
     }
+    if let Some(configured_autogrid) = configured_tool_from_settings("autogrid4") {
+        hash_path_signature(&mut hasher, Path::new(&configured_autogrid), false);
+    }
     if let Some(path_python) =
         first_executable_on_path(&["python.exe", "python", "python3.exe", "python3"])
     {
@@ -3565,6 +3660,9 @@ fn runtime_fingerprint() -> String {
     }
     if let Some(path_vina) = first_executable_on_path(&["vina.exe", "vina"]) {
         hash_path_signature(&mut hasher, &path_vina, false);
+    }
+    if let Some(path_autogrid) = first_executable_on_path(&["autogrid4.exe", "autogrid4"]) {
+        hash_path_signature(&mut hasher, &path_autogrid, false);
     }
     python_paths.sort();
     python_paths.dedup();
@@ -3604,6 +3702,11 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
             CacheInvalidation::Project
         }
         "dockstart_core.reference_rmsd" if command == "calculate" => CacheInvalidation::Project,
+        "dockstart_core.autogrid"
+            if matches!(command, "set-protocol" | "generate" | "import") =>
+        {
+            CacheInvalidation::Project
+        }
         "dockstart_core.project"
             if matches!(
                 command,
@@ -3839,6 +3942,11 @@ fn main() {
             update_vina_params,
             get_vina_config_preview,
             generate_vina_config,
+            get_autogrid_maps_defaults,
+            get_autogrid_maps_status,
+            set_scoring_protocol,
+            generate_autogrid_maps,
+            import_autogrid_maps,
             validate_run_prerequisites,
             get_run_preflight,
             get_project_run_guard,
@@ -3923,6 +4031,24 @@ mod tests {
         fs::write(&manifest, br#"{"release_profile":"custom"}"#).unwrap();
         assert!(distribution_profile_from_manifest(&manifest).is_err());
         let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn preparation_tool_snapshot_requires_all_three_tools() {
+        let ready = serde_json::json!({
+            "python": {"status": "ok"},
+            "rdkit": {"status": "ok"},
+            "meeko": {"status": "ok"},
+        });
+        let transient_meeko_error = serde_json::json!({
+            "python": {"status": "ok"},
+            "rdkit": {"status": "ok"},
+            "meeko": {"status": "error"},
+        });
+
+        assert!(preparation_tools_ready(&ready));
+        assert!(!preparation_tools_ready(&transient_meeko_error));
+        assert!(!preparation_tools_ready(&serde_json::Value::Null));
     }
 
     #[test]

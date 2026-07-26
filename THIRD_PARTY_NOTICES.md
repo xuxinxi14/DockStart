@@ -15,3 +15,6 @@ Assisted Stable 将 Meeko 作为独立、可替换的 Python 组件分发，不�
 
 桌面端直接使用 serde/serde_json 生成结构化后台任务事件；两者按 MIT 条款分发，许可证
 文本见 `resources/licenses/Serde_LICENSE-MIT.txt`。
+
+AutoGrid4 不属于 DockStart 安装包内容。v0.12.0 只允许用户配置其自行安装的
+`autogrid4.exe`；该上游工具按 GNU GPL 提供，DockStart 不重新分发其二进制。

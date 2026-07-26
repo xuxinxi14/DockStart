@@ -68,8 +68,9 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   const runReportStatus = useMemo(() => files.find((file) => file.key === "run_report"), [files]);
   const projectReportStatus = useMemo(() => files.find((file) => file.key === "project_report"), [files]);
   const displayedReportFile = reportFile || metadataString(metadata, "report_file") || `runs/${runId}/docking_report.md`;
+  const isAd4Maps = metadataString(metadata, "scoring_protocol") === "ad4_maps";
   const displayedProjectReportFile =
-    projectReportFile || metadataString(metadata, "project_report_file") || "reports/docking_report.md";
+    projectReportFile || metadataString(metadata, "project_report_file") || (isAd4Maps ? "reports/ad4_docking_report.md" : "reports/docking_report.md");
   const displayedReportedAt = reportedAt || metadataString(metadata, "reported_at");
   const hasScores = scoresStatus?.status === "ok";
 
@@ -137,7 +138,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
         eyebrow="结果与报告"
         title="结果分析报告"
         titleId="report-title"
-        description="生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。"
+        description={isAd4Maps ? "生成独立的 AutoDock4 maps 评分、网格、输入哈希与可复现记录。" : "生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。"}
         actions={
           <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
@@ -173,6 +174,11 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             {!hasScores ? (
               <WarningCallout title="分析报告暂不可生成">
                 <p>请先完成对接并确认结果页已加载 scores.csv。</p>
+              </WarningCallout>
+            ) : null}
+            {isAd4Maps ? (
+              <WarningCallout title="协议间评分不可直接比较">
+                <p>AutoDock4 maps 报告单独写入 ad4_docking_report.md，不覆盖 Vina / Vinardo 项目报告。</p>
               </WarningCallout>
             ) : null}
 

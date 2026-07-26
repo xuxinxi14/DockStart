@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import PathInput from "../components/PathInput";
 import type { PageId, StartMode } from "../navigation/pages";
 import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
@@ -27,6 +28,11 @@ type ModeConfig = {
 };
 
 type AssistedSource = "online" | "local";
+
+type BusyOperation = {
+  title: string;
+  message: string;
+} | null;
 
 function projectModePanelId(mode: StartMode) {
   return `project-mode-panel-${mode}`;
@@ -173,6 +179,7 @@ export default function ProjectCreatePage({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [busyOperation, setBusyOperation] = useState<BusyOperation>(null);
   const [demos, setDemos] = useState<DemoProjectsResponse["demos"]>([]);
 
   const currentConfig = modeConfig[startMode];
@@ -227,6 +234,10 @@ export default function ProjectCreatePage({
 
   const createProject = useCallback(async () => {
     setIsBusy(true);
+    setBusyOperation({
+      title: "正在创建项目",
+      message: "正在建立项目目录与基础记录。",
+    });
     resetFeedback();
     let createdProjectDir = "";
     try {
@@ -238,6 +249,10 @@ export default function ProjectCreatePage({
       createdProjectDir = project.project_dir;
 
       if (startMode === "basic") {
+        setBusyOperation({
+          title: "正在导入 PDBQT",
+          message: "正在复制受体与配体文件并检查项目记录。",
+        });
         project = await runProjectCommand(
           "import_receptor_pdbqt",
           { projectDir: project.project_dir, sourcePath: receptorPdbqtPath },
@@ -265,6 +280,10 @@ export default function ProjectCreatePage({
           onCreated(project, "structure-fetch");
           return;
         }
+        setBusyOperation({
+          title: "正在导入原始结构",
+          message: "正在复制受体与配体文件到当前项目。",
+        });
         project = await runProjectCommand(
           "import_receptor_raw_file",
           { projectDir: project.project_dir, sourcePath: receptorRawPath },
@@ -303,6 +322,7 @@ export default function ProjectCreatePage({
       }
       setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
     } finally {
+      setBusyOperation(null);
       setIsBusy(false);
     }
   }, [
@@ -321,6 +341,10 @@ export default function ProjectCreatePage({
 
   const loadExistingProject = useCallback(async (projectDir = existingProjectDir) => {
     setIsBusy(true);
+    setBusyOperation({
+      title: "正在打开项目",
+      message: "正在读取 project.json 与当前工作流状态。",
+    });
     resetFeedback();
     try {
       const rawPayload = await invoke<string>("load_project", {
@@ -337,6 +361,7 @@ export default function ProjectCreatePage({
       setMessage("无法加载项目。请确认当前运行环境是 DockStart 桌面端。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
+      setBusyOperation(null);
       setIsBusy(false);
     }
   }, [existingProjectDir, onCreated]);
@@ -415,6 +440,10 @@ export default function ProjectCreatePage({
         if (!destinationDir) {
           return;
         }
+        setBusyOperation({
+          title: "正在复制示例",
+          message: "正在创建独立的示例项目副本。",
+        });
         const rawPayload = await invoke<string>("create_demo_project", {
           destinationDir,
           demoType: demo.demo_type,
@@ -430,6 +459,7 @@ export default function ProjectCreatePage({
         setMessage("无法创建示例项目。请确认当前运行环境是 DockStart 桌面端。");
         setRawError(error instanceof Error ? error.message : String(error));
       } finally {
+        setBusyOperation(null);
         setIsBusy(false);
       }
     },
@@ -631,6 +661,12 @@ export default function ProjectCreatePage({
 
   return (
     <PageShell className="project-create-workbench" labelledBy="project-create-title">
+      <OperationLoadingDialog
+        open={Boolean(busyOperation)}
+        title={busyOperation?.title ?? ""}
+        message={busyOperation?.message ?? ""}
+        detail="完成前请保持 DockStart 打开。"
+      />
       <PageHero
         eyebrow="项目"
         title={currentConfig.title}

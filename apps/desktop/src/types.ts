@@ -435,6 +435,8 @@ export type RunHistoryItem = {
   duration_seconds: number | null;
   best_affinity: number | null;
   stage: string;
+  scoring_protocol?: "vina" | "ad4_maps";
+  scoring_function?: "vina" | "vinardo" | "ad4" | string;
 };
 
 export type ProjectRunGuardItem = {
@@ -583,6 +585,8 @@ export type RunPreflightResponse = {
   next_run_id: string;
   command_preview: string;
   run_history: RunHistoryItem[];
+  scoring_protocol?: "vina" | "ad4_maps";
+  ad4_maps?: AutoGridMapsStatusResponse | null;
   active_run_guard?: ProjectRunGuardPayload;
   message: string;
   error?: {
@@ -821,6 +825,7 @@ export type DockStartSettings = {
   tool_paths: {
     vina: string;
     python: string;
+    autogrid4: string;
   };
   project: {
     default_project_dir: string;
@@ -911,8 +916,83 @@ export type DockStartProject = {
   runs: Array<Record<string, unknown>>;
   docking_protocol?: {
     mode?: "rigid" | "flexible";
+    receptor_mode?: "rigid" | "flexible";
+    engine?: "vina" | "ad4_maps";
+    protocol_id?: string;
     [key: string]: unknown;
   };
+};
+
+export type AutoGridMapsDefaults = {
+  spacing: number;
+  grid_points: { x: number; y: number; z: number };
+  center: { x: number; y: number; z: number };
+  actual_size: { x: number; y: number; z: number };
+  receptor_atom_types: string[];
+  ligand_atom_types: string[];
+  parameter_file: string;
+};
+
+export type AutoGridMapsManifest = {
+  map_set_id: string;
+  status: string;
+  source: "generated" | "imported" | string;
+  grid?: {
+    center?: { x: number; y: number; z: number };
+    grid_points?: { x: number; y: number; z: number };
+    spacing?: number;
+    actual_size?: { x: number; y: number; z: number };
+  };
+  maps?: {
+    prefix?: string;
+    ligand_atom_types?: string[];
+    files?: Array<{ name?: string; relative_path?: string; sha256?: string; size_bytes?: number }>;
+  };
+  autogrid?: {
+    path?: string;
+    version?: string;
+    source?: string;
+    log_file?: string;
+    exit_code?: number | null;
+  };
+};
+
+export type AutoGridMapsDefaultsResponse = {
+  ok: boolean;
+  project_dir?: string;
+  project: DockStartProject | null;
+  protocol?: "vina" | "ad4_maps";
+  defaults?: AutoGridMapsDefaults;
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
+};
+
+export type AutoGridMapsStatusResponse = {
+  ok: boolean;
+  ready: boolean;
+  project_dir?: string;
+  project: DockStartProject | null;
+  protocol?: "vina" | "ad4_maps";
+  protocol_active?: boolean;
+  map_set_id?: string;
+  manifest_file?: string;
+  manifest?: AutoGridMapsManifest | null;
+  maps_prefix?: string;
+  ligand_atom_types?: string[];
+  issues?: string[];
+  tool?: ToolCheckResult;
+  message?: string;
+  error?: {
+    code: string;
+    message: string;
+    raw_error: string;
+    suggestion: string;
+  } | null;
 };
 
 export type PreparationStatusResponse = {

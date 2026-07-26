@@ -4,6 +4,10 @@ This notice applies only to the `assisted_stable` distribution profile. The
 Basic profile does not distribute RDKit, Meeko, or these scientific Python
 packages.
 
+Neither profile distributes AutoGrid4. DockStart can call a user-installed
+GPL `autogrid4.exe` for the optional AutoDock4 maps protocol; no AutoGrid4
+binary, installer, or parameter data is included in this package.
+
 The Assisted runtime is a normal, separate Python 3.11 directory under
 `resources/python/`. It is not frozen into `dockstart-desktop.exe`. DockStart
 invokes Meeko through a Python subprocess and file-based adapter boundary.

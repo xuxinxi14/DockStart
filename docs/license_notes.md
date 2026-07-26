@@ -14,7 +14,7 @@
 | serde / serde_json | 后台任务事件的结构化序列化 | MIT OR Apache-2.0 | Rust crate，编译进桌面端 | 是 | 否 |
 | Python | 后端运行环境 | Python Software Foundation License | v0.10.2 的 Basic/Assisted profile 均随包提供独立 runtime；源码仓库不提交二进制 | 是 | 否 |
 
-## v0.10.2 Basic Stable 分发边界
+## v0.12.0 Basic Stable 分发边界
 
 | 名称 | 用途 | 许可证 | 集成方式 | 是否随包 | 是否需要用户自行安装 |
 | --- | --- | --- | --- | --- | --- |
@@ -23,7 +23,7 @@
 | RDKit | Assisted Mode 的配体读取与准备 | BSD-3-Clause | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 | Meeko | Assisted Mode 的 PDBQT 准备 | LGPL-2.1-or-later | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 
-v0.10.2 Basic Stable 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
+v0.12.0 Basic Stable 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
 `Lib/site-packages`、Meeko/RDKit 命令行工具或 conda 环境。
 
 ## Assisted Stable 分发边界
@@ -65,12 +65,23 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 | Meeko | ligand/receptor PDBQT 准备 | LGPL-2.1；wheel classifier 为 LGPLv2+ | Basic 为外部包；Assisted 为独立可替换 bundled 包 | 仅 Assisted | Basic 需要，Assisted 不需要 |
 | RDKit | ligand SDF/MOL 读取并配合 Meeko 准备 PDBQT | BSD-3-Clause | Basic 为外部包；Assisted 为独立 bundled 包 | 仅 Assisted | Basic 需要，Assisted 不需要 |
 | 3Dmol.js | 结构查看与 Box / docking pose 几何可视化 | BSD-3-Clause | npm 前端依赖 `3dmol`，由 Vite 打包进桌面端，不使用外部 CDN | 是 | 否 |
+| AutoGrid4 4.2.6 | 生成 AutoDock4 affinity maps | GNU GPL | 外部命令行工具；仅从用户配置路径或 PATH 检测，通过 adapter 参数数组调用 | 否 | 是，仅 AutoDock4 maps 协议 |
+
+### v0.12.0 AutoGrid4 结论
+
+- 上游 AutoDock4 下载页将 AutoDock4/AutoGrid4 按 GNU GPL 提供；
+- DockStart 不复制、修改或重新分发 AutoGrid4 二进制；
+- Basic/Assisted 安装包均不含 `autogrid4.exe`、AutoDock4 安装器或其参数数据；
+- 用户自行取得 AutoGrid4 后，可在本机设置中配置路径；
+- DockStart 只保存用户运行产生的 GPF、GLG、maps 和可复现 manifest；
+- 随包的 AutoDock Vina 1.2.7 保持 Apache-2.0 分发，用于读取 maps 并执行 AD4 评分。
 
 ## Assisted 之后的工具链扩展审查
 
 | 名称 | 当前状态 | 合规要求 |
 | --- | --- | --- |
 | AutoDock Vina | Basic/Assisted 已随包 | 继续保留许可证文本、版本、来源和修改说明 |
+| AutoGrid4 | 外部可选，不随包 | 保持 adapter 边界；若未来考虑分发，必须重新做 GPL 法律与源码提供方案审查 |
 | RDKit | Assisted 已随包 | 继续保留许可证文本、依赖说明和 wheel 来源；升级需重跑门禁 |
 | Meeko | Assisted 已随包 | 保持独立可替换、提供对应源码；修改或冻结前重新审查 LGPL |
 | Python 运行时 | Basic/Assisted 已随包 | 保留 Python 许可证、版本、来源和 SHA256；仓库不提交 runtime 二进制 |
@@ -83,7 +94,7 @@ V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检�
 
 - `resources/python/` 当前只提交 `README.md`；
 - `resources/python/python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/` 等真实 runtime 文件被 `.gitignore` 忽略；
-- v0.10.2 Basic 发布使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
+- v0.12.0 Basic 发布使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
 - Basic stage 排除 `Lib/site-packages`、`Scripts`、`__pycache__`、`.pyc` 与 `.pyo`；
 - `scripts/prepare_bundled_python.py` 仍只用于准备本地构建输入，不直接定义稳定安装包内容；
 - 该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko；

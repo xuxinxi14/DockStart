@@ -140,6 +140,9 @@ export default function ResultPage({
   const loadRequestRef = useRef(0);
 
   const status = metadataString(metadata, "status") || "unknown";
+  const scoringProtocol = metadataString(metadata, "scoring_protocol") || "vina";
+  const scoringFunction = metadataString(metadata, "scoring_function") || "vina";
+  const isAd4Maps = scoringProtocol === "ad4_maps";
   const canGenerateReport = status === "finished" && scores.length > 0 && !isBusy;
   const logPath = logFile || metadataString(metadata, "log_file") || `runs/${runId}/log.txt`;
   const displayedScoresFile = scoresFile || metadataString(metadata, "scores_file");
@@ -364,7 +367,7 @@ export default function ResultPage({
         eyebrow="结果 · RESULT ANALYSIS"
         title="对接结果分析"
         titleId="result-title"
-        description="查看与比较对接构象的评分与结构，访问运行记录并导出实验文件。"
+        description={isAd4Maps ? "查看 AutoDock4 maps 对接构象、独立评分记录与可复现文件。" : "查看与比较对接构象的评分与结构，访问运行记录并导出实验文件。"}
         actions={
           <>
             <StatusBadge tone={status === "finished" ? "ok" : status === "failed" ? "error" : "warning"}>
@@ -386,6 +389,11 @@ export default function ResultPage({
 
       {status !== "finished" ? (
         <WarningCallout title="结果暂不可解析"><p>需要先完成 Vina 运行。</p></WarningCallout>
+      ) : null}
+      {isAd4Maps ? (
+        <WarningCallout title="AutoDock4 评分协议">
+          <p>本页评分来自 AutoDock4 maps；不要与 Vina 或 Vinardo 的分值直接横向比较。</p>
+        </WarningCallout>
       ) : null}
 
       <div className="result-analysis-layout">
@@ -465,7 +473,7 @@ export default function ResultPage({
             {scores.length ? (
               <div className="scores-table-wrap">
                 <table className="scores-table">
-                  <thead><tr><th>构象</th><th>对接评分 kcal/mol</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
+                  <thead><tr><th>构象</th><th>{isAd4Maps ? "AutoDock4 评分 kcal/mol" : "对接评分 kcal/mol"}</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
                   <tbody>
                     {scores.map((score) => (
                       <tr key={score.mode} className={selectedMode === score.mode ? "is-selected" : ""} onClick={() => setViewerMode(score.mode)}>
@@ -494,6 +502,7 @@ export default function ResultPage({
               </div>
               <dl className="result-run-file-grid">
                 <div><dt>运行状态</dt><dd>{runStatusText[status] ?? status}</dd></div>
+                <div><dt>评分协议</dt><dd>{isAd4Maps ? "AutoDock4（maps）" : scoringFunction === "vinardo" ? "Vinardo" : "Vina"}</dd></div>
                 <div><dt>Vina 版本</dt><dd>{vinaDisplay}</dd></div>
                 <div><dt>开始时间</dt><dd>{formatTimestamp(startedAt)}</dd></div>
                 <div><dt>结束时间</dt><dd>{formatTimestamp(metadataFinishedAt)}</dd></div>
@@ -512,7 +521,7 @@ export default function ResultPage({
 
         <aside className="result-analysis-rail">
           <section className="result-selected-pose">
-            <span>所选构象</span><strong>Mode {selectedMode}</strong>
+            <span>{isAd4Maps ? "AutoDock4 构象" : "所选构象"}</span><strong>Mode {selectedMode}</strong>
             <b>{selectedScore ? formatScoreValue(selectedScore.affinity_kcal_mol) : displayedBestAffinity ?? "—"} <small>kcal/mol</small></b>
           </section>
           <section className="result-output-files">

@@ -6,7 +6,7 @@ import json
 import sys
 from collections.abc import Callable
 
-from adapters import meeko_adapter, python_adapter, rdkit_adapter, viewer_adapter, vina_adapter
+from adapters import autogrid_adapter, meeko_adapter, python_adapter, rdkit_adapter, viewer_adapter, vina_adapter
 from dockstart_core.models import ToolCheckResult
 from dockstart_core.settings import load_settings
 
@@ -40,6 +40,11 @@ def check_all_tools() -> list[ToolCheckResult]:
     return [
         python_result,
         _safe_detect("vina", "AutoDock Vina", lambda: vina_adapter.detect(settings.tool_paths.vina)),
+        _safe_detect(
+            "autogrid4",
+            "AutoGrid4",
+            lambda: autogrid_adapter.detect(settings.tool_paths.autogrid4),
+        ),
         _safe_detect("meeko", "Meeko", lambda: meeko_adapter.detect(selected_python, python_source)),
         _safe_detect("rdkit", "RDKit", lambda: rdkit_adapter.detect(selected_python, python_source)),
         _safe_detect("viewer_3dmol", "3Dmol.js", viewer_adapter.detect),

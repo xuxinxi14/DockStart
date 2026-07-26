@@ -9,7 +9,9 @@ export function getWorkflowSummary(project: DockStartProject | null, page: PageI
     return "结果与报告阶段";
   }
   if (page === "run-prepare" || page === "run-execute") {
-    return "Vina 运行阶段";
+    return project.docking_protocol?.engine === "ad4_maps"
+      ? "AutoDock4 maps 运行阶段"
+      : "Vina 运行阶段";
   }
   if (page === "box-setup") {
     return "结构与 Box 阶段";

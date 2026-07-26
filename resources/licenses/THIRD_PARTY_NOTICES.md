@@ -61,7 +61,7 @@ runtime source/version metadata with the packaged application.
 
 ## Bundled Python Packages
 
-DockStart v0.10.2 has two isolated Windows release profiles. Basic Stable uses a
+DockStart v0.12.0 has two isolated Windows release profiles. Basic Stable uses a
 backend-only Python runtime and excludes `Lib/site-packages` and `Scripts`.
 Assisted Stable adds the following pinned, ordinary-directory Python packages
 for local PDBQT preparation. They are not frozen into `dockstart-desktop.exe`:
@@ -100,7 +100,15 @@ keep their distribution metadata and original license/notices under
 `resources/licenses/python-packages/`. It must also ship the exact upstream
 source archives for Meeko 0.7.1, Gemmi 0.7.5, and tqdm 4.67.1 together with
 `resources/sources/SOURCE_MANIFEST.json`. DockStart does not modify those three
-components in v0.10.2.
+components in v0.12.0.
+
+## External AutoGrid4
+
+AutoGrid4 is not distributed in either DockStart profile. DockStart v0.12.0 can
+detect and call a user-installed `autogrid4.exe` to generate AutoDock4 affinity
+maps. Upstream AutoGrid4 4.2.6 is GPL-licensed; users obtain and install it
+separately. No AutoGrid4 binary, installer, parameter data, or GPL source is
+included in this package.
 
 ## Generated production dependency bundle
 

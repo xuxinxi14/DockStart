@@ -11,6 +11,7 @@ import type {
   ToolchainRepairSuggestionsResponse,
   ToolchainStatusResponse,
 } from "../types";
+import OperationLoadingDialog from "../components/OperationLoadingDialog";
 
 type ToolchainStatusPageProps = {
   onBack: () => void;
@@ -544,6 +545,14 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
 
   return (
     <PageShell labelledBy="toolchain-status-title">
+      <OperationLoadingDialog
+        open={isLoading || isDiagnosticLoading}
+        title={isDiagnosticLoading ? "正在运行本机自检" : "正在检测工具链"}
+        message={isDiagnosticLoading
+          ? "正在核对随附资源、运行环境与示例状态。"
+          : "正在加载 Vina、Python、RDKit 与 Meeko。"}
+        detail="首次加载科学工具时可能需要更长时间。"
+      />
       <PageHero
         eyebrow="支持"
         title="配置工具链"

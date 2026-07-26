@@ -1,6 +1,6 @@
 # Windows Packaging
 
-本文档定义 DockStart v0.11.2 Windows x86_64 的可重复发布入口。构建脚本只能在干净的
+本文档定义 DockStart v0.12.0 Windows x86_64 的可重复发布入口。构建脚本只能在干净的
 `main` 分支运行，并从白名单 stage 生成 MSI 与 NSIS；禁止直接把开发目录中的
 `resources/python` 或旧 `target/release` 内容复制进安装包。
 
@@ -21,6 +21,10 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 两个 profile 都随附 Vina、DockStart 后端、许可证和 `resources/examples/`。Basic 的
 Python 仅运行后端且排除 `site-packages`；Assisted 的独立 runtime 包含固定 scientific
 packages，但不包含 conda、ProDy、Open Babel、PLIP 或 MGLTools。
+
+两个 profile 都不包含 AutoGrid4。AutoDock4 maps GUI 与后端基础设施随应用提供，但生成
+maps 前必须由用户自行安装外部 GPL `autogrid4.exe`；已有、校验通过的 maps 仍可由随包
+Vina 1.2.7 读取。
 
 ## 可重复资源 stage
 

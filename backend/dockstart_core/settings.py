@@ -18,6 +18,7 @@ SETTINGS_ENV_VAR = "DOCKSTART_SETTINGS_PATH"
 class ToolPaths:
     vina: str = ""
     python: str = ""
+    autogrid4: str = ""
 
 
 @dataclass
@@ -53,6 +54,7 @@ def _settings_from_dict(data: dict[str, Any]) -> DockStartSettings:
         tool_paths=ToolPaths(
             vina=str(tool_paths.get("vina", "") or ""),
             python=str(tool_paths.get("python", "") or ""),
+            autogrid4=str(tool_paths.get("autogrid4", "") or ""),
         ),
         project=ProjectSettings(
             default_project_dir=str(project.get("default_project_dir", "") or ""),
@@ -85,8 +87,8 @@ def save_settings(settings: DockStartSettings) -> DockStartSettings:
 
 
 def update_tool_path(tool_key: str, path: str) -> DockStartSettings:
-    if tool_key not in {"vina", "python"}:
-        raise ValueError("tool_key 只支持 vina 或 python。")
+    if tool_key not in {"vina", "python", "autogrid4"}:
+        raise ValueError("tool_key 只支持 vina、python 或 autogrid4。")
 
     settings = load_settings()
     setattr(settings.tool_paths, tool_key, path.strip())

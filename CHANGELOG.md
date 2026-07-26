@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.0
+
+- Added an independent AutoDock4 maps protocol with GPF generation, external AutoGrid4 detection/execution, maps import, completeness checks, manifests, SHA256 binding, and automatic invalidation after receptor or Box changes.
+- Added immutable per-run maps snapshots and Vina 1.2.7 execution through `--maps` and `--scoring ad4`.
+- Separated AD4 project outputs into `results/ad4_scores.csv` and `reports/ad4_docking_report.md`, with protocol labels and non-comparability warnings in run history, results, and reports.
+- Added a Docking Workbench maps panel for protocol selection, grid points, spacing, atom types, parameter file, generation/import status, and AutoGrid logs.
+- Completed a real end-to-end regression with the official AutoDock 4.2.6 `1dwd` example; DockStart produced validated maps, a finished run, a best score of -11.55 kcal/mol, and an AD4 report.
+- Kept AutoGrid4 external because it is GPL-licensed; neither Basic nor Assisted bundles it.
+- Made Help the initial page, added waiting dialogs to long interactions, hardened non-linear workspace navigation, and improved bundled Meeko/RDKit cold-start detection.
+
 ## v0.10.2
 
 - Reworked project creation labels around the user’s actual inputs: prepared PDBQT, raw PDB/CIF plus SDF/MOL, or a bundled example, replacing ambiguous “Basic” and “raw structure project” wording.

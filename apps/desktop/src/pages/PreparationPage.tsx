@@ -5,6 +5,7 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
 import type {
@@ -195,6 +196,7 @@ export default function PreparationPage({
   const [pendingTarget, setPendingTarget] = useState<PreparationTarget | null>(null);
   const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
 
   useEffect(() => {
@@ -210,10 +212,17 @@ export default function PreparationPage({
     setProject(initialProject);
   }, [initialProject]);
 
-  useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeTaskAbortRef.current?.abort();
+    };
+  }, []);
 
   const applyResponse = useCallback(
     (next: PreparationStatusResponse, fallbackMessage: string, completedTarget?: PreparationTarget) => {
+      if (!mountedRef.current) return;
       setResponse(next);
       if (next.tools) setTools(next.tools);
       if (next.project) {
@@ -243,16 +252,19 @@ export default function PreparationPage({
 
   const waitForPreparation = useCallback(
     async (started: BackgroundTaskStatus, target: PreparationTarget, controller: AbortController) => {
+      if (!mountedRef.current) return;
       setActiveTask(started);
       const completed = await waitForBackgroundTask(
         started.task_id,
         (task) => {
+          if (!mountedRef.current) return;
           setActiveTask(task);
           setMessage(task.progress.message || task.message);
           if (task.error) setRawError(task.error);
         },
         controller.signal,
       );
+      if (!mountedRef.current) return;
       setActiveTask(completed);
       if (completed.status === "cancelled") {
         setMessage("排队中的结构准备任务已取消。");
@@ -307,6 +319,7 @@ export default function PreparationPage({
   }, [initialProject.project_dir, waitForPreparation]);
 
   const reloadStatus = useCallback(async () => {
+    if (!mountedRef.current) return;
     setIsBusy(true);
     try {
       const [rawPayload, rawReviewPayload] = await Promise.all([
@@ -318,15 +331,17 @@ export default function PreparationPage({
         ok?: boolean;
         structure_review?: StructureReviewPayload;
       };
+      if (!mountedRef.current) return;
       if (reviewResponse.ok && reviewResponse.structure_review) {
         parsed.structure_review = reviewResponse.structure_review;
       }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
+      if (!mountedRef.current) return;
       setMessage("无法读取准备状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      if (mountedRef.current) setIsBusy(false);
     }
   }, [applyResponse, project.project_dir]);
 
@@ -341,6 +356,7 @@ export default function PreparationPage({
       const rawPayload = await invoke<string>("get_preparation_tool_status", {
         projectDir: project.project_dir,
       });
+      if (!mountedRef.current) return;
       const parsed = parsePreparationResponse(rawPayload);
       if (!parsed.ok) {
         setMessage(parsed.error?.message ?? "无法检测格式转换工具。");
@@ -350,10 +366,11 @@ export default function PreparationPage({
       setTools(parsed.tools);
       setMessage("格式转换工具检测完成；开始转换时仍会复核输入和输出。" );
     } catch (error) {
+      if (!mountedRef.current) return;
       setMessage("无法检测格式转换工具。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsCheckingTools(false);
+      if (mountedRef.current) setIsCheckingTools(false);
     }
   };
 
@@ -366,12 +383,14 @@ export default function PreparationPage({
         projectDir: project.project_dir,
         target,
       });
+      if (!mountedRef.current) return;
       applyResponse(parsePreparationResponse(rawPayload), `${label}准备状态已重置。`);
     } catch (error) {
+      if (!mountedRef.current) return;
       setMessage("无法重置准备状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      if (mountedRef.current) setIsBusy(false);
     }
   };
 
@@ -403,17 +422,21 @@ export default function PreparationPage({
           : undefined,
       );
       taskId = started.task_id;
+      if (!mountedRef.current) return;
       setMessage(started.deduplicated ? "同一准备任务已在运行，正在接收其进度。" : "准备任务已进入后台队列。界面可以继续响应。" );
       await waitForPreparation(started, target, controller);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
+      if (!mountedRef.current) return;
       setMessage(target === "receptor" ? "无法准备受体输入。" : "无法准备配体输入。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       if (activeTaskAbortRef.current === controller) activeTaskAbortRef.current = null;
-      setActiveTask((current) => (current?.task_id === taskId ? null : current));
-      setPendingTarget(null);
-      setIsBusy(false);
+      if (mountedRef.current) {
+        setActiveTask((current) => (current?.task_id === taskId ? null : current));
+        setPendingTarget(null);
+        setIsBusy(false);
+      }
     }
   };
 
@@ -440,6 +463,7 @@ export default function PreparationPage({
         target === "receptor" ? "load_receptor_preparation_log" : "load_ligand_preparation_log",
         { projectDir: project.project_dir },
       );
+      if (!mountedRef.current) return;
       const parsed = JSON.parse(rawPayload) as {
         message?: string;
         stderr?: string;
@@ -450,10 +474,11 @@ export default function PreparationPage({
       setMessage(parsed.message ?? parsed.error?.message ?? "准备日志已读取。");
       setRawError([parsed.stderr, parsed.stdout, parsed.log, parsed.error?.raw_error].filter(Boolean).join("\n\n"));
     } catch (error) {
+      if (!mountedRef.current) return;
       setMessage("无法读取准备日志。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setIsBusy(false);
+      if (mountedRef.current) setIsBusy(false);
     }
   };
 
@@ -463,6 +488,18 @@ export default function PreparationPage({
   const files = response?.files;
   const readyForBox = files?.receptor_prepared?.status === "ok" && files?.ligand_prepared?.status === "ok";
   const interactionBusy = Boolean(pendingTarget || activeTask?.status === "queued" || activeTask?.status === "running");
+  const loadingTarget = pendingTarget ?? (
+    activeTask?.target === "receptor" || activeTask?.target === "ligand"
+      ? activeTask.target
+      : null
+  );
+  const loadingTitle = isCheckingTools
+    ? "正在检查转换工具"
+    : loadingTarget === "receptor"
+      ? "正在转换受体"
+      : loadingTarget === "ligand"
+        ? "正在转换配体"
+        : "";
 
   const renderStructureRow = (target: PreparationTarget, prep: PreparationResult | undefined) => {
     const isReceptor = target === "receptor";
@@ -667,6 +704,16 @@ export default function PreparationPage({
 
   return (
     <PageShell labelledBy="preparation-title" className="preparation-workspace-page">
+      <OperationLoadingDialog
+        open={isCheckingTools || interactionBusy}
+        title={loadingTitle || "正在处理结构转换"}
+        message={isCheckingTools
+          ? "正在检测 Python、RDKit 与 Meeko。"
+          : activeTask?.progress.message || message || "结构转换任务正在本机运行。"}
+        detail="转换完成后仍需人工检查结构与化学状态。"
+        actionLabel={activeTask?.status === "queued" ? "取消排队" : undefined}
+        onAction={activeTask?.status === "queued" ? () => void cancelQueuedPreparation() : undefined}
+      />
       <PageHero
         eyebrow="格式转换 · PDBQT PREPARATION"
         title="格式转换与 PDBQT 准备"

@@ -32,6 +32,7 @@ dockstart_settings.json
 .workbuddy/
 .codex-ui-audit/
 output/playwright/
+output/qa-tools/
 
 # Third-party source archives and downloads
 *_master.zip

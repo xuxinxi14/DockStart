@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { SpinnerGap } from "@phosphor-icons/react";
+import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
 import { normalizeNavigationPage, type NavigateOptions, type PageId, type StartMode } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
@@ -36,14 +36,16 @@ function projectStateKey(project: DockStartProject): string {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<PageId>("home");
+  const [currentPage, setCurrentPage] = useState<PageId>("help");
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
   const [openProjectRequestKey, setOpenProjectRequestKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
+  const [navigationNotice, setNavigationNotice] = useState("");
   const committedProjectKeyRef = useRef("");
+  const currentPageRef = useRef<PageId>("help");
 
   const commitProject = useCallback((project: DockStartProject) => {
     setCurrentProject(project);
@@ -75,6 +77,12 @@ export default function App() {
       setCurrentRunId((runId) => runId || latestRunId);
     }
   }, []);
+
+  useEffect(() => {
+    if (!navigationNotice) return;
+    const timer = window.setTimeout(() => setNavigationNotice(""), 4800);
+    return () => window.clearTimeout(timer);
+  }, [navigationNotice]);
 
   useEffect(() => {
     const projectDir = currentProject?.project_dir;
@@ -173,15 +181,28 @@ export default function App() {
   }, [commitProjectSnapshot, commitWorkflowSnapshot, currentProject?.project_dir, projectRevision]);
 
   function navigateTo(page: PageId, options?: NavigateOptions) {
-    const destination = normalizeNavigationPage(page);
+    let destination = normalizeNavigationPage(page);
+    if (
+      destination === "run-prepare"
+      && currentProject
+      && !(currentProject.receptor.file && currentProject.ligand.file)
+    ) {
+      destination = "preparation";
+      setNavigationNotice("对接工作台需要受体和配体 PDBQT；已带你回到结构转换步骤。");
+    } else {
+      setNavigationNotice("");
+    }
     if (destination === "project-create") {
       setProjectStartMode(options?.startMode ?? "basic");
     }
+    if (currentPageRef.current === destination) return;
+    currentPageRef.current = destination;
     setCurrentPage(destination);
   }
 
   const requestOpenProject = useCallback(() => {
     setOpenProjectRequestKey((key) => key + 1);
+    currentPageRef.current = "project-create";
     setCurrentPage("project-create");
   }, []);
 
@@ -431,6 +452,12 @@ export default function App() {
       onNavigate={navigateTo}
       onOpenProject={requestOpenProject}
     >
+      {navigationNotice ? (
+        <div className="navigation-guard-notice" role="status">
+          <WarningCircle aria-hidden="true" size={20} weight="fill" />
+          <span>{navigationNotice}</span>
+        </div>
+      ) : null}
       <Suspense
         fallback={(
           <section aria-live="polite" className="page-loading-state" role="status">

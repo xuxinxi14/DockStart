@@ -529,3 +529,28 @@ conda install -n dockstart-rdkit-meeko -c conda-forge --override-channels "setup
 - viewer 不做 pocket prediction；
 - viewer 不替代专业分子建模软件；
 - viewer 不修改 Vina 算法或 scoring function。
+
+## V0.12.0 AutoDock4 Maps Smoke Test
+
+### 自动化
+
+```powershell
+python -m unittest backend.tests.test_autogrid -v
+```
+
+应覆盖 GPF/manifest、maps 完整性、受体变更失效、金属阻断、不可变 run 快照与 AD4 命令。
+
+### 官方真实回归
+
+使用 Scripps AutoDock 4.2.6 官方 `examples/dock_flexlig/1dwd_*`：
+
+1. 配置外部 `autogrid4.exe` 4.2.6 与随包 Vina 1.2.7。
+2. 导入 `1dwd_rec.pdbqt` 与 `1dwd_lig.pdbqt`。
+3. Box center 设为 `32.192, 14.174, 25.076`；grid points 为 `60, 60, 60`；spacing 为 `0.375 Å`。
+4. 生成 maps，确认 `.maps.fld`、各配体类型 `.map`、`.e.map`、`.d.map` 和 manifest 非空。
+5. 使用 `ad4_maps` 准备并执行 run，确认命令包含 `--maps` 与 `--scoring ad4`。
+6. seed 12345、exhaustiveness 2、CPU 1 的基准运行应完成；2026-07-26 本机记录的最佳评分为 -11.55 kcal/mol。
+7. 确认 `results/ad4_scores.csv` 与 `reports/ad4_docking_report.md` 存在，且没有覆盖标准 `scores.csv` / `docking_report.md`。
+8. 修改受体或 Box，确认旧 maps 被标记失效并阻止新 run。
+
+该结果用于软件回归，不用于证明真实结合或药效；不同协议的分值不得横向比较。

@@ -2,6 +2,33 @@
 
 本文档记录 DockStart 从 V0.1 Lite MVP 走向 DockStart Full 一站式分子对接平台的阶段路线。实际优先级会根据用户反馈、许可证边界、分发体积和维护成本调整。
 
+## V0.12.0：AutoDock4 Maps 基础设施，已完成
+
+完成路径：
+
+1. **外部工具边界**：完成 AutoGrid4 GPL 审查；Basic/Assisted 均不内置，只检测用户配置路径或 PATH。
+2. **网格准备**：从当前受体、配体和 Box 推导 GPF，管理偶数 grid points、spacing、原子类型和可选参数文件。
+3. **maps 资产**：生成或导入 maps，保存 manifest、日志、版本、命令和 SHA256，并把 maps 绑定到受体与 Box。
+4. **运行协议**：新增独立 `ad4_maps`，通过 Vina 1.2.7 的 `--maps`、`--scoring ad4` 执行；不复用普通评分下拉框。
+5. **结果隔离**：AD4 项目汇总写入 `ad4_scores.csv` 与 `ad4_docking_report.md`，运行历史、结果页和报告显示协议标签。
+6. **科学回归**：Scripps 官方 `1dwd` 用例完成真实 AutoGrid4 4.2.6 + Vina 1.2.7 全链路回归。
+7. **发布**：统一版本为 v0.12.0，构建 Basic/Assisted 的 MSI 与 NSIS；AutoGrid4 不进入任何安装包。
+
+后续顺序：
+
+```text
+v0.12.x：不增加新科学协议；收口 GUI、AutoDock4 maps、Assisted 干净安装，以及现有批筛/柔性/大环真实安装态回归
+v0.13.0：用可核对样例复核并收口大环正式协议
+v0.14.0：AD4Zn beta（只处理 Zn，不泛化到其他金属）
+v0.15.0：AD4Zn stable，前提是 beta 完成多样本、失败路径和安装态门禁
+更后：score_only/local_only、多配体同时对接、水合对接等候选能力逐项立项，不提前绑定版本号
+v1.0.0：冻结 Stable 协议集合并完成兼容、签名、文档和发布门禁
+```
+
+V0.12.0 明确不包含 AD4Zn、柔性受体 AD4、批量 AD4 maps、水合对接、分子动力学或评分函数修改。
+
+当前 `project.json` 仍使用 schema v1，并通过向后兼容字段保存批筛、柔性、大环和 AD4 maps 状态。schema v2 不再作为一个脱离实际需求的固定版本目标；只有新协议无法由现有数据模型安全表达时，才在提供备份、回滚和旧项目兼容测试后单独迁移。当前“多配体对接”指多个配体依次运行的串行批量筛选，不等于未来可能研究的多配体同时对接。
+
 ## 产品方向
 
 DockStart Full 的最终目标：

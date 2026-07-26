@@ -12,6 +12,9 @@ from dockstart_core.models import ToolCheckResult
 from dockstart_core.process_utils import hidden_subprocess_kwargs
 
 SUBPROCESS_TEXT_KWARGS = {"text": True, "encoding": "utf-8", "errors": "replace"}
+# First import can be delayed by Windows Defender while native RDKit
+# extensions are mapped from a freshly installed Assisted runtime.
+SCIENTIFIC_IMPORT_TIMEOUT_SECONDS = 45
 
 
 def detect(python_path: str = "", source: str = "current_environment") -> ToolCheckResult:
@@ -39,7 +42,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             command,
             capture_output=True,
             **SUBPROCESS_TEXT_KWARGS,
-            timeout=10,
+            timeout=SCIENTIFIC_IMPORT_TIMEOUT_SECONDS,
             check=False,
             **hidden_subprocess_kwargs(),
         )
@@ -160,7 +163,7 @@ print(json.dumps(payload, ensure_ascii=True))
             command,
             capture_output=True,
             **SUBPROCESS_TEXT_KWARGS,
-            timeout=10,
+            timeout=SCIENTIFIC_IMPORT_TIMEOUT_SECONDS,
             check=False,
             **hidden_subprocess_kwargs(),
         )

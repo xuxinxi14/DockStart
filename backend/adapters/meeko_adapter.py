@@ -13,6 +13,9 @@ from dockstart_core.models import ToolCheckResult
 from dockstart_core.process_utils import hidden_subprocess_kwargs
 
 SUBPROCESS_TEXT_KWARGS = {"text": True, "encoding": "utf-8", "errors": "replace"}
+# First import can be delayed by Windows Defender while native RDKit/NumPy
+# extensions are mapped from a freshly installed Assisted runtime.
+SCIENTIFIC_IMPORT_TIMEOUT_SECONDS = 45
 MEEKO_LIGAND_MODULE = "meeko.cli.mk_prepare_ligand"
 MEEKO_RECEPTOR_MODULE = "meeko.cli.mk_prepare_receptor"
 ALLOWED_MEEKO_MODULES = frozenset({MEEKO_LIGAND_MODULE, MEEKO_RECEPTOR_MODULE})
@@ -56,7 +59,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             capture_output=True,
             env=_python_subprocess_environment(),
             **SUBPROCESS_TEXT_KWARGS,
-            timeout=10,
+            timeout=SCIENTIFIC_IMPORT_TIMEOUT_SECONDS,
             check=False,
             **hidden_subprocess_kwargs(),
         )
@@ -271,7 +274,7 @@ print(json.dumps(payload, ensure_ascii=True))
             capture_output=True,
             env=_python_subprocess_environment(),
             **SUBPROCESS_TEXT_KWARGS,
-            timeout=10,
+            timeout=SCIENTIFIC_IMPORT_TIMEOUT_SECONDS,
             check=False,
             **hidden_subprocess_kwargs(),
         )

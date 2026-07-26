@@ -30,7 +30,7 @@ from dockstart_core.preparation_models import PreparationState, preparation_stat
 from dockstart_core.settings import load_settings
 from dockstart_core.structure_review import build_structure_review
 
-PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation")
+PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation", "maps")
 PROJECT_NAME_PATTERN = re.compile(r"^[^<>:\"/\\|?*\x00-\x1f]+$")
 RUN_ID_PATTERN = re.compile(r"^run_(\d{3,})$")
 VINA_NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -42,6 +42,20 @@ DOCKING_SCORE_DISCLAIMER = "Docking score 仅供结构结合趋势参考，不�
 RUN_REPORT_FILE = "docking_report.md"
 PROJECT_REPORT_FILE = Path("reports", "docking_report.md").as_posix()
 CURRENT_PROJECT_SCHEMA_VERSION = 1
+
+
+def _metadata_scoring_protocol(metadata: dict[str, Any]) -> str:
+    return "ad4_maps" if str(metadata.get("scoring_protocol") or "") == "ad4_maps" else "vina"
+
+
+def _project_scores_file(metadata: dict[str, Any]) -> str:
+    filename = "ad4_scores.csv" if _metadata_scoring_protocol(metadata) == "ad4_maps" else "scores.csv"
+    return Path("results", filename).as_posix()
+
+
+def _project_report_file(metadata: dict[str, Any]) -> str:
+    filename = "ad4_docking_report.md" if _metadata_scoring_protocol(metadata) == "ad4_maps" else "docking_report.md"
+    return Path("reports", filename).as_posix()
 
 
 class ProjectSchemaError(ValueError):
@@ -1150,6 +1164,19 @@ def _prepared_input_hint(project: DockStartProject, project_dir: Path, target: s
     return fallback_error
 
 
+def _project_scoring_protocol(project: DockStartProject) -> str:
+    protocol = project.preserved_data.get("docking_protocol")
+    if isinstance(protocol, dict) and str(protocol.get("engine") or "").strip().lower() == "ad4_maps":
+        return "ad4_maps"
+    return "vina"
+
+
+def _active_ad4_maps(project_dir: str) -> dict[str, Any]:
+    from dockstart_core.autogrid import validate_active_maps
+
+    return validate_active_maps(project_dir)
+
+
 def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
@@ -1169,6 +1196,13 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
     receptor_inputs = _active_receptor_inputs(project_path, project)
     if not receptor_inputs.get("ok"):
         return receptor_inputs
+    scoring_protocol = _project_scoring_protocol(project)
+    if scoring_protocol == "ad4_maps" and receptor_inputs.get("mode") == "flexible":
+        return _error(
+            "MAPS_FLEXIBLE_RECEPTOR_UNSUPPORTED",
+            "AutoDock4 (maps) 的当前稳定基准只支持刚性受体。",
+            suggestion="请切换回刚性受体，或改用标准 Vina/Vinardo 柔性侧链流程。",
+        )
     receptor_file = str(receptor_inputs["receptor_file"])
     _, receptor_error = _project_relative_file(project_path, receptor_file, "receptor")
     if receptor_error:
@@ -1184,6 +1218,17 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
     vina_validation = validate_vina_params(asdict(project.vina))
     if not vina_validation.get("ok"):
         return vina_validation
+    maps_status: dict[str, Any] | None = None
+    if scoring_protocol == "ad4_maps":
+        maps_status = _active_ad4_maps(str(project_path))
+        if not maps_status.get("ok") or not maps_status.get("ready"):
+            error = maps_status.get("error") or {}
+            return _error(
+                str(error.get("code") or "MAPS_VALIDATION_FAILED"),
+                str(error.get("message") or "AutoDock4 affinity maps 未准备完成。"),
+                str(error.get("raw_error") or "；".join(maps_status.get("issues") or [])),
+                str(error.get("suggestion") or "请重新生成或导入与当前受体匹配的 maps。"),
+            )
 
     return {
         "ok": True,
@@ -1194,6 +1239,8 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
         "receptor_file": receptor_file,
         "flex_file": str(receptor_inputs.get("flex_file") or ""),
         "docking_protocol": receptor_inputs,
+        "scoring_protocol": scoring_protocol,
+        "ad4_maps": maps_status,
         "warnings": vina_validation.get("warnings", []) + box_validation.get("warnings", []),
         "error": None,
     }
@@ -1207,24 +1254,34 @@ def build_vina_config_text(project_dir: str) -> dict[str, Any]:
     project = _project_from_dict(prerequisites["project"], Path(project_dir).expanduser())
     box = prerequisites["box"]
     vina = prerequisites["vina"]
-    lines = [
-        f"receptor = {Path(prerequisites['receptor_file']).as_posix()}",
-        f"ligand = {Path(project.ligand.file).as_posix()}",
-        f"scoring = {vina['scoring']}",
-        "",
-        f"center_x = {_format_config_number(box['center_x'])}",
-        f"center_y = {_format_config_number(box['center_y'])}",
-        f"center_z = {_format_config_number(box['center_z'])}",
-        "",
-        f"size_x = {_format_config_number(box['size_x'])}",
-        f"size_y = {_format_config_number(box['size_y'])}",
-        f"size_z = {_format_config_number(box['size_z'])}",
-        "",
+    scoring_protocol = str(prerequisites.get("scoring_protocol") or "vina")
+    if scoring_protocol == "ad4_maps":
+        lines = [
+            f"ligand = {Path(project.ligand.file).as_posix()}",
+            "scoring = ad4",
+            "",
+        ]
+    else:
+        lines = [
+            f"receptor = {Path(prerequisites['receptor_file']).as_posix()}",
+            f"ligand = {Path(project.ligand.file).as_posix()}",
+            f"scoring = {vina['scoring']}",
+            "",
+            f"center_x = {_format_config_number(box['center_x'])}",
+            f"center_y = {_format_config_number(box['center_y'])}",
+            f"center_z = {_format_config_number(box['center_z'])}",
+            "",
+            f"size_x = {_format_config_number(box['size_x'])}",
+            f"size_y = {_format_config_number(box['size_y'])}",
+            f"size_z = {_format_config_number(box['size_z'])}",
+            "",
+        ]
+    lines.extend([
         f"exhaustiveness = {vina['exhaustiveness']}",
         f"num_modes = {vina['num_modes']}",
         f"energy_range = {_format_config_number(vina['energy_range'])}",
         f"cpu = {vina['cpu']}",
-    ]
+    ])
     if vina["seed"] is not None:
         lines.append(f"seed = {vina['seed']}")
 
@@ -1234,6 +1291,8 @@ def build_vina_config_text(project_dir: str) -> dict[str, Any]:
         "project": project.to_dict(),
         "config_file": "configs/vina_config.txt",
         "config_text": "\n".join(lines) + "\n",
+        "scoring_protocol": scoring_protocol,
+        "maps_prefix": str((prerequisites.get("ad4_maps") or {}).get("maps_prefix") or ""),
         "warnings": prerequisites.get("warnings", []),
         "message": "Vina 配置预览已生成。",
         "error": None,
@@ -1571,6 +1630,15 @@ def _collect_run_history(project_path: Path, project: DockStartProject) -> list[
         except (OSError, json.JSONDecodeError):
             pass
         combined = {**summary, **metadata}
+        scoring_protocol = str(combined.get("scoring_protocol") or "")
+        if not scoring_protocol:
+            protocol_snapshot = combined.get("docking_protocol")
+            scoring_protocol = (
+                "ad4_maps"
+                if isinstance(protocol_snapshot, dict)
+                and str(protocol_snapshot.get("protocol_id") or "") == "ad4_maps"
+                else "vina"
+            )
         duration = combined.get("duration_seconds")
         if not isinstance(duration, (int, float)):
             duration = _duration_seconds(combined.get("started_at"), combined.get("finished_at"))
@@ -1584,6 +1652,12 @@ def _collect_run_history(project_path: Path, project: DockStartProject) -> list[
                 "duration_seconds": duration,
                 "best_affinity": combined.get("best_affinity"),
                 "stage": str(combined.get("stage") or combined.get("status") or "unknown"),
+                "scoring_protocol": scoring_protocol,
+                "scoring_function": "ad4"
+                if scoring_protocol == "ad4_maps"
+                else str((combined.get("vina_snapshot") or {}).get("scoring") or "vina")
+                if isinstance(combined.get("vina_snapshot"), dict)
+                else "vina",
             },
         )
     return history
@@ -1595,11 +1669,12 @@ def _format_duration_range(seconds_low: float, seconds_high: float) -> str:
     return f"约 {max(1, round(seconds_low / 60))}–{max(1, round(seconds_high / 60))} 分钟"
 
 
-def _runtime_estimate(run_history: list[dict[str, Any]]) -> dict[str, Any]:
+def _runtime_estimate(run_history: list[dict[str, Any]], scoring_protocol: str = "vina") -> dict[str, Any]:
     samples = sorted(
         float(item["duration_seconds"])
         for item in run_history
         if item.get("status") == "finished"
+        and str(item.get("scoring_protocol") or "vina") == scoring_protocol
         and isinstance(item.get("duration_seconds"), (int, float))
         and float(item["duration_seconds"]) > 0
     )
@@ -1654,6 +1729,8 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
         "next_run_id": "",
         "command_preview": "",
         "run_history": [],
+        "scoring_protocol": "vina",
+        "ad4_maps": None,
         "config": {"status": "missing", "relative_path": "", "absolute_path": "", "exists": False, "non_empty": False, "sha256": ""},
         "message": "运行前检查未完成。",
         "error": None,
@@ -1698,7 +1775,15 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
 
     project_path = Path(project_dir).expanduser().resolve()
     project = _project_from_dict(loaded["project"], project_path)
-    default_payload.update({"ok": True, "project": project.to_dict(), "project_dir": str(project_path)})
+    scoring_protocol = _project_scoring_protocol(project)
+    default_payload.update(
+        {
+            "ok": True,
+            "project": project.to_dict(),
+            "project_dir": str(project_path),
+            "scoring_protocol": scoring_protocol,
+        }
+    )
     add_check("project", "项目文件", "ok", "project.json 已读取。", blocking=False, path=str(project_path / "project.json"))
 
     def inspect_input(role: str, relative_path: str) -> None:
@@ -1822,7 +1907,14 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
     vina_data = asdict(project.vina)
     vina_validation = validate_vina_params(vina_data)
     if vina_validation.get("ok"):
-        add_check("vina_params", "Vina 参数", "ok", "Vina 参数格式有效。", blocking=False, action_page="vina-param")
+        add_check(
+            "vina_params",
+            "搜索参数",
+            "ok",
+            "AutoDock4 搜索参数格式有效。" if scoring_protocol == "ad4_maps" else "Vina 参数格式有效。",
+            blocking=False,
+            action_page="vina-param",
+        )
         for warning in vina_validation.get("warnings", []):
             if warning not in warnings:
                 warnings.append(warning)
@@ -1838,6 +1930,68 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
     else:
         add_check("cpu", "CPU 线程", "ok", "CPU 线程设置未超过系统逻辑核心数。", blocking=False, action_page="vina-param")
     default_payload["vina_params"] = vina_data
+
+    maps_prefix = ""
+    if scoring_protocol == "ad4_maps":
+        maps_status = _active_ad4_maps(str(project_path))
+        default_payload["ad4_maps"] = maps_status
+        if maps_status.get("ok") and maps_status.get("ready"):
+            maps_prefix = str(maps_status.get("maps_prefix") or "")
+            add_check(
+                "ad4_maps",
+                "AutoDock4 affinity maps",
+                "ok",
+                "maps 完整，并与当前受体 SHA256、配体原子类型和 Box 一致。",
+                blocking=False,
+                path=str(maps_status.get("manifest_file") or ""),
+            )
+        else:
+            error = maps_status.get("error") or {}
+            add_check(
+                "ad4_maps",
+                "AutoDock4 affinity maps",
+                "error",
+                str(error.get("message") or maps_status.get("message") or "maps 未准备完成。"),
+                blocking=True,
+                detail=str(error.get("raw_error") or "；".join(maps_status.get("issues") or [])),
+                action_page="run-prepare",
+                path=str(maps_status.get("manifest_file") or ""),
+            )
+        from adapters import autogrid_adapter
+
+        autogrid_detection = autogrid_adapter.detect(load_settings().tool_paths.autogrid4)
+        if autogrid_detection.status == "ok":
+            add_check(
+                "autogrid4",
+                "AutoGrid4",
+                "ok",
+                "外部 AutoGrid4 可用于重新生成 maps。",
+                blocking=False,
+                path=autogrid_detection.path,
+                version=autogrid_detection.version,
+            )
+        elif maps_status.get("ok") and maps_status.get("ready"):
+            warning = "当前 AutoGrid4 不可用；已有 maps 仍可运行，但无法在本机重新生成。"
+            warnings.append(warning)
+            add_check(
+                "autogrid4",
+                "AutoGrid4",
+                "warning",
+                warning,
+                blocking=False,
+                detail=autogrid_detection.raw_error,
+                action_page="settings",
+            )
+        else:
+            add_check(
+                "autogrid4",
+                "AutoGrid4",
+                autogrid_detection.status,
+                autogrid_detection.message or "未检测到 AutoGrid4。",
+                blocking=True,
+                detail=autogrid_detection.raw_error,
+                action_page="settings",
+            )
 
     config_file = _config_relative_path(project)
     config_relative = Path(config_file)
@@ -1948,11 +2102,17 @@ def get_run_preflight(project_dir: str) -> dict[str, Any]:
 
     run_history = _collect_run_history(project_path, project)
     next_run_id = get_next_run_id(str(project_path))
-    command = _build_vina_command(detection.path, config_file, next_run_id)
+    command = _build_vina_command(
+        detection.path,
+        config_file,
+        next_run_id,
+        scoring_protocol=scoring_protocol,
+        maps_prefix=maps_prefix,
+    )
     default_payload.update(
         {
             "ready": not blockers,
-            "estimate": _runtime_estimate(run_history),
+            "estimate": _runtime_estimate(run_history, scoring_protocol),
             "next_run_id": next_run_id,
             "command_preview": _format_command_preview(command),
             "run_history": run_history,
@@ -2112,40 +2272,54 @@ def _build_vina_command(
     config_file: str,
     run_id: str,
     flex_file: str = "",
+    *,
+    scoring_protocol: str = "vina",
+    maps_prefix: str = "",
 ) -> list[str]:
     command = [
         vina_path or "vina",
         "--config",
         Path(config_file).as_posix(),
-        "--out",
-        Path("runs", run_id, "out.pdbqt").as_posix(),
     ]
+    if scoring_protocol == "ad4_maps":
+        command.extend(["--maps", Path(maps_prefix).as_posix(), "--scoring", "ad4"])
+    command.extend(["--out", Path("runs", run_id, "out.pdbqt").as_posix()])
     if flex_file:
         command.extend(["--flex", Path(flex_file).as_posix()])
     return command
 
 
-def _build_run_snapshot_config(project: DockStartProject, run_id: str) -> str:
+def _build_run_snapshot_config(
+    project: DockStartProject,
+    run_id: str,
+    *,
+    scoring_protocol: str = "vina",
+) -> str:
     receptor = Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()
     ligand = Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix()
-    lines = [
-        f"receptor = {receptor}",
-        f"ligand = {ligand}",
-        f"scoring = {project.vina.scoring}",
-        "",
-        f"center_x = {_format_config_number(project.box.center_x)}",
-        f"center_y = {_format_config_number(project.box.center_y)}",
-        f"center_z = {_format_config_number(project.box.center_z)}",
-        "",
-        f"size_x = {_format_config_number(project.box.size_x)}",
-        f"size_y = {_format_config_number(project.box.size_y)}",
-        f"size_z = {_format_config_number(project.box.size_z)}",
-        "",
+    if scoring_protocol == "ad4_maps":
+        lines = [f"ligand = {ligand}", "scoring = ad4", ""]
+    else:
+        lines = [
+            f"receptor = {receptor}",
+            f"ligand = {ligand}",
+            f"scoring = {project.vina.scoring}",
+            "",
+            f"center_x = {_format_config_number(project.box.center_x)}",
+            f"center_y = {_format_config_number(project.box.center_y)}",
+            f"center_z = {_format_config_number(project.box.center_z)}",
+            "",
+            f"size_x = {_format_config_number(project.box.size_x)}",
+            f"size_y = {_format_config_number(project.box.size_y)}",
+            f"size_z = {_format_config_number(project.box.size_z)}",
+            "",
+        ]
+    lines.extend([
         f"exhaustiveness = {project.vina.exhaustiveness}",
         f"num_modes = {project.vina.num_modes}",
         f"energy_range = {_format_config_number(project.vina.energy_range)}",
         f"cpu = {project.vina.cpu}",
-    ]
+    ])
     if project.vina.seed is not None:
         lines.append(f"seed = {project.vina.seed}")
     return "\n".join(lines) + "\n"
@@ -2179,6 +2353,7 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
 
     project_path = Path(project_dir).expanduser()
     project = _project_from_dict(loaded["project"], project_path)
+    scoring_protocol = _project_scoring_protocol(project)
     checks.append(_run_check("project_json", "project.json", "ok", "已读取项目配置。", "project.json"))
 
     receptor_inputs = _active_receptor_inputs(project_path, project)
@@ -2202,6 +2377,21 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
         )
     receptor_file = str(receptor_inputs["receptor_file"])
     flex_file = str(receptor_inputs.get("flex_file") or "")
+    if scoring_protocol == "ad4_maps" and flex_file:
+        checks.append(
+            _run_check(
+                "ad4_maps",
+                "AutoDock4 affinity maps",
+                "error",
+                "AutoDock4 (maps) 的当前稳定基准只支持刚性受体。",
+            )
+        )
+        return _run_error(
+            "MAPS_FLEXIBLE_RECEPTOR_UNSUPPORTED",
+            "AutoDock4 (maps) 的当前稳定基准只支持刚性受体。",
+            checks,
+            suggestion="请切换回刚性受体，或改用标准 Vina/Vinardo 柔性侧链流程。",
+        )
     receptor_path, receptor_error = _project_relative_file(project_path, receptor_file, "receptor")
     if receptor_error:
         receptor_error = _prepared_input_hint(project, project_path, "receptor", receptor_error)
@@ -2333,6 +2523,40 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
         return _run_error(error["code"], error["message"], checks, error.get("raw_error", ""), error.get("suggestion", ""))
     checks.append(_run_check("vina_params", "Vina 参数", "ok", "Vina 参数格式有效。"))
 
+    maps_status: dict[str, Any] | None = None
+    maps_prefix = ""
+    if scoring_protocol == "ad4_maps":
+        maps_status = _active_ad4_maps(str(project_path))
+        if not maps_status.get("ok") or not maps_status.get("ready"):
+            error = maps_status.get("error") or {}
+            checks.append(
+                _run_check(
+                    "ad4_maps",
+                    "AutoDock4 affinity maps",
+                    "error",
+                    str(error.get("message") or "maps 未通过完整性校验。"),
+                    str(maps_status.get("manifest_file") or ""),
+                    raw_error=str(error.get("raw_error") or "；".join(maps_status.get("issues") or [])),
+                )
+            )
+            return _run_error(
+                str(error.get("code") or "MAPS_VALIDATION_FAILED"),
+                str(error.get("message") or "AutoDock4 affinity maps 未通过完整性校验。"),
+                checks,
+                str(error.get("raw_error") or ""),
+                str(error.get("suggestion") or "请重新生成或导入 maps。"),
+            )
+        maps_prefix = str(maps_status.get("maps_prefix") or "")
+        checks.append(
+            _run_check(
+                "ad4_maps",
+                "AutoDock4 affinity maps",
+                "ok",
+                "maps 完整，并与当前受体、配体原子类型和 Box 一致。",
+                str(maps_status.get("manifest_file") or ""),
+            )
+        )
+
     settings = load_settings()
     vina_detection = vina_adapter.detect(settings.tool_paths.vina)
     vina_dict = vina_detection.to_dict()
@@ -2368,7 +2592,14 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
     )
 
     next_run_id = get_next_run_id(project.project_dir)
-    command = _build_vina_command(vina_detection.path, config_file, next_run_id, flex_file)
+    command = _build_vina_command(
+        vina_detection.path,
+        config_file,
+        next_run_id,
+        flex_file,
+        scoring_protocol=scoring_protocol,
+        maps_prefix=maps_prefix,
+    )
     warnings = box_validation.get("warnings", []) + vina_validation.get("warnings", [])
     return {
         "ok": True,
@@ -2385,6 +2616,9 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
         "receptor_file": receptor_file,
         "flex_file": flex_file,
         "docking_protocol": receptor_inputs,
+        "scoring_protocol": scoring_protocol,
+        "ad4_maps": maps_status,
+        "maps_prefix": maps_prefix,
         "command": command,
         "command_preview": _format_command_preview(command),
         "message": "运行前检查通过，可以准备运行记录。",
@@ -2435,6 +2669,8 @@ def build_vina_command_preview(project_dir: str, run_id: str) -> dict[str, Any]:
         prerequisites["config_file"],
         run_id,
         str(prerequisites.get("flex_file") or ""),
+        scoring_protocol=str(prerequisites.get("scoring_protocol") or "vina"),
+        maps_prefix=str(prerequisites.get("maps_prefix") or ""),
     )
     return {
         "ok": True,
@@ -2495,6 +2731,62 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             if prerequisites.get("flex_file")
             else ""
         )
+        scoring_protocol = str(prerequisites.get("scoring_protocol") or "vina")
+        ad4_maps_status = prerequisites.get("ad4_maps") if isinstance(prerequisites.get("ad4_maps"), dict) else {}
+        maps_snapshot_prefix = ""
+        maps_manifest_snapshot_file = ""
+        maps_file_snapshots: list[dict[str, Any]] = []
+        if scoring_protocol == "ad4_maps":
+            source_manifest = ad4_maps_status.get("manifest")
+            if not isinstance(source_manifest, dict):
+                raise RuntimeError("AutoDock4 maps manifest 未包含在运行前检查结果中。")
+            source_maps = source_manifest.get("maps") if isinstance(source_manifest.get("maps"), dict) else {}
+            source_files = source_maps.get("files") if isinstance(source_maps.get("files"), list) else []
+            source_prefix = Path(str(source_maps.get("prefix") or "")).name
+            if not source_prefix or not source_files:
+                raise RuntimeError("AutoDock4 maps manifest 缺少 prefix 或文件清单。")
+            maps_snapshot_dir = inputs_dir / "maps"
+            maps_snapshot_dir.mkdir(parents=True, exist_ok=False)
+            for item in source_files:
+                if not isinstance(item, dict):
+                    raise RuntimeError("AutoDock4 maps manifest 包含无效文件记录。")
+                source_relative = str(item.get("relative_path") or "")
+                source_path, source_error = _project_relative_existing_file(
+                    project_root,
+                    source_relative,
+                    "AD4_MAP",
+                    "AutoDock4 map",
+                )
+                if source_error or source_path is None:
+                    raise RuntimeError(str((source_error or {}).get("error") or "AutoDock4 map 不可读取。"))
+                target_path = maps_snapshot_dir / source_path.name
+                shutil.copyfile(source_path, target_path)
+                target_relative = Path("runs", run_id, "inputs", "maps", target_path.name).as_posix()
+                maps_file_snapshots.append(
+                    {
+                        "name": target_path.name,
+                        "source_relative_path": Path(source_relative).as_posix(),
+                        **_hash_snapshot(target_path, target_relative),
+                    }
+                )
+            maps_manifest_snapshot_file = Path(
+                "runs",
+                run_id,
+                "inputs",
+                "maps",
+                "manifest.json",
+            ).as_posix()
+            _atomic_write_text(
+                project_root / maps_manifest_snapshot_file,
+                json.dumps(source_manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+            maps_snapshot_prefix = Path(
+                "runs",
+                run_id,
+                "inputs",
+                "maps",
+                source_prefix,
+            ).as_posix()
         output_file = Path("runs", run_id, "out.pdbqt").as_posix()
         log_file = Path("runs", run_id, "log.txt").as_posix()
         command = _build_vina_command(
@@ -2502,6 +2794,8 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             config_snapshot_file,
             run_id,
             flex_snapshot_file,
+            scoring_protocol=scoring_protocol,
+            maps_prefix=maps_snapshot_prefix,
         )
         receptor_source_file = str(prerequisites.get("receptor_file") or project.receptor.file)
         receptor_path = project_root / receptor_source_file
@@ -2514,7 +2808,10 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
         shutil.copyfile(ligand_path, ligand_snapshot_path)
         if flex_snapshot_path is not None:
             shutil.copyfile(project_root / str(prerequisites["flex_file"]), flex_snapshot_path)
-        _atomic_write_text(config_snapshot_path, _build_run_snapshot_config(project, run_id))
+        _atomic_write_text(
+            config_snapshot_path,
+            _build_run_snapshot_config(project, run_id, scoring_protocol=scoring_protocol),
+        )
         receptor_snapshot = _parse_pdbqt_stats(receptor_snapshot_path, receptor_snapshot_file)
         receptor_snapshot["source_relative_path"] = Path(receptor_source_file).as_posix()
         ligand_snapshot = _parse_pdbqt_stats(ligand_snapshot_path, ligand_snapshot_file, ligand=True)
@@ -2541,6 +2838,11 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             flex_snapshot = _parse_pdbqt_stats(flex_snapshot_path, flex_snapshot_file)
             flex_snapshot["source_relative_path"] = Path(str(prerequisites["flex_file"])).as_posix()
         config_sha256 = _sha256_file(config_snapshot_path)
+        maps_manifest_snapshot = (
+            _hash_snapshot(project_root / maps_manifest_snapshot_file, maps_manifest_snapshot_file)
+            if maps_manifest_snapshot_file
+            else None
+        )
         system_snapshot = _system_snapshot()
         vina_source = str((prerequisites.get("vina") or {}).get("source") or "unknown")
         vina_binary = _tool_hash_snapshot(str(prerequisites.get("vina_path") or ""))
@@ -2586,24 +2888,74 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                     "size_bytes": config_snapshot_path.stat().st_size,
                 },
                 **(
+                    {
+                        "ad4_maps": {
+                            "manifest": maps_manifest_snapshot,
+                            "prefix": maps_snapshot_prefix,
+                            "files": maps_file_snapshots,
+                            "source_manifest": str(ad4_maps_status.get("manifest_file") or ""),
+                        }
+                    }
+                    if scoring_protocol == "ad4_maps"
+                    else {}
+                ),
+                **(
                     {"ligand_preparation": ligand_preparation_snapshot}
                     if ligand_preparation_snapshot is not None
                     else {}
                 ),
                 "box": asdict(project.box),
-                "vina": asdict(project.vina),
+                "vina": {
+                    **asdict(project.vina),
+                    "scoring": "ad4" if scoring_protocol == "ad4_maps" else project.vina.scoring,
+                },
             },
             "input_sha256": {
                 "receptor": receptor_snapshot["sha256"],
                 "ligand": ligand_snapshot["sha256"],
                 "config": config_sha256,
                 **({"flex": flex_snapshot["sha256"]} if flex_snapshot is not None else {}),
+                **(
+                    {
+                        "maps_manifest": str((maps_manifest_snapshot or {}).get("sha256") or ""),
+                        "maps": {
+                            str(item.get("name") or ""): str(item.get("sha256") or "")
+                            for item in maps_file_snapshots
+                        },
+                    }
+                    if scoring_protocol == "ad4_maps"
+                    else {}
+                ),
             },
-            "docking_protocol": copy.deepcopy(prerequisites.get("docking_protocol") or {"mode": "rigid"}),
+            "docking_protocol": {
+                **copy.deepcopy(prerequisites.get("docking_protocol") or {"mode": "rigid"}),
+                "protocol_id": "ad4_maps" if scoring_protocol == "ad4_maps" else "rigid_single",
+                "engine": scoring_protocol,
+            },
+            "scoring_protocol": scoring_protocol,
+            "scoring_function": "ad4" if scoring_protocol == "ad4_maps" else project.vina.scoring,
+            "ad4_maps": (
+                {
+                    "map_set_id": str(ad4_maps_status.get("map_set_id") or ""),
+                    "source_manifest": str(ad4_maps_status.get("manifest_file") or ""),
+                    "manifest_snapshot": maps_manifest_snapshot_file,
+                    "prefix": maps_snapshot_prefix,
+                    "files": maps_file_snapshots,
+                    "grid": copy.deepcopy((ad4_maps_status.get("manifest") or {}).get("grid") or {}),
+                    "ligand_atom_types": copy.deepcopy(
+                        ((ad4_maps_status.get("manifest") or {}).get("maps") or {}).get("ligand_atom_types") or []
+                    ),
+                }
+                if scoring_protocol == "ad4_maps"
+                else None
+            ),
             "ligand_preparation": ligand_preparation,
             "ligand_preparation_snapshot": ligand_preparation_snapshot_file,
             "box_snapshot": asdict(project.box),
-            "vina_snapshot": asdict(project.vina),
+            "vina_snapshot": {
+                **asdict(project.vina),
+                "scoring": "ad4" if scoring_protocol == "ad4_maps" else project.vina.scoring,
+            },
             "output_file": output_file,
             "log_file": log_file,
             "exit_code": None,
@@ -2620,6 +2972,8 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                 "status": "prepared",
                 "metadata_file": metadata_file,
                 "created_at": created_at,
+                "scoring_protocol": scoring_protocol,
+                "scoring_function": "ad4" if scoring_protocol == "ad4_maps" else project.vina.scoring,
             },
         )
         saved = save_project(project)
@@ -3254,9 +3608,14 @@ def export_scores_csv(project_dir: str, run_id: str, scores: list[dict[str, Any]
             suggestion="请先解析包含结果表格的 log.txt。",
         )
 
+    metadata, metadata_error = _read_run_metadata(project_dir, run_id)
+    if metadata_error:
+        return metadata_error
+    assert metadata is not None
+
     project_path = Path(project_dir).expanduser()
     run_scores_file = Path("runs", run_id, "scores.csv").as_posix()
-    project_scores_file = Path("results", "scores.csv").as_posix()
+    project_scores_file = _project_scores_file(metadata)
 
     run_scores_path, run_path_error = _project_relative_path_for_run(project_path, run_scores_file, "RUN_SCORES_CSV", "scores.csv")
     if run_path_error:
@@ -3296,7 +3655,11 @@ def export_scores_csv(project_dir: str, run_id: str, scores: list[dict[str, Any]
         "scores": scores,
         "scores_file": run_scores_file,
         "project_scores_file": project_scores_file,
-        "message": "scores.csv 已导出。",
+        "message": (
+            "AutoDock4 scores.csv 已导出，并与 Vina/Vinardo 项目结果分开保存。"
+            if _metadata_scoring_protocol(metadata) == "ad4_maps"
+            else "scores.csv 已导出。"
+        ),
         "error": None,
     }
 
@@ -3398,7 +3761,7 @@ def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
         "metadata": metadata,
         "scores": scores,
         "scores_file": scores_file,
-        "project_scores_file": str(metadata.get("project_scores_file") or Path("results", "scores.csv").as_posix()),
+        "project_scores_file": str(metadata.get("project_scores_file") or _project_scores_file(metadata)),
         "best_affinity": metadata.get("best_affinity", scores[0]["affinity_kcal_mol"]),
         "analyzed_at": metadata.get("analyzed_at", ""),
         "message": "scores.csv 已读取。",
@@ -3480,7 +3843,11 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
         "project_scores_file": exported["project_scores_file"],
         "best_affinity": best_affinity,
         "analyzed_at": analyzed_at,
-        "message": "Vina 结果已解析，scores.csv 已导出。",
+        "message": (
+            "AutoDock4 结果已解析；该评分与 Vina/Vinardo 不可直接比较。"
+            if _metadata_scoring_protocol(metadata) == "ad4_maps"
+            else "Vina 结果已解析，scores.csv 已导出。"
+        ),
         "error": None,
     }
 
@@ -3606,7 +3973,7 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "scores": scores_payload["scores"],
         "scores_file": scores_payload["scores_file"],
-        "project_scores_file": scores_payload.get("project_scores_file", Path("results", "scores.csv").as_posix()),
+        "project_scores_file": scores_payload.get("project_scores_file", _project_scores_file(metadata)),
         "receptor_file": receptor_file,
         "receptor_path": str(receptor_path) if receptor_path else "",
         "ligand_file": ligand_file,
@@ -3628,6 +3995,9 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     project = _project_from_dict(context["project"], Path(project_dir).expanduser())
     metadata = context["metadata"]
     scores = context["scores"]
+    scoring_protocol = _metadata_scoring_protocol(metadata)
+    is_ad4_maps = scoring_protocol == "ad4_maps"
+    ad4_maps = metadata.get("ad4_maps") if isinstance(metadata.get("ad4_maps"), dict) else {}
     command = _command_for_report(metadata)
     command_text = json.dumps(command, ensure_ascii=False, indent=2)
     vina_path = command[0] if command else str(metadata.get("vina_path") or "")
@@ -3641,6 +4011,14 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["out.pdbqt", str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())],
         ["stdout.txt", str(metadata.get("stdout_file") or Path("runs", run_id, "stdout.txt").as_posix())],
         ["stderr.txt", str(metadata.get("stderr_file") or Path("runs", run_id, "stderr.txt").as_posix())],
+        *(
+            [
+                ["AutoDock4 maps manifest", str(ad4_maps.get("manifest_snapshot") or "")],
+                ["AutoDock4 maps prefix", str(ad4_maps.get("prefix") or "")],
+            ]
+            if is_ad4_maps
+            else []
+        ),
     ]
     box_snapshot = {**asdict(project.box), **context["box_snapshot"]}
     vina_snapshot = {**asdict(project.vina), **context["vina_snapshot"]}
@@ -3675,11 +4053,14 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["ligand SHA256", input_sha256.get("ligand")],
         *([["flex SHA256", input_sha256.get("flex")]] if input_sha256.get("flex") else []),
         ["config SHA256", input_sha256.get("config")],
+        *([["maps manifest SHA256", input_sha256.get("maps_manifest")]] if is_ad4_maps else []),
         ["system fingerprint", system.get("fingerprint")],
     ]
     docking_protocol = metadata.get("docking_protocol") if isinstance(metadata.get("docking_protocol"), dict) else {}
     ligand_preparation = metadata.get("ligand_preparation") if isinstance(metadata.get("ligand_preparation"), dict) else {}
     protocol_rows = [
+        ["评分协议", "AutoDock4（预计算 maps）" if is_ad4_maps else "Vina / Vinardo"],
+        ["评分函数", "ad4" if is_ad4_maps else vina_snapshot.get("scoring") or "vina"],
         ["受体模式", "有限柔性侧链" if docking_protocol.get("mode") == "flexible" else "刚性受体"],
         [
             "柔性残基",
@@ -3693,6 +4074,22 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["配体准备记录", ligand_preparation.get("prep_id") or "不适用"],
         ["Meeko 版本", ligand_preparation.get("meeko_version") or "未记录"],
     ]
+    if is_ad4_maps:
+        grid = ad4_maps.get("grid") if isinstance(ad4_maps.get("grid"), dict) else {}
+        grid_points = grid.get("grid_points") if isinstance(grid.get("grid_points"), dict) else {}
+        protocol_rows.extend(
+            [
+                ["map set", ad4_maps.get("map_set_id") or "未记录"],
+                [
+                    "网格点数",
+                    " × ".join(str(grid_points.get(axis)) for axis in ("x", "y", "z"))
+                    if all(grid_points.get(axis) is not None for axis in ("x", "y", "z"))
+                    else "未记录",
+                ],
+                ["网格间距", f"{grid.get('spacing')} Å" if grid.get("spacing") is not None else "未记录"],
+                ["配体原子类型", ", ".join(str(value) for value in ad4_maps.get("ligand_atom_types", [])) or "未记录"],
+            ]
+        )
     reference_rmsd = metadata.get("reference_rmsd") if isinstance(metadata.get("reference_rmsd"), dict) else {}
     if reference_rmsd:
         reproducibility_rows.extend(
@@ -3736,7 +4133,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     score_summary_rows = [
         ["输出构象数量", score_count, "个"],
         ["最佳评分", best_affinity, "kcal/mol"],
-        ["第二名与最佳评分差", second_gap, "kcal/mol"],
+        ["第二名与最佳评分差", second_gap if second_gap is not None else "无第二构象", "kcal/mol" if second_gap is not None else "—"],
         ["评分均值", round(mean_affinity, 4), "kcal/mol"],
         ["评分中位数", round(median_affinity, 4), "kcal/mol"],
         ["评分标准差", round(score_std, 4), "kcal/mol"],
@@ -3790,9 +4187,18 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     second_gap_text = _format_config_number(second_gap) if second_gap is not None else "无第二构象"
     interpretation_lines = [
         f"- 本次最佳预测为 Mode {scores[0]['mode']}，评分 {_format_config_number(best_affinity)} kcal/mol。",
-        f"- 第二名与最佳评分差为 {second_gap_text} kcal/mol；该差值只描述本次输出的内部排序，不代表结合概率或置信度。",
+        (
+            f"- 第二名与最佳评分差为 {second_gap_text} kcal/mol；该差值只描述本次输出的内部排序，不代表结合概率或置信度。"
+            if second_gap is not None
+            else "- 本次只有一个输出构象，没有可计算的第二名评分差。"
+        ),
         f"- {sum(value <= best_affinity + 1 for value in affinities)} / {score_count} 个构象位于最佳评分 1 kcal/mol 范围内。",
         "- Vina 表格中的 RMSD l.b./u.b. 是相对最佳预测构象的距离界限，不是相对共晶配体的验证 RMSD。",
+        *(
+            ["- 本次使用 AutoDock4 maps 评分；该评分不能与 Vina 或 Vinardo 结果直接横向比较。"]
+            if is_ad4_maps
+            else []
+        ),
     ]
 
     report_text = "\n".join(
@@ -3811,11 +4217,11 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "",
             _markdown_table(["项目", "路径"], input_rows),
             "",
-            "## 3. Box 参数",
+            "## 3. Box / Grid 参数",
             "",
             _markdown_table(["参数", "值", "单位"], box_rows),
             "",
-            "## 4. Vina 参数",
+            "## 4. 运行参数",
             "",
             _markdown_table(["参数", "值"], vina_rows),
             "",
@@ -3841,7 +4247,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "",
             _markdown_table(["项目", "记录值"], reproducibility_rows),
             "",
-            "## 7. Docking Score 结果",
+            "## 7. AutoDock4 Score 结果" if is_ad4_maps else "## 7. Docking Score 结果",
             "",
             _markdown_table(["Mode", "Affinity kcal/mol", "RMSD l.b.", "RMSD u.b."], score_rows),
             "",
@@ -3875,6 +4281,13 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "",
             DOCKING_SCORE_DISCLAIMER,
             "",
+            *(
+                [
+                    "- AutoDock4 maps、Vina 与 Vinardo 使用不同的评分协议，评分不可直接横向比较；",
+                ]
+                if is_ad4_maps
+                else []
+            ),
             "- 本报告不证明真实药效；",
             "- 本报告不包含相互作用分析；",
             "- 本报告不包含分子动力学验证；",
@@ -3902,7 +4315,7 @@ def _report_file_statuses(project_dir: str, run_id: str, metadata: dict[str, Any
     project_path = Path(project_dir).expanduser()
     scores_file = str(metadata.get("scores_file") or Path("runs", run_id, "scores.csv").as_posix())
     report_file = str(metadata.get("report_file") or Path("runs", run_id, RUN_REPORT_FILE).as_posix())
-    project_report_file = str(metadata.get("project_report_file") or PROJECT_REPORT_FILE)
+    project_report_file = str(metadata.get("project_report_file") or _project_report_file(metadata))
     return [
         _file_status(project_path, scores_file, "scores", "scores.csv"),
         _file_status(project_path, report_file, "run_report", f"runs/{run_id}/docking_report.md"),
@@ -3937,7 +4350,7 @@ def get_report_status(project_dir: str, run_id: str) -> dict[str, Any]:
         "report_status": "exported" if reports_ready else "missing",
         "can_export": can_export,
         "report_file": str(metadata.get("report_file") or Path("runs", run_id, RUN_REPORT_FILE).as_posix()),
-        "project_report_file": str(metadata.get("project_report_file") or PROJECT_REPORT_FILE),
+        "project_report_file": str(metadata.get("project_report_file") or _project_report_file(metadata)),
         "reported_at": str(metadata.get("reported_at") or ""),
         "message": "报告状态已读取。",
         "error": None,
@@ -3951,7 +4364,7 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
 
     project_path = Path(project_dir).expanduser()
     run_report_file = Path("runs", run_id, RUN_REPORT_FILE).as_posix()
-    project_report_file = PROJECT_REPORT_FILE
+    project_report_file = _project_report_file(built["metadata"])
     run_report_path, run_report_error = _project_relative_path_for_run(
         project_path,
         run_report_file,
@@ -4127,6 +4540,7 @@ def _validate_execute_prerequisites(
         return loaded
     project_path = Path(project_dir).expanduser().resolve()
     project = _project_from_dict(loaded["project"], project_path)
+    scoring_protocol = _metadata_scoring_protocol(metadata)
     if not any(isinstance(item, dict) and item.get("run_id") == run_id for item in project.runs):
         return _error(
             "RUN_SUMMARY_NOT_FOUND",
@@ -4234,10 +4648,129 @@ def _validate_execute_prerequisites(
                 suggestion="请重新准备 run，或恢复未被修改的快照。",
             )
 
+    maps_prefix = ""
+    if scoring_protocol == "ad4_maps":
+        maps_snapshot = snapshots.get("ad4_maps") if isinstance(snapshots.get("ad4_maps"), dict) else {}
+        maps_metadata = metadata.get("ad4_maps") if isinstance(metadata.get("ad4_maps"), dict) else {}
+        maps_files = maps_snapshot.get("files") if isinstance(maps_snapshot.get("files"), list) else []
+        maps_prefix = str(maps_snapshot.get("prefix") or maps_metadata.get("prefix") or "")
+        expected_maps_dir = run_dir / "inputs" / "maps"
+        prefix_name = Path(maps_prefix).name
+        expected_prefix = Path("runs", run_id, "inputs", "maps", prefix_name).as_posix() if prefix_name else ""
+        if not maps_files or maps_prefix != expected_prefix:
+            return _error(
+                "RUN_AD4_MAPS_SNAPSHOT_INVALID",
+                "AutoDock4 maps 快照缺少可信的文件清单或 prefix，拒绝执行。",
+                suggestion="请重新准备新的 AutoDock4 maps run。",
+            )
+
+        observed_names: set[str] = set()
+        for item in maps_files:
+            if not isinstance(item, dict):
+                return _error("RUN_AD4_MAP_RECORD_INVALID", "AutoDock4 map 文件记录格式无效，拒绝执行。")
+            name = str(item.get("name") or "")
+            relative_path = str(item.get("relative_path") or "")
+            expected_relative = Path("runs", run_id, "inputs", "maps", name).as_posix()
+            expected_hash = str(item.get("sha256") or "")
+            if (
+                not name
+                or Path(name).name != name
+                or relative_path != expected_relative
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_hash)
+            ):
+                return _error(
+                    "RUN_AD4_MAP_RECORD_INVALID",
+                    "AutoDock4 map 文件记录不完整或路径不可信，拒绝执行。",
+                    raw_error=json.dumps(item, ensure_ascii=False),
+                    suggestion="请重新准备新的 AutoDock4 maps run。",
+                )
+            lexical_path = project_path / relative_path
+            if lexical_path.is_symlink():
+                return _error(
+                    "RUN_AD4_MAP_SYMLINK_UNSAFE",
+                    "AutoDock4 map 快照不能是符号链接，拒绝执行。",
+                    raw_error=str(lexical_path),
+                )
+            try:
+                resolved = lexical_path.resolve(strict=True)
+            except OSError as exc:
+                return _error(
+                    "RUN_AD4_MAP_SNAPSHOT_MISSING",
+                    "AutoDock4 map 快照缺失，拒绝执行。",
+                    raw_error=f"{lexical_path}: {exc}",
+                    suggestion="请重新准备新的 AutoDock4 maps run。",
+                )
+            if resolved.parent != expected_maps_dir or resolved != lexical_path.absolute():
+                return _error(
+                    "RUN_AD4_MAP_REPARSE_UNSAFE",
+                    "AutoDock4 map 快照被重解析到本次 run 之外，拒绝执行。",
+                    raw_error=str(lexical_path),
+                )
+            if not resolved.is_file() or resolved.stat().st_size <= 0:
+                return _error(
+                    "RUN_AD4_MAP_SNAPSHOT_EMPTY",
+                    "AutoDock4 map 快照缺失或为空，拒绝执行。",
+                    raw_error=str(resolved),
+                )
+            actual_hash = _sha256_file(resolved)
+            if actual_hash.lower() != expected_hash.lower():
+                return _error(
+                    "RUN_AD4_MAP_HASH_MISMATCH",
+                    "AutoDock4 map 快照在准备后发生变化，拒绝执行。",
+                    raw_error=f"expected={expected_hash}; actual={actual_hash}; path={resolved}",
+                    suggestion="请重新准备新的 AutoDock4 maps run。",
+                )
+            observed_names.add(name)
+
+        required_names = {
+            f"{prefix_name}.maps.fld",
+            f"{prefix_name}.e.map",
+            f"{prefix_name}.d.map",
+        }
+        if not required_names.issubset(observed_names) or not any(
+            name.startswith(f"{prefix_name}.") and name.endswith(".map") and name not in required_names
+            for name in observed_names
+        ):
+            return _error(
+                "RUN_AD4_MAPS_INCOMPLETE",
+                "AutoDock4 maps 快照不完整，拒绝执行。",
+                raw_error=", ".join(sorted(observed_names)),
+                suggestion="请重新生成或导入完整 maps 后准备新的 run。",
+            )
+
+        manifest_record = maps_snapshot.get("manifest") if isinstance(maps_snapshot.get("manifest"), dict) else {}
+        manifest_relative = str(manifest_record.get("relative_path") or "")
+        expected_manifest = Path("runs", run_id, "inputs", "maps", "manifest.json").as_posix()
+        manifest_hash = str(manifest_record.get("sha256") or "")
+        manifest_path = project_path / expected_manifest
+        if manifest_relative != expected_manifest or not re.fullmatch(r"[0-9a-fA-F]{64}", manifest_hash):
+            return _error(
+                "RUN_AD4_MANIFEST_SNAPSHOT_INVALID",
+                "AutoDock4 maps manifest 快照记录无效，拒绝执行。",
+            )
+        if (
+            manifest_path.is_symlink()
+            or not manifest_path.is_file()
+            or manifest_path.resolve(strict=True).parent != expected_maps_dir
+            or _sha256_file(manifest_path).lower() != manifest_hash.lower()
+        ):
+            return _error(
+                "RUN_AD4_MANIFEST_HASH_MISMATCH",
+                "AutoDock4 maps manifest 快照缺失或已被修改，拒绝执行。",
+                raw_error=str(manifest_path),
+                suggestion="请重新准备新的 AutoDock4 maps run。",
+            )
+
     config_text = fixed_paths["config"].read_text(encoding="utf-8", errors="strict")
     expected_receptor_line = f"receptor = {fixed_relative_paths['receptor']}"
     expected_ligand_line = f"ligand = {fixed_relative_paths['ligand']}"
-    if expected_receptor_line not in config_text.splitlines() or expected_ligand_line not in config_text.splitlines():
+    config_lines = config_text.splitlines()
+    config_inputs_match = (
+        expected_ligand_line in config_lines and "scoring = ad4" in config_lines
+        if scoring_protocol == "ad4_maps"
+        else expected_receptor_line in config_lines and expected_ligand_line in config_lines
+    )
+    if not config_inputs_match:
         return _error(
             "RUN_CONFIG_SNAPSHOT_INPUT_MISMATCH",
             "运行配置快照没有引用本次 run 的 immutable 输入快照。",
@@ -4253,6 +4786,8 @@ def _validate_execute_prerequisites(
         "receptor_file": fixed_relative_paths["receptor"],
         "ligand_file": fixed_relative_paths["ligand"],
         "flex_file": fixed_relative_paths.get("flex", ""),
+        "scoring_protocol": scoring_protocol,
+        "maps_prefix": maps_prefix,
         "output_file": fixed_relative_paths["output"],
         "output_path": str(fixed_paths["output"]),
         "log_file": fixed_relative_paths["log"],
@@ -4295,6 +4830,15 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
         _file_status(project_path, Path("runs", run_id, "log.txt").as_posix(), "log", "log.txt"),
         _file_status(project_path, Path("runs", run_id, "out.pdbqt").as_posix(), "out", "out.pdbqt"),
     ]
+    if _metadata_scoring_protocol(metadata) == "ad4_maps":
+        files.append(
+            _file_status(
+                project_path,
+                Path("runs", run_id, "inputs", "maps", "manifest.json").as_posix(),
+                "ad4_maps_manifest",
+                "AutoDock4 maps manifest.json",
+            )
+        )
 
     loaded = load_project(project_dir)
     project = loaded.get("project") if loaded.get("ok") else None
@@ -5307,6 +5851,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         config_file,
         run_id,
         str(prerequisites.get("flex_file") or ""),
+        scoring_protocol=str(prerequisites.get("scoring_protocol") or "vina"),
+        maps_prefix=str(prerequisites.get("maps_prefix") or ""),
     )
     started_at = _now_iso()
     launch_token = f"{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"

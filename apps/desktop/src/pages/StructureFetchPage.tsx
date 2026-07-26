@@ -14,6 +14,7 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import { BodyGrid, MainPanel, PageHero, PageShell } from "../components/layout/PageLayout";
+import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type {
@@ -1124,6 +1125,15 @@ export default function StructureFetchPage({
   const ligandStatus = ligandRaw ?? findStatus(files, "ligand_raw");
   const receptorBusy = isBusy && (busyAction === "refresh" || Boolean(busyAction?.endsWith("-receptor")));
   const ligandBusy = isBusy && (busyAction === "refresh" || Boolean(busyAction?.endsWith("-ligand")));
+  const loadingTitle = busyAction === "search-receptor"
+    ? "正在搜索受体"
+    : busyAction === "search-ligand"
+      ? "正在搜索配体"
+      : busyAction === "prepare-receptor"
+        ? "正在获取并转换受体"
+        : busyAction === "prepare-ligand"
+          ? "正在获取并转换配体"
+          : "";
 
   const renderTechnicalDetails = (status: RawStructureStatus | null, fallbackRawFile: string) => (
     <dl className="meta-list">
@@ -1290,6 +1300,14 @@ export default function StructureFetchPage({
 
   return (
     <PageShell labelledBy="structure-fetch-title">
+      <OperationLoadingDialog
+        open={isBusy && Boolean(loadingTitle)}
+        title={loadingTitle}
+        message={message || "正在处理当前操作。"}
+        detail={busyAction?.startsWith("search-")
+          ? "搜索速度取决于网络连接。"
+          : "raw 文件会先保存到当前项目，再尝试生成 PDBQT。"}
+      />
       <PageHero
         eyebrow="结构来源 · SOURCE"
         title="搜索、选择并准备结构"

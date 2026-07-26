@@ -141,11 +141,31 @@ npm run build
 
 ## 三级：AutoDock4 Maps 基础设施
 
-- 生成 GPF、调用 AutoGrid4、验证 maps 完整性。
-- 管理 grid points、spacing、受体/配体原子类型、参数文件与 AutoGrid 日志。
-- 对接协议中单独提供 `AutoDock4 (maps)`，其分数不与 Vina/Vinardo 横向比较。
+状态：**v0.12.0 已完成**。
 
-进入条件：完成 AutoGrid4 许可证与分发审查；建立标准非金属体系回归基准。
+- 已实现独立 AutoGrid4 adapter：配置路径或 PATH 检测、版本识别、安全参数数组调用、stdout/stderr/GLG 留档和结构化错误。
+- 已实现 GPF 生成与参数管理：grid center、偶数 grid points、spacing、受体/配体原子类型和可选参数文件。
+- 已实现 maps 生成、外部导入、manifest、文件 SHA256、受体 SHA256 绑定、配体原子类型校验、Box 一致性校验和失效阻断。
+- 已实现独立 `AutoDock4（maps）` 协议；它不出现在 Vina/Vinardo 评分下拉框中，运行使用 `--maps` 与 `--scoring ad4`。
+- 每次运行会把 maps 与 manifest 复制到 `runs/{run_id}/inputs/maps/`，执行前再次校验不可变路径和 SHA256。
+- AD4 项目汇总分别写入 `results/ad4_scores.csv` 与 `reports/ad4_docking_report.md`，不覆盖 Vina/Vinardo 文件；结果页与报告均明确禁止协议间直接比较。
+- GUI 已提供协议切换、网格参数、原子类型、参数文件、maps 生成/导入、工具状态、manifest 和失效原因。
+
+许可证与分发结论：
+
+- AutoGrid4 4.2.6 由上游按 GNU GPL 分发；
+- v0.12.0 的 Basic/Assisted 安装包都**不内置 AutoGrid4**；
+- 用户自行安装后，可在设置页配置 `autogrid4.exe`，或由 PATH 自动检测；
+- 安装包继续内置 Apache-2.0 的 AutoDock Vina 1.2.7，用于读取 AD4 maps 并执行对接。
+
+标准非金属回归：
+
+- 2026-07-26 使用 Scripps 官方 AutoDock 4.2.6 `1dwd` 示例；
+- AutoGrid4 4.2.6 成功重新生成 60 × 60 × 60、0.375 Å 的完整 maps；
+- DockStart 新工作流完成 `ad4_001 → run_001 → results/ad4_scores.csv → reports/ad4_docking_report.md`；
+- 随附 Vina 1.2.7 以 `ad4` 评分完成运行，固定 seed 12345 下最佳评分为 -11.55 kcal/mol。
+
+当前边界：只开放标准非金属、刚性受体、单配体协议。金属体系进入四级 AD4Zn；批量 AD4 maps、柔性受体 AD4 和水合对接仍未开放。
 
 ## 四级：AD4Zn 专用协议
 
