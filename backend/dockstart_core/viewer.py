@@ -526,7 +526,7 @@ def validate_viewer_file(project_dir: str, relative_path: str) -> dict[str, Any]
     if size > MAX_VIEWER_FILE_BYTES:
         return _viewer_error(
             "VIEWER_FILE_TOO_LARGE",
-            "结构文件超过 20 MB，为避免前端卡顿，本次没有读取内容。",
+            "结构文件超过 20 MB 的预览上限，本次没有读取内容。",
             relative_path=relative_path,
             raw_error=f"{size} bytes",
             suggestion="请使用更小的结构文件，或后续版本的分块/压缩查看能力。",

@@ -29,6 +29,13 @@ SUPPORTED_RECEPTOR_SUFFIXES = frozenset({".pdb", ".cif", ".mmcif"})
 WATER_RESIDUES = frozenset({"HOH", "WAT", "H2O", "DOD", "SOL", "TIP", "TIP3"})
 GLUE_TYPE_PATTERN = re.compile(r"^G\d+$")
 CLOSURE_ANCHOR_PATTERN = re.compile(r"^CG\d+$")
+MEEKO_BAD_RESIDUE_PATTERN = re.compile(
+    r"No template matched for residue_key=['\"]([^'\"]+)['\"]"
+)
+MEEKO_BAD_RESIDUE_SUMMARY_PATTERN = re.compile(
+    r"Template matching failed for:\s*\[(.*?)\]",
+    re.DOTALL,
+)
 
 
 class ProtocolValidationError(ValueError):
@@ -240,6 +247,57 @@ def parse_flexible_residue(value: str) -> FlexibleResidueSelector:
         )
     insertion_code = (match.group("icode") or "").upper()
     return FlexibleResidueSelector(chain, residue_number, insertion_code)
+
+
+def extract_meeko_bad_residues(output: str) -> list[str]:
+    """Extract Meeko residue IDs that failed template matching.
+
+    Meeko 0.7.x writes detailed diagnostics to stderr and a shorter summary to
+    stdout.  Parse both forms without executing or evaluating text emitted by
+    the external process.
+    """
+
+    text = str(output or "")
+    values = MEEKO_BAD_RESIDUE_PATTERN.findall(text)
+    for summary in MEEKO_BAD_RESIDUE_SUMMARY_PATTERN.findall(text):
+        values.extend(re.findall(r"['\"]([^'\"]+)['\"]", summary))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in seen:
+            unique.append(normalized)
+            seen.add(normalized)
+    return unique
+
+
+def _normalize_bad_residue_acknowledgements(
+    values: Iterable[str] | None,
+    *,
+    allow_bad_res: bool,
+) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values or ():
+        residue_id = parse_flexible_residue(value).meeko_id
+        if residue_id not in seen:
+            normalized.append(residue_id)
+            seen.add(residue_id)
+    if allow_bad_res and not normalized:
+        raise _validation_error(
+            "FLEX_BAD_RESIDUE_ACKNOWLEDGEMENT_REQUIRED",
+            "尚未确认将被忽略的残基",
+            "启用 --allow_bad_res 前必须提供已审阅的坏残基清单。",
+            "请先按严格模式运行，审阅 Meeko 返回的完整残基列表，再明确确认。",
+        )
+    if not allow_bad_res and normalized:
+        raise _validation_error(
+            "FLEX_BAD_RESIDUE_ACKNOWLEDGEMENT_UNUSED",
+            "坏残基确认与严格模式冲突",
+            "严格模式下不能提交坏残基确认清单。",
+            "请保持默认严格模式，或明确启用允许忽略坏残基。",
+        )
+    return normalized
 
 
 def _parse_pdb_residues(text: str) -> dict[tuple[str, int, str], _ResidueRecord]:
@@ -578,6 +636,8 @@ def build_meeko_receptor_flex_plan(
     *,
     resolved_altlocs: Mapping[str, str] | None = None,
     max_residues: int = 8,
+    allow_bad_res: bool = False,
+    acknowledged_bad_residues: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Build a Meeko flexible-receptor command and its three required outputs."""
 
@@ -588,6 +648,10 @@ def build_meeko_receptor_flex_plan(
         selections,
         resolved_altlocs=resolved_altlocs,
         max_residues=max_residues,
+    )
+    acknowledged = _normalize_bad_residue_acknowledgements(
+        acknowledged_bad_residues,
+        allow_bad_res=allow_bad_res,
     )
     basename = _normalize_output_basename(output_basename)
     command = [
@@ -604,6 +668,8 @@ def build_meeko_receptor_flex_plan(
         command.extend(["--read_with_prody", str(source_path)])
         requires_prody = True
     command.extend(["--output_basename", str(basename), "--write_pdbqt", "--write_json"])
+    if allow_bad_res:
+        command.append("--allow_bad_res")
     for residue_id in validation["meeko_flexres"]:
         command.extend(["--flexres", residue_id])
     if validation["wanted_altlocs"]:
@@ -626,6 +692,10 @@ def build_meeko_receptor_flex_plan(
         "selected_residues": validation["residues"],
         "outputs": outputs,
         "requires_prody": requires_prody,
+        "scientific_review": {
+            "allow_bad_res": allow_bad_res,
+            "acknowledged_bad_residues": acknowledged,
+        },
         "warnings": warnings,
     }
 
@@ -1313,6 +1383,7 @@ def _execute_staged_plan(
         "declared_outputs": {key: str(path) for key, path in final_outputs.items()},
         "published_outputs": {},
         "output_validation": {},
+        "scientific_review": {},
         "error": None,
     }
 
@@ -1377,6 +1448,65 @@ def _execute_staged_plan(
                 "请检查 runner adapter 的实现。",
                 detail=str(exc),
             ) from exc
+        combined_output = "\n".join(value for value in (stdout_text, stderr_text) if value)
+        bad_residues = extract_meeko_bad_residues(combined_output)
+        if protocol == "flexible_sidechains":
+            plan_review = (
+                staged_plan.get("scientific_review")
+                if isinstance(staged_plan.get("scientific_review"), Mapping)
+                else {}
+            )
+            allow_bad_res = bool(plan_review.get("allow_bad_res"))
+            acknowledged = [
+                str(value)
+                for value in plan_review.get("acknowledged_bad_residues", [])
+                if str(value)
+            ]
+            payload["scientific_review"] = {
+                "allow_bad_res": allow_bad_res,
+                "acknowledged_bad_residues": acknowledged,
+                "detected_bad_residues": bad_residues,
+            }
+            if exit_code != 0 and bad_residues:
+                raise _validation_error(
+                    "FLEX_BAD_RESIDUES_REVIEW_REQUIRED",
+                    "受体包含 Meeko 无法匹配模板的残基",
+                    f"严格模式检测到 {len(bad_residues)} 个不完整或无法匹配模板的残基。",
+                    "请优先修复受体；如确认可以删除这些残基，请完整审阅列表后再显式启用 --allow_bad_res。",
+                    detail=json.dumps(
+                        {"bad_residues": bad_residues},
+                        ensure_ascii=False,
+                    ),
+                )
+            if exit_code == 0 and allow_bad_res:
+                if set(bad_residues) != set(acknowledged):
+                    raise _validation_error(
+                        "FLEX_BAD_RESIDUES_CHANGED",
+                        "Meeko 实际忽略的残基与确认清单不一致",
+                        "受体诊断结果在确认后发生变化，DockStart 已拒绝发布输出。",
+                        "请重新按严格模式检查并审阅最新残基列表。",
+                        detail=json.dumps(
+                            {
+                                "acknowledged_bad_residues": acknowledged,
+                                "bad_residues": bad_residues,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                selected_ids = {
+                    str(item.get("meeko_id") or "")
+                    for item in staged_plan.get("selected_residues", [])
+                    if isinstance(item, Mapping)
+                }
+                ignored_selected = sorted(selected_ids & set(bad_residues))
+                if ignored_selected:
+                    raise _validation_error(
+                        "FLEX_SELECTED_RESIDUE_WOULD_BE_IGNORED",
+                        "所选柔性残基将被 Meeko 删除",
+                        "允许坏残基后，至少一个所选柔性残基也会被忽略。",
+                        "请先修复这些目标残基，不能把被删除的残基作为柔性侧链。",
+                        detail=", ".join(ignored_selected),
+                    )
         if exit_code != 0:
             raise _validation_error(
                 "PROTOCOL_COMMAND_FAILED",
@@ -1501,6 +1631,8 @@ def execute_meeko_receptor_flex(
     record_dir: str | Path,
     resolved_altlocs: Mapping[str, str] | None = None,
     max_residues: int = 8,
+    allow_bad_res: bool = False,
+    acknowledged_bad_residues: Iterable[str] | None = None,
     runner: ProtocolRunner | None = None,
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -1510,6 +1642,7 @@ def execute_meeko_receptor_flex(
     source_path = Path(structure_path).resolve()
     final_basename = Path(output_basename).resolve()
     selection_values = list(selections)
+    acknowledged_values = list(acknowledged_bad_residues or ())
     final_plan = build_meeko_receptor_flex_plan(
         python_path,
         source_path,
@@ -1517,6 +1650,8 @@ def execute_meeko_receptor_flex(
         selection_values,
         resolved_altlocs=resolved_altlocs,
         max_residues=max_residues,
+        allow_bad_res=allow_bad_res,
+        acknowledged_bad_residues=acknowledged_values,
     )
     token = uuid.uuid4().hex
     staged_basename = final_basename.parent / f".dockstart-{token}-receptor"
@@ -1527,6 +1662,8 @@ def execute_meeko_receptor_flex(
         selection_values,
         resolved_altlocs=resolved_altlocs,
         max_residues=max_residues,
+        allow_bad_res=allow_bad_res,
+        acknowledged_bad_residues=acknowledged_values,
     )
     return _execute_staged_plan(
         final_plan,

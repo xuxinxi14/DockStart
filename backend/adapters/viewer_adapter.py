@@ -24,7 +24,7 @@ def detect() -> ToolCheckResult:
             key="viewer_3dmol",
             name="3Dmol.js",
             status="unknown",
-            message="尚未找到前端依赖元数据，暂时无法判断 3Dmol.js 是否已接入。",
+            message="尚未找到 3D Viewer 资源信息，暂时无法确认 3Dmol.js 状态。",
         )
 
     try:
@@ -35,7 +35,7 @@ def detect() -> ToolCheckResult:
             name="3Dmol.js",
             status="error",
             path=str(package_json),
-            message="读取前端依赖配置时发生错误。",
+            message="读取 3D Viewer 资源信息时发生错误。",
             raw_error=str(exc),
         )
 
@@ -51,7 +51,7 @@ def detect() -> ToolCheckResult:
                 status="ok",
                 version=str(dependencies[package_name]),
                 path=str(package_json),
-                message="已在前端依赖中检测到 3Dmol.js，Viewer 使用本地打包依赖，不使用外部 CDN。",
+                message="已检测到随应用提供的 3Dmol.js，可离线使用 3D Viewer。",
                 source="frontend_dependency",
             )
 
@@ -60,6 +60,6 @@ def detect() -> ToolCheckResult:
         name="3Dmol.js",
         status="missing",
         path=str(package_json),
-        message="当前前端依赖元数据中没有检测到 3Dmol.js，3D Viewer 可能不可用。",
+        message="当前安装资源中没有检测到 3Dmol.js，3D Viewer 可能不可用。",
         source="frontend_dependency",
     )

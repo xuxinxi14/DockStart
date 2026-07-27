@@ -19,7 +19,16 @@ type FlexibleStatus = {
     selected_residues?: Array<string | { selector?: string; residue_name?: string }>;
     rigid_file?: string;
     flex_file?: string;
+    scientific_review?: {
+      allow_bad_res?: boolean;
+      detected_bad_residues?: string[];
+    };
   } | null;
+  review?: {
+    allow_bad_res?: boolean;
+    bad_residues?: string[];
+    acknowledged_bad_residues?: string[];
+  };
   project?: DockStartProject | null;
   message?: string;
   error?: { code?: string; message?: string; raw_error?: string; suggestion?: string };
@@ -60,6 +69,8 @@ export default function FlexibleReceptorPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const [badResidues, setBadResidues] = useState<string[]>([]);
+  const [badResiduesConfirmed, setBadResiduesConfirmed] = useState(false);
   const [viewMode, setViewMode] = useState<"rigid" | "flexible">(
     project.docking_protocol?.mode === "flexible" ? "flexible" : "rigid",
   );
@@ -72,6 +83,12 @@ export default function FlexibleReceptorPanel({
   useEffect(() => {
     onResiduesChange?.(residues);
   }, [onResiduesChange, residues]);
+
+  const residueSignature = residues.join("|");
+  useEffect(() => {
+    setBadResidues([]);
+    setBadResiduesConfirmed(false);
+  }, [project.project_dir, residueSignature]);
 
   useEffect(() => {
     if (!pickedResidue) return;
@@ -98,6 +115,8 @@ export default function FlexibleReceptorPanel({
     setInput("");
     setMessage("");
     setRawError("");
+    setBadResidues([]);
+    setBadResiduesConfirmed(false);
     void refresh(true);
   }, [refresh]);
 
@@ -112,7 +131,7 @@ export default function FlexibleReceptorPanel({
         maxResidues: 8,
       }));
       if (!result.ok) throw new Error(result.error?.message || "柔性残基检查失败。");
-      setMessage(`已确认 ${residues.length} 个残基可进入柔性准备。`);
+      setMessage(`已确认 ${residues.length} 个残基选择有效；受体模板完整性将在严格准备时检查。`);
     } catch (error) {
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -125,16 +144,38 @@ export default function FlexibleReceptorPanel({
     setBusy(true);
     setRawError("");
     try {
-      const task = await startFlexibleReceptorTask(project.project_dir, residues, 8);
+      const allowBadRes = badResidues.length > 0 && badResiduesConfirmed;
+      const task = await startFlexibleReceptorTask(
+        project.project_dir,
+        residues,
+        8,
+        allowBadRes,
+        allowBadRes ? badResidues : [],
+      );
       const completed = await waitForBackgroundTask(task.task_id, (next) => {
         setMessage(next.progress.message || next.message || "正在准备柔性受体…");
       });
       const result = completed.result_json ? parse(completed.result_json) : null;
       if (completed.status !== "finished" || !result?.ok) {
-        throw new Error(result?.error?.message || completed.error || "柔性受体准备失败。");
+        const reviewResidues = result?.review?.bad_residues ?? [];
+        if (reviewResidues.length) {
+          setBadResidues(reviewResidues);
+          setBadResiduesConfirmed(false);
+          setMessage(`严格模式检测到 ${reviewResidues.length} 个坏残基；项目仍保持刚性，请审阅后决定是否允许 Meeko 忽略。`);
+        }
+        setRawError(
+          [
+            result?.error?.message || completed.error || "柔性受体准备失败。",
+            result?.error?.suggestion,
+            result?.error?.raw_error,
+          ].filter(Boolean).join("\n"),
+        );
+        return;
       }
       if (result.project) onProjectChange(result.project);
       setMessage(result.message || "柔性受体已准备并激活。");
+      setBadResidues([]);
+      setBadResiduesConfirmed(false);
       await refresh(true);
     } catch (error) {
       setRawError(error instanceof Error ? error.message : String(error));
@@ -204,11 +245,39 @@ export default function FlexibleReceptorPanel({
               <ActionButton variant="secondary" disabled={disabled || busy || !residues.length || residues.length > 8} onClick={() => void validate()}>
                 检查选择
               </ActionButton>
-              <ActionButton variant="primary" disabled={disabled || busy || !residues.length || residues.length > 8} onClick={() => void prepare()}>
+              <ActionButton
+                variant="primary"
+                disabled={
+                  disabled
+                  || busy
+                  || !residues.length
+                  || residues.length > 8
+                  || (badResidues.length > 0 && !badResiduesConfirmed)
+                }
+                onClick={() => void prepare()}
+              >
                 {busy ? <SpinnerGap className="run-monitor-spinner" size={16} /> : <CheckCircle size={16} />}
                 准备并启用
               </ActionButton>
             </div>
+            {badResidues.length ? (
+              <div className="flexible-bad-residue-review" role="alert">
+                <strong>Meeko 将删除 {badResidues.length} 个无法匹配模板的残基</strong>
+                <p>默认严格模式已经停止且没有发布半成品。优先修复原始受体；只有确认这些残基与研究目标无关时才继续。</p>
+                <AdvancedDetails summary="查看将被忽略的完整残基列表">
+                  <pre>{badResidues.join(", ")}</pre>
+                </AdvancedDetails>
+                <label className="flexible-bad-residue-confirm">
+                  <input
+                    type="checkbox"
+                    checked={badResiduesConfirmed}
+                    disabled={disabled || busy}
+                    onChange={(event) => setBadResiduesConfirmed(event.target.checked)}
+                  />
+                  <span>我已审阅完整列表，并同意本次使用 <code>--allow_bad_res</code> 删除这些残基。</span>
+                </label>
+              </div>
+            ) : null}
           </div>
         </div> : (
           <div className="flexible-receptor-rigid-summary">
@@ -222,6 +291,9 @@ export default function FlexibleReceptorPanel({
             <div>
               <strong>{status.flexible_receptor?.preparation_id || "已验证的柔性受体"}</strong>
               <span>{selected.map(residueLabel).join("、") || "残基记录可用"}</span>
+              {status.flexible_receptor?.scientific_review?.allow_bad_res ? (
+                <span>已记录忽略 {status.flexible_receptor.scientific_review.detected_bad_residues?.length ?? 0} 个坏残基的明确确认。</span>
+              ) : null}
             </div>
             <div className="flexible-receptor-actions">
               <ActionButton variant={status.effective_mode === "rigid" ? "primary" : "secondary"} disabled={disabled || busy} onClick={() => void setMode("rigid")}>使用刚性</ActionButton>

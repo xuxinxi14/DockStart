@@ -935,7 +935,7 @@ export default function RunPreparePage({
                 <p className="run-science-note">
                   {isAd4Maps
                     ? "当前运行使用预计算 AutoDock4 网格图；AD4、Vina 与 Vinardo 的分值不能直接横向比较。"
-                    : "Vina 使用随机搜索与局部优化；界面不将其错误描述为遗传算法。不同评分函数的分值不能直接横向比较。"}
+                    : "Vina 使用随机搜索与局部优化，而不是遗传算法。Vina 与 Vinardo 的分值不能直接横向比较。"}
                 </p>
                 {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到每个配体任务中；修改后需要重新创建队列。</p> : null}
                 <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
@@ -1155,7 +1155,7 @@ export default function RunPreparePage({
                   </tbody>
                 </table>
               </div>
-            ) : <p className="run-history-empty">尚无运行记录。首次完整运行后，这里会保存状态、耗时和最佳评分。</p>}
+            ) : <p className="run-history-empty">尚无运行记录。首次完整运行后可查看状态、耗时和最佳评分。</p>}
           </section> : null}
         </main>
 

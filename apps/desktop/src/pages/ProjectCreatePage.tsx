@@ -639,7 +639,7 @@ export default function ProjectCreatePage({
               ) : (
                 <div className="assisted-online-note" role="note">
                   <strong>创建后直接进入“获取或导入原始结构”</strong>
-                  <p>可随时搜索 RCSB / PubChem，也可改为从电脑导入文件；这个入口会一直保留在结构获取与转换工作区。</p>
+                  <p>创建项目后仍可搜索 RCSB / PubChem，或从电脑补充导入结构文件。</p>
                 </div>
               )}
             </>

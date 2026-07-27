@@ -9,7 +9,9 @@ coordinates.
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -102,12 +104,27 @@ def load_reference_molecule(path: Path):
     suffix = path.suffix.lower()
     molecule = None
     if suffix == ".sdf":
-        supplier = Chem.SDMolSupplier(str(path), removeHs=True, sanitize=True)
+        # RDKit's filename-based readers are not consistently Unicode-safe on
+        # Windows.  Read through Python (which is Unicode-safe) and pass an
+        # in-memory binary stream to RDKit instead.
+        supplier = Chem.ForwardSDMolSupplier(
+            io.BytesIO(path.read_bytes()),
+            removeHs=True,
+            sanitize=True,
+        )
         molecule = next((item for item in supplier if item is not None), None)
     elif suffix == ".mol":
-        molecule = Chem.MolFromMolFile(str(path), removeHs=True, sanitize=True)
+        molecule = Chem.MolFromMolBlock(
+            path.read_text(encoding="utf-8", errors="replace"),
+            removeHs=True,
+            sanitize=True,
+        )
     elif suffix == ".pdb":
-        molecule = Chem.MolFromPDBFile(str(path), removeHs=True, sanitize=True)
+        molecule = Chem.MolFromPDBBlock(
+            path.read_text(encoding="utf-8", errors="replace"),
+            removeHs=True,
+            sanitize=True,
+        )
     elif suffix == ".pdbqt":
         molecule = molecule_from_pdbqt(path, 1)
     else:
@@ -173,6 +190,8 @@ def main() -> None:
         payload = _error(code, "当前 Python 环境没有可用的 RDKit，无法计算对称性修正 RMSD。", str(exc))
     except Exception as exc:  # noqa: BLE001 - worker always returns structured JSON.
         payload = _error("REFERENCE_RMSD_FAILED", "共晶参考 RMSD 计算失败。", str(exc))
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False))
 
 

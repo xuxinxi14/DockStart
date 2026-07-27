@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "fixture_id": "flexible_1fpu",
+  "purpose": "Meeko 柔性受体严格失败、坏残基审阅和显式 allow_bad_res 回归",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "version": "v1.2.7",
+    "url": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "path": "example/flexible_docking/data/1fpu_receptorH.pdb",
+    "license": "Apache-2.0"
+  },
+  "files": {
+    "1fpu_receptorH.pdb": {
+      "sha256": "896980690302f6b10c5d96d6f76d0a59d5127b76b231d00665b48ceaa15a80da",
+      "size_bytes": 352277,
+      "derived": false
+    },
+    "expected_bad_residues.json": {
+      "derived": true,
+      "generator": "DockStart acceptance run with Meeko 0.7.1",
+      "reviewed_at": "2026-07-27"
+    }
+  }
+}

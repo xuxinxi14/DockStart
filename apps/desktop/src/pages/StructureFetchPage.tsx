@@ -1287,12 +1287,12 @@ export default function StructureFetchPage({
                   label={preview.label}
                 />
               </Suspense>
-              <p>原始 PDB / mmCIF / SDF 可直接用于临时 3D 选择预览；只有点击“选择并准备”后才会写入项目并生成 PDBQT。</p>
+              <p>确认结构无误后，点击候选卡片中的“选择并准备”写入项目并生成 PDBQT。</p>
             </section>
           ) : null}
         </div>
         <p className="structure-candidate-note">
-          DockStart 不会默认下载第一项。可逐项加载只读 3D 预览；只有明确点击“选择并准备”的候选才会写入项目并转换。
+          搜索不会自动下载候选；可先查看详细参数或 3D 结构，再选择目标。
         </p>
       </section>
     );
@@ -1453,49 +1453,54 @@ export default function StructureFetchPage({
                       </ActionButton>
                     </div>
                   </div>
-
-                  {renderCandidates("receptor", rcsbResults)}
-                </section>
-
-                <div className="structure-source-actions">
-                  <div className="structure-source-actions-copy">
-                    <span>本地文件</span>
-                    <strong>导入 PDB / CIF</strong>
-                    <p>选择本机原始结构后，立即尝试生成受体 PDBQT。</p>
-                  </div>
-                  <ActionButton
-                    aria-describedby="receptor-operation-status"
-                    className="structure-source-import-button"
-                    disabled={isBusy}
-                    onClick={() => void importLocalRaw("receptor")}
-                  >
-                    {busyAction === "prepare-receptor" ? "正在处理…" : "导入并自动转换"}
-                  </ActionButton>
-                  <label className="checkbox-row structure-source-overwrite">
+                  <label className="checkbox-row structure-search-options">
                     <input
                       type="checkbox"
                       checked={overwritePdb}
                       disabled={isBusy}
                       onChange={(event) => setOverwritePdb(event.target.checked)}
                     />
-                    在线候选允许覆盖同名 raw 文件
+                    允许覆盖项目中同名的在线受体 raw 文件
                   </label>
-                  <AdvancedDetails className="structure-source-manage" summary="管理受体原始结构">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={deleteReceptorRawFile}
-                        disabled={isBusy}
-                        onChange={(event) => setDeleteReceptorRawFile(event.target.checked)}
-                      />
-                      清除记录时同时删除项目中的 raw 文件
-                    </label>
-                    <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
-                      清除受体记录
+
+                  {renderCandidates("receptor", rcsbResults)}
+                </section>
+
+                <details className="structure-source-local-drawer">
+                  <summary>
+                    <span className="structure-source-actions-copy">
+                      <span>或者使用本地文件</span>
+                      <strong>从电脑导入 PDB / CIF</strong>
+                      <small>导入后立即尝试生成受体 PDBQT。</small>
+                    </span>
+                    <span className="structure-source-drawer-trigger">展开 <CaretDown aria-hidden="true" size={15} /></span>
+                  </summary>
+                  <div className="structure-source-actions">
+                    <ActionButton
+                      aria-describedby="receptor-operation-status"
+                      className="structure-source-import-button"
+                      disabled={isBusy}
+                      onClick={() => void importLocalRaw("receptor")}
+                    >
+                      {busyAction === "prepare-receptor" ? "正在处理…" : "选择文件并转换"}
                     </ActionButton>
-                    {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
-                  </AdvancedDetails>
-                </div>
+                    <AdvancedDetails className="structure-source-manage" summary="文件记录与详细信息">
+                      <label className="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={deleteReceptorRawFile}
+                          disabled={isBusy}
+                          onChange={(event) => setDeleteReceptorRawFile(event.target.checked)}
+                        />
+                        清除记录时同时删除项目中的 raw 文件
+                      </label>
+                      <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
+                        清除受体记录
+                      </ActionButton>
+                      {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
+                    </AdvancedDetails>
+                  </div>
+                </details>
               </article>
 
               <article
@@ -1609,64 +1614,56 @@ export default function StructureFetchPage({
                       </ActionButton>
                     </div>
                   </div>
-
-                  {renderCandidates("ligand", pubchemResults)}
-                </section>
-
-                <div className="structure-source-actions">
-                  <div className="structure-source-actions-copy">
-                    <span>本地文件</span>
-                    <strong>导入 SDF / MOL</strong>
-                    <p>选择本机原始结构后，立即尝试生成配体 PDBQT。</p>
-                  </div>
-                  <ActionButton
-                    aria-describedby="ligand-operation-status"
-                    className="structure-source-import-button"
-                    disabled={isBusy}
-                    onClick={() => void importLocalRaw("ligand")}
-                  >
-                    {busyAction === "prepare-ligand" ? "正在处理…" : "导入并自动转换"}
-                  </ActionButton>
-                  <label className="checkbox-row structure-source-overwrite">
+                  <label className="checkbox-row structure-search-options">
                     <input
                       type="checkbox"
                       checked={overwritePubchem}
                       disabled={isBusy}
                       onChange={(event) => setOverwritePubchem(event.target.checked)}
                     />
-                    在线候选允许覆盖同名 raw 文件
+                    允许覆盖项目中同名的在线配体 raw 文件
                   </label>
-                  <AdvancedDetails className="structure-source-manage" summary="管理配体原始结构">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={deleteLigandRawFile}
-                        disabled={isBusy}
-                        onChange={(event) => setDeleteLigandRawFile(event.target.checked)}
-                      />
-                      清除记录时同时删除项目中的 raw 文件
-                    </label>
-                    <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
-                      清除配体记录
+
+                  {renderCandidates("ligand", pubchemResults)}
+                </section>
+
+                <details className="structure-source-local-drawer">
+                  <summary>
+                    <span className="structure-source-actions-copy">
+                      <span>或者使用本地文件</span>
+                      <strong>从电脑导入 SDF / MOL</strong>
+                      <small>导入后立即尝试生成配体 PDBQT。</small>
+                    </span>
+                    <span className="structure-source-drawer-trigger">展开 <CaretDown aria-hidden="true" size={15} /></span>
+                  </summary>
+                  <div className="structure-source-actions">
+                    <ActionButton
+                      aria-describedby="ligand-operation-status"
+                      className="structure-source-import-button"
+                      disabled={isBusy}
+                      onClick={() => void importLocalRaw("ligand")}
+                    >
+                      {busyAction === "prepare-ligand" ? "正在处理…" : "选择文件并转换"}
                     </ActionButton>
-                    {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
-                  </AdvancedDetails>
-                </div>
+                    <AdvancedDetails className="structure-source-manage" summary="文件记录与详细信息">
+                      <label className="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={deleteLigandRawFile}
+                          disabled={isBusy}
+                          onChange={(event) => setDeleteLigandRawFile(event.target.checked)}
+                        />
+                        清除记录时同时删除项目中的 raw 文件
+                      </label>
+                      <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
+                        清除配体记录
+                      </ActionButton>
+                      {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
+                    </AdvancedDetails>
+                  </div>
+                </details>
               </article>
             </div>
-
-            <aside className="structure-source-guidance" aria-label="结构选择与转换说明">
-              <section>
-                <span>选择规则</span>
-                <strong>预览不会修改项目</strong>
-                <p>只有明确点击某个候选的“选择并准备”，DockStart 才下载该结构并启动转换。</p>
-              </section>
-              <section>
-                <span>转换失败怎么办</span>
-                <strong>raw 文件会保留</strong>
-                <p>打开“格式转换与 PDBQT 准备”检查工具链、stderr 和日志，或改为导入已有 PDBQT。</p>
-              </section>
-            </aside>
 
             <div className="next-step-strip">
               <div>

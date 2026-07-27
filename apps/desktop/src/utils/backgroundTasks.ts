@@ -97,11 +97,15 @@ export async function startFlexibleReceptorTask(
   projectDir: string,
   residues: string[],
   maxResidues = 8,
+  allowBadRes = false,
+  acknowledgedBadResidues: string[] = [],
 ): Promise<BackgroundTaskStatus> {
   const payload = await invoke<string>("start_flexible_receptor_task", {
     projectDir,
     residues,
     maxResidues,
+    allowBadRes,
+    acknowledgedBadResidues,
   });
   return assertStarted(normalizeTaskStatus(payload));
 }
@@ -256,7 +260,7 @@ export async function waitForBackgroundTask(
     rejectCompletion(error instanceof Error ? error : new Error(String(error)));
   };
 
-  const onAbort = () => fail(new DOMException("页面已离开，停止等待后台任务事件。", "AbortError"));
+  const onAbort = () => fail(new DOMException("已离开当前步骤，停止等待任务更新。", "AbortError"));
   const refreshFromRegistry = async () => {
     if (settled || watchdogInFlight) return;
     watchdogInFlight = true;

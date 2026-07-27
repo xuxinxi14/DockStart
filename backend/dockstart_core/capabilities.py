@@ -259,7 +259,7 @@ def _error_response(message: str, raw_error: str = "") -> dict[str, Any]:
             "code": "CAPABILITY_PROFILE_ERROR",
             "message": message,
             "raw_error": raw_error,
-            "suggestion": "请确认 Python 后端和项目目录可访问。",
+            "suggestion": "请重新打开应用，并确认项目目录仍可访问。",
         },
     }
 

@@ -100,7 +100,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <StatusBadge tone="info">{`v${appVersion}`}</StatusBadge>
           </div>
           <h1 id="help-title">从结构文件到可复现对接记录</h1>
-          <p>按你已有的文件选择入口；每一步都说明要做什么、为什么要做，以及遇到问题时去哪里排查。</p>
+          <p>已有 PDBQT 可直接开始；只有 PDB、CIF、SDF 或 MOL 时，可先搜索或导入并转换。</p>
         </div>
         <div className="help-center-hero-actions">
           <ActionButton variant="secondary" onClick={() => onNavigate("toolchain-status")}>
@@ -204,15 +204,15 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
           <section className="help-center-section" aria-labelledby="help-reliability-title">
             <div className="help-section-heading">
               <div>
-                <span>稳定性与记录</span>
-                <h2 id="help-reliability-title">最近版本带来的运行保障</h2>
+                <span>运行与记录</span>
+                <h2 id="help-reliability-title">长任务与产物在哪里查看</h2>
               </div>
             </div>
             <div className="help-reliability-grid">
-              <article><ShieldCheck aria-hidden="true" size={20} /><div><strong>工具检测缓存</strong><p>相同运行环境不会在每次切页时重复启动检测；需要时可手动重新检查。</p></div></article>
-              <article><Play aria-hidden="true" size={20} /><div><strong>后台任务队列</strong><p>格式准备和 Vina 长任务在后台执行，界面只接收进度和结果事件。</p></div></article>
+              <article><ShieldCheck aria-hidden="true" size={20} /><div><strong>工具状态</strong><p>工具链页显示当前可用版本和路径；环境变化后可手动重新检测。</p></div></article>
+              <article><Play aria-hidden="true" size={20} /><div><strong>长任务进度</strong><p>格式准备和 Vina 运行期间会显示进度；切换页面不会自动终止任务。</p></div></article>
               <article><FileText aria-hidden="true" size={20} /><div><strong>可追踪产物</strong><p>配置、命令、stdout、stderr、日志、输入快照、SHA256 和报告随运行记录保存。</p></div></article>
-              <article><ArrowCounterClockwise aria-hidden="true" size={20} /><div><strong>中断恢复</strong><p>异常退出后会保守识别未完成的准备或运行记录，并保留已有日志用于排查。</p></div></article>
+              <article><ArrowCounterClockwise aria-hidden="true" size={20} /><div><strong>中断恢复</strong><p>异常退出后重新打开项目，可根据保留的状态和日志检查或恢复未完成任务。</p></div></article>
             </div>
           </section>
 
@@ -251,7 +251,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
           <section className="help-rail-project">
             <span>当前上下文</span>
             <h2>{project ? project.project_name : "尚未加载项目"}</h2>
-            <p>{project ? "可以直接进入当前项目对应阶段。" : "创建或打开项目后，帮助页会保留项目快捷入口。"}</p>
+            <p>{project ? "可直接进入当前项目的结构准备、对接或结果页面。" : "创建或打开项目后，可从这里进入各项操作。"}</p>
             <StatusBadge tone={project ? "ok" : "muted"}>{project ? "项目已加载" : "等待项目"}</StatusBadge>
           </section>
 

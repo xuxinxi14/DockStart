@@ -423,7 +423,7 @@ export default function PreparationPage({
       );
       taskId = started.task_id;
       if (!mountedRef.current) return;
-      setMessage(started.deduplicated ? "同一准备任务已在运行，正在接收其进度。" : "准备任务已进入后台队列。界面可以继续响应。" );
+      setMessage(started.deduplicated ? "同一准备任务已在运行，正在读取进度。" : "准备任务已开始，可继续查看项目其他内容。" );
       await waitForPreparation(started, target, controller);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -638,8 +638,8 @@ export default function PreparationPage({
                 <strong>3D 预览按需加载</strong>
                 <span>
                   {preparedSize > 0
-                    ? `文件大小 ${preparedSize.toLocaleString()} B；点击后再初始化查看器，避免进入页面时卡顿。`
-                    : "点击后再初始化查看器，避免进入页面时卡顿。"}
+                    ? `文件大小 ${preparedSize.toLocaleString()} B；点击加载 3D 预览。`
+                    : "点击加载 3D 预览。"}
                 </span>
                 <ActionButton onClick={() => setPreviewRequested((current) => ({ ...current, [target]: true }))}>
                   加载 3D 预览
@@ -648,7 +648,7 @@ export default function PreparationPage({
             ) : (
               <>
                 <strong>{mode === "raw" ? "等待转换为 PDBQT" : "等待导入 PDBQT"}</strong>
-                <span>文件就绪后才会初始化 3D 查看器。</span>
+                <span>准备好 PDBQT 后即可查看结构。</span>
               </>
             )}
           </div>
@@ -895,7 +895,7 @@ export default function PreparationPage({
                 <p className="preparation-profile-hint">
                   Assisted Stable 随附 RDKit / Meeko；Basic Stable 默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
                 </p>
-                <p>{tools ? "已读取本次工具检测结果。" : "进入页面时不再自动启动检测脚本；开始转换时会自动检查。"}</p>
+                <p>{tools ? "转换工具状态已读取。" : "开始转换时会自动检查所需工具。"}</p>
                 <ActionButton disabled={isCheckingTools || interactionBusy} onClick={() => void checkConversionTools()}>
                   {isCheckingTools ? "检测中…" : "检查转换工具"}
                 </ActionButton>

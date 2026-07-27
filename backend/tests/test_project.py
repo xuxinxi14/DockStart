@@ -1235,6 +1235,7 @@ class ProjectTests(unittest.TestCase):
             flex_snapshot = project_dir / "runs" / run_id / "inputs" / "flex.pdbqt"
             self.assertTrue(flex_snapshot.is_file())
             self.assertEqual(prepared["metadata"]["docking_protocol"]["mode"], "flexible")
+            self.assertEqual(prepared["metadata"]["docking_protocol"]["protocol_id"], "flexible_single")
             self.assertEqual(
                 prepared["metadata"]["command"][-2:],
                 ["--flex", f"runs/{run_id}/inputs/flex.pdbqt"],

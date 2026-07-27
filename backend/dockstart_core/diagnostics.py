@@ -222,7 +222,7 @@ def _error_response(message: str, raw_error: str = "") -> dict[str, Any]:
             "code": "DIAGNOSTIC_ERROR",
             "message": message,
             "raw_error": raw_error,
-            "suggestion": "请确认 Python 后端、工具链状态和输出目录可访问。",
+            "suggestion": "请重新打开应用，并确认工具链和输出目录仍可访问。",
         },
     }
 

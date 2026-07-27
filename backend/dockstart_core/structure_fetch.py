@@ -92,7 +92,7 @@ def validate_pubchem_cid(cid: str | int) -> dict[str, Any]:
             "PUBCHEM_CID_INVALID",
             "PubChem CID 必须是正整数。",
             raw_error=value,
-            suggestion="如需按名称查询，请在前端选择“名称”；SMILES 查询当前暂未支持。",
+            suggestion="如需按名称查询，请选择“名称”搜索方式；SMILES 查询当前暂未支持。",
         )
     number = int(value)
     if number <= 0:
@@ -983,7 +983,7 @@ def fetch_pdb_structure(
             "PDB_FORMAT_UNSUPPORTED",
             "当前只支持下载 pdb 或 cif 格式的 RCSB 结构文件。",
             raw_error=file_format,
-            suggestion="请选择 pdb；如需 cif，请确认当前版本前端已开放该选项。",
+            suggestion="请选择 PDB；如需 mmCIF，请在搜索表单中将下载格式改为 mmCIF。",
         )
 
     project, project_error = _load_project_for_raw(project_dir)

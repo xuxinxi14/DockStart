@@ -464,7 +464,7 @@ export default function App() {
             <SpinnerGap aria-hidden="true" className="page-loading-indicator" size={24} weight="bold" />
             <div>
               <strong>正在打开工作区</strong>
-              <p>正在加载当前页面所需的本地组件。</p>
+              <p>正在打开当前页面。</p>
             </div>
           </section>
         )}

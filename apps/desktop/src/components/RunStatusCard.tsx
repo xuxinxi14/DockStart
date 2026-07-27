@@ -14,7 +14,7 @@ export default function RunStatusCard({ runId, status = "missing", detail }: Run
         <strong>{runId || "尚无 run"}</strong>
         <StatusBadge tone={tone}>{status}</StatusBadge>
       </div>
-      <p>{detail || "准备 run 后这里会显示最新状态。"}</p>
+      <p>{detail || "准备运行后可查看最新状态。"}</p>
     </article>
   );
 }

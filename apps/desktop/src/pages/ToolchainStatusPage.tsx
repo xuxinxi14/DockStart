@@ -31,7 +31,7 @@ const sourceText: Record<ToolSource, string> = {
   configured: "用户配置路径",
   auto: "系统自动检测",
   current_environment: "Python 运行环境",
-  frontend_dependency: "前端依赖",
+  frontend_dependency: "应用内置资源",
   missing: "尚未找到",
   unknown: "未知来源",
 };
@@ -302,12 +302,12 @@ function buildFrontendRepairError(error: unknown): ToolchainRepairSuggestionsRes
   return {
     ok: false,
     suggestions: [],
-    message: "前端未能读取工具链修复建议。",
+    message: "无法读取工具链修复建议。",
     error: {
       code: "FRONTEND_TOOLCHAIN_REPAIR_ERROR",
       message: "无法读取工具链修复建议。",
       raw_error: rawError,
-      suggestion: "请确认当前运行环境是 Tauri 桌面端，并重新打开工具链页。",
+      suggestion: "请重新打开工具链页；若仍失败，请查看原始诊断。",
     },
   };
 }
@@ -320,7 +320,7 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
     status: "error",
     version: "",
     path: "",
-    message: "前端未能调用工具链状态命令。",
+    message: "DockStart 无法读取工具链状态。",
     raw_error: rawError,
     source: "unknown",
     bundled_path: "",
@@ -373,9 +373,9 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
     rdkit_python_source: "unknown",
     first_run_guidance: {
       status: "unknown",
-      recommended_action: "请在 Tauri 桌面端打开工具链页后重新检测。",
+      recommended_action: "请重新打开应用，并在工具链页重新检测。",
       primary_page: "toolchain-status",
-      message: "前端无法读取后端工具链状态。",
+      message: "暂时无法读取本机工具链状态。",
     },
     licenses: {
       exists: false,
@@ -394,7 +394,7 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
       code: "FRONTEND_TOOLCHAIN_STATUS_ERROR",
       message: frontendTool.message,
       raw_error: rawError,
-      suggestion: "请确认当前运行环境是 Tauri 桌面端，并检查 Python 后端入口。",
+      suggestion: "请重新打开应用后重试；若仍失败，请查看原始诊断。",
     },
   };
 }
@@ -514,7 +514,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           assisted_mode_available: false,
           demo_mode_available: false,
           recommended_mode: "setup",
-          next_action: "安装后自检失败，请检查 Python 后端。",
+          next_action: "安装后自检失败，请重新打开应用后再试。",
         },
         issues: ["安装后自检失败。"],
         privacy_note: "",
@@ -523,7 +523,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           code: "FRONTEND_DIAGNOSTIC_ERROR",
           message: "无法运行安装后自检。",
           raw_error: error instanceof Error ? error.message : String(error),
-          suggestion: "请确认当前运行环境是 Tauri 桌面端。",
+          suggestion: "请重新打开应用后重试；若仍失败，请查看原始诊断。",
         },
       });
     } finally {
@@ -671,7 +671,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               <p className="placeholder-note">
                 {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
                   ? "Assisted Stable 已随附固定 RDKit/Meeko；兼容的用户配置 Python 仍优先。运行时不会联网改环境。"
-                  : "当前 profile 不随附 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。"}
+                  : "当前安装包不含 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。"}
               </p>
             </article>
 
@@ -681,8 +681,8 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <h2>随附资源</h2>
                   <p>
                     {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
-                      ? "Assisted 包随附 Vina，以及独立、可替换的 RDKit/Meeko Python runtime。"
-                      : "Basic 包随附 Vina 与 DockStart 后端 Python；后端 Python 不代表包含 RDKit/Meeko。"}
+                      ? "Assisted 包随附 Vina，以及独立、可替换的 RDKit/Meeko Python 工具环境。"
+                      : "Basic 包随附 Vina 和 DockStart 运行所需的 Python，但不含 RDKit/Meeko。"}
                   </p>
                 </div>
                 <span className={`status-badge ${packageStatusClass(status.bundled_vina.package_status)}`}>
@@ -695,7 +695,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <dd>{booleanText(status.bundled_vina.exists)}，{status.bundled_vina.version || "未获取版本"}</dd>
                 </div>
                 <div>
-                  <dt>随附 Python（后端）</dt>
+                  <dt>随附 Python（应用运行）</dt>
                   <dd>{booleanText(status.bundled_python.exists)}，{status.bundled_python.version || "未获取版本"}</dd>
                 </div>
                 <div>

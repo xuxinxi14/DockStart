@@ -172,6 +172,48 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "FLEX_RECEPTOR_CIF_BRIDGE_UNAVAILABLE")
 
+    def test_bad_residues_require_strict_review_then_explicit_matching_confirmation(self) -> None:
+        bad_residues = ["A:226", "A:229"]
+        diagnostics = "\n".join(
+            f"No template matched for residue_key='{value}'"
+            for value in bad_residues
+        )
+
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            if "--allow_bad_res" not in argv:
+                return SimpleNamespace(returncode=1, stdout="", stderr=diagnostics)
+            basename = Path(argv[argv.index("--output_basename") + 1])
+            Path(str(basename) + "_rigid.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
+            Path(str(basename) + "_flex.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
+            Path(str(basename) + ".json").write_text("{}\n", encoding="utf-8")
+            return SimpleNamespace(returncode=0, stdout="prepared", stderr=diagnostics)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project, _ = self._project(Path(temp_dir))
+            with patch(
+                "dockstart_core.flexible_receptor.get_resolved_python",
+                return_value=self._python_tool(),
+            ):
+                strict = prepare_flexible_receptor(str(project), ["A:42"], runner=runner)
+                confirmed = prepare_flexible_receptor(
+                    str(project),
+                    ["A:42"],
+                    allow_bad_res=True,
+                    acknowledged_bad_residues=bad_residues,
+                    runner=runner,
+                )
+
+            self.assertFalse(strict["ok"])
+            self.assertEqual(strict["error"]["code"], "FLEX_BAD_RESIDUES_REVIEW_REQUIRED")
+            self.assertEqual(strict["review"]["bad_residues"], bad_residues)
+            self.assertTrue(confirmed["ok"])
+            self.assertTrue(confirmed["scientific_review"]["allow_bad_res"])
+            status = get_flexible_receptor_status(str(project))
+            review = status["flexible_receptor"]["scientific_review"]
+
+        self.assertEqual(review["acknowledged_bad_residues"], bad_residues)
+        self.assertEqual(review["detected_bad_residues"], bad_residues)
+
 
 if __name__ == "__main__":
     unittest.main()

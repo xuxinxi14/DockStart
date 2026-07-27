@@ -23,6 +23,7 @@ from dockstart_core.advanced_protocols import (  # noqa: E402
     execute_meeko_macrocycle,
     execute_meeko_receptor_flex,
     execute_mk_export,
+    extract_meeko_bad_residues,
     inspect_meeko_ligand_pdbqt,
     main,
     parse_flexible_residue,
@@ -97,6 +98,13 @@ class FlexibleResidueParsingTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ProtocolValidationError) as raised:
                 parse_flexible_residue(value)
             self.assertEqual(raised.exception.code, "INVALID_FLEX_RESIDUE_ID")
+
+    def test_extracts_unique_bad_residues_from_meeko_diagnostics(self) -> None:
+        output = """No template matched for residue_key='A:226'
+No template matched for residue_key='A:229'
+- Template matching failed for: ['A:226', 'A:229'] Ignored due to allow_bad_res.
+"""
+        self.assertEqual(extract_meeko_bad_residues(output), ["A:226", "A:229"])
 
 
 class FlexibleResidueValidationTests(unittest.TestCase):
@@ -201,6 +209,36 @@ class FlexibleProtocolPlanTests(unittest.TestCase):
         self.assertTrue(result["outputs"]["rigid_pdbqt"].endswith("_rigid.pdbqt"))
         self.assertTrue(result["outputs"]["flex_pdbqt"].endswith("_flex.pdbqt"))
         self.assertTrue(result["outputs"]["receptor_json"].endswith(".json"))
+        self.assertNotIn("--allow_bad_res", result["argv"])
+
+    def test_allow_bad_res_requires_and_records_explicit_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pdb = root / "receptor.pdb"
+            pdb.write_text(_receptor_pdb(), encoding="utf-8")
+            with self.assertRaises(ProtocolValidationError) as missing:
+                build_meeko_receptor_flex_plan(
+                    sys.executable,
+                    pdb,
+                    root / "missing_ack",
+                    ["A:42"],
+                    allow_bad_res=True,
+                )
+            plan = build_meeko_receptor_flex_plan(
+                sys.executable,
+                pdb,
+                root / "reviewed",
+                ["A:42"],
+                allow_bad_res=True,
+                acknowledged_bad_residues=["A:226", "A:226"],
+            )
+
+        self.assertEqual(missing.exception.code, "FLEX_BAD_RESIDUE_ACKNOWLEDGEMENT_REQUIRED")
+        self.assertIn("--allow_bad_res", plan["argv"])
+        self.assertEqual(
+            plan["scientific_review"]["acknowledged_bad_residues"],
+            ["A:226"],
+        )
 
     def test_builds_vina_flex_fragment_only_for_existing_pdbqt(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -401,6 +439,101 @@ class AdvancedProtocolExecutionTests(unittest.TestCase):
             self.assertEqual(saved["stderr"], "meeko failed")
 
         self.assertEqual(raised.exception.code, "PROTOCOL_COMMAND_FAILED")
+
+    def test_flex_strict_failure_returns_reviewable_bad_residue_list(self) -> None:
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="No template matched for residue_key='A:226'\n",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "receptor.pdb"
+            receptor.write_text(_receptor_pdb(), encoding="utf-8")
+            record_dir = root / "strict_failure"
+            with self.assertRaises(ProtocolValidationError) as raised:
+                execute_meeko_receptor_flex(
+                    sys.executable,
+                    receptor,
+                    root / "receptor_flexible",
+                    ["A:42"],
+                    record_dir=record_dir,
+                    runner=runner,
+                )
+            saved = json.loads((record_dir / "command_result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(raised.exception.code, "FLEX_BAD_RESIDUES_REVIEW_REQUIRED")
+        self.assertEqual(json.loads(raised.exception.detail)["bad_residues"], ["A:226"])
+        self.assertEqual(saved["scientific_review"]["detected_bad_residues"], ["A:226"])
+
+    def test_flex_allow_bad_res_publishes_only_when_actual_list_matches_acknowledgement(self) -> None:
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            basename = Path(argv[argv.index("--output_basename") + 1])
+            Path(str(basename) + "_rigid.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
+            Path(str(basename) + "_flex.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
+            Path(str(basename) + ".json").write_text('{"ok": true}', encoding="utf-8")
+            return SimpleNamespace(
+                returncode=0,
+                stdout="prepared\n",
+                stderr="No template matched for residue_key='A:226'\n",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "receptor.pdb"
+            receptor.write_text(_receptor_pdb(), encoding="utf-8")
+            output_basename = root / "accepted"
+            accepted = execute_meeko_receptor_flex(
+                sys.executable,
+                receptor,
+                output_basename,
+                ["A:42"],
+                record_dir=root / "accepted_record",
+                allow_bad_res=True,
+                acknowledged_bad_residues=["A:226"],
+                runner=runner,
+            )
+
+        self.assertIn("--allow_bad_res", accepted["requested_command"])
+        self.assertTrue(accepted["scientific_review"]["allow_bad_res"])
+        self.assertEqual(accepted["scientific_review"]["detected_bad_residues"], ["A:226"])
+
+    def test_flex_allow_bad_res_rejects_changed_diagnostic_before_publish(self) -> None:
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            basename = Path(argv[argv.index("--output_basename") + 1])
+            Path(str(basename) + "_rigid.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
+            Path(str(basename) + "_flex.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
+            Path(str(basename) + ".json").write_text('{"ok": true}', encoding="utf-8")
+            return SimpleNamespace(
+                returncode=0,
+                stdout="prepared\n",
+                stderr="No template matched for residue_key='A:227'\n",
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "receptor.pdb"
+            receptor.write_text(_receptor_pdb(), encoding="utf-8")
+            output_basename = root / "rejected"
+            with self.assertRaises(ProtocolValidationError) as raised:
+                execute_meeko_receptor_flex(
+                    sys.executable,
+                    receptor,
+                    output_basename,
+                    ["A:42"],
+                    record_dir=root / "rejected_record",
+                    allow_bad_res=True,
+                    acknowledged_bad_residues=["A:226"],
+                    runner=runner,
+                )
+
+            self.assertFalse(Path(str(output_basename) + "_rigid.pdbqt").exists())
+            self.assertFalse(Path(str(output_basename) + "_flex.pdbqt").exists())
+            self.assertFalse(Path(str(output_basename) + ".json").exists())
+
+        self.assertEqual(raised.exception.code, "FLEX_BAD_RESIDUES_CHANGED")
 
     def test_missing_one_flex_output_publishes_none(self) -> None:
         def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:

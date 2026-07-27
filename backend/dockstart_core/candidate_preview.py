@@ -160,7 +160,7 @@ def _download_preview(
             source_id=source_id,
             file_format=file_format,
             raw_error=str(exc),
-            suggestion=f"为保持界面流畅，本次临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
+            suggestion=f"临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可先选择并准备，再在项目工作台中查看。",
         )
     except urllib.error.HTTPError as exc:
         return None, _preview_error(
@@ -221,7 +221,7 @@ def _download_preview(
             source_id=source_id,
             file_format=file_format,
             raw_error=f"size_bytes={len(data)}; limit_bytes={byte_limit}",
-            suggestion=f"为保持界面流畅，本次临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
+            suggestion=f"临时预览最多读取 {byte_limit // (1024 * 1024)} MB；可先选择并准备，再在项目工作台中查看。",
         )
     return data, None
 
@@ -408,7 +408,7 @@ def preview_candidate_structure(
             source_id=target["source_id"],
             file_format=target["format"],
             raw_error=f"response_bytes={response_size}; limit_bytes={byte_limit}",
-            suggestion=f"为保持界面流畅，本次临时预览响应最多 {byte_limit // (1024 * 1024)} MB；可直接选择并准备，再在项目工作台中查看。",
+            suggestion=f"临时预览响应最多 {byte_limit // (1024 * 1024)} MB；可先选择并准备，再在项目工作台中查看。",
         )
     return response
 

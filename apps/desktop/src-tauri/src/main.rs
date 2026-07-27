@@ -158,7 +158,7 @@ async fn check_tools() -> String {
     .await
     {
         Ok(payload) => payload,
-        Err(error) => fallback_check_error_json("无法调用 Python 后端工具检测入口。", &error),
+        Err(error) => fallback_check_error_json("无法读取本机工具状态。", &error),
     }
 }
 
@@ -2448,6 +2448,8 @@ fn start_flexible_receptor_task(
     project_dir: String,
     residues: Vec<String>,
     max_residues: u8,
+    allow_bad_res: Option<bool>,
+    acknowledged_bad_residues: Option<Vec<String>>,
 ) -> String {
     if residues.is_empty() {
         return fallback_project_error_json(
@@ -2463,9 +2465,20 @@ fn start_flexible_receptor_task(
         .collect::<Vec<_>>();
     normalized.sort();
     normalized.dedup();
+    let allow_bad_res = allow_bad_res.unwrap_or(false);
+    let mut acknowledged = acknowledged_bad_residues
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    acknowledged.sort();
+    acknowledged.dedup();
     let mut hasher = DefaultHasher::new();
     normalized.hash(&mut hasher);
     max_residues.hash(&mut hasher);
+    allow_bad_res.hash(&mut hasher);
+    acknowledged.hash(&mut hasher);
     let mut args = vec![
         "prepare".to_string(),
         "--project".to_string(),
@@ -2475,6 +2488,15 @@ fn start_flexible_receptor_task(
     ];
     for residue in &normalized {
         args.extend(["--residue".to_string(), residue.clone()]);
+    }
+    if allow_bad_res {
+        args.push("--allow-bad-res".to_string());
+        for residue in &acknowledged {
+            args.extend([
+                "--acknowledge-bad-residue".to_string(),
+                residue.clone(),
+            ]);
+        }
     }
     start_background_job(
         app,
@@ -3090,7 +3112,7 @@ fn backend_payload_value(payload: &str, operation: &str) -> Result<serde_json::V
             .pointer("/error/message")
             .and_then(serde_json::Value::as_str)
             .or_else(|| value.get("message").and_then(serde_json::Value::as_str))
-            .unwrap_or("后端返回失败状态。");
+            .unwrap_or("本地操作未能完成。");
         let raw_error = value
             .pointer("/error/raw_error")
             .and_then(serde_json::Value::as_str)
@@ -3362,7 +3384,7 @@ fn run_backend_module_uncached_with_env(
     extra_env: &[(&str, &str)],
 ) -> Result<String, String> {
     let backend_dir = find_backend_dir().ok_or_else(|| {
-        "未找到 Python 后端目录。请确认应用仍位于 DockStart 项目结构中。".to_string()
+        "未找到 DockStart 本地服务文件。请重新安装或恢复完整应用目录。".to_string()
     })?;
 
     let mut errors = Vec::new();
@@ -3811,7 +3833,7 @@ fn is_backend_dir(path: &Path) -> bool {
 
 fn fallback_check_error_json(message: &str, raw_error: &str) -> String {
     format!(
-        "[{{\"key\":\"tool_check_backend\",\"name\":\"Python 后端工具检测\",\"status\":\"error\",\"version\":\"\",\"path\":\"\",\"message\":\"{}\",\"raw_error\":\"{}\"}}]",
+        "[{{\"key\":\"tool_check_backend\",\"name\":\"本机工具状态\",\"status\":\"error\",\"version\":\"\",\"path\":\"\",\"message\":\"{}\",\"raw_error\":\"{}\"}}]",
         json_escape(message),
         json_escape(raw_error)
     )
@@ -3827,7 +3849,7 @@ fn fallback_settings_error_json(message: &str, raw_error: &str) -> String {
 
 fn fallback_project_error_json(message: &str, raw_error: &str) -> String {
     format!(
-        "{{\"ok\":false,\"project\":null,\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请确认 Python 后端可以运行。\"}}}}",
+        "{{\"ok\":false,\"project\":null,\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请重新打开应用；若仍失败，请重新安装或恢复完整应用目录。\"}}}}",
         json_escape(message),
         json_escape(raw_error)
     )
@@ -3835,7 +3857,7 @@ fn fallback_project_error_json(message: &str, raw_error: &str) -> String {
 
 fn fallback_toolchain_error_json(message: &str, raw_error: &str) -> String {
     format!(
-        "{{\"ok\":false,\"runtime_mode\":\"unknown\",\"resource_dir\":\"\",\"toolchain_root\":\"\",\"tools_dir\":\"\",\"licenses_dir\":\"\",\"manifest_file\":\"\",\"manifest_exists\":false,\"manifest\":{{}},\"manifest_error\":\"\",\"bundled_vina\":{{\"exists\":false,\"path\":\"\",\"version\":\"\",\"status\":\"error\",\"message\":\"{}\",\"raw_error\":\"{}\"}},\"active_vina\":null,\"active_source\":\"unknown\",\"licenses\":{{\"exists\":false,\"third_party_notices\":\"\",\"third_party_notices_exists\":false}},\"resources\":{{\"exists\":false,\"tools_dir_exists\":false,\"vina_dir_exists\":false}},\"full_status\":\"missing\",\"message\":\"{}\",\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请确认 Python 后端可以运行。\"}}}}",
+        "{{\"ok\":false,\"runtime_mode\":\"unknown\",\"resource_dir\":\"\",\"toolchain_root\":\"\",\"tools_dir\":\"\",\"licenses_dir\":\"\",\"manifest_file\":\"\",\"manifest_exists\":false,\"manifest\":{{}},\"manifest_error\":\"\",\"bundled_vina\":{{\"exists\":false,\"path\":\"\",\"version\":\"\",\"status\":\"error\",\"message\":\"{}\",\"raw_error\":\"{}\"}},\"active_vina\":null,\"active_source\":\"unknown\",\"licenses\":{{\"exists\":false,\"third_party_notices\":\"\",\"third_party_notices_exists\":false}},\"resources\":{{\"exists\":false,\"tools_dir_exists\":false,\"vina_dir_exists\":false}},\"full_status\":\"missing\",\"message\":\"{}\",\"error\":{{\"code\":\"PYTHON_BACKEND_ERROR\",\"message\":\"{}\",\"raw_error\":\"{}\",\"suggestion\":\"请重新打开应用；若仍失败，请重新安装或恢复完整应用目录。\"}}}}",
         json_escape(message),
         json_escape(raw_error),
         json_escape(message),

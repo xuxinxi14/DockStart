@@ -39,7 +39,7 @@ export default function AppShell({
   const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
     releaseProfile: "unknown",
     displayName: "识别中",
-    message: "正在读取当前安装包的发布 profile。",
+    message: "正在识别当前安装包类型。",
   });
 
   useEffect(() => {
@@ -57,15 +57,15 @@ export default function AppShell({
           : "unknown";
         setDistributionProfile({
           releaseProfile,
-          displayName: typeof payload.display_name === "string" ? payload.display_name : "Profile 未知",
-          message: typeof payload.message === "string" ? payload.message : "无法识别当前安装包的发布 profile。",
+          displayName: typeof payload.display_name === "string" ? payload.display_name : "版本类型未知",
+          message: typeof payload.message === "string" ? payload.message : "无法识别当前安装包类型。",
         });
       })
       .catch(() => {
         if (cancelled) return;
         setDistributionProfile({
           releaseProfile: "unknown",
-          displayName: "Profile 未知",
+          displayName: "版本类型未知",
           message: "无法读取当前安装包的发布清单。",
         });
       });

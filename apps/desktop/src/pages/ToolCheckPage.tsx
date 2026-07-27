@@ -23,7 +23,7 @@ const sourceText: Record<ToolSource, string> = {
   configured: "用户配置",
   auto: "自动检测",
   current_environment: "Python 运行环境",
-  frontend_dependency: "前端依赖",
+  frontend_dependency: "应用内置资源",
   missing: "未找到来源",
   unknown: "未知来源",
 };
@@ -54,12 +54,11 @@ function buildFrontendError(error: unknown): ToolCheckResult[] {
   return [
     {
       key: "tool_check_bridge",
-      name: "工具检测入口",
+      name: "工具状态",
       status: "error",
       version: "",
       path: "",
-      message:
-        "前端未能调用 Tauri 工具检测命令。请确认当前运行环境是 Tauri 桌面端，并检查 Python 后端入口。",
+      message: "DockStart 无法读取工具状态。请重新打开应用后再试。",
       raw_error: error instanceof Error ? error.message : String(error),
       source: "unknown",
       bundled_path: "",

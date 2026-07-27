@@ -76,6 +76,18 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 - DockStart 只保存用户运行产生的 GPF、GLG、maps 和可复现 manifest；
 - 随包的 AutoDock Vina 1.2.7 保持 Apache-2.0 分发，用于读取 maps 并执行 AD4 评分。
 
+### 科学回归夹具
+
+`backend/tests/fixtures/scientific/` 保留 AutoDock Vina v1.2.7 官方示例中的
+1FPU 和 BACE_1 最小回归输入。上游仓库以 Apache-2.0 发布；每个夹具目录
+同时记录上游路径、用途、文件 SHA256、派生关系和工具版本。夹具只用于源码
+测试和人工验收，不会复制进 Basic/Assisted 安装包。
+
+BACE_1 的 SDF 是由外部 Open Babel 2.3.2 从同目录官方 MOL2 机械转换得到，
+原始 MOL2 与转换命令模板一并保留。该派生文件不代表 DockStart 引入或分发
+Open Babel；DockStart 仍不提供 Open Babel adapter，发布包也不包含其程序或
+许可证约束下的二进制。
+
 ## Assisted 之后的工具链扩展审查
 
 | 名称 | 当前状态 | 合规要求 |

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "source_file": "1fpu_receptorH.pdb",
+  "source_sha256": "896980690302f6b10c5d96d6f76d0a59d5127b76b231d00665b48ceaa15a80da",
+  "meeko_version": "0.7.1",
+  "selected_flexible_residues": [
+    "A:315"
+  ],
+  "expected_bad_residues": [
+    "A:226",
+    "A:229",
+    "A:230",
+    "A:231",
+    "A:274",
+    "A:275",
+    "A:276",
+    "A:277",
+    "A:278",
+    "A:279",
+    "A:285",
+    "A:294",
+    "A:306",
+    "A:307",
+    "A:308",
+    "A:387",
+    "A:388",
+    "A:389",
+    "A:391",
+    "A:394",
+    "A:415",
+    "A:450",
+    "A:466",
+    "A:467",
+    "A:470",
+    "A:491",
+    "A:498"
+  ],
+  "review_policy": "strict_first_then_exact_explicit_acknowledgement",
+  "expected_outputs_after_acknowledgement": {
+    "rigid_pdbqt_sha256": "f5a1a804b9855f634b1c9aa42a8edf0ea271802318adc0397a074f868686ebb8",
+    "flex_pdbqt_sha256": "d2efb4f8ea622aeb0445cc59336ca361f96c96f08a694915c5febd569c562d6e",
+    "receptor_json_sha256": "2e6055a9428c8d3ad13b936d3536f2219c5e776547a613cb89cd9ecdf24e4132"
+  }
+}

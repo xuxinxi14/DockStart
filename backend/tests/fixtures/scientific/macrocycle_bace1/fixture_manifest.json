@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "fixture_id": "macrocycle_bace1",
+  "purpose": "Meeko 大环准备、Vina 对接、CLI 对照和拓扑安全导出回归",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "version": "v1.2.7",
+    "url": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "path": "example/docking_with_macrocycles",
+    "license": "Apache-2.0"
+  },
+  "files": {
+    "BACE_1_receptorH.pdb": {
+      "sha256": "335feef4827b6c89e9c213b10866adda6c72f9ae05c200c1d7be2f181bbab08a",
+      "size_bytes": 495897,
+      "derived": false
+    },
+    "BACE_1_ligand.mol2": {
+      "sha256": "ffaf0af7f358185046e0220ed59de208960e8f10f50690e0fe6a55c08d8bbbac",
+      "size_bytes": 9085,
+      "derived": false
+    },
+    "BACE_1_ligand.sdf": {
+      "sha256": "00f914847658da3d64b611518ad13693d4070e2b75685d6a4d45c85d3e91cee1",
+      "size_bytes": 8298,
+      "derived": true,
+      "generator": "Open Babel 2.3.2",
+      "command_template": "obabel -imol2 BACE_1_ligand.mol2 -osdf -O BACE_1_ligand.sdf"
+    },
+    "BACE_1_ligand_reference.pdbqt": {
+      "sha256": "b2f71f1b3cdefff8813f55e528babf75a0c813de387c8775730d39b8d00f56e9",
+      "size_bytes": 4478,
+      "derived": false,
+      "upstream_path": "example/docking_with_macrocycles/solution/BACE_1_ligand.pdbqt"
+    }
+  },
+  "official_vina_box": {
+    "center_x": 30.103,
+    "center_y": 6.152,
+    "center_z": 15.584,
+    "size_x": 20.0,
+    "size_y": 20.0,
+    "size_z": 20.0
+  },
+  "full_acceptance_parameters": {
+    "scoring": "vina",
+    "exhaustiveness": 64,
+    "num_modes": 20,
+    "energy_range": 5,
+    "cpu": 1,
+    "seed": 12345
+  }
+}

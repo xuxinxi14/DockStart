@@ -14,6 +14,7 @@ from dockstart_core.autogrid import (  # noqa: E402
     generate_maps,
     get_maps_defaults,
     get_maps_status,
+    import_maps,
     validate_active_maps,
 )
 from dockstart_core.models import ToolCheckResult  # noqa: E402
@@ -174,6 +175,51 @@ class AutoGridWorkflowTests(unittest.TestCase):
             defaults = get_maps_defaults(str(project_dir))
             self.assertFalse(defaults["ok"])
             self.assertEqual(defaults["error"]["code"], "MAPS_METAL_PROTOCOL_REQUIRED")
+
+    def test_import_uses_actual_pdbqt_types_when_gpf_declares_metal_superset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source_dir = Path(temp_dir) / "external_maps"
+            source_dir.mkdir()
+            receptor_name = "source_receptor.pdbqt"
+            (source_dir / receptor_name).write_bytes(
+                (project_dir / "prepared" / "receptor.pdbqt").read_bytes()
+            )
+            prefix = "source"
+            (source_dir / f"{prefix}.gpf").write_text(
+                "\n".join(
+                    (
+                        "npts 54 56 60",
+                        f"gridfld {prefix}.maps.fld",
+                        "spacing 0.375",
+                        "receptor_types A C HD N NA OA SA Zn",
+                        "ligand_types C NA",
+                        f"receptor {receptor_name}",
+                        f"gridcenter 1 2 3",
+                        f"map {prefix}.C.map",
+                        f"map {prefix}.NA.map",
+                        f"elecmap {prefix}.e.map",
+                        f"dsolvmap {prefix}.d.map",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            for name in (
+                f"{prefix}.maps.fld",
+                f"{prefix}.C.map",
+                f"{prefix}.NA.map",
+                f"{prefix}.e.map",
+                f"{prefix}.d.map",
+            ):
+                (source_dir / name).write_text(f"fixture {name}\n", encoding="utf-8")
+
+            imported = import_maps(str(project_dir), str(source_dir / f"{prefix}.maps.fld"))
+
+            self.assertTrue(imported["ok"], imported.get("error"))
+            receptor = imported["manifest"]["receptor"]
+            self.assertEqual(receptor["atom_types"], ["C", "OA"])
+            self.assertIn("Zn", receptor["gpf_declared_atom_types"])
 
     def test_prepared_ad4_run_uses_immutable_maps_and_separate_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

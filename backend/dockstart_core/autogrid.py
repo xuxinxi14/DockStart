@@ -174,6 +174,7 @@ def _validated_type_list(
     detected: list[str],
     *,
     role: str,
+    eligibility_from_detected_only: bool = False,
 ) -> tuple[list[str] | None, dict[str, Any] | None]:
     if requested in (None, "", []):
         values = list(detected)
@@ -184,13 +185,24 @@ def _validated_type_list(
     else:
         return None, _error("MAPS_ATOM_TYPES_INVALID", f"{role}原子类型必须是列表或逗号分隔文本。")
     normalized = sorted({_canonical_atom_type(item) for item in values})
+    detected_normalized = sorted({_canonical_atom_type(item) for item in detected})
     unknown = sorted(set(normalized) - STANDARD_NON_METAL_TYPES - METAL_TYPES)
-    metals = sorted(set(normalized) & METAL_TYPES)
-    missing = sorted(set(detected) - set(normalized))
+    actual_unknown = sorted(set(detected_normalized) - STANDARD_NON_METAL_TYPES - METAL_TYPES)
+    actual_metals = sorted(set(detected_normalized) & METAL_TYPES)
+    declared_metals = sorted(set(normalized) & METAL_TYPES)
+    metals = actual_metals if eligibility_from_detected_only else declared_metals
+    missing = sorted(set(detected_normalized) - set(normalized))
+    if actual_unknown:
+        return None, _error(
+            "MAPS_ATOM_TYPE_UNSUPPORTED",
+            f"{role} PDBQT 实际包含当前 AutoDock4 基础协议未支持的原子类型。",
+            ", ".join(actual_unknown),
+            "三级协议仅开放标准非金属体系；特殊类型应由后续专用协议管理。",
+        )
     if unknown:
         return None, _error(
             "MAPS_ATOM_TYPE_UNSUPPORTED",
-            f"{role}包含当前 AutoDock4 基础协议未支持的原子类型。",
+            f"{role}原子类型声明包含当前 AutoDock4 基础协议未支持的类型。",
             ", ".join(unknown),
             "三级协议仅开放标准非金属体系；特殊类型应由后续专用协议管理。",
         )
@@ -789,6 +801,7 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
         gpf.get("receptor_types"),
         receptor_detected["atom_types"],
         role="受体",
+        eligibility_from_detected_only=True,
     )
     if type_error:
         return type_error
@@ -796,6 +809,7 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
         gpf.get("ligand_types"),
         ligand_detected["atom_types"],
         role="配体",
+        eligibility_from_detected_only=True,
     )
     if type_error:
         return type_error
@@ -851,14 +865,16 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
                 **_snapshot(receptor_snapshot, Path("maps", map_set_id, "inputs", "receptor.pdbqt").as_posix()),
                 "source_relative_path": Path(project.receptor.file).as_posix(),
                 "source_sha256": _sha256(receptor_path),
-                "atom_types": receptor_types,
+                "atom_types": receptor_detected["atom_types"],
+                "gpf_declared_atom_types": receptor_types,
                 "provenance_file": str(source_receptor),
             },
             "ligand": {
                 **_snapshot(ligand_snapshot, Path("maps", map_set_id, "inputs", "ligand.pdbqt").as_posix()),
                 "source_relative_path": Path(project.ligand.file).as_posix(),
                 "source_sha256": _sha256(ligand_path),
-                "atom_types": ligand_types,
+                "atom_types": ligand_detected["atom_types"],
+                "gpf_declared_atom_types": ligand_types,
             },
             "grid": {
                 "center": {"x": center[0], "y": center[1], "z": center[2]},

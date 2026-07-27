@@ -84,7 +84,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             status="ok",
             version=version,
             path=python_executable,
-            message="已检测到 Meeko Python 包。本轮只确认可导入，不执行受体或配体准备。",
+            message="已检测到 Meeko Python 包；开始转换时会继续检查受体和配体准备能力。",
             raw_error=raw_error,
             source=source,
         )
@@ -95,7 +95,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
         name="Meeko",
         status=status,
         path=python_executable,
-        message="未检测到 Meeko Python 包。本轮不会自动安装或执行分子准备。",
+        message="未检测到 Meeko Python 包；如需自动生成 PDBQT，请配置包含 Meeko 的兼容 Python。",
         raw_error=raw_error,
         source=source,
     )

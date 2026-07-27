@@ -27,7 +27,7 @@ export class PageOperationScope {
 
   begin(): PageOperationToken {
     if (!this.active) {
-      throw new Error("页面操作作用域尚未激活。");
+      throw new Error("当前操作已结束，请重试。");
     }
     const previous = this.currentToken;
     this.currentToken = null;

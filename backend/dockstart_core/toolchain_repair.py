@@ -167,7 +167,7 @@ def _error_response(message: str, raw_error: str = "") -> dict[str, Any]:
             "code": "TOOLCHAIN_REPAIR_SUGGESTION_ERROR",
             "message": message,
             "raw_error": raw_error,
-            "suggestion": "请先确认 Python 后端可以读取工具链状态。",
+            "suggestion": "请重新打开应用，并在工具链页重新检测。",
         },
     }
 

@@ -67,7 +67,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
             status="ok",
             version=version,
             path=python_executable,
-            message="已检测到 RDKit Python 包。本轮只确认可导入，不进行分子读取或处理。",
+            message="已检测到 RDKit Python 包；开始转换时会继续检查所需的分子读取能力。",
             raw_error=raw_error,
             source=source,
         )
@@ -78,7 +78,7 @@ def detect(python_path: str = "", source: str = "current_environment") -> ToolCh
         name="RDKit",
         status=status,
         path=python_executable,
-        message="未检测到 RDKit Python 包。本轮不会自动安装或进行分子处理。",
+        message="未检测到 RDKit Python 包；如需自动准备配体，请配置包含 RDKit 的兼容 Python。",
         raw_error=raw_error,
         source=source,
     )

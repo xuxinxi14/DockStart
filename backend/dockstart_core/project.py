@@ -2929,7 +2929,16 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             },
             "docking_protocol": {
                 **copy.deepcopy(prerequisites.get("docking_protocol") or {"mode": "rigid"}),
-                "protocol_id": "ad4_maps" if scoring_protocol == "ad4_maps" else "rigid_single",
+                "protocol_id": (
+                    "ad4_maps"
+                    if scoring_protocol == "ad4_maps"
+                    else (
+                        "flexible_single"
+                        if str((prerequisites.get("docking_protocol") or {}).get("mode") or "").strip().lower()
+                        == "flexible"
+                        else "rigid_single"
+                    )
+                ),
                 "engine": scoring_protocol,
             },
             "scoring_protocol": scoring_protocol,

@@ -70,7 +70,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       const rawPayload = await invoke<string>("get_settings");
       applyResponse(parseSettingsResponse(rawPayload), "已读取当前设置。");
     } catch (error) {
-      setMessage("前端未能调用设置读取命令。请确认当前运行环境是 Tauri 桌面端。");
+      setMessage("无法读取本机设置。请重新打开应用后再试。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -97,7 +97,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       const rawPayload = await invoke<string>("update_tool_path", { toolKey, path });
       applyResponse(parseSettingsResponse(rawPayload), successMessage);
     } catch (error) {
-      setMessage("前端未能调用工具路径保存命令。");
+      setMessage("无法保存工具路径。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -112,7 +112,7 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
       });
       applyResponse(parseSettingsResponse(rawPayload), successMessage);
     } catch (error) {
-      setMessage("前端未能调用设置保存命令。");
+      setMessage("无法保存当前设置。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);

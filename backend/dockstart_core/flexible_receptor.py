@@ -65,13 +65,34 @@ def _error(
 
 def _protocol_error(exc: ProtocolValidationError) -> dict[str, Any]:
     detail = exc.to_dict()
-    return _error(
+    result = _error(
         detail["code"],
         detail["message"],
         raw_error=detail.get("detail", ""),
         suggestion=detail.get("suggestion", ""),
         title=detail.get("title", "柔性受体准备未完成"),
     )
+    if detail["code"] in {
+        "FLEX_BAD_RESIDUES_REVIEW_REQUIRED",
+        "FLEX_BAD_RESIDUES_CHANGED",
+    }:
+        try:
+            review_payload = json.loads(detail.get("detail", "") or "{}")
+        except json.JSONDecodeError:
+            review_payload = {}
+        if isinstance(review_payload, dict):
+            bad_residues = review_payload.get("bad_residues")
+            if isinstance(bad_residues, list):
+                result["review"] = {
+                    "allow_bad_res": False,
+                    "bad_residues": [str(value) for value in bad_residues if str(value)],
+                    "acknowledged_bad_residues": [
+                        str(value)
+                        for value in review_payload.get("acknowledged_bad_residues", [])
+                        if str(value)
+                    ],
+                }
+    return result
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -261,7 +282,21 @@ def validate_flexible_receptor_preparation(
             max_residues=max_residues,
         )
     except ProtocolValidationError as exc:
-        return _protocol_error(exc)
+        failure = _protocol_error(exc)
+        if "record_dir" in locals() and isinstance(record_dir, Path) and record_dir.is_dir():
+            try:
+                _write_wrapper_result(
+                    record_dir,
+                    {
+                        **failure,
+                        "preparation_id": preparation_id,
+                        "allow_bad_res": allow_bad_res,
+                        "acknowledged_bad_residues": acknowledged_values,
+                    },
+                )
+            except OSError:
+                pass
+        return failure
     return {
         "ok": True,
         "project_dir": str(project_root),
@@ -306,11 +341,14 @@ def prepare_flexible_receptor(
     *,
     resolved_altlocs: Mapping[str, str] | None = None,
     max_residues: int = 8,
+    allow_bad_res: bool = False,
+    acknowledged_bad_residues: Iterable[str] | None = None,
     runner: ProtocolRunner | None = None,
 ) -> dict[str, Any]:
     """Prepare, verify and atomically activate a flexible receptor protocol."""
 
     selection_values = list(selections)
+    acknowledged_values = list(acknowledged_bad_residues or ())
     project_root = Path(project_dir).expanduser().resolve()
     lock_path = project_root / ".flexible-receptor.lock"
     try:
@@ -367,6 +405,8 @@ def prepare_flexible_receptor(
                 record_dir=record_dir,
                 resolved_altlocs=resolved_altlocs,
                 max_residues=max_residues,
+                allow_bad_res=allow_bad_res,
+                acknowledged_bad_residues=acknowledged_values,
                 runner=runner,
                 cwd=record_dir,
             )
@@ -434,6 +474,11 @@ def prepare_flexible_receptor(
                         "selected_residues": execution.get("selected_residues", validation["validation"]["residues"]),
                         "resolved_altlocs": dict(resolved_altlocs or {}),
                         "max_residues": max_residues,
+                        "scientific_review": execution.get("scientific_review", {
+                            "allow_bad_res": False,
+                            "acknowledged_bad_residues": [],
+                            "detected_bad_residues": [],
+                        }),
                         "rigid_file": relative_outputs["rigid_pdbqt"],
                         "flex_file": relative_outputs["flex_pdbqt"],
                         "receptor_json_file": relative_outputs["receptor_json"],
@@ -462,8 +507,13 @@ def prepare_flexible_receptor(
                 "source_sha256": source_sha256,
                 "outputs": relative_outputs,
                 "sha256": output_hashes,
+                "scientific_review": execution.get("scientific_review", {}),
                 "project": saved.get("project"),
-                "message": "柔性受体三件套已验证并激活。",
+                "message": (
+                    "柔性受体三件套已验证并激活；已记录用户确认后由 Meeko 忽略的坏残基。"
+                    if allow_bad_res
+                    else "柔性受体三件套已验证并激活。"
+                ),
                 "error": None,
             }
             _write_wrapper_result(record_dir, success)
@@ -550,6 +600,9 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--residue", action="append", required=True)
             command.add_argument("--resolved-altloc", action="append", default=[])
             command.add_argument("--max-residues", type=int, default=8)
+            if name == "prepare":
+                command.add_argument("--allow-bad-res", action="store_true")
+                command.add_argument("--acknowledge-bad-residue", action="append", default=[])
     set_mode_parser = commands.add_parser("set-mode")
     set_mode_parser.add_argument("--project", required=True)
     set_mode_parser.add_argument("--mode", choices=("rigid", "flexible"), required=True)
@@ -571,6 +624,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.residue,
                 resolved_altlocs=altlocs,
                 max_residues=args.max_residues,
+                **(
+                    {
+                        "allow_bad_res": args.allow_bad_res,
+                        "acknowledged_bad_residues": args.acknowledge_bad_residue,
+                    }
+                    if args.command == "prepare"
+                    else {}
+                ),
             )
     except Exception as exc:  # noqa: BLE001 - CLI always emits one JSON response.
         result = _error("FLEX_RECEPTOR_CLI_ERROR", "柔性受体命令参数无效。", raw_error=str(exc))

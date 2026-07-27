@@ -188,7 +188,7 @@ def get_bundled_python_integrity() -> dict[str, Any]:
     )
     return {
         **integrity,
-        "message": "后端 Python runtime 完整性检查已完成。",
+        "message": "随附 Python 完整性检查已完成。",
     }
 
 
@@ -200,12 +200,12 @@ def validate_bundled_python_package() -> dict[str, Any]:
         "status": integrity["status"],
         "integrity": integrity,
         "warnings": integrity["warnings"],
-        "message": "后端 Python runtime 已满足 Basic 发布条件。" if is_ready else "后端 Python runtime 尚未满足 Basic 发布条件。",
+        "message": "随附 Python 已满足 Basic 运行条件。" if is_ready else "随附 Python 尚未满足 Basic 运行条件。",
         "error": None
         if is_ready
         else {
             "code": "BUNDLED_PYTHON_PACKAGE_INCOMPLETE",
-            "message": "后端 Python runtime 打包检查未通过。",
+            "message": "随附 Python 文件检查未通过。",
             "raw_error": "\n".join(integrity["warnings"]),
             "suggestion": "请确认 python.exe 已放入 resources/python/，并通过 prepare_bundled_python.py 更新 manifest sha256。",
         },
@@ -369,7 +369,7 @@ def get_toolchain_status() -> dict[str, Any]:
             "message": (
                 bundled_python_detection.message
                 if bundled_python_detection
-                else "未发现随应用提供的后端 Python。将尝试用户配置 Python 或当前 Python 环境。"
+                else "未发现随应用提供的 Python。将尝试用户配置 Python 或当前 Python 环境。"
             ),
             "raw_error": bundled_python_detection.raw_error if bundled_python_detection else "",
             "sha256": bundled_python_integrity["sha256"],
