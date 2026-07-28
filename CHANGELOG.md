@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.13.0
+
+- Added audited `score_only` and two-stage `local_only` workflows, pose-context attestations, quantitative before/after comparisons, and advanced Vina parameter capability gates.
+- Expanded serial virtual screening with record-level ligand import, frozen protocol parameters, failure isolation, cancellation and recovery, complete result tables, Top N views, per-ligand poses, read-only archive comparison, and verified ZIP export.
+- Added Vina/Vinardo precomputed-map generation and reuse with receptor, Box, scoring-function, binary, manifest, and payload integrity checks.
+- Added an experimental two-ligand joint-docking protocol with ordered member snapshots, joint-mode parsing, dual-member visualization, and protocol-specific reports.
+- Added the AD4Zn beta source workflow with TZ receptor preparation, user-provided `AD4Zn.dat`, AutoGrid4 4.2.7+ gates, immutable maps evidence, and isolated results.
+- Added the Hydrated AD4 Experimental workflow with hydrated ligand preparation, BEST W-map generation, immutable run evidence, water classification/post-processing, dedicated GUI controls, viewer support, and reports.
+- Preserved protocol isolation and scientific boundaries: AD4Zn and Hydrated AD4 remain non-default experimental capabilities, AutoGrid4 and `AD4Zn.dat` are not bundled, and docking scores do not replace experimental validation.
+- Updated Windows Basic and Assisted package metadata to v0.13.0; generated installers and their release manifests remain local build artifacts and are not committed to Git.
+
 ## v0.12.0
 
 - Added an independent AutoDock4 maps protocol with GPF generation, external AutoGrid4 detection/execution, maps import, completeness checks, manifests, SHA256 binding, and automatic invalidation after receptor or Box changes.
