@@ -38,6 +38,8 @@
   --ds-viewer-success: #70C695;
   --ds-viewer-warning: #D8A35F;
   --ds-viewer-danger: #DF8E91;
+  --ds-viewer-pose-input: #00FFFF;
+  --ds-viewer-pose-optimized: #FFA500;
 
   /* Borders and dividers. */
   --ds-border-strong: #6C8EA7;

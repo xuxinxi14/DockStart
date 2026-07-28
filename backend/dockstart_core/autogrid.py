@@ -19,11 +19,25 @@ from dockstart_core.project import BoxSettings, _project_from_dict, load_project
 from dockstart_core.settings import load_settings
 
 MAP_SET_ID_PATTERN = re.compile(r"^ad4_(\d{3,})$")
+AD4ZN_MAP_SET_ID_PATTERN = re.compile(r"^ad4zn_(\d{3,})$")
+HYDRATED_MAP_SET_ID_PATTERN = re.compile(r"^hydrated_(\d{3,})$")
 MAP_PREFIX_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_SPACING = 0.375
 MAX_GRID_POINTS = 126
 MAX_PARAMETER_FILE_BYTES = 5 * 1024 * 1024
+AD4ZN_PROTOCOL_ID = "ad4zn_beta"
+HYDRATED_PROTOCOL_ID = "hydrated_ad4_experimental"
+AD4ZN_RECEPTOR_TYPES = {"Zn", "TZ"}
+AD4ZN_MIN_AUTOGRID_VERSION = (4, 2, 7)
+AD4ZN_NBP_R_EPS = (
+    "nbp_r_eps 0.25 23.2135 12 6 NA TZ",
+    "nbp_r_eps 2.1 3.8453 12 6 OA Zn",
+    "nbp_r_eps 2.25 7.5914 12 6 SA Zn",
+    "nbp_r_eps 1.0 0.0 12 6 HD Zn",
+    "nbp_r_eps 2.0 0.0060 12 6 NA Zn",
+    "nbp_r_eps 2.0 0.2966 12 6 N Zn",
+)
 STANDARD_NON_METAL_TYPES = {
     "A",
     "B",
@@ -48,7 +62,8 @@ STANDARD_NON_METAL_TYPES = {
 }
 METAL_TYPES = {"Ca", "Co", "Cu", "Fe", "Mg", "Mn", "Ni", "Zn"}
 CANONICAL_TYPES = {
-    value.lower(): value for value in sorted(STANDARD_NON_METAL_TYPES | METAL_TYPES)
+    value.lower(): value
+    for value in sorted(STANDARD_NON_METAL_TYPES | METAL_TYPES | {"TZ"})
 }
 
 
@@ -67,6 +82,26 @@ def _error(code: str, message: str, raw_error: str = "", suggestion: str = "") -
             "suggestion": suggestion,
         },
     }
+
+
+def _issue_messages(issues: Any) -> str:
+    if not isinstance(issues, list):
+        return str(issues or "")
+    messages: list[str] = []
+    for issue in issues:
+        if isinstance(issue, dict):
+            message = str(
+                issue.get("message")
+                or issue.get("title")
+                or issue.get("raw_error")
+                or issue.get("code")
+                or ""
+            ).strip()
+        else:
+            message = str(issue or "").strip()
+        if message:
+            messages.append(message)
+    return "；".join(messages)
 
 
 def _sha256(path: Path) -> str:
@@ -223,6 +258,70 @@ def _validated_type_list(
     return normalized, None
 
 
+def _validated_ad4zn_receptor_types(
+    requested: Any,
+    detected: list[str],
+) -> tuple[list[str] | None, dict[str, Any] | None]:
+    if requested in (None, "", []):
+        values = list(detected)
+    elif isinstance(requested, str):
+        values = [item for item in re.split(r"[\s,;]+", requested.strip()) if item]
+    elif isinstance(requested, list):
+        values = [str(item).strip() for item in requested if str(item).strip()]
+    else:
+        return None, _error(
+            "AD4ZN_RECEPTOR_TYPES_INVALID",
+            "AD4Zn 受体原子类型必须是列表或分隔文本。",
+        )
+    normalized = sorted({_canonical_atom_type(item) for item in values})
+    detected_normalized = sorted({_canonical_atom_type(item) for item in detected})
+    allowed = STANDARD_NON_METAL_TYPES | AD4ZN_RECEPTOR_TYPES
+    unknown = sorted(set(normalized) - allowed)
+    actual_unknown = sorted(set(detected_normalized) - allowed)
+    unsupported_metals = sorted(
+        (set(normalized) | set(detected_normalized)) & (METAL_TYPES - {"Zn"})
+    )
+    missing = sorted(set(detected_normalized) - set(normalized))
+    if actual_unknown or unknown:
+        return None, _error(
+            "AD4ZN_RECEPTOR_TYPE_UNSUPPORTED",
+            "AD4Zn beta 受体包含未验证的原子类型。",
+            ", ".join(sorted(set(actual_unknown + unknown))),
+            "请只使用经准备的 Zn/TZ 刚性受体；其他特殊类型需要单独协议验证。",
+        )
+    if unsupported_metals:
+        return None, _error(
+            "AD4ZN_NON_ZN_METAL_UNSUPPORTED",
+            "AD4Zn beta 只处理 Zn，当前受体仍包含其他金属类型。",
+            ", ".join(unsupported_metals),
+            "请人工检查受体，并为本次 beta 协议准备只包含目标 Zn 环境的受体。",
+        )
+    if {"Zn", "TZ"} - set(detected_normalized):
+        return None, _error(
+            "AD4ZN_TZ_RECEPTOR_REQUIRED",
+            "AD4Zn maps 必须使用同时包含 Zn 与 TZ 的专用受体。",
+            ", ".join(detected_normalized),
+            "请先完成 Zn 位点复核并生成 TZ 受体。",
+        )
+    if missing:
+        return None, _error(
+            "AD4ZN_RECEPTOR_TYPES_INCOMPLETE",
+            "AD4Zn 受体原子类型列表遗漏了实际存在的类型。",
+            ", ".join(missing),
+        )
+    return sorted("ZN" if item == "Zn" else item for item in normalized), None
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(value or ""))
+    return tuple(int(part) for part in match.groups()) if match else ()
+
+
+def _autogrid_supports_ad4zn(version: str) -> bool:
+    parsed = _version_tuple(version)
+    return bool(parsed) and parsed >= AD4ZN_MIN_AUTOGRID_VERSION
+
+
 def _even_grid_points(size: float, spacing: float) -> int:
     points = max(2, math.ceil(float(size) / spacing))
     if points % 2:
@@ -276,14 +375,28 @@ def _validated_spacing(value: Any) -> tuple[float | None, dict[str, Any] | None]
     return spacing, None
 
 
-def _next_map_set_id(root: Path) -> str:
+def _next_map_set_id(root: Path, *, protocol_id: str = "ad4_maps") -> str:
     maps_dir = root / "maps"
+    pattern = (
+        AD4ZN_MAP_SET_ID_PATTERN
+        if protocol_id == AD4ZN_PROTOCOL_ID
+        else HYDRATED_MAP_SET_ID_PATTERN
+        if protocol_id == HYDRATED_PROTOCOL_ID
+        else MAP_SET_ID_PATTERN
+    )
+    prefix = (
+        "ad4zn"
+        if protocol_id == AD4ZN_PROTOCOL_ID
+        else "hydrated"
+        if protocol_id == HYDRATED_PROTOCOL_ID
+        else "ad4"
+    )
     numbers = [
         int(match.group(1))
         for child in maps_dir.iterdir()
-        if child.is_dir() and (match := MAP_SET_ID_PATTERN.match(child.name))
+        if child.is_dir() and (match := pattern.match(child.name))
     ] if maps_dir.is_dir() else []
-    return f"ad4_{max(numbers, default=0) + 1:03d}"
+    return f"{prefix}_{max(numbers, default=0) + 1:03d}"
 
 
 def _active_protocol(project: Any) -> str:
@@ -293,12 +406,27 @@ def _active_protocol(project: Any) -> str:
     return "ad4_maps" if str(protocol.get("engine") or "").lower() == "ad4_maps" else "vina"
 
 
+def _active_protocol_id(project: Any) -> str:
+    protocol = project.preserved_data.get("docking_protocol")
+    if not isinstance(protocol, dict):
+        return "rigid_single"
+    protocol_id = str(protocol.get("protocol_id") or "").strip().lower()
+    if (
+        str(protocol.get("engine") or "").strip().lower() == "ad4_maps"
+        and protocol_id == AD4ZN_PROTOCOL_ID
+    ):
+        return AD4ZN_PROTOCOL_ID
+    if str(protocol.get("engine") or "").strip().lower() == "ad4_maps":
+        return "ad4_maps"
+    return protocol_id or "rigid_single"
+
+
 def set_scoring_protocol(project_dir: str, protocol: str) -> dict[str, Any]:
     normalized = str(protocol or "").strip().lower()
-    if normalized not in {"vina", "ad4_maps"}:
+    if normalized not in {"vina", "ad4_maps", AD4ZN_PROTOCOL_ID}:
         return _error(
             "PROTOCOL_SCORING_INVALID",
-            "对接评分协议只支持标准 Vina/Vinardo 或 AutoDock4 (maps)。",
+            "对接评分协议只支持 Vina/Vinardo、标准 AutoDock4 maps 或 AD4Zn beta。",
         )
     project, _, load_error = _load_project_model(project_dir)
     if load_error:
@@ -306,8 +434,20 @@ def set_scoring_protocol(project_dir: str, protocol: str) -> dict[str, Any]:
     assert project is not None
     current = project.preserved_data.get("docking_protocol")
     docking_protocol = copy.deepcopy(current) if isinstance(current, dict) else {}
-    docking_protocol["engine"] = normalized
-    docking_protocol["protocol_id"] = "ad4_maps" if normalized == "ad4_maps" else "rigid_single"
+    docking_protocol["engine"] = (
+        "ad4_maps" if normalized in {"ad4_maps", AD4ZN_PROTOCOL_ID} else "vina"
+    )
+    docking_protocol["protocol_id"] = (
+        normalized if normalized in {"ad4_maps", AD4ZN_PROTOCOL_ID} else "rigid_single"
+    )
+    if normalized in {"ad4_maps", AD4ZN_PROTOCOL_ID}:
+        docking_protocol["autobox"] = False
+        docking_protocol["run_mode"] = "dock"
+        docking_protocol["receptor_mode"] = "rigid"
+    if normalized == AD4ZN_PROTOCOL_ID:
+        docking_protocol["stability"] = "beta"
+    else:
+        docking_protocol.pop("stability", None)
     docking_protocol.setdefault("receptor_mode", str(docking_protocol.get("mode") or "rigid"))
     project.preserved_data["docking_protocol"] = docking_protocol
     saved = save_project(project)
@@ -318,7 +458,13 @@ def set_scoring_protocol(project_dir: str, protocol: str) -> dict[str, Any]:
         "project_dir": project.project_dir,
         "project": project.to_dict(),
         "protocol": normalized,
-        "message": "已切换到 AutoDock4 (maps) 协议。" if normalized == "ad4_maps" else "已切换到标准 Vina/Vinardo 协议。",
+        "message": (
+            "已切换到 AD4Zn beta；仅支持 Zn、刚性受体、单配体全局对接。"
+            if normalized == AD4ZN_PROTOCOL_ID
+            else "已切换到 AutoDock4 (maps) 协议。"
+            if normalized == "ad4_maps"
+            else "已切换到标准 Vina/Vinardo 协议。"
+        ),
         "error": None,
     }
 
@@ -328,22 +474,58 @@ def get_maps_defaults(project_dir: str) -> dict[str, Any]:
     if load_error:
         return load_error
     assert project is not None and root is not None
-    receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
-    if receptor_error:
-        return receptor_error
+    protocol_id = _active_protocol_id(project)
+    ad4zn_status: dict[str, Any] | None = None
+    if protocol_id == AD4ZN_PROTOCOL_ID:
+        from dockstart_core.ad4zn import get_status as get_ad4zn_status
+
+        ad4zn_status = get_ad4zn_status(project_dir)
+        prepared = (
+            ad4zn_status.get("prepared_receptor")
+            if isinstance(ad4zn_status.get("prepared_receptor"), dict)
+            else {}
+        )
+        prepared_relative = str(prepared.get("relative_path") or "")
+        receptor_path = _contained_project_path(root, prepared_relative)
+        if (
+            receptor_path is None
+            or not receptor_path.is_file()
+            or receptor_path.stat().st_size <= 0
+        ):
+            receptor_path = None
+    else:
+        receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+        if receptor_error:
+            return receptor_error
     ligand_path, ligand_error = _project_file(root, project.ligand.file, "配体")
     if ligand_error:
         return ligand_error
-    assert receptor_path is not None and ligand_path is not None
-    receptor_types = read_pdbqt_atom_types(receptor_path)
+    assert ligand_path is not None
+    receptor_types = (
+        read_pdbqt_atom_types(receptor_path)
+        if receptor_path is not None
+        else {"ok": True, "atom_types": []}
+    )
     if not receptor_types.get("ok"):
         return receptor_types
     ligand_types = read_pdbqt_atom_types(ligand_path)
     if not ligand_types.get("ok"):
         return ligand_types
-    _, receptor_type_error = _validated_type_list(None, receptor_types["atom_types"], role="受体")
-    if receptor_type_error:
-        return receptor_type_error
+    if protocol_id == AD4ZN_PROTOCOL_ID and receptor_path is not None:
+        _, receptor_type_error = _validated_ad4zn_receptor_types(
+            None,
+            receptor_types["atom_types"],
+        )
+        if receptor_type_error:
+            return receptor_type_error
+    elif protocol_id != AD4ZN_PROTOCOL_ID:
+        _, receptor_type_error = _validated_type_list(
+            None,
+            receptor_types["atom_types"],
+            role="受体",
+        )
+        if receptor_type_error:
+            return receptor_type_error
     _, ligand_type_error = _validated_type_list(None, ligand_types["atom_types"], role="配体")
     if ligand_type_error:
         return ligand_type_error
@@ -357,7 +539,13 @@ def get_maps_defaults(project_dir: str) -> dict[str, Any]:
         "ok": True,
         "project_dir": str(root),
         "project": project.to_dict(),
-        "protocol": _active_protocol(project),
+        "protocol": (
+            AD4ZN_PROTOCOL_ID
+            if protocol_id == AD4ZN_PROTOCOL_ID
+            else _active_protocol(project)
+        ),
+        "protocol_id": protocol_id,
+        "ad4zn": ad4zn_status,
         "defaults": {
             "spacing": spacing,
             "grid_points": {"x": points[0], "y": points[1], "z": points[2]},
@@ -373,7 +561,19 @@ def get_maps_defaults(project_dir: str) -> dict[str, Any]:
             },
             "receptor_atom_types": receptor_types["atom_types"],
             "ligand_atom_types": ligand_types["atom_types"],
-            "parameter_file": "",
+            "parameter_file": (
+                str(
+                    (
+                        ad4zn_status.get("parameter_file")
+                        if isinstance(ad4zn_status, dict)
+                        and isinstance(ad4zn_status.get("parameter_file"), dict)
+                        else {}
+                    ).get("relative_path")
+                    or ""
+                )
+                if protocol_id == AD4ZN_PROTOCOL_ID
+                else ""
+            ),
         },
         "message": "已根据当前 PDBQT 与 Box 生成 AutoGrid4 默认参数。",
         "error": None,
@@ -388,6 +588,8 @@ def _gpf_text(
     receptor_types: list[str],
     ligand_types: list[str],
     parameter_file: str,
+    receptor_file: str = "inputs/receptor.pdbqt",
+    protocol_id: str = "ad4_maps",
 ) -> str:
     lines = []
     if parameter_file:
@@ -399,13 +601,18 @@ def _gpf_text(
             f"spacing {spacing:g}",
             f"receptor_types {' '.join(receptor_types)}",
             f"ligand_types {' '.join(ligand_types)}",
-            "receptor inputs/receptor.pdbqt",
+            f"receptor {Path(receptor_file).as_posix()}",
             f"gridcenter {center[0]:g} {center[1]:g} {center[2]:g}",
             "smooth 0.500",
         ],
     )
     lines.extend(f"map receptor.{atom_type}.map" for atom_type in ligand_types)
-    lines.extend(["elecmap receptor.e.map", "dsolvmap receptor.d.map", "dielectric -42.000"])
+    lines.extend(["elecmap receptor.e.map", "dsolvmap receptor.d.map"])
+    if protocol_id == AD4ZN_PROTOCOL_ID:
+        lines.append("dielectric -0.1465")
+        lines.extend(AD4ZN_NBP_R_EPS)
+    else:
+        lines.append("dielectric -42.000")
     return "\n".join(lines) + "\n"
 
 
@@ -436,15 +643,34 @@ def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
 
 
 def _activate_map_set(project: Any, manifest_relative: str, manifest: dict[str, Any]) -> dict[str, Any]:
-    project.preserved_data["ad4_maps"] = {
-        "active_manifest": Path(manifest_relative).as_posix(),
-        "map_set_id": manifest["map_set_id"],
-        "status": manifest["status"],
-        "updated_at": _now_iso(),
-    }
+    protocol_id = str(manifest.get("protocol_id") or "ad4_maps")
+    state_key = "ad4zn" if protocol_id == AD4ZN_PROTOCOL_ID else "ad4_maps"
+    current_state = project.preserved_data.get(state_key)
+    state = copy.deepcopy(current_state) if isinstance(current_state, dict) else {}
+    state.update(
+        {
+            "active_manifest": Path(manifest_relative).as_posix(),
+            "map_set_id": manifest["map_set_id"],
+            "status": manifest["status"],
+            "updated_at": _now_iso(),
+        }
+    )
+    project.preserved_data[state_key] = state
     docking_protocol = project.preserved_data.get("docking_protocol")
     protocol = copy.deepcopy(docking_protocol) if isinstance(docking_protocol, dict) else {}
-    protocol.update({"engine": "ad4_maps", "protocol_id": "ad4_maps"})
+    protocol.update(
+        {
+            "engine": "ad4_maps",
+            "protocol_id": protocol_id,
+            "autobox": False,
+            "run_mode": "dock",
+            "receptor_mode": "rigid",
+        }
+    )
+    if protocol_id == AD4ZN_PROTOCOL_ID:
+        protocol["stability"] = "beta"
+    else:
+        protocol.pop("stability", None)
     protocol.setdefault("receptor_mode", str(protocol.get("mode") or "rigid"))
     project.preserved_data["docking_protocol"] = protocol
     grid = manifest["grid"]
@@ -464,15 +690,31 @@ def generate_maps(
     options: dict[str, Any] | None = None,
     *,
     runner: Callable[..., dict[str, Any]] | None = None,
+    _profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     options = options if isinstance(options, dict) else {}
+    profile = _profile if isinstance(_profile, dict) else {}
     project, root, load_error = _load_project_model(project_dir)
     if load_error:
         return load_error
     assert project is not None and root is not None
+    profile_protocol_id = str(profile.get("protocol_id") or "").strip().lower()
+    if profile_protocol_id and profile_protocol_id != HYDRATED_PROTOCOL_ID:
+        return _error(
+            "MAPS_INTERNAL_PROFILE_INVALID",
+            "AutoGrid maps 内部协议配置无效。",
+            profile_protocol_id,
+        )
+    protocol_id = profile_protocol_id or _active_protocol_id(project)
+    if protocol_id not in {AD4ZN_PROTOCOL_ID, HYDRATED_PROTOCOL_ID}:
+        protocol_id = "ad4_maps"
+    is_ad4zn = protocol_id == AD4ZN_PROTOCOL_ID
+    is_hydrated = protocol_id == HYDRATED_PROTOCOL_ID
     docking_protocol = project.preserved_data.get("docking_protocol")
     receptor_mode = (
-        str(docking_protocol.get("receptor_mode") or docking_protocol.get("mode") or "rigid")
+        "rigid"
+        if is_hydrated
+        else str(docking_protocol.get("receptor_mode") or docking_protocol.get("mode") or "rigid")
         if isinstance(docking_protocol, dict)
         else "rigid"
     )
@@ -482,10 +724,66 @@ def generate_maps(
             "AutoDock4 (maps) 的 v0.12.0 基准仅开放刚性受体。",
             suggestion="请先切换到刚性受体；柔性 AD4 maps 需单独科学回归后再开放。",
         )
-    receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
-    if receptor_error:
-        return receptor_error
-    ligand_path, ligand_error = _project_file(root, project.ligand.file, "配体")
+    ad4zn_status: dict[str, Any] | None = None
+    original_receptor_path: Path | None = None
+    if is_ad4zn:
+        from dockstart_core.ad4zn import get_status as get_ad4zn_status
+
+        ad4zn_status = get_ad4zn_status(project_dir)
+        if not ad4zn_status.get("ok") or not ad4zn_status.get("preparation_ready"):
+            error = ad4zn_status.get("error") or {}
+            return _error(
+                str(error.get("code") or "AD4ZN_PREPARATION_INCOMPLETE"),
+                str(
+                    error.get("message")
+                    or "AD4Zn 的 Zn 复核、TZ 受体或参数文件尚未准备完成。"
+                ),
+                str(
+                    error.get("raw_error")
+                    or _issue_messages(ad4zn_status.get("issues"))
+                ),
+                str(
+                    error.get("suggestion")
+                    or "请依次完成 Zn 位点复核、TZ 受体生成和 AD4Zn.dat 校验。"
+                ),
+            )
+        prepared = (
+            ad4zn_status.get("prepared_receptor")
+            if isinstance(ad4zn_status.get("prepared_receptor"), dict)
+            else {}
+        )
+        receptor_relative = str(prepared.get("relative_path") or "")
+        receptor_path = _contained_project_path(root, receptor_relative)
+        if (
+            receptor_path is None
+            or not receptor_path.is_file()
+            or receptor_path.stat().st_size <= 0
+        ):
+            return _error(
+                "AD4ZN_TZ_RECEPTOR_MISSING",
+                "AD4Zn TZ 受体不存在或路径不安全。",
+                receptor_relative,
+                "请重新生成 TZ 受体。",
+            )
+        original_receptor_path, original_receptor_error = _project_file(
+            root,
+            project.receptor.file,
+            "受体",
+        )
+        if original_receptor_error:
+            return original_receptor_error
+    else:
+        receptor_relative = Path(project.receptor.file).as_posix()
+        receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+        if receptor_error:
+            return receptor_error
+        original_receptor_path = receptor_path
+    ligand_relative = (
+        str(profile.get("ligand_file") or "").strip()
+        if is_hydrated
+        else str(project.ligand.file or "")
+    )
+    ligand_path, ligand_error = _project_file(root, ligand_relative, "配体")
     if ligand_error:
         return ligand_error
     assert receptor_path is not None and ligand_path is not None
@@ -496,21 +794,41 @@ def generate_maps(
         return receptor_detected
     if not ligand_detected.get("ok"):
         return ligand_detected
-    receptor_types, type_error = _validated_type_list(
-        options.get("receptor_atom_types"),
-        receptor_detected["atom_types"],
-        role="受体",
+    receptor_types, type_error = (
+        _validated_ad4zn_receptor_types(
+            None,
+            receptor_detected["atom_types"],
+        )
+        if is_ad4zn
+        else _validated_type_list(
+            options.get("receptor_atom_types"),
+            receptor_detected["atom_types"],
+            role="受体",
+        )
     )
     if type_error:
         return type_error
+    detected_ligand_types = list(ligand_detected["atom_types"])
+    if is_hydrated:
+        if "W" not in detected_ligand_types:
+            return _error(
+                "HYDRATED_LIGAND_W_TYPE_MISSING",
+                "水合配体 PDBQT 中没有 W 类型伪水原子。",
+                suggestion="请重新完成水合配体准备后再生成 maps。",
+            )
+        detected_ligand_types = [
+            atom_type for atom_type in detected_ligand_types if atom_type != "W"
+        ]
     ligand_types, type_error = _validated_type_list(
         options.get("ligand_atom_types"),
-        ligand_detected["atom_types"],
+        detected_ligand_types,
         role="配体",
     )
     if type_error:
         return type_error
     assert receptor_types is not None and ligand_types is not None
+    if is_hydrated:
+        ligand_types = sorted(set(ligand_types) | {"HD", "OA"})
     spacing, spacing_error = _validated_spacing(options.get("spacing"))
     if spacing_error:
         return spacing_error
@@ -521,9 +839,37 @@ def generate_maps(
     assert points is not None
 
     parameter_source: Path | None = None
-    parameter_value = str(options.get("parameter_file") or "").strip()
+    parameter_value = (
+        str(
+            (
+                ad4zn_status.get("parameter_file")
+                if isinstance(ad4zn_status, dict)
+                and isinstance(ad4zn_status.get("parameter_file"), dict)
+                else {}
+            ).get("relative_path")
+            or ""
+        )
+        if is_ad4zn
+        else str(options.get("parameter_file") or "").strip()
+    )
+    if is_hydrated and parameter_value:
+        return _error(
+            "HYDRATED_MAPS_PARAMETER_FILE_UNSUPPORTED",
+            "水合对接首版不接受自定义 AutoGrid 参数文件。",
+            suggestion="请清除 parameter_file，并使用固定的标准 AD4 maps 参数。",
+        )
     if parameter_value:
-        parameter_source = Path(parameter_value).expanduser().resolve()
+        parameter_source = (
+            _contained_project_path(root, parameter_value)
+            if is_ad4zn
+            else Path(parameter_value).expanduser().resolve()
+        )
+        if parameter_source is None:
+            return _error(
+                "AD4ZN_PARAMETER_PATH_INVALID",
+                "AD4Zn 参数文件路径不在当前项目内。",
+                parameter_value,
+            )
         if not parameter_source.is_file() or parameter_source.stat().st_size <= 0:
             return _error(
                 "MAPS_PARAMETER_FILE_MISSING",
@@ -532,6 +878,13 @@ def generate_maps(
             )
         if parameter_source.stat().st_size > MAX_PARAMETER_FILE_BYTES:
             return _error("MAPS_PARAMETER_FILE_TOO_LARGE", "AutoGrid 参数文件超过 5 MB，已拒绝导入。")
+
+    if is_ad4zn and parameter_source is None:
+        return _error(
+            "AD4ZN_PARAMETER_FILE_REQUIRED",
+            "AD4Zn maps 必须使用已校验的 AD4Zn.dat。",
+            suggestion="请选择官方 AD4Zn.dat，DockStart 会复制并冻结到项目中。",
+        )
 
     settings = load_settings()
     detection = autogrid_adapter.detect(settings.tool_paths.autogrid4)
@@ -542,22 +895,33 @@ def generate_maps(
             detection.raw_error,
             "请在工具路径设置中配置外部 autogrid4.exe；DockStart 不会在安装包中内置 GPL 工具。",
         )
+    if is_ad4zn and not _autogrid_supports_ad4zn(detection.version):
+        return _error(
+            "AD4ZN_AUTOGRID_VERSION_UNSUPPORTED",
+            "AD4Zn beta 需要 AutoGrid 4.2.7 或更高版本。",
+            f"detected={detection.version or 'unknown'}; required>=4.2.7",
+            "官方说明 4.2.6 与 4.2.7 的 nbp_r_eps 行为不同；请配置 ADFR Suite 提供的 AutoGrid 4.2.7.x。",
+        )
 
-    map_set_id = _next_map_set_id(root)
+    map_set_id = _next_map_set_id(root, protocol_id=protocol_id)
     set_dir = root / "maps" / map_set_id
     inputs_dir = set_dir / "inputs"
     manifest_relative = Path("maps", map_set_id, "manifest.json").as_posix()
     created_at = _now_iso()
     try:
         inputs_dir.mkdir(parents=True, exist_ok=False)
-        receptor_snapshot = inputs_dir / "receptor.pdbqt"
+        receptor_snapshot = inputs_dir / (
+            "receptor_tz.pdbqt" if is_ad4zn else "receptor.pdbqt"
+        )
         ligand_snapshot = inputs_dir / "ligand.pdbqt"
         shutil.copyfile(receptor_path, receptor_snapshot)
         shutil.copyfile(ligand_path, ligand_snapshot)
         parameter_relative = ""
         parameter_snapshot: dict[str, Any] | None = None
         if parameter_source is not None:
-            parameter_target = inputs_dir / "parameter_file.dat"
+            parameter_target = inputs_dir / (
+                "AD4Zn.dat" if is_ad4zn else "parameter_file.dat"
+            )
             shutil.copyfile(parameter_source, parameter_target)
             parameter_relative = Path("inputs", parameter_target.name).as_posix()
             parameter_snapshot = {
@@ -576,6 +940,8 @@ def generate_maps(
                 receptor_types=receptor_types,
                 ligand_types=ligand_types,
                 parameter_file=parameter_relative,
+                receptor_file=Path("inputs", receptor_snapshot.name).as_posix(),
+                protocol_id=protocol_id,
             ),
         )
         run_impl = runner or autogrid_adapter.run
@@ -606,27 +972,58 @@ def generate_maps(
             map_files.append(
                 {"name": xyz_path.name, **_snapshot(xyz_path, Path("maps", map_set_id, xyz_path.name).as_posix())}
             )
-        ready = bool(result.get("ok")) and not missing and not log_summary["has_error"]
+        ready = (
+            bool(result.get("ok"))
+            and not missing
+            and not log_summary["has_error"]
+            and (
+                log_summary["successful_completion"]
+                if is_ad4zn or is_hydrated
+                else True
+            )
+        )
         executable_path = Path(detection.path)
         manifest = {
             "schema_version": 1,
             "map_set_id": map_set_id,
-            "protocol_id": "ad4_maps",
+            "protocol_id": protocol_id,
+            "stability": (
+                "beta"
+                if is_ad4zn
+                else "experimental"
+                if is_hydrated
+                else "stable"
+            ),
             "source": "generated",
             "status": "ready" if ready else "failed",
             "created_at": created_at,
             "finished_at": _now_iso(),
             "receptor": {
                 **_snapshot(receptor_snapshot, Path("maps", map_set_id, "inputs", "receptor.pdbqt").as_posix()),
-                "source_relative_path": Path(project.receptor.file).as_posix(),
+                "source_relative_path": Path(receptor_relative).as_posix(),
                 "source_sha256": _sha256(receptor_path),
+                **(
+                    {
+                        "original_source_relative_path": Path(
+                            project.receptor.file
+                        ).as_posix(),
+                        "original_source_sha256": (
+                            _sha256(original_receptor_path)
+                            if original_receptor_path is not None
+                            else ""
+                        ),
+                    }
+                    if is_ad4zn
+                    else {}
+                ),
                 "atom_types": receptor_types,
             },
             "ligand": {
                 **_snapshot(ligand_snapshot, Path("maps", map_set_id, "inputs", "ligand.pdbqt").as_posix()),
-                "source_relative_path": Path(project.ligand.file).as_posix(),
+                "source_relative_path": Path(ligand_relative).as_posix(),
                 "source_sha256": _sha256(ligand_path),
-                "atom_types": ligand_types,
+                "atom_types": ligand_detected["atom_types"],
+                "autogrid_atom_types": ligand_types,
             },
             "grid": {
                 "center": {"x": center[0], "y": center[1], "z": center[2]},
@@ -654,7 +1051,76 @@ def generate_maps(
                 "required_files": required_names,
                 "files": map_files,
             },
-            "validation": {"complete": ready, "missing_files": missing, "issues": log_summary["error_lines"]},
+            "ad4zn": (
+                {
+                    "protocol_id": AD4ZN_PROTOCOL_ID,
+                    "algorithm": {
+                        key: copy.deepcopy(value)
+                        for key, value in (
+                            ad4zn_status.get("prepared_receptor")
+                            if isinstance(ad4zn_status, dict)
+                            and isinstance(
+                                ad4zn_status.get("prepared_receptor"), dict
+                            )
+                            else {}
+                        ).items()
+                        if key
+                        in {
+                            "algorithm_name",
+                            "algorithm_version",
+                            "algorithm_reference",
+                            "algorithm_reference_sha256",
+                            "limits",
+                        }
+                    },
+                    "selected_site": copy.deepcopy(
+                        ad4zn_status.get("selected_site")
+                        if isinstance(ad4zn_status, dict)
+                        else {}
+                    ),
+                    "review": copy.deepcopy(
+                        ad4zn_status.get("review")
+                        if isinstance(ad4zn_status, dict)
+                        else {}
+                    ),
+                    "prepared_receptor": copy.deepcopy(
+                        ad4zn_status.get("prepared_receptor")
+                        if isinstance(ad4zn_status, dict)
+                        else {}
+                    ),
+                    "parameter_file": copy.deepcopy(
+                        ad4zn_status.get("parameter_file")
+                        if isinstance(ad4zn_status, dict)
+                        else {}
+                    ),
+                    "scientific_scope": {
+                        "zinc_only": True,
+                        "multinuclear_metal_supported": False,
+                        "near_coplanar_tz_blocked": True,
+                        "rigid_receptor": True,
+                        "single_ligand": True,
+                        "global_docking_only": True,
+                    },
+                }
+                if is_ad4zn
+                else None
+            ),
+            "validation": {
+                "complete": ready,
+                "missing_files": missing,
+                "issues": (
+                    log_summary["error_lines"]
+                    + (
+                        []
+                        if (
+                            not is_ad4zn
+                            and not is_hydrated
+                        )
+                        or log_summary["successful_completion"]
+                        else ["AutoGrid GLG 未包含 Successful Completion。"]
+                    )
+                ),
+            },
         }
         _write_manifest(set_dir / "manifest.json", manifest)
         if not ready:
@@ -670,9 +1136,10 @@ def generate_maps(
                 ).strip(),
                 f"请查看 {Path('maps', map_set_id, 'autogrid.glg').as_posix()} 与 stderr.txt。",
             ) | {"map_set_id": map_set_id, "manifest_file": manifest_relative}
-        saved = _activate_map_set(project, manifest_relative, manifest)
-        if not saved.get("ok"):
-            return saved
+        if not is_hydrated:
+            saved = _activate_map_set(project, manifest_relative, manifest)
+            if not saved.get("ok"):
+                return saved
         return {
             "ok": True,
             "project_dir": str(root),
@@ -680,7 +1147,11 @@ def generate_maps(
             "map_set_id": map_set_id,
             "manifest_file": manifest_relative,
             "manifest": manifest,
-            "message": "AutoGrid4 affinity maps 已生成、校验并绑定到当前受体。",
+            "message": (
+                "水合对接基础 affinity maps 已生成并完成完整性校验。"
+                if is_hydrated
+                else "AutoGrid4 affinity maps 已生成、校验并绑定到当前受体。"
+            ),
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001
@@ -690,7 +1161,7 @@ def generate_maps(
                 {
                     "schema_version": 1,
                     "map_set_id": map_set_id,
-                    "protocol_id": "ad4_maps",
+                    "protocol_id": protocol_id,
                     "source": "generated",
                     "status": "failed",
                     "created_at": created_at,
@@ -704,6 +1175,54 @@ def generate_maps(
             str(exc),
             "请保留失败的 maps 记录并查看 AutoGrid 日志。",
         )
+
+
+def generate_hydrated_base_maps(
+    project_dir: str,
+    hydrated_ligand_file: str,
+    options: dict[str, Any] | None = None,
+    *,
+    runner: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Generate an isolated AD4 map set for a hydrated ligand.
+
+    The returned set deliberately omits activation in ``project.json``.  A
+    hydrated workflow must derive and validate the W map before publishing its
+    own active manifest.
+    """
+
+    relative = Path(str(hydrated_ligand_file or "").strip())
+    if not str(relative) or relative.is_absolute():
+        return _error(
+            "HYDRATED_LIGAND_PATH_INVALID",
+            "水合配体必须使用当前项目内的相对路径。",
+            str(hydrated_ligand_file or ""),
+        )
+    normalized_options = options if isinstance(options, dict) else {}
+    allowed = {
+        "spacing",
+        "grid_points",
+        "grid_points_x",
+        "grid_points_y",
+        "grid_points_z",
+    }
+    unknown = sorted(set(normalized_options) - allowed)
+    if unknown:
+        return _error(
+            "HYDRATED_MAPS_OPTIONS_UNSUPPORTED",
+            "水合 maps 选项包含首版未开放的字段。",
+            ", ".join(unknown),
+            "当前仅允许设置 spacing 与各轴 grid points。",
+        )
+    return generate_maps(
+        project_dir,
+        normalized_options,
+        runner=runner,
+        _profile={
+            "protocol_id": HYDRATED_PROTOCOL_ID,
+            "ligand_file": relative.as_posix(),
+        },
+    )
 
 
 def _parse_gpf(path: Path) -> dict[str, Any]:
@@ -731,6 +1250,12 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
     if load_error:
         return load_error
     assert project is not None and root is not None
+    if _active_protocol_id(project) == AD4ZN_PROTOCOL_ID:
+        return _error(
+            "AD4ZN_GENERIC_MAP_IMPORT_UNSUPPORTED",
+            "AD4Zn beta 不接受缺少完整协议记录的通用 `.maps.fld` 导入。",
+            suggestion="请在 DockStart 中完成 Zn 复核、TZ 受体和参数校验后生成专用 maps。",
+        )
     source_fld = Path(fld_file).expanduser().resolve()
     if not source_fld.is_file() or source_fld.stat().st_size <= 0 or not source_fld.name.endswith(".maps.fld"):
         return _error(
@@ -943,7 +1468,10 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
     if load_error:
         return load_error
     assert project is not None and root is not None
-    record = project.preserved_data.get("ad4_maps")
+    protocol_id = _active_protocol_id(project)
+    is_ad4zn = protocol_id == AD4ZN_PROTOCOL_ID
+    state_key = "ad4zn" if is_ad4zn else "ad4_maps"
+    record = project.preserved_data.get(state_key)
     manifest_relative = str(record.get("active_manifest") or "") if isinstance(record, dict) else ""
     if not manifest_relative:
         return _error(
@@ -961,6 +1489,12 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
     if not isinstance(manifest, dict) or manifest.get("status") != "ready":
         return _error("MAPS_MANIFEST_NOT_READY", "maps manifest 未处于 ready 状态。")
     issues: list[str] = []
+    expected_protocol_id = AD4ZN_PROTOCOL_ID if is_ad4zn else "ad4_maps"
+    if str(manifest.get("protocol_id") or "") != expected_protocol_id:
+        issues.append(
+            f"manifest 协议为 {manifest.get('protocol_id') or '未记录'}，"
+            f"与当前 {expected_protocol_id} 不一致。"
+        )
     files = (manifest.get("maps") or {}).get("files") if isinstance(manifest.get("maps"), dict) else []
     if not isinstance(files, list) or not files:
         issues.append("manifest 没有记录 maps 文件。")
@@ -976,9 +1510,164 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
                 issues.append(f"缺失或为空：{relative_path}")
             elif not SHA256_PATTERN.fullmatch(expected) or _sha256(path) != expected:
                 issues.append(f"SHA256 不匹配：{relative_path}")
+    for label, record in (
+        (
+            "GPF",
+            manifest.get("gpf")
+            if isinstance(manifest.get("gpf"), dict)
+            else {},
+        ),
+        (
+            "参数文件",
+            manifest.get("parameter_file")
+            if isinstance(manifest.get("parameter_file"), dict)
+            else {},
+        ),
+    ):
+        if not record:
+            if is_ad4zn:
+                issues.append(f"AD4Zn manifest 缺少{label}快照。")
+            continue
+        relative_path = str(record.get("relative_path") or "")
+        path = _contained_project_path(root, relative_path)
+        expected = str(record.get("sha256") or "").lower()
+        if path is None or not path.is_file() or path.stat().st_size <= 0:
+            issues.append(f"{label}缺失或为空：{relative_path}")
+        elif not SHA256_PATTERN.fullmatch(expected) or _sha256(path) != expected:
+            issues.append(f"{label} SHA256 不匹配：{relative_path}")
+    if is_ad4zn:
+        gpf_record = (
+            manifest.get("gpf")
+            if isinstance(manifest.get("gpf"), dict)
+            else {}
+        )
+        gpf_path = _contained_project_path(
+            root,
+            str(gpf_record.get("relative_path") or ""),
+        )
+        if gpf_path is not None and gpf_path.is_file():
+            gpf_text = gpf_path.read_text(encoding="utf-8", errors="replace")
+            required_gpf_lines = {
+                "dielectric -0.1465",
+                *AD4ZN_NBP_R_EPS,
+            }
+            missing_gpf_lines = sorted(
+                line for line in required_gpf_lines if line not in gpf_text
+            )
+            if "parameter_file inputs/AD4Zn.dat" not in gpf_text:
+                missing_gpf_lines.append(
+                    "parameter_file inputs/AD4Zn.dat"
+                )
+            if "receptor inputs/receptor_tz.pdbqt" not in gpf_text:
+                missing_gpf_lines.append(
+                    "receptor inputs/receptor_tz.pdbqt"
+                )
+            if missing_gpf_lines:
+                issues.append(
+                    "AD4Zn GPF 缺少专用参数："
+                    + ", ".join(missing_gpf_lines)
+                )
+        autogrid_record = (
+            manifest.get("autogrid")
+            if isinstance(manifest.get("autogrid"), dict)
+            else {}
+        )
+        if not _autogrid_supports_ad4zn(
+            str(autogrid_record.get("version") or "")
+        ):
+            issues.append("AD4Zn maps 未绑定 AutoGrid 4.2.7+。")
+        log_summary = (
+            autogrid_record.get("log_summary")
+            if isinstance(autogrid_record.get("log_summary"), dict)
+            else {}
+        )
+        if log_summary.get("successful_completion") is not True:
+            issues.append("AD4Zn AutoGrid 日志未记录 Successful Completion。")
     receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
     if receptor_error or receptor_path is None:
         issues.append(str((receptor_error or {}).get("error", {}).get("message") or "当前受体不可读取。"))
+    elif is_ad4zn:
+        receptor_manifest = (
+            manifest.get("receptor")
+            if isinstance(manifest.get("receptor"), dict)
+            else {}
+        )
+        expected_original = str(
+            receptor_manifest.get("original_source_sha256") or ""
+        ).lower()
+        if (
+            not SHA256_PATTERN.fullmatch(expected_original)
+            or _sha256(receptor_path) != expected_original
+        ):
+            issues.append("当前原始受体 SHA256 与 AD4Zn maps 绑定记录不一致。")
+        try:
+            from dockstart_core.ad4zn import get_status as get_ad4zn_status
+
+            ad4zn_status = get_ad4zn_status(project_dir)
+        except Exception as exc:  # noqa: BLE001
+            ad4zn_status = {"ok": False, "issues": [str(exc)]}
+        if not ad4zn_status.get("ok") or not ad4zn_status.get("preparation_ready"):
+            issues.append(
+                "AD4Zn Zn 复核、TZ 受体或参数记录已失效："
+                + _issue_messages(ad4zn_status.get("issues"))
+            )
+        prepared = (
+            ad4zn_status.get("prepared_receptor")
+            if isinstance(ad4zn_status.get("prepared_receptor"), dict)
+            else {}
+        )
+        prepared_path = _contained_project_path(
+            root,
+            str(prepared.get("relative_path") or ""),
+        )
+        expected_prepared = str(receptor_manifest.get("source_sha256") or "").lower()
+        if (
+            prepared_path is None
+            or not prepared_path.is_file()
+            or not SHA256_PATTERN.fullmatch(expected_prepared)
+            or _sha256(prepared_path) != expected_prepared
+        ):
+            issues.append("当前 TZ 受体与 AD4Zn maps 绑定记录不一致。")
+        manifest_parameter = (
+            manifest.get("parameter_file")
+            if isinstance(manifest.get("parameter_file"), dict)
+            else {}
+        )
+        current_parameter = (
+            ad4zn_status.get("parameter_file")
+            if isinstance(ad4zn_status.get("parameter_file"), dict)
+            else {}
+        )
+        if (
+            str(manifest_parameter.get("sha256") or "").lower()
+            != str(current_parameter.get("sha256") or "").lower()
+            or not SHA256_PATTERN.fullmatch(
+                str(manifest_parameter.get("sha256") or "").lower()
+            )
+        ):
+            issues.append("当前 AD4Zn.dat 与 maps 绑定参数文件不一致。")
+        manifest_ad4zn = (
+            manifest.get("ad4zn")
+            if isinstance(manifest.get("ad4zn"), dict)
+            else {}
+        )
+        manifest_review = (
+            manifest_ad4zn.get("review")
+            if isinstance(manifest_ad4zn.get("review"), dict)
+            else {}
+        )
+        current_review = (
+            ad4zn_status.get("review")
+            if isinstance(ad4zn_status.get("review"), dict)
+            else {}
+        )
+        if (
+            str(manifest_review.get("receptor_sha256") or "").lower()
+            != str(current_review.get("receptor_sha256") or "").lower()
+            or str(manifest_review.get("selected_site_id") or "")
+            != str(current_review.get("selected_site_id") or "")
+        ):
+            issues.append("Zn 位点人工复核记录与 AD4Zn maps manifest 不一致。")
     else:
         expected_receptor = str((manifest.get("receptor") or {}).get("source_sha256") or "").lower()
         if not SHA256_PATTERN.fullmatch(expected_receptor) or _sha256(receptor_path) != expected_receptor:
@@ -1022,8 +1711,12 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
         "ready": not issues,
         "project_dir": str(root),
         "project": project.to_dict(),
-        "protocol": _active_protocol(project),
-        "protocol_active": _active_protocol(project) == "ad4_maps",
+        "protocol": protocol_id if is_ad4zn else _active_protocol(project),
+        "protocol_id": protocol_id,
+        "protocol_active": (
+            _active_protocol(project) == "ad4_maps"
+            and str(manifest.get("protocol_id") or "") == expected_protocol_id
+        ),
         "map_set_id": str(manifest.get("map_set_id") or ""),
         "manifest_file": Path(manifest_relative).as_posix(),
         "manifest": manifest,
@@ -1045,8 +1738,14 @@ def get_maps_status(project_dir: str) -> dict[str, Any]:
     if load_error:
         return load_error
     assert project is not None and root is not None
+    protocol_id = _active_protocol_id(project)
     settings = load_settings()
     tool = autogrid_adapter.detect(settings.tool_paths.autogrid4).to_dict()
+    tool["ad4zn_compatible"] = (
+        _autogrid_supports_ad4zn(str(tool.get("version") or ""))
+        if protocol_id == AD4ZN_PROTOCOL_ID
+        else None
+    )
     validated = validate_active_maps(project_dir)
     if (validated.get("error") or {}).get("code") == "MAPS_NOT_PREPARED":
         return {
@@ -1054,7 +1753,12 @@ def get_maps_status(project_dir: str) -> dict[str, Any]:
             "ready": False,
             "project_dir": str(root),
             "project": project.to_dict(),
-            "protocol": _active_protocol(project),
+            "protocol": (
+                protocol_id
+                if protocol_id == AD4ZN_PROTOCOL_ID
+                else _active_protocol(project)
+            ),
+            "protocol_id": protocol_id,
             "protocol_active": _active_protocol(project) == "ad4_maps",
             "map_set_id": "",
             "manifest_file": "",

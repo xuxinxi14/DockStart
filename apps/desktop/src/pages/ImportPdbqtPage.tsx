@@ -130,9 +130,9 @@ export default function ImportPdbqtPage({
           projectDir: project.project_dir,
           files: ligandPaths,
         })) as { ok?: boolean; staged?: unknown[]; error?: { message?: string; raw_error?: string } };
-        if (!staged.ok) throw new Error(staged.error?.raw_error || staged.error?.message || "多配体快照导入失败。");
+        if (!staged.ok) throw new Error(staged.error?.raw_error || staged.error?.message || "批量配体快照导入失败。");
         writeDockingWorkspaceMode(project.project_dir, "batch");
-        setMessage(`已导入 ${staged.staged?.length ?? ligandPaths.length} 个配体，并自动切换为多配体模式；首个配体用于搜索范围预览。`);
+        setMessage(`已导入 ${staged.staged?.length ?? ligandPaths.length} 个配体，并自动切换为串行批量筛选；首个配体用于搜索范围预览。也可在运行工作台明确选择多配体共同对接（实验性）。`);
       } else if (response.ok && role === "ligand") {
         writeDockingWorkspaceMode(project.project_dir, "single");
       }
@@ -184,7 +184,7 @@ export default function ImportPdbqtPage({
         ) : (
           <div className="multi-ligand-file-picker">
             <ActionButton onClick={() => void chooseLigands()}>选择一个或多个 PDBQT</ActionButton>
-            <span>{ligandPaths.length ? `已选择 ${ligandPaths.length} 个文件` : "选择 1 个进入单配体模式，选择多个自动进入多配体模式"}</span>
+            <span>{ligandPaths.length ? `已选择 ${ligandPaths.length} 个文件` : "选择 1 个进入单配体任务，选择多个默认进入串行批量筛选"}</span>
             {ligandPaths.length ? <code title={ligandPaths.join("\n")}>{ligandPaths.map((path) => path.split(/[\\/]/).pop()).join("、")}</code> : null}
           </div>
         )}

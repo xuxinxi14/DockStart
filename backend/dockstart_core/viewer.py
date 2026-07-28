@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
 import re
 import sys
-import csv
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from dockstart_core.project import (
     RUN_ID_PATTERN,
+    _active_receptor_inputs,
     _error,
+    _local_only_execution_plan_enabled,
     _project_from_dict,
+    _read_run_metadata,
     load_project,
     update_box_params,
     validate_box_params,
 )
+from dockstart_core.pose_comparison import compare_local_only_pose_texts
+from dockstart_core.screening import get_screening_archive
 from dockstart_core.viewer_models import DockingPoseSummary, ViewerStructureResult
 
 MAX_VIEWER_FILE_BYTES = 20 * 1024 * 1024
@@ -28,6 +34,11 @@ VIEWER_FILE_KINDS = {
     "receptor_prepared": "准备后的受体 PDBQT",
     "ligand_prepared": "准备后的配体 PDBQT",
     "docking_output": "Vina 输出 PDBQT",
+}
+
+INTERNAL_VIEWER_FILE_KINDS = {
+    "receptor_run": "实际运行用刚性受体 PDBQT",
+    "receptor_flex": "实际运行用柔性侧链 PDBQT",
 }
 
 TEXT_STRUCTURE_EXTENSIONS = {
@@ -41,6 +52,7 @@ TEXT_STRUCTURE_EXTENSIONS = {
 
 MODEL_PATTERN = re.compile(r"^\s*MODEL\s+(\d+)?\s*$", re.IGNORECASE)
 ENDMDL_PATTERN = re.compile(r"^\s*ENDMDL\s*$", re.IGNORECASE)
+SCREENING_ITEM_ID_PATTERN = re.compile(r"^ligand_\d{4,}$")
 PDBQT_VIEWER_RECORDS = {
     "ATOM",
     "HETATM",
@@ -655,20 +667,34 @@ def update_box_from_visualization(project_dir: str, box_params: dict[str, Any]) 
 
 
 def load_structure_for_viewer(project_dir: str, file_kind: str) -> dict[str, Any]:
-    if file_kind not in VIEWER_FILE_KINDS:
+    if file_kind not in VIEWER_FILE_KINDS and file_kind not in INTERNAL_VIEWER_FILE_KINDS:
         return _viewer_error(
             "VIEWER_FILE_KIND_INVALID",
             "结构文件类型无效。",
             file_kind=file_kind,
             raw_error=str(file_kind),
-            suggestion="请使用 receptor_raw、ligand_raw、receptor_prepared、ligand_prepared 或 docking_output。",
+            suggestion="请使用 receptor_raw、ligand_raw、receptor_prepared、receptor_run、receptor_flex、ligand_prepared 或 docking_output。",
         )
 
     project, error = _load_project_model(project_dir)
     if error:
         return error
 
-    relative_path = _relative_path_for_kind(project, file_kind) or ""
+    if file_kind in {"receptor_run", "receptor_flex"}:
+        receptor_inputs = _active_receptor_inputs(
+            _project_root(project_dir),
+            project,
+        )
+        if not receptor_inputs.get("ok"):
+            return receptor_inputs
+        relative_path = str(
+            receptor_inputs.get(
+                "receptor_file" if file_kind == "receptor_run" else "flex_file"
+            )
+            or ""
+        )
+    else:
+        relative_path = _relative_path_for_kind(project, file_kind) or ""
     validation = validate_viewer_file(project_dir, relative_path)
     if not validation.get("ok"):
         validation["file_kind"] = file_kind
@@ -726,13 +752,678 @@ def _run_output_relative_path(project_dir: str, run_id: str) -> tuple[str | None
     if metadata_path.exists():
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if isinstance(metadata, dict) and metadata.get("output_file"):
-                return str(metadata["output_file"]), None
+            if isinstance(metadata, dict):
+                pose_file = str(metadata.get("pose_file") or metadata.get("output_file") or "")
+                if pose_file:
+                    return pose_file, None
         except Exception:
             # Metadata is helpful but not required for viewer fallback.
             pass
 
     return Path("runs", run_id, "out.pdbqt").as_posix(), None
+
+
+def _run_evaluation_pose_relative_path(
+    project_dir: str,
+    run_id: str,
+    pose_kind: str | None,
+) -> tuple[str | None, str, dict[str, Any] | None]:
+    normalized_kind = str(pose_kind or "").strip().lower()
+    if not normalized_kind:
+        relative_path, error = _run_output_relative_path(project_dir, run_id)
+        return relative_path, "", error
+    if normalized_kind not in {"input", "optimized"}:
+        return None, "", _viewer_error(
+            "VIEWER_POSE_KIND_INVALID",
+            "评价姿势类型只能是 input 或 optimized。",
+            raw_error=normalized_kind,
+        )
+    if not RUN_ID_PATTERN.match(run_id):
+        return None, "", _viewer_error(
+            "VIEWER_RUN_ID_INVALID",
+            "run_id 格式无效，应类似 run_001。",
+            raw_error=str(run_id),
+        )
+
+    metadata_path = _project_root(project_dir) / "runs" / run_id / "metadata.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - return structured viewer errors.
+        return None, "", _viewer_error(
+            "VIEWER_RUN_METADATA_INVALID",
+            "无法读取本次 run 的 metadata.json，不能选择评价姿势。",
+            raw_error=str(exc),
+        )
+    if not isinstance(metadata, dict):
+        return None, "", _viewer_error(
+            "VIEWER_RUN_METADATA_INVALID",
+            "本次 run 的 metadata.json 结构无效。",
+        )
+    run_mode = str(metadata.get("run_mode") or "dock").strip().lower()
+    if normalized_kind == "input":
+        if run_mode not in {"score_only", "local_only"}:
+            return None, "", _viewer_error(
+                "VIEWER_INPUT_POSE_NOT_APPLICABLE",
+                "全局对接结果不使用评价模式的输入姿势视图。",
+            )
+        return (
+            Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix(),
+            "输入姿势",
+            None,
+        )
+    if run_mode != "local_only":
+        return None, "", _viewer_error(
+            "VIEWER_OPTIMIZED_POSE_NOT_APPLICABLE",
+            "只有 local_only run 才有局部优化后姿势。",
+        )
+    expected = Path("runs", run_id, "optimized.pdbqt").as_posix()
+    recorded = str(metadata.get("output_file") or metadata.get("pose_file") or "")
+    if recorded != expected:
+        return None, "", _viewer_error(
+            "VIEWER_OPTIMIZED_POSE_PATH_INVALID",
+            "metadata 中的局部优化姿势路径与固定 run 路径不一致。",
+            raw_error=f"recorded={recorded!r}; expected={expected!r}",
+        )
+    return expected, "优化后姿势", None
+
+
+def _read_fixed_local_only_viewer_file(
+    project_root: Path,
+    relative_path: str,
+    *,
+    label: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Read one fixed run PDBQT once and bind validation to those exact bytes."""
+
+    lexical_path = project_root / relative_path
+    if lexical_path.is_symlink():
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_PATH_UNSAFE",
+            f"{label}不能是符号链接。",
+            relative_path=relative_path,
+            raw_error=str(lexical_path),
+            suggestion="请保留 run 目录中的原始快照文件，不要用链接替换。",
+        )
+    try:
+        resolved_path = lexical_path.resolve(strict=True)
+        resolved_path.relative_to(project_root)
+    except FileNotFoundError:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_FILE_NOT_FOUND",
+            f"没有找到{label}。",
+            relative_path=relative_path,
+            raw_error=str(lexical_path),
+            suggestion="请保留该 local_only run 的完整 inputs 与 optimized.pdbqt。",
+        )
+    except (OSError, ValueError) as exc:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_PATH_UNSAFE",
+            f"{label}路径不安全，已拒绝读取。",
+            relative_path=relative_path,
+            raw_error=str(exc),
+        )
+    if resolved_path != lexical_path.absolute() or not resolved_path.is_file():
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_PATH_UNSAFE",
+            f"{label}不是 run 目录中的普通固定文件。",
+            relative_path=relative_path,
+            raw_error=f"lexical={lexical_path}; resolved={resolved_path}",
+        )
+    try:
+        content_bytes = resolved_path.read_bytes()
+    except OSError as exc:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_READ_ERROR",
+            f"无法读取{label}。",
+            relative_path=relative_path,
+            raw_error=str(exc),
+        )
+    size_bytes = len(content_bytes)
+    if size_bytes <= 0:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_FILE_EMPTY",
+            f"{label}为空，无法叠合显示。",
+            relative_path=relative_path,
+            raw_error=str(resolved_path),
+        )
+    if size_bytes > MAX_VIEWER_FILE_BYTES:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_FILE_TOO_LARGE",
+            f"{label}超过 20 MB 的 3D 预览上限。",
+            relative_path=relative_path,
+            raw_error=f"{size_bytes} bytes",
+        )
+    try:
+        content = content_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        return None, _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_ENCODING_INVALID",
+            f"{label}不是有效的 UTF-8 PDBQT 文件。",
+            relative_path=relative_path,
+            raw_error=str(exc),
+        )
+    return (
+        {
+            "relative_path": relative_path,
+            "absolute_path": str(resolved_path),
+            "content": content,
+            "size_bytes": size_bytes,
+            "sha256": hashlib.sha256(content_bytes).hexdigest(),
+        },
+        None,
+    )
+
+
+def _local_only_ligand_display_text(content: str) -> str:
+    """Remove flexible-receptor blocks from the ligand display copy."""
+
+    lines: list[str] = []
+    inside_flexible_receptor = False
+    for line in content.splitlines():
+        upper = line.strip().upper()
+        if upper.startswith("BEGIN_RES"):
+            inside_flexible_receptor = True
+            continue
+        if upper.startswith("END_RES"):
+            inside_flexible_receptor = False
+            continue
+        if not inside_flexible_receptor:
+            lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _local_only_flexible_receptor_display_text(content: str) -> str:
+    """Extract flexible-receptor blocks from a local-only PDBQT display copy."""
+
+    lines: list[str] = []
+    inside_flexible_receptor = False
+    for line in content.splitlines():
+        upper = line.strip().upper()
+        if upper.startswith("BEGIN_RES"):
+            inside_flexible_receptor = True
+            continue
+        if upper.startswith("END_RES"):
+            inside_flexible_receptor = False
+            continue
+        if inside_flexible_receptor:
+            lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _local_only_bundle_structure(
+    file_record: dict[str, Any],
+    *,
+    file_kind: str,
+    pose_kind: str = "",
+    pose_label: str,
+    ligand_only: bool = False,
+    flexible_receptor_only: bool = False,
+) -> dict[str, Any]:
+    if flexible_receptor_only:
+        display_source = _local_only_flexible_receptor_display_text(
+            str(file_record["content"])
+        )
+    elif ligand_only:
+        display_source = _local_only_ligand_display_text(str(file_record["content"]))
+    else:
+        display_source = str(file_record["content"])
+    viewer_content, viewer_format, viewer_warnings = _viewer_content(
+        display_source,
+        "pdbqt",
+    )
+    payload = ViewerStructureResult(
+        ok=True,
+        file_kind=file_kind,
+        relative_path=str(file_record["relative_path"]),
+        absolute_path=str(file_record["absolute_path"]),
+        exists=True,
+        format=viewer_format,
+        content=viewer_content,
+        size_bytes=len(viewer_content.encode("utf-8")),
+        message=f"{pose_label}已从本次 run 的固定快照读取。",
+        warnings=viewer_warnings,
+        error=None,
+    ).to_dict()
+    if pose_kind:
+        payload.update(
+            {
+                "mode": 1,
+                "pose_kind": pose_kind,
+                "pose_label": pose_label,
+            }
+        )
+    return payload
+
+
+def _local_only_pair_hash_error(
+    *,
+    label: str,
+    expected: str,
+    actual: str,
+    relative_path: str,
+) -> dict[str, Any] | None:
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_HASH_MISSING",
+            f"metadata 中缺少可验证的{label} SHA256。",
+            relative_path=relative_path,
+            raw_error=f"recorded={expected!r}",
+            suggestion="请重新准备并执行新的 local_only run。",
+        )
+    if expected.lower() != actual.lower():
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_HASH_MISMATCH",
+            f"{label}在 run 完成后发生变化，已拒绝叠合显示。",
+            relative_path=relative_path,
+            raw_error=f"expected={expected}; actual={actual}",
+            suggestion="请保留该 run 作为审计记录，并重新执行新的 local_only run。",
+        )
+    return None
+
+
+def load_local_only_pose_pair_for_viewer(
+    project_dir: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Load one immutable local-only receptor/input/optimized display bundle."""
+
+    metadata, metadata_error = _read_run_metadata(project_dir, run_id)
+    if metadata_error:
+        return metadata_error
+    assert metadata is not None
+    run_mode = str(metadata.get("run_mode") or "dock").strip().lower()
+    if run_mode != "local_only":
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_NOT_APPLICABLE",
+            "只有 local_only run 才能显示优化前后姿势叠合。",
+            raw_error=f"run_mode={run_mode}",
+        )
+    if str(metadata.get("status") or "") != "finished":
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_NOT_FINISHED",
+            "本次 local_only run 尚未成功完成，不能显示优化前后叠合。",
+            raw_error=f"status={metadata.get('status')!r}",
+        )
+    recorded_run_id = str(metadata.get("run_id") or run_id)
+    if recorded_run_id != run_id:
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_RUN_ID_MISMATCH",
+            "metadata 中的 run_id 与请求不一致。",
+            raw_error=f"recorded={recorded_run_id!r}; requested={run_id!r}",
+        )
+
+    receptor_relative = Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()
+    input_relative = Path("runs", run_id, "inputs", "ligand.pdbqt").as_posix()
+    flex_relative = Path("runs", run_id, "inputs", "flex.pdbqt").as_posix()
+    optimized_relative = Path("runs", run_id, "optimized.pdbqt").as_posix()
+    output_file = str(metadata.get("output_file") or "")
+    pose_file = str(metadata.get("pose_file") or "")
+    recorded_pose_paths = [value for value in (output_file, pose_file) if value]
+    if (
+        not recorded_pose_paths
+        or any(value != optimized_relative for value in recorded_pose_paths)
+    ):
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_PATH_INVALID",
+            "metadata 中的优化后姿势路径与固定 run 路径不一致。",
+            relative_path=optimized_relative,
+            raw_error=(
+                f"output_file={output_file!r}; pose_file={pose_file!r}; "
+                f"expected={optimized_relative!r}"
+            ),
+        )
+
+    modern_plan = _local_only_execution_plan_enabled(metadata)
+    plan_or_phases_present = (
+        metadata.get("execution_plan") is not None
+        or metadata.get("execution_phases") is not None
+    )
+    if plan_or_phases_present and not modern_plan:
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_EXECUTION_PLAN_INVALID",
+            "local_only 的执行计划记录不完整或版本不受支持，不能降级为历史 run 读取。",
+            suggestion="请保留该 run，并重新准备新的 local_only run。",
+        )
+    if modern_plan:
+        phases = (
+            metadata.get("execution_phases")
+            if isinstance(metadata.get("execution_phases"), dict)
+            else {}
+        )
+        if any(
+            str((phases.get(phase_id) or {}).get("status") or "") != "finished"
+            for phase_id in ("input_score", "local_optimization")
+            if isinstance(phases.get(phase_id), dict)
+        ) or any(
+            not isinstance(phases.get(phase_id), dict)
+            for phase_id in ("input_score", "local_optimization")
+        ):
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_PHASES_INVALID",
+                "local_only 的输入评分或局部优化阶段没有完整完成记录。",
+                suggestion="请重新准备并执行新的 local_only run。",
+            )
+        if output_file != optimized_relative or pose_file != optimized_relative:
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_PATH_INVALID",
+                "现代 local_only run 必须同时记录固定的 output_file 与 pose_file。",
+                relative_path=optimized_relative,
+            )
+
+    project_root = _project_root(project_dir)
+    file_records: dict[str, dict[str, Any]] = {}
+    for key, relative_path, label in (
+        ("receptor", receptor_relative, "受体快照"),
+        ("input", input_relative, "输入配体姿势"),
+        ("optimized", optimized_relative, "优化后配体姿势"),
+    ):
+        record, read_error = _read_fixed_local_only_viewer_file(
+            project_root,
+            relative_path,
+            label=label,
+        )
+        if read_error:
+            return read_error
+        assert record is not None
+        file_records[key] = record
+
+    input_hashes = (
+        metadata.get("input_sha256")
+        if isinstance(metadata.get("input_sha256"), dict)
+        else {}
+    )
+    snapshots = (
+        metadata.get("snapshots")
+        if isinstance(metadata.get("snapshots"), dict)
+        else {}
+    )
+    snapshot_inputs = (
+        snapshots.get("inputs")
+        if isinstance(snapshots.get("inputs"), dict)
+        else {}
+    )
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    out_artifact = (
+        artifacts.get("out")
+        if isinstance(artifacts.get("out"), dict)
+        else {}
+    )
+    docking_protocol = (
+        metadata.get("docking_protocol")
+        if isinstance(metadata.get("docking_protocol"), dict)
+        else {}
+    )
+    recorded_flexible_receptor = bool(
+        input_hashes.get("flex")
+        or snapshot_inputs.get("flex")
+        or str(
+            docking_protocol.get("receptor_mode")
+            or docking_protocol.get("mode")
+            or ""
+        ).strip().lower()
+        == "flexible"
+    )
+    flex_snapshot_path = project_root / flex_relative
+    optimized_flex_display = _local_only_flexible_receptor_display_text(
+        str(file_records["optimized"]["content"])
+    )
+    flexible_receptor = bool(
+        recorded_flexible_receptor
+        or flex_snapshot_path.exists()
+        or optimized_flex_display.strip()
+    )
+    if flexible_receptor:
+        flex_record, flex_read_error = _read_fixed_local_only_viewer_file(
+            project_root,
+            flex_relative,
+            label="柔性受体输入快照",
+        )
+        if flex_read_error:
+            return flex_read_error
+        assert flex_record is not None
+        file_records["flex"] = flex_record
+        input_flex_display = _local_only_flexible_receptor_display_text(
+            str(flex_record["content"])
+        )
+        if not any(
+            line[:6].strip().upper() in {"ATOM", "HETATM"}
+            for line in input_flex_display.splitlines()
+        ):
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_FLEX_INPUT_INVALID",
+                "柔性受体输入快照中没有可显示的 BEGIN_RES/END_RES 原子记录。",
+                relative_path=flex_relative,
+            )
+        if not any(
+            line[:6].strip().upper() in {"ATOM", "HETATM"}
+            for line in optimized_flex_display.splitlines()
+        ):
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_FLEX_OUTPUT_MISSING",
+                "优化后姿势没有记录柔性受体残基，不能完整显示该 flexible local_only run。",
+                relative_path=optimized_relative,
+            )
+
+    if modern_plan:
+        snapshot_roles = [
+            ("receptor", "receptor", "受体快照", receptor_relative),
+            ("ligand", "input", "输入配体姿势", input_relative),
+        ]
+        if flexible_receptor:
+            snapshot_roles.append(
+                ("flex", "flex", "柔性受体输入快照", flex_relative)
+            )
+        for key, record_key, label, relative_path in snapshot_roles:
+            input_expected = str(input_hashes.get(key) or "")
+            snapshot_record = (
+                snapshot_inputs.get(key)
+                if isinstance(snapshot_inputs.get(key), dict)
+                else {}
+            )
+            snapshot_expected = str(snapshot_record.get("sha256") or "")
+            snapshot_relative = str(snapshot_record.get("relative_path") or "")
+            if (
+                input_expected.lower() != snapshot_expected.lower()
+                or snapshot_relative != relative_path
+            ):
+                return _viewer_error(
+                    "VIEWER_LOCAL_POSE_PAIR_SNAPSHOT_INVALID",
+                    f"{label}的两份 metadata 快照记录不一致。",
+                    relative_path=relative_path,
+                    raw_error=(
+                        f"input_sha256={input_expected!r}; "
+                        f"snapshot_sha256={snapshot_expected!r}; "
+                        f"snapshot_path={snapshot_relative!r}"
+                    ),
+                )
+            hash_error = _local_only_pair_hash_error(
+                label=label,
+                expected=input_expected,
+                actual=str(file_records[record_key]["sha256"]),
+                relative_path=relative_path,
+            )
+            if hash_error:
+                return hash_error
+
+        out_expected = str(out_artifact.get("sha256") or "")
+        out_relative = str(out_artifact.get("relative_path") or "")
+        if (
+            bool(out_artifact.get("backfilled_unverified"))
+            or str(out_artifact.get("verification_status") or "").lower()
+            == "unknown"
+        ):
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_HASH_UNVERIFIED",
+                "优化后姿势的哈希仅在恢复时观察到，不能作为执行时完整性证据。",
+                relative_path=optimized_relative,
+            )
+        if out_relative != optimized_relative:
+            return _viewer_error(
+                "VIEWER_LOCAL_POSE_PAIR_SNAPSHOT_INVALID",
+                "优化后姿势的 artifact 路径与固定 run 路径不一致。",
+                relative_path=optimized_relative,
+                raw_error=f"artifact_path={out_relative!r}",
+            )
+        hash_error = _local_only_pair_hash_error(
+            label="优化后配体姿势",
+            expected=out_expected,
+            actual=str(file_records["optimized"]["sha256"]),
+            relative_path=optimized_relative,
+        )
+        if hash_error:
+            return hash_error
+        integrity_status = "verified"
+        integrity_source = "execution_metadata"
+        pair_warnings: list[str] = []
+    else:
+        # Historical single-stage local_only runs did not always record hashes.
+        # Enforce any valid hashes that do exist, but never promote current-file
+        # observations to execution-time provenance.
+        legacy_hash_candidates = {
+            "receptor": [
+                str(input_hashes.get("receptor") or ""),
+                str(
+                    (snapshot_inputs.get("receptor") or {}).get("sha256") or ""
+                )
+                if isinstance(snapshot_inputs.get("receptor"), dict)
+                else "",
+            ],
+            "input": [
+                str(input_hashes.get("ligand") or ""),
+                str((snapshot_inputs.get("ligand") or {}).get("sha256") or "")
+                if isinstance(snapshot_inputs.get("ligand"), dict)
+                else "",
+            ],
+            "optimized": [str(out_artifact.get("sha256") or "")],
+        }
+        if flexible_receptor:
+            legacy_hash_candidates["flex"] = [
+                str(input_hashes.get("flex") or ""),
+                str((snapshot_inputs.get("flex") or {}).get("sha256") or "")
+                if isinstance(snapshot_inputs.get("flex"), dict)
+                else "",
+            ]
+        for key, candidates in legacy_hash_candidates.items():
+            actual = str(file_records[key]["sha256"])
+            for expected in candidates:
+                if re.fullmatch(r"[0-9a-fA-F]{64}", expected) and (
+                    expected.lower() != actual.lower()
+                ):
+                    return _viewer_error(
+                        "VIEWER_LOCAL_POSE_PAIR_HASH_MISMATCH",
+                        "历史 local_only run 中已记录的姿势哈希与当前文件不一致。",
+                        relative_path=str(file_records[key]["relative_path"]),
+                        raw_error=f"expected={expected}; actual={actual}",
+                    )
+        integrity_status = "legacy_unverified"
+        integrity_source = "current_file_observation"
+        pair_warnings = [
+            "该历史 local_only run 未记录完整的执行时哈希；本次结果仅供几何叠合，不代表审计完整。"
+        ]
+
+    comparison = compare_local_only_pose_texts(
+        str(file_records["input"]["content"]),
+        str(file_records["optimized"]["content"]),
+    )
+    if not comparison.get("ok"):
+        comparison_error = (
+            comparison.get("error")
+            if isinstance(comparison.get("error"), dict)
+            else {}
+        )
+        return _viewer_error(
+            "VIEWER_LOCAL_POSE_PAIR_IDENTITY_MISMATCH",
+            "输入姿势与优化后姿势的原子身份不能严格对应，已拒绝叠合显示。",
+            raw_error=(
+                f"{comparison_error.get('code', '')}: "
+                f"{comparison_error.get('raw_error', '')}"
+            ).strip(": "),
+            suggestion=str(comparison_error.get("suggestion") or ""),
+        )
+
+    comparison_warnings = (
+        comparison.get("warnings")
+        if isinstance(comparison.get("warnings"), list)
+        else []
+    )
+    pair_warnings.extend(str(item) for item in comparison_warnings)
+    if flexible_receptor:
+        pair_warnings.append(
+            "该 run 使用柔性受体；完整受体视图由刚性受体与对应的柔性受体层共同组成。"
+        )
+    payload = {
+        "ok": True,
+        "project_dir": str(project_root),
+        "run_id": run_id,
+        "run_mode": "local_only",
+        "integrity": {
+            "status": integrity_status,
+            "source": integrity_source,
+            "receptor_sha256": file_records["receptor"]["sha256"],
+            "input_sha256": file_records["input"]["sha256"],
+            "optimized_sha256": file_records["optimized"]["sha256"],
+            **(
+                {"flex_input_sha256": file_records["flex"]["sha256"]}
+                if flexible_receptor
+                else {}
+            ),
+        },
+        "coordinate_frame": {
+            "source": "run_snapshot",
+            "same_receptor_frame": True,
+            "alignment_applied": False,
+            "flexible_receptor": flexible_receptor,
+        },
+        "receptor": _local_only_bundle_structure(
+            file_records["receptor"],
+            file_kind="run_receptor",
+            pose_label="刚性受体快照" if flexible_receptor else "受体快照",
+        ),
+        "input": _local_only_bundle_structure(
+            file_records["input"],
+            file_kind="docking_output",
+            pose_kind="input",
+            pose_label="输入姿势",
+            ligand_only=True,
+        ),
+        "optimized": _local_only_bundle_structure(
+            file_records["optimized"],
+            file_kind="docking_output",
+            pose_kind="optimized",
+            pose_label="优化后姿势",
+            ligand_only=True,
+        ),
+        "comparison": comparison,
+        "warnings": pair_warnings,
+        "message": (
+            "已读取本次 flexible local_only run 的刚性受体、柔性受体与优化前后姿势。"
+            if flexible_receptor
+            else "已读取本次 local_only run 的受体、输入姿势与优化后姿势。"
+        ),
+        "error": None,
+    }
+    if flexible_receptor:
+        payload.update(
+            {
+                "flex_receptor_input": _local_only_bundle_structure(
+                    file_records["flex"],
+                    file_kind="run_flexible_receptor",
+                    pose_label="柔性受体输入快照",
+                    flexible_receptor_only=True,
+                ),
+                "flex_receptor_optimized": _local_only_bundle_structure(
+                    file_records["optimized"],
+                    file_kind="run_flexible_receptor",
+                    pose_label="优化后柔性受体",
+                    flexible_receptor_only=True,
+                ),
+            }
+        )
+    return payload
 
 
 def _parse_pdbqt_poses(content: str) -> list[dict[str, Any]]:
@@ -767,6 +1458,605 @@ def _parse_pdbqt_poses(content: str) -> list[dict[str, Any]]:
         poses.append({"mode": 1, "content": content})
 
     return poses
+
+
+def _viewer_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_screening_pose_for_viewer(
+    project_dir: str,
+    item_id: str,
+    mode: int | None = None,
+) -> dict[str, Any]:
+    """Load one successful screening pose with its frozen receptor.
+
+    New screening records bind both structures to SHA256 values.  Historical
+    records without an output hash remain viewable, but the response labels
+    their output integrity as ``legacy_unverified`` instead of implying that
+    the file is unchanged.
+    """
+
+    if not SCREENING_ITEM_ID_PATTERN.fullmatch(str(item_id or "")):
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_INVALID",
+            "批量筛选配体编号无效。",
+            file_kind="screening_output",
+            raw_error=str(item_id),
+            suggestion="请从当前批量筛选完整结果表中选择配体。",
+        )
+    try:
+        selected_mode = int(mode) if mode is not None else 1
+    except (TypeError, ValueError):
+        selected_mode = 0
+    if selected_mode < 1:
+        return _viewer_error(
+            "VIEWER_SCREENING_MODE_INVALID",
+            "批量筛选构象编号必须是大于 0 的整数。",
+            file_kind="screening_output",
+            raw_error=repr(mode),
+        )
+
+    project_root = _project_root(project_dir)
+    state_path = project_root / "screening" / "screening.json"
+    if not state_path.is_file():
+        return _viewer_error(
+            "VIEWER_SCREENING_STATE_NOT_FOUND",
+            "没有找到当前批量筛选记录。",
+            file_kind="screening_output",
+            relative_path=Path("screening", "screening.json").as_posix(),
+            suggestion="请先完成或恢复当前批量筛选任务。",
+        )
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - return a structured viewer error.
+        return _viewer_error(
+            "VIEWER_SCREENING_STATE_INVALID",
+            "批量筛选状态文件无法解析。",
+            file_kind="screening_output",
+            raw_error=str(exc),
+            suggestion="请检查 screening/screening.json，或恢复对应筛选记录。",
+        )
+    if (
+        not isinstance(state, dict)
+        or state.get("schema_version") != 1
+        or not isinstance(state.get("items"), list)
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_STATE_UNSUPPORTED",
+            "批量筛选状态格式不受支持。",
+            file_kind="screening_output",
+            raw_error=f"schema_version={state.get('schema_version') if isinstance(state, dict) else 'invalid'}",
+        )
+
+    item = next(
+        (
+            candidate
+            for candidate in state["items"]
+            if isinstance(candidate, dict)
+            and str(candidate.get("item_id") or "") == item_id
+        ),
+        None,
+    )
+    if item is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_NOT_FOUND",
+            "当前批量筛选中没有找到所选配体。",
+            file_kind="screening_output",
+            raw_error=item_id,
+        )
+    if item.get("status") != "succeeded":
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_NOT_SUCCEEDED",
+            "只有成功完成的批量筛选配体可以查看构象。",
+            file_kind="screening_output",
+            raw_error=f"{item_id}: status={item.get('status')}",
+            suggestion="请等待该配体成功完成，或查看失败诊断。",
+        )
+
+    output_relative = str(item.get("best_output_file") or "")
+    succeeded_attempt = next(
+        (
+            attempt
+            for attempt in reversed(item.get("attempts") or [])
+            if isinstance(attempt, dict)
+            and attempt.get("status") == "succeeded"
+            and str(attempt.get("output_file") or "") == output_relative
+        ),
+        None,
+    )
+    if not output_relative or succeeded_attempt is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_RECORD_INVALID",
+            "成功配体缺少与尝试记录一致的输出文件，已拒绝读取。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            suggestion="请保留筛选记录并检查 attempt.json；不要手工重写 best_output_file。",
+        )
+
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    receptor_record = (
+        inputs.get("receptor")
+        if isinstance(inputs.get("receptor"), dict)
+        else {}
+    )
+    receptor_relative = str(receptor_record.get("file") or "")
+    attempt_directory = str(succeeded_attempt.get("directory") or "")
+    attempt_parts = Path(attempt_directory).parts
+    expected_attempt_prefix = ("screening", "attempts", item_id)
+    expected_output_relative = (
+        (Path(attempt_directory) / "out.pdbqt").as_posix()
+        if attempt_directory
+        else ""
+    )
+    if (
+        Path(receptor_relative).parts
+        != ("screening", "inputs", "receptor.pdbqt")
+        or len(attempt_parts) != 4
+        or attempt_parts[:3] != expected_attempt_prefix
+        or not re.fullmatch(r"attempt_\d{3,}", attempt_parts[3])
+        or Path(output_relative).as_posix() != expected_output_relative
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_SCOPE_INVALID",
+            "筛选构象记录没有指向本次任务的冻结受体和配体 attempt，已拒绝读取。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            raw_error=(
+                f"receptor={receptor_relative}; "
+                f"attempt_directory={attempt_directory}; output={output_relative}"
+            ),
+            suggestion="请从当前筛选结果表重新选择配体，或恢复未修改的筛选记录。",
+        )
+    receptor_validation = validate_viewer_file(project_dir, receptor_relative)
+    if not receptor_validation.get("ok"):
+        receptor_validation["file_kind"] = "screening_receptor"
+        return receptor_validation
+    output_validation = validate_viewer_file(project_dir, output_relative)
+    if not output_validation.get("ok"):
+        output_validation["file_kind"] = "screening_output"
+        return output_validation
+
+    receptor_path = Path(receptor_validation["absolute_path"])
+    output_path = Path(output_validation["absolute_path"])
+    receptor_actual_sha256 = _viewer_sha256(receptor_path)
+    output_actual_sha256 = _viewer_sha256(output_path)
+    receptor_expected_sha256 = str(receptor_record.get("sha256") or "")
+    item_output_sha256 = str(item.get("best_output_sha256") or "")
+    attempt_output_sha256 = str(succeeded_attempt.get("output_sha256") or "")
+    if (
+        item_output_sha256
+        and attempt_output_sha256
+        and item_output_sha256.lower() != attempt_output_sha256.lower()
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_HASH_CONFLICT",
+            "批量筛选的配体与尝试记录保存了不同的输出 SHA256，已拒绝显示。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            suggestion="请保留筛选记录并检查 attempt.json；不要手工修改输出哈希。",
+        )
+    output_expected_sha256 = item_output_sha256 or attempt_output_sha256
+    mismatches = [
+        label
+        for label, expected, actual in (
+            ("受体", receptor_expected_sha256, receptor_actual_sha256),
+            ("配体输出", output_expected_sha256, output_actual_sha256),
+        )
+        if expected and expected.lower() != actual.lower()
+    ]
+    if mismatches:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_HASH_MISMATCH",
+            f"{'、'.join(mismatches)} SHA256 与筛选记录不一致，已拒绝显示。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            raw_error="筛选输出可能在任务完成后被替换或修改。",
+            suggestion="请从原始筛选归档恢复文件，或重新运行该配体。",
+        )
+
+    try:
+        receptor_content = receptor_path.read_text(encoding="utf-8", errors="replace")
+        output_content = output_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:  # noqa: BLE001 - return a structured viewer error.
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_READ_ERROR",
+            "读取批量筛选结构文件时发生错误。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            raw_error=str(exc),
+        )
+    poses = _parse_pdbqt_poses(output_content)
+    selected = next(
+        (pose for pose in poses if int(pose["mode"]) == selected_mode),
+        None,
+    )
+    if selected is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_POSE_NOT_FOUND",
+            f"批量筛选输出中没有 Mode {selected_mode}。",
+            file_kind="screening_output",
+            relative_path=output_relative,
+            suggestion="请查看该输出实际包含的构象编号。",
+        )
+
+    receptor_viewer_content, receptor_format, receptor_warnings = _viewer_content(
+        receptor_content,
+        str(receptor_validation["format"]),
+    )
+    pose_viewer_content, pose_format, pose_warnings = _viewer_content(
+        str(selected["content"]),
+        str(output_validation["format"]),
+    )
+    integrity_status = (
+        "verified"
+        if receptor_expected_sha256 and output_expected_sha256
+        else "legacy_unverified"
+    )
+    integrity_warning = (
+        []
+        if integrity_status == "verified"
+        else ["历史筛选记录没有保存完整输出 SHA256；本次只能确认文件当前可读，不能证明完成后未被替换。"]
+    )
+    receptor_result = ViewerStructureResult(
+        ok=True,
+        file_kind="screening_receptor",
+        relative_path=receptor_relative,
+        absolute_path=str(receptor_path),
+        exists=True,
+        format=receptor_format,
+        content=receptor_viewer_content,
+        size_bytes=len(receptor_viewer_content.encode("utf-8")),
+        message="已读取本次筛选冻结的受体快照。",
+        warnings=receptor_warnings,
+        error=None,
+    ).to_dict()
+    pose_result = ViewerStructureResult(
+        ok=True,
+        file_kind="screening_output",
+        relative_path=output_relative,
+        absolute_path=str(output_path),
+        exists=True,
+        format=pose_format,
+        content=pose_viewer_content,
+        size_bytes=len(pose_viewer_content.encode("utf-8")),
+        message=f"已读取 {item_id} 的 Mode {selected_mode}。",
+        warnings=[*pose_warnings, *integrity_warning],
+        error=None,
+    ).to_dict() | {
+        "mode": selected_mode,
+        "pose_label": f"{item_id} Mode {selected_mode}",
+    }
+    return {
+        "ok": True,
+        "project_dir": str(project_root),
+        "screening_id": str(state.get("screening_id") or ""),
+        "item_id": item_id,
+        "source_file": str(item.get("source_file") or item.get("ligand_file") or ""),
+        "best_affinity_kcal_mol": item.get("best_affinity_kcal_mol"),
+        "available_modes": [int(pose["mode"]) for pose in poses],
+        "mode": selected_mode,
+        "receptor": receptor_result,
+        "pose": pose_result,
+        "integrity": {
+            "status": integrity_status,
+            "receptor_sha256": receptor_actual_sha256,
+            "output_sha256": output_actual_sha256,
+            "expected_receptor_sha256": receptor_expected_sha256,
+            "expected_output_sha256": output_expected_sha256,
+        },
+        "message": (
+            "批量筛选受体与最佳构象已通过 SHA256 核对并加载。"
+            if integrity_status == "verified"
+            else "历史批量筛选构象已加载，但缺少完成时输出 SHA256。"
+        ),
+        "warnings": integrity_warning,
+        "error": None,
+    }
+
+
+def load_archived_screening_pose_for_viewer(
+    project_dir: str,
+    archive_id: str,
+    item_id: str,
+    mode: int | None = None,
+) -> dict[str, Any]:
+    """Load one pose from a verified immutable screening archive."""
+
+    if not SCREENING_ITEM_ID_PATTERN.fullmatch(str(item_id or "")):
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_INVALID",
+            "批量筛选配体编号无效。",
+            file_kind="screening_archive_output",
+            raw_error=str(item_id),
+            suggestion="请从历史筛选完整结果表中选择配体。",
+        )
+    try:
+        selected_mode = int(mode) if mode is not None else 1
+    except (TypeError, ValueError):
+        selected_mode = 0
+    if selected_mode < 1 or selected_mode > 50:
+        return _viewer_error(
+            "VIEWER_SCREENING_MODE_INVALID",
+            "批量筛选构象编号必须在 1 到 50 之间。",
+            file_kind="screening_archive_output",
+            raw_error=repr(mode),
+        )
+
+    archived = get_screening_archive(project_dir, archive_id)
+    if not archived.get("ok"):
+        error = archived.get("error") if isinstance(archived.get("error"), dict) else {}
+        return _viewer_error(
+            "VIEWER_SCREENING_ARCHIVE_INVALID",
+            "批量筛选历史归档未通过读取校验。",
+            file_kind="screening_archive_output",
+            raw_error=(
+                f"{error.get('code') or 'SCREENING_ARCHIVE_READ_ERROR'}: "
+                f"{error.get('raw_error') or error.get('message') or 'unknown'}"
+            ),
+            suggestion="请从历史归档列表选择 valid=true 的记录。",
+        )
+    state = archived.get("screening")
+    files = archived.get("files")
+    if not isinstance(state, dict) or not isinstance(files, dict):
+        return _viewer_error(
+            "VIEWER_SCREENING_ARCHIVE_INVALID",
+            "批量筛选历史归档详情缺少状态或文件索引。",
+            file_kind="screening_archive_output",
+        )
+    item = next(
+        (
+            candidate
+            for candidate in state.get("items") or []
+            if isinstance(candidate, dict)
+            and str(candidate.get("item_id") or "") == item_id
+        ),
+        None,
+    )
+    if item is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_NOT_FOUND",
+            "所选历史筛选中没有找到该配体。",
+            file_kind="screening_archive_output",
+            raw_error=item_id,
+        )
+    if item.get("status") != "succeeded":
+        return _viewer_error(
+            "VIEWER_SCREENING_ITEM_NOT_SUCCEEDED",
+            "只有成功完成的历史筛选配体可以查看构象。",
+            file_kind="screening_archive_output",
+            raw_error=f"{item_id}: status={item.get('status')}",
+        )
+    output_relative = str(item.get("best_output_file") or "")
+    succeeded_attempt = next(
+        (
+            attempt
+            for attempt in reversed(item.get("attempts") or [])
+            if isinstance(attempt, dict)
+            and attempt.get("status") == "succeeded"
+            and str(attempt.get("output_file") or "") == output_relative
+        ),
+        None,
+    )
+    if not output_relative or succeeded_attempt is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_RECORD_INVALID",
+            "历史筛选配体缺少一致的成功输出记录。",
+            file_kind="screening_archive_output",
+            raw_error=item_id,
+        )
+
+    item_files = files.get("items") if isinstance(files.get("items"), dict) else {}
+    selected_files = (
+        item_files.get(item_id)
+        if isinstance(item_files.get(item_id), dict)
+        else {}
+    )
+    receptor_relative = str(files.get("receptor") or "")
+    relocated_output = str(selected_files.get("best_output") or "")
+    receptor_validation = validate_viewer_file(project_dir, receptor_relative)
+    if not receptor_validation.get("ok"):
+        receptor_validation["file_kind"] = "screening_archive_receptor"
+        return receptor_validation
+    output_validation = validate_viewer_file(project_dir, relocated_output)
+    if not output_validation.get("ok"):
+        output_validation["file_kind"] = "screening_archive_output"
+        return output_validation
+
+    receptor_path = Path(receptor_validation["absolute_path"])
+    output_path = Path(output_validation["absolute_path"])
+    receptor_record = (
+        state.get("inputs", {}).get("receptor", {})
+        if isinstance(state.get("inputs"), dict)
+        and isinstance(state.get("inputs", {}).get("receptor"), dict)
+        else {}
+    )
+    receptor_expected_hash = str(receptor_record.get("sha256") or "")
+    item_output_hash = str(item.get("best_output_sha256") or "")
+    attempt_output_hash = str(succeeded_attempt.get("output_sha256") or "")
+    if (
+        item_output_hash
+        and attempt_output_hash
+        and item_output_hash.lower() != attempt_output_hash.lower()
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_HASH_CONFLICT",
+            "历史筛选的配体与尝试记录保存了不同的输出 SHA256，已拒绝显示。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+        )
+    output_expected_hash = item_output_hash or attempt_output_hash
+
+    def recorded_size(value: Any) -> int:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            return -1
+        return parsed
+
+    receptor_expected_size = recorded_size(receptor_record.get("size_bytes"))
+    item_output_size = recorded_size(item.get("best_output_size_bytes"))
+    attempt_output_size = recorded_size(succeeded_attempt.get("output_size_bytes"))
+    if min(receptor_expected_size, item_output_size, attempt_output_size) < 0:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_SIZE_INVALID",
+            "历史筛选记录了无效的文件大小。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+        )
+    if (
+        item_output_size
+        and attempt_output_size
+        and item_output_size != attempt_output_size
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_SIZE_CONFLICT",
+            "历史筛选的配体与尝试记录保存了不同的输出文件大小，已拒绝显示。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+        )
+    output_expected_size = item_output_size or attempt_output_size
+    actual_receptor_size = receptor_path.stat().st_size
+    actual_output_size = output_path.stat().st_size
+    size_mismatches = [
+        label
+        for label, expected, actual in (
+            ("受体", receptor_expected_size, actual_receptor_size),
+            ("配体输出", output_expected_size, actual_output_size),
+        )
+        if expected and expected != actual
+    ]
+    if size_mismatches:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_SIZE_MISMATCH",
+            f"{'、'.join(size_mismatches)}大小与历史筛选记录不一致，已拒绝显示。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+        )
+
+    receptor_actual_hash = _viewer_sha256(receptor_path)
+    output_actual_hash = _viewer_sha256(output_path)
+    hash_mismatches = [
+        label
+        for label, expected, actual in (
+            ("受体", receptor_expected_hash, receptor_actual_hash),
+            ("配体输出", output_expected_hash, output_actual_hash),
+        )
+        if expected and expected.lower() != actual.lower()
+    ]
+    if hash_mismatches:
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_HASH_MISMATCH",
+            f"{'、'.join(hash_mismatches)} SHA256 与历史筛选记录不一致，已拒绝显示。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+            suggestion="请恢复原归档文件，或重新运行该批量筛选。",
+        )
+
+    try:
+        receptor_content = receptor_path.read_text(encoding="utf-8", errors="replace")
+        output_content = output_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:  # noqa: BLE001 - return a structured viewer error.
+        return _viewer_error(
+            "VIEWER_SCREENING_OUTPUT_READ_ERROR",
+            "读取历史筛选结构文件时发生错误。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+            raw_error=str(exc),
+        )
+    poses = _parse_pdbqt_poses(output_content)
+    selected = next(
+        (pose for pose in poses if int(pose["mode"]) == selected_mode),
+        None,
+    )
+    if selected is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_POSE_NOT_FOUND",
+            f"历史筛选输出中没有 Mode {selected_mode}。",
+            file_kind="screening_archive_output",
+            relative_path=relocated_output,
+        )
+    receptor_viewer_content, receptor_format, receptor_warnings = _viewer_content(
+        receptor_content,
+        str(receptor_validation["format"]),
+    )
+    pose_viewer_content, pose_format, pose_warnings = _viewer_content(
+        str(selected["content"]),
+        str(output_validation["format"]),
+    )
+    integrity_status = (
+        "verified"
+        if receptor_expected_hash and output_expected_hash
+        else "legacy_unverified"
+    )
+    integrity_warning = (
+        []
+        if integrity_status == "verified"
+        else ["历史归档没有保存完整输出 SHA256；文件可读但无法证明归档后未被替换。"]
+    )
+    label = str(item.get("display_label") or item_id)
+    receptor_result = ViewerStructureResult(
+        ok=True,
+        file_kind="screening_archive_receptor",
+        relative_path=receptor_relative,
+        absolute_path=str(receptor_path),
+        exists=True,
+        format=receptor_format,
+        content=receptor_viewer_content,
+        size_bytes=len(receptor_viewer_content.encode("utf-8")),
+        message="已读取历史筛选冻结的受体快照。",
+        warnings=receptor_warnings,
+        error=None,
+    ).to_dict()
+    pose_result = ViewerStructureResult(
+        ok=True,
+        file_kind="screening_archive_output",
+        relative_path=relocated_output,
+        absolute_path=str(output_path),
+        exists=True,
+        format=pose_format,
+        content=pose_viewer_content,
+        size_bytes=len(pose_viewer_content.encode("utf-8")),
+        message=f"已读取 {label} 的 Mode {selected_mode}。",
+        warnings=[*pose_warnings, *integrity_warning],
+        error=None,
+    ).to_dict() | {
+        "mode": selected_mode,
+        "pose_label": f"{label} Mode {selected_mode}",
+    }
+    return {
+        "ok": True,
+        "project_dir": str(Path(project_dir).expanduser().resolve()),
+        "archive_id": str(archive_id),
+        "screening_id": str(state.get("screening_id") or ""),
+        "item_id": item_id,
+        "display_label": label,
+        "source_file": str(item.get("source_file") or item.get("ligand_file") or ""),
+        "best_affinity_kcal_mol": item.get("best_affinity_kcal_mol"),
+        "available_modes": [int(pose["mode"]) for pose in poses],
+        "mode": selected_mode,
+        "receptor": receptor_result,
+        "pose": pose_result,
+        "integrity": {
+            "status": integrity_status,
+            "state": "verified",
+            "receptor_sha256": receptor_actual_hash,
+            "output_sha256": output_actual_hash,
+            "expected_receptor_sha256": receptor_expected_hash,
+            "expected_output_sha256": output_expected_hash,
+        },
+        "message": (
+            "历史筛选受体与最佳构象已通过状态和文件 SHA256 核对并加载。"
+            if integrity_status == "verified"
+            else "历史筛选构象已加载，但旧归档缺少完成时输出 SHA256。"
+        ),
+        "warnings": integrity_warning,
+        "error": None,
+    }
 
 
 def _parse_float_cell(value: Any) -> float | None:
@@ -921,8 +2211,17 @@ def list_docking_poses(project_dir: str, run_id: str) -> dict[str, Any]:
     }
 
 
-def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None = None) -> dict[str, Any]:
-    relative_path, path_error = _run_output_relative_path(project_dir, run_id)
+def load_docking_pose_for_viewer(
+    project_dir: str,
+    run_id: str,
+    mode: int | None = None,
+    pose_kind: str | None = None,
+) -> dict[str, Any]:
+    relative_path, pose_label, path_error = _run_evaluation_pose_relative_path(
+        project_dir,
+        run_id,
+        pose_kind,
+    )
     if path_error:
         return path_error
 
@@ -938,10 +2237,10 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
     if not poses:
         return _viewer_error(
             "VIEWER_POSE_NOT_FOUND",
-            "out.pdbqt 中没有可显示的 docking pose。",
+            f"{pose_label or '输出文件'}中没有可显示的姿势。",
             file_kind="docking_output",
             relative_path=relative_path,
-            suggestion="请确认 Vina 已成功生成非空 out.pdbqt。",
+            suggestion="请确认本次 run 的姿势文件存在且非空。",
         )
 
     selected_mode = int(mode) if mode is not None else int(poses[0]["mode"])
@@ -988,10 +2287,20 @@ def load_docking_pose_for_viewer(project_dir: str, run_id: str, mode: int | None
         format=viewer_format,
         content=viewer_content,
         size_bytes=len(viewer_content.encode("utf-8")),
-        message=f"已读取 docking pose mode {selected_mode}，仅用于几何查看。",
+        message=(
+            f"已读取{pose_label}，仅用于几何查看。"
+            if pose_label
+            else f"已读取 docking pose mode {selected_mode}，仅用于几何查看。"
+        ),
         warnings=[*score_summary.get("warnings", []), *viewer_warnings],
         error=None,
-    ).to_dict() | {"run_id": run_id, "mode": selected_mode, "score": selected_score}
+    ).to_dict() | {
+        "run_id": run_id,
+        "mode": selected_mode,
+        "pose_kind": str(pose_kind or ""),
+        "pose_label": pose_label,
+        "score": selected_score,
+    }
 
 
 def _print_json(payload: dict[str, Any]) -> None:
@@ -1016,6 +2325,69 @@ def main() -> None:
             _print_json(_viewer_error("VIEWER_LOAD_ARGS", "读取结构文件需要 project_dir 和 file_kind 参数。"))
             return
         _print_json(load_structure_for_viewer(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "load-screening-pose":
+        if len(sys.argv) < 4:
+            _print_json(
+                _viewer_error(
+                    "VIEWER_SCREENING_POSE_ARGS",
+                    "读取批量筛选构象需要 project_dir 和 item_id 参数。",
+                )
+            )
+            return
+        requested_mode: int | None = None
+        if len(sys.argv) >= 5:
+            try:
+                requested_mode = int(sys.argv[4])
+            except ValueError:
+                _print_json(
+                    _viewer_error(
+                        "VIEWER_SCREENING_MODE_INVALID",
+                        "批量筛选构象编号必须是整数。",
+                        raw_error=sys.argv[4],
+                    )
+                )
+                return
+        _print_json(
+            load_screening_pose_for_viewer(
+                sys.argv[2],
+                sys.argv[3],
+                requested_mode,
+            )
+        )
+        return
+
+    if command == "load-screening-archive-pose":
+        if len(sys.argv) < 5:
+            _print_json(
+                _viewer_error(
+                    "VIEWER_SCREENING_ARCHIVE_POSE_ARGS",
+                    "读取历史筛选构象需要 project_dir、archive_id 和 item_id 参数。",
+                )
+            )
+            return
+        requested_mode: int | None = None
+        if len(sys.argv) >= 6:
+            try:
+                requested_mode = int(sys.argv[5])
+            except ValueError:
+                _print_json(
+                    _viewer_error(
+                        "VIEWER_SCREENING_MODE_INVALID",
+                        "批量筛选构象编号必须是整数。",
+                        raw_error=sys.argv[5],
+                    )
+                )
+                return
+        _print_json(
+            load_archived_screening_pose_for_viewer(
+                sys.argv[2],
+                sys.argv[3],
+                sys.argv[4],
+                requested_mode,
+            )
+        )
         return
 
     if command == "box-visualization":
@@ -1044,12 +2416,32 @@ def main() -> None:
         _print_json(list_docking_poses(sys.argv[2], sys.argv[3]))
         return
 
+    if command == "load-local-pose-pair":
+        if len(sys.argv) < 4:
+            _print_json(
+                _viewer_error(
+                    "VIEWER_LOCAL_POSE_PAIR_ARGS",
+                    "读取 local_only 姿势叠合需要 project_dir 和 run_id 参数。",
+                )
+            )
+            return
+        _print_json(load_local_only_pose_pair_for_viewer(sys.argv[2], sys.argv[3]))
+        return
+
     if command == "load-pose":
         if len(sys.argv) < 4:
             _print_json(_viewer_error("VIEWER_POSE_LOAD_ARGS", "读取 docking pose 需要 project_dir 和 run_id 参数。"))
             return
         mode = int(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[4] else None
-        _print_json(load_docking_pose_for_viewer(sys.argv[2], sys.argv[3], mode))
+        pose_kind = sys.argv[5] if len(sys.argv) >= 6 and sys.argv[5] else None
+        _print_json(
+            load_docking_pose_for_viewer(
+                sys.argv[2],
+                sys.argv[3],
+                mode,
+                pose_kind,
+            )
+        )
         return
 
     if command == "score-summary":

@@ -1054,7 +1054,7 @@ export default function StructureFetchPage({
         if (!imported.ok) throw new Error(imported.error?.raw_error || imported.error?.message || "无法载入首个配体预览。");
         applyProjectResponse(imported, "多个配体已准备。", true, token);
         writeDockingWorkspaceMode(project.project_dir, "batch");
-        operationScope.commit(token, () => setMessage(`已准备 ${staged.staged?.length} 个配体并自动进入多配体模式；首个配体用于搜索范围预览。`));
+        operationScope.commit(token, () => setMessage(`已准备 ${staged.staged?.length} 个配体并自动进入串行批量筛选；首个配体用于搜索范围预览。也可在运行工作台明确选择多配体共同对接（实验性）。`));
         await refreshRawStatus(token, false);
         return;
       }

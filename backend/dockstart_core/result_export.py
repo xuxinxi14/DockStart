@@ -58,6 +58,13 @@ def _run_context(project_dir: str, run_id: str) -> tuple[Path, dict[str, Any], P
             "只有 finished 状态的对接结果可以导出 SDF。",
             suggestion="请先完成 Vina 运行与结果解析。",
         )
+    run_mode = str(metadata.get("run_mode") or "dock").strip().lower()
+    if run_mode == "score_only":
+        return _error(
+            "SCORE_ONLY_SDF_NOT_APPLICABLE",
+            "仅评分运行不会生成新构象，因此没有可导出的结果 SDF。",
+            suggestion="如需导出优化后结构，请使用局部优化；如需构象集合，请使用全局对接。",
+        )
     output_file = str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())
     relative = Path(output_file)
     if relative.is_absolute():

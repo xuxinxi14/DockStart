@@ -1,6 +1,7 @@
 import type { WorkflowStep, WorkflowStepState } from "../components/WorkflowStepper";
 import type { PageId } from "../navigation/pages";
-import type { DockStartProject, ProjectWorkflowStatusResponse } from "../types";
+import type { DockStartProject, ProjectWorkflowStatusResponse, VinaRunMode } from "../types";
+import { workflowRunForTask } from "./vinaTask";
 
 export type GuidedWorkflowStep = WorkflowStep & {
   targetPage: PageId;
@@ -28,6 +29,33 @@ function step(
   return { title, description, status, actionLabel, targetPage };
 }
 
+function runModeFor(
+  project: DockStartProject | null,
+  workflow: ProjectWorkflowStatusResponse | null,
+): VinaRunMode {
+  const projectMode = project?.docking_protocol?.run_mode;
+  const latestMode =
+    workflow?.latest_run_for_current_mode?.run_mode
+    ?? workflow?.latest_run?.run_mode;
+  const candidate =
+    projectMode === "score_only" || projectMode === "local_only" || projectMode === "dock"
+      ? projectMode
+      : latestMode;
+  return candidate === "score_only" || candidate === "local_only" ? candidate : "dock";
+}
+
+function runAutoboxFor(
+  project: DockStartProject | null,
+  workflow: ProjectWorkflowStatusResponse | null,
+  runMode: VinaRunMode,
+): boolean {
+  const projectAutobox = project?.docking_protocol?.autobox;
+  const latestAutobox = workflowRunForTask(workflow, runMode)?.autobox;
+  return typeof projectAutobox === "boolean"
+    ? projectAutobox
+    : latestAutobox === true;
+}
+
 export function buildWorkflowSteps(
   project: DockStartProject | null,
   workflow: ProjectWorkflowStatusResponse | null,
@@ -43,11 +71,66 @@ export function buildWorkflowSteps(
   const configReady = fileOk(workflow?.config?.status);
   const boxReady = workflow?.box?.status === "ok";
   const vinaReady = workflow?.vina?.status === "ok";
-  const latestRunStatus = String(workflow?.latest_run?.status ?? "");
-  const hasRun = Boolean(workflow?.latest_run);
+  const runMode = runModeFor(project, workflow);
+  const latestRunForMode = workflowRunForTask(workflow, runMode);
+  const latestRunStatus = String(latestRunForMode?.status ?? "");
+  const hasRun = Boolean(latestRunForMode);
   const hasFinishedRun = latestRunStatus === "finished";
   const hasFailedRun = latestRunStatus === "failed";
-  const canViewPose = Boolean(workflow?.viewer?.can_view_docking_output);
+  const isEvaluation = runMode !== "dock";
+  const isAd4Maps = project?.docking_protocol?.engine === "ad4_maps";
+  const autobox =
+    isEvaluation
+    && !isAd4Maps
+    && runAutoboxFor(project, workflow, runMode);
+  const effectiveBoxReady = autobox || boxReady;
+  const modeText =
+    runMode === "score_only"
+      ? {
+          rangeTitle: "选择评价范围",
+          rangeDescription: isAd4Maps
+            ? "当前使用已校验的 AutoDock4 maps 网格；该协议不启用 autobox。"
+            : autobox
+              ? "当前使用自动范围，由 Vina 围绕输入配体姿势建立评分网格。"
+              : "使用项目 Box 作为当前姿势的评价范围。",
+          rangeAction: autobox ? "查看自动范围" : "设置评价范围",
+          paramsDescription: "确认评分函数与 CPU；当前姿势评分不执行构象搜索。",
+          executeTitle: "评价当前姿势",
+          executeDescription: "评价当前输入姿势，并保存 stdout、stderr 与 log。",
+          executeAction: "开始姿势评分",
+          analyzeTitle: "解析评价结果",
+          analyzeDescription: "从 Vina log 提取能量项并生成 evaluation.json。",
+          reportDescription: "生成包含当前姿势评分、能量项与可复现记录的 Markdown 报告。",
+        }
+      : runMode === "local_only"
+        ? {
+            rangeTitle: "选择优化范围",
+            rangeDescription: isAd4Maps
+              ? "当前使用已校验的 AutoDock4 maps 网格；该协议不启用 autobox。"
+              : autobox
+                ? "当前使用自动范围，由 Vina 围绕输入配体姿势建立局部优化网格。"
+                : "使用项目 Box 作为局部优化范围。",
+            rangeAction: autobox ? "查看自动范围" : "设置优化范围",
+            paramsDescription: "确认评分函数与 CPU；局部优化不执行全局构象搜索。",
+            executeTitle: "开始局部优化",
+            executeDescription: "优化当前输入姿势，并保存优化后 PDBQT 与运行日志。",
+            executeAction: "开始局部优化",
+            analyzeTitle: "解析评价结果",
+            analyzeDescription: "从 Vina log 提取能量项并生成 evaluation.json。",
+            reportDescription: "生成包含局部优化评分、能量项与可复现记录的 Markdown 报告。",
+          }
+        : {
+            rangeTitle: "设置搜索范围",
+            rangeDescription: "设置对接箱体中心与尺寸。",
+            rangeAction: "设置搜索范围",
+            paramsDescription: "确认 exhaustiveness、num_modes、energy_range、cpu 和 seed。",
+            executeTitle: "开始对接",
+            executeDescription: "执行 AutoDock Vina 并保存 stdout、stderr、log 与 out.pdbqt。",
+            executeAction: "开始对接",
+            analyzeTitle: "解析结果",
+            analyzeDescription: "从 Vina log 解析构象评分并生成 scores.csv。",
+            reportDescription: "生成包含评分统计与可复现记录的 Markdown 报告。",
+          };
 
   const rawStatus: WorkflowStepState = !hasProject
     ? "blocked"
@@ -77,7 +160,7 @@ export function buildWorkflowSteps(
     ? "blocked"
     : configReady
       ? "done"
-      : receptorPrepared && ligandPrepared && boxReady && vinaReady
+      : receptorPrepared && ligandPrepared && effectiveBoxReady && vinaReady
         ? "available"
         : "blocked";
 
@@ -137,23 +220,37 @@ export function buildWorkflowSteps(
       "preparation",
     ),
     step(
-      "设置搜索范围",
-      "设置对接箱体中心与尺寸。",
-      !hasProject ? "blocked" : boxReady ? "done" : "available",
-      "设置搜索范围",
+      modeText.rangeTitle,
+      modeText.rangeDescription,
+      !hasProject ? "blocked" : effectiveBoxReady ? "done" : "available",
+      modeText.rangeAction,
       "run-prepare",
     ),
     step(
       "设置 Vina 参数",
-      "确认 exhaustiveness、num_modes、energy_range、cpu 和 seed。",
+      modeText.paramsDescription,
       !hasProject ? "blocked" : vinaReady ? "done" : "available",
       "设置参数",
       "run-prepare",
     ),
-    step("生成运行配置", "生成 configs/vina_config.txt。", configStatus, "生成运行配置", "run-prepare"),
+    step(
+      "生成运行配置",
+      isEvaluation
+        ? "生成与当前评价模式匹配的 configs/vina_config.txt。"
+        : "生成 configs/vina_config.txt。",
+      configStatus,
+      "生成运行配置",
+      "run-prepare",
+    ),
     step("创建运行记录", "保存运行编号、配置快照和命令预览。", runPrepareStatus, "创建运行记录", "run-prepare"),
-    step("开始对接", "执行 AutoDock Vina 并保存 stdout/stderr/log/out。", executeStatus, "开始对接", "run-execute"),
-    step("解析结果", "从 Vina log 解析 scores.csv。", resultStatus, "查看结果", "result"),
-    step("结果分析报告", "生成包含评分统计与可复现记录的 Markdown 报告。", resultStatus, "生成分析报告", "report"),
+    step(
+      modeText.executeTitle,
+      modeText.executeDescription,
+      executeStatus,
+      modeText.executeAction,
+      "run-execute",
+    ),
+    step(modeText.analyzeTitle, modeText.analyzeDescription, resultStatus, "查看结果", "result"),
+    step("结果分析报告", modeText.reportDescription, resultStatus, "生成分析报告", "report"),
   ];
 }

@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "fixture_id": "hydrated_1uw6_external",
+  "distribution": "metadata_only",
+  "contains_upstream_structure_files": false,
+  "purpose": "AutoDock Vina 1UW6 hydrated-ligand, W-map, AD4 docking, and retained-water postprocessing acceptance",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "tag": "v1.2.7",
+    "commit": "8eb40404f4f45608acb3b01427587ac049f27c1f",
+    "example_path": "example/hydrated_docking",
+    "data_path": "example/hydrated_docking/data",
+    "solution_path": "example/hydrated_docking/solution",
+    "license": "Apache-2.0",
+    "checkout_profile": {
+      "platform": "windows",
+      "working_tree_line_endings": "CRLF",
+      "git_setting": "core.autocrlf=true"
+    }
+  },
+  "required_files": {
+    "hydrated_ligand_input": {
+      "path": "example/hydrated_docking/solution/1uw6_ligandH.sdf",
+      "size_bytes": 3312,
+      "sha256": "6eb5375c4b3b01ec997b6417d130fdebaaf567c7bf006871dd39b77017a316dd"
+    },
+    "official_hydrated_ligand": {
+      "path": "example/hydrated_docking/solution/1uw6_ligand.pdbqt",
+      "size_bytes": 1448,
+      "sha256": "30d2171d0774d7d7cfc315c00a5176be3dc81a77addcbb98da019e3ecb65c667"
+    },
+    "receptor": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.pdbqt",
+      "size_bytes": 329589,
+      "sha256": "ba4814e8ef709e8b63fe8d09ee57d06a2963c89b6ae6c4bfd58259beb9c0d418"
+    },
+    "gpf": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.gpf",
+      "size_bytes": 816,
+      "sha256": "124e060d60b07cf4e97ee08add31a4cdbc4c000693760e5bec69fa6530fa73f1"
+    },
+    "map_A": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.A.map",
+      "size_bytes": 628327,
+      "sha256": "58bf67065674d263e58a9792b4db96aa8d29094ba31de627d554c68790dda9c6"
+    },
+    "map_C": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.C.map",
+      "size_bytes": 628554,
+      "sha256": "1d4b515acea20ef20db1ca270fc7a16e59a4d1a1058e244946e38e0f69f882e8"
+    },
+    "map_HD": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.HD.map",
+      "size_bytes": 559838,
+      "sha256": "c691f2c2d0a5cabf54b12029ae1c18e4a299b984825eff5a2f34cba1b17e8d1e"
+    },
+    "map_N": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.N.map",
+      "size_bytes": 612438,
+      "sha256": "edb3c1e3e9cfd34d84b6c2dbffe383756b91d33e11ae74c809c93f39d98dbed8"
+    },
+    "map_NA": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.NA.map",
+      "size_bytes": 612956,
+      "sha256": "1eba7bbe62607c03da1eece99bfdf2251077f742a9ba1f5fb98aaff8158fb42c"
+    },
+    "map_OA": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.OA.map",
+      "size_bytes": 606273,
+      "sha256": "d73d109fb66f46834b301990faf2b96d0ad49c1718af29a23c8447b234838f17"
+    },
+    "map_W": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.W.map",
+      "size_bytes": 620467,
+      "sha256": "9f87090a86da2f33d364ed3ab6f946ed234145e55feb3222690d7d95886e9be8"
+    },
+    "map_d": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.d.map",
+      "size_bytes": 482625,
+      "sha256": "7b23859d9233823e5bbaf41b63458ba03b74a793cc1ea22e60cf7d790508143d"
+    },
+    "map_e": {
+      "path": "example/hydrated_docking/solution/1uw6_receptor.e.map",
+      "size_bytes": 543826,
+      "sha256": "137f956d518dd046a9efd00c138b6942e27aac3f66814354d812c22f8e3bf6e7"
+    },
+    "official_raw_output": {
+      "path": "example/hydrated_docking/solution/1uw6_ligand_ad4_out.pdbqt",
+      "size_bytes": 15417,
+      "sha256": "07bd8c280a0dd0be4b149f59fa1e629673db1b946754c880952c1e1cdcfa9651"
+    }
+  },
+  "expected": {
+    "meeko": {
+      "validated_version": "0.7.1",
+      "hydrated_ligand_sha256": "30d2171d0774d7d7cfc315c00a5176be3dc81a77addcbb98da019e3ecb65c667",
+      "water_atom_count": 2
+    },
+    "water_map": {
+      "algorithm": "BEST",
+      "weight": 0.6,
+      "oxygen_weight": 1.0,
+      "hydrogen_weight": 1.0,
+      "entropy": -0.2,
+      "sha256": "9f87090a86da2f33d364ed3ab6f946ed234145e55feb3222690d7d95886e9be8",
+      "value_count": 68921
+    },
+    "vina": {
+      "validated_version": "1.2.7",
+      "scoring": "ad4",
+      "exhaustiveness": 32,
+      "num_modes": 9,
+      "minimum_output_modes": 1,
+      "energy_range": 3,
+      "cpu": 1,
+      "seed": 1952347903,
+      "best_affinity": -8.261,
+      "affinity_tolerance": 0.05,
+      "water_atoms_per_raw_pose": 2
+    },
+    "postprocess": {
+      "clean_room": {
+        "semantics": "final_pdbqt_type_W_with_overlap_filters_and_true_autogrid_origin",
+        "raw_water_count": 18,
+        "strong_water_count": 8,
+        "weak_water_count": 1,
+        "displaced_water_count": 9,
+        "retained_by_mode": [
+          1,
+          1,
+          0,
+          1,
+          1,
+          1,
+          1,
+          2,
+          1
+        ],
+        "raw_affinity_must_remain_unchanged": true
+      },
+      "upstream_legacy_reference": {
+        "semantics": "autodock_vina_v1_2_7_dry_py_documented_output",
+        "raw_water_count": 18,
+        "strong_water_count": 7,
+        "weak_water_count": 4,
+        "displaced_water_count": 7,
+        "retained_by_mode": [
+          1,
+          1,
+          0,
+          1,
+          2,
+          1,
+          2,
+          2,
+          1
+        ],
+        "compatibility_notes": [
+          "dry.py overlap filters recognize atom name W, while the 1UW6 waters are named WAT and have final PDBQT type W",
+          "dry.py derives the lookup origin from NELEMENTS plus one, shifting it by half a grid spacing"
+        ]
+      }
+    }
+  }
+}

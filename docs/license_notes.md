@@ -65,7 +65,8 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 | Meeko | ligand/receptor PDBQT 准备 | LGPL-2.1；wheel classifier 为 LGPLv2+ | Basic 为外部包；Assisted 为独立可替换 bundled 包 | 仅 Assisted | Basic 需要，Assisted 不需要 |
 | RDKit | ligand SDF/MOL 读取并配合 Meeko 准备 PDBQT | BSD-3-Clause | Basic 为外部包；Assisted 为独立 bundled 包 | 仅 Assisted | Basic 需要，Assisted 不需要 |
 | 3Dmol.js | 结构查看与 Box / docking pose 几何可视化 | BSD-3-Clause | npm 前端依赖 `3dmol`，由 Vite 打包进桌面端，不使用外部 CDN | 是 | 否 |
-| AutoGrid4 4.2.6 | 生成 AutoDock4 affinity maps | GNU GPL | 外部命令行工具；仅从用户配置路径或 PATH 检测，通过 adapter 参数数组调用 | 否 | 是，仅 AutoDock4 maps 协议 |
+| AutoGrid4 4.2.6+ | 生成 AutoDock4 affinity maps；AD4Zn beta 要求 4.2.7 或更高版本 | GNU GPL | 外部命令行工具；仅从用户配置路径或 PATH 检测，通过 adapter 参数数组调用 | 否 | 是，仅 AutoDock4 maps / AD4Zn 协议 |
+| `AD4Zn.dat` | AD4Zn 专用 AutoGrid 非键参数 | GPL-2.0-or-later（文件头声明） | 用户从 AutoDock Vina v1.2.7 上游参考自行取得并在项目中选择；DockStart 复制到用户项目，记录本机来源路径、SHA256、许可证 ID、支持配置和上游参考 | 否 | 是，仅 AD4Zn beta |
 
 ### v0.12.0 AutoGrid4 结论
 
@@ -75,6 +76,23 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 - 用户自行取得 AutoGrid4 后，可在本机设置中配置路径；
 - DockStart 只保存用户运行产生的 GPF、GLG、maps 和可复现 manifest；
 - 随包的 AutoDock Vina 1.2.7 保持 Apache-2.0 分发，用于读取 maps 并执行 AD4 评分。
+
+### 当前源码 AD4Zn beta 的参数文件边界
+
+- AD4Zn beta 复用用户自行安装的 AutoGrid4，但硬性要求 AutoGrid4 4.2.7 或更高版本；标准 v0.12.0 AutoDock4 maps 工作流的 4.2.6 基线不等于满足 AD4Zn 门禁；
+- `AD4Zn.dat` 文件自身在文件头声明 GPL-2.0-or-later。它与 AutoDock Vina 仓库整体的 Apache-2.0 许可边界不同，不能仅按仓库级许可证处理；
+- DockStart 不在 Git、Basic 或 Assisted 资源中内置或重新分发 `AD4Zn.dat`，也不会静默下载。用户应从固定的 AutoDock Vina v1.2.7 根数据路径取得：<https://github.com/ccsb-scripps/AutoDock-Vina/blob/v1.2.7/data/AD4Zn.dat>；
+- 用户明确选择文件后，DockStart 会为可复现性把它复制到用户项目、maps 和 run 快照，并记录本机来源路径、文件 SHA256、GPL-2.0-or-later、受支持参数配置和固定上游参考；分享含该副本的项目时，分享者需要自行履行 GPL 再分发义务。这不改变 DockStart 自有 Apache-2.0 代码的许可证；
+- 若未来提供应用内下载、离线组件包或随包分发，必须先单独完成 GPL 源码提供、notice、修改说明和再分发方案审查，不能沿用当前“用户提供”结论；
+- 以上能力目前只存在于源码工作树，尚未重新打包或进入正式 Release。现有 v0.12.0 Basic/Assisted 安装包不包含 AD4Zn beta，也不包含 `AD4Zn.dat`。
+
+### 当前源码多配体共同对接的依赖边界
+
+- “多配体共同对接（实验性）”复用现有 AutoDock Vina 命令行适配器、PDBQT 输入、项目后端和 3Dmol.js，不引入新的 Python 包、Rust crate、npm 包或外部科研工具；
+- 最低运行门槛为 AutoDock Vina 1.2.0；Basic/Assisted 已有的 AutoDock Vina 1.2.7 仍按 Apache-2.0 分发，联合对接不会改变其许可证或分发方式；
+- 命令使用一个 `--ligand` 后跟两个用户已准备 PDBQT 路径，不复制第三方算法源码，也不修改 AutoDock Vina 的评分函数；
+- 2026-07-28 的官方 5X72 源码级验收只在临时目录取得并使用 AutoDock Vina 上游示例输入，未把这些文件提交到仓库或安装包；如果将来提交或分发任何示例文件，必须像其他科学夹具一样记录精确上游路径、版本、SHA256、用途和许可证，不能因它来自官方示例而省略来源记录；
+- 该能力目前只属于 v0.12.2 源码实验性闭环，尚未重新打包或进入正式 Release；现有 v0.12.0 Basic/Assisted 安装包不包含该入口。
 
 ### 科学回归夹具
 
@@ -94,6 +112,7 @@ Open Babel；DockStart 仍不提供 Open Babel adapter，发布包也不包含�
 | --- | --- | --- |
 | AutoDock Vina | Basic/Assisted 已随包 | 继续保留许可证文本、版本、来源和修改说明 |
 | AutoGrid4 | 外部可选，不随包 | 保持 adapter 边界；若未来考虑分发，必须重新做 GPL 法律与源码提供方案审查 |
+| AD4Zn.dat | 用户提供，不随包 | 校验受支持的 v1.2.7 关键参数，记录本机来源、SHA256、许可证 ID 与固定上游参考；任何应用内下载或随包分发方案都需重新审查 GPL-2.0-or-later 边界 |
 | RDKit | Assisted 已随包 | 继续保留许可证文本、依赖说明和 wheel 来源；升级需重跑门禁 |
 | Meeko | Assisted 已随包 | 保持独立可替换、提供对应源码；修改或冻结前重新审查 LGPL |
 | Python 运行时 | Basic/Assisted 已随包 | 保留 Python 许可证、版本、来源和 SHA256；仓库不提交 runtime 二进制 |

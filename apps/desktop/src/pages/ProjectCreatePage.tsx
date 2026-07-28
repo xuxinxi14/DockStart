@@ -6,16 +6,24 @@ import AdvancedDetails from "../components/AdvancedDetails";
 import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import PathInput from "../components/PathInput";
-import type { PageId, StartMode } from "../navigation/pages";
+import type { PageId, ProjectTaskIntent, StartMode } from "../navigation/pages";
 import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 import { writeDockingWorkspaceMode } from "../utils/dockingMode";
+import {
+  effectiveProjectTaskIntent,
+  projectCreateProtocol,
+  projectTaskOptions,
+  taskIntentLabel,
+} from "../utils/vinaTask";
 
 type ProjectCreatePageProps = {
   openExistingRequestKey?: number;
   startMode: StartMode;
+  taskIntent: ProjectTaskIntent;
   onBack: () => void;
   onCreated: (project: DockStartProject, nextPage: PageId, runId?: string) => void;
   onStartModeChange: (mode: StartMode) => void;
+  onTaskIntentChange: (intent: ProjectTaskIntent) => void;
 };
 
 type ModeConfig = {
@@ -25,6 +33,14 @@ type ModeConfig = {
   currentPath: string;
   nextStep: string;
   requirement: string;
+};
+
+type TaskCreateCopy = {
+  title: string;
+  subtitle: string;
+  primaryLabel: string;
+  currentPath: string;
+  nextStep: string;
 };
 
 type AssistedSource = "online" | "local";
@@ -39,18 +55,18 @@ function projectModePanelId(mode: StartMode) {
 }
 
 const modeOptions: Array<{ id: StartMode; label: string; controlsId: string }> = [
-  { id: "basic", label: "已有 PDBQT（直接对接）", controlsId: projectModePanelId("basic") },
+  { id: "basic", label: "已有 PDBQT（直接使用）", controlsId: projectModePanelId("basic") },
   { id: "assisted", label: "PDB/CIF + SDF/MOL（准备并转换）", controlsId: projectModePanelId("assisted") },
   { id: "demo", label: "示例项目（快速体验）", controlsId: projectModePanelId("demo") },
 ];
 
 const modeConfig: Record<StartMode, ModeConfig> = {
   basic: {
-    title: "使用已有 PDBQT 直接开始对接",
-    subtitle: "适合已经准备好受体与配体 PDBQT 的用户；导入后直接设置搜索范围。",
+    title: "使用已有 PDBQT 开始运行",
+    subtitle: "适合已经准备好受体与配体 PDBQT 的用户；导入后按本次任务继续配置。",
     primaryLabel: "创建项目并导入 PDBQT",
     currentPath: "已有 PDBQT",
-    nextStep: "复核两个 PDBQT 文件",
+    nextStep: "复核输入结构",
     requirement: "AutoDock Vina",
   },
   assisted: {
@@ -70,6 +86,43 @@ const modeConfig: Record<StartMode, ModeConfig> = {
     requirement: "示例项目资源",
   },
 };
+
+function taskCreateCopy(startMode: StartMode, taskIntent: ProjectTaskIntent): TaskCreateCopy | null {
+  if (startMode === "demo") return null;
+  if (taskIntent === "score_only") {
+    return {
+      title: startMode === "basic"
+        ? "使用已有 PDBQT 评价当前姿势"
+        : "准备结构后评价当前姿势",
+      subtitle: "受体与配体需要处在同一坐标系。Vina 将评价输入姿势，不执行构象或新位点搜索。",
+      primaryLabel: startMode === "basic"
+        ? "创建项目并导入待评分姿势"
+        : "创建项目并准备待评分姿势",
+      currentPath: startMode === "basic" ? "已有 PDBQT → 姿势评分" : "原始结构 → PDBQT → 姿势评分",
+      nextStep: startMode === "basic" ? "复核坐标系并设置评分参数" : "获取结构并完成格式转换",
+    };
+  }
+  if (taskIntent === "local_only") {
+    return {
+      title: startMode === "basic"
+        ? "使用已有 PDBQT 局部优化当前姿势"
+        : "准备结构后局部优化当前姿势",
+      subtitle: "受体与配体需要处在同一坐标系。Vina 将从输入姿势附近优化，不执行全局位点搜索。",
+      primaryLabel: startMode === "basic"
+        ? "创建项目并导入待优化姿势"
+        : "创建项目并准备待优化姿势",
+      currentPath: startMode === "basic" ? "已有 PDBQT → 局部优化" : "原始结构 → PDBQT → 局部优化",
+      nextStep: startMode === "basic" ? "复核坐标系并设置优化参数" : "获取结构并完成格式转换",
+    };
+  }
+  return {
+    title: modeConfig[startMode].title,
+    subtitle: modeConfig[startMode].subtitle,
+    primaryLabel: modeConfig[startMode].primaryLabel,
+    currentPath: modeConfig[startMode].currentPath,
+    nextStep: modeConfig[startMode].nextStep,
+  };
+}
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectResponse>;
@@ -163,9 +216,11 @@ function projectFromResponse(response: ProjectResponse, fallbackMessage: string)
 export default function ProjectCreatePage({
   openExistingRequestKey = 0,
   startMode,
+  taskIntent,
   onBack,
   onCreated,
   onStartModeChange,
+  onTaskIntentChange,
 }: ProjectCreatePageProps) {
   const [projectName, setProjectName] = useState("demo_project");
   const [baseDir, setBaseDir] = useState("");
@@ -183,7 +238,18 @@ export default function ProjectCreatePage({
   const [demos, setDemos] = useState<DemoProjectsResponse["demos"]>([]);
 
   const currentConfig = modeConfig[startMode];
+  const effectiveTaskIntent = effectiveProjectTaskIntent(startMode, taskIntent);
+  const isEvaluationTask = effectiveTaskIntent !== "dock";
+  const selectedTask = projectTaskOptions.find((option) => option.id === effectiveTaskIntent)
+    ?? projectTaskOptions[0];
+  const currentTaskCopy = taskCreateCopy(startMode, effectiveTaskIntent);
   const activeModeIndex = Math.max(0, modeOptions.findIndex((option) => option.id === startMode));
+
+  useEffect(() => {
+    if (startMode === "assisted" && isEvaluationTask && assistedSource === "online") {
+      setAssistedSource("local");
+    }
+  }, [assistedSource, isEvaluationTask, startMode]);
 
   useEffect(() => {
     async function loadDefaultProjectDir() {
@@ -224,7 +290,7 @@ export default function ProjectCreatePage({
 
   const runProjectCommand = async (
     command: string,
-    payload: Record<string, string>,
+    payload: Record<string, unknown>,
     fallbackMessage: string,
   ): Promise<DockStartProject> => {
     const rawPayload = await invoke<string>(command, payload);
@@ -233,6 +299,17 @@ export default function ProjectCreatePage({
   };
 
   const createProject = useCallback(async () => {
+    if (
+      startMode === "assisted"
+      && isEvaluationTask
+      && assistedSource !== "local"
+    ) {
+      resetFeedback();
+      setMessage(
+        "姿势评分与局部优化需要导入与受体处在同一坐标系中的本地结构，不能使用独立的在线 PubChem 构象。",
+      );
+      return;
+    }
     setIsBusy(true);
     setBusyOperation({
       title: "正在创建项目",
@@ -247,6 +324,20 @@ export default function ProjectCreatePage({
         "项目创建失败。",
       );
       createdProjectDir = project.project_dir;
+      const taskProtocol = projectCreateProtocol(startMode, taskIntent);
+      project = await runProjectCommand(
+        "update_vina_run_protocol",
+        {
+          projectDir: project.project_dir,
+          runMode: taskProtocol.runMode,
+          autobox: taskProtocol.autobox,
+          confirmPoseContext: taskProtocol.confirmPoseContext,
+        },
+        "运行任务类型保存失败。",
+      );
+      if (taskProtocol.workspaceMode) {
+        writeDockingWorkspaceMode(project.project_dir, taskProtocol.workspaceMode);
+      }
 
       if (startMode === "basic") {
         setBusyOperation({
@@ -263,7 +354,7 @@ export default function ProjectCreatePage({
           { projectDir: project.project_dir, sourcePath: ligandPdbqtPaths[0] ?? "" },
           "配体 PDBQT 导入失败。",
         );
-        if (ligandPdbqtPaths.length > 1) {
+        if (taskProtocol.runMode === "dock" && ligandPdbqtPaths.length > 1) {
           const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
             projectDir: project.project_dir,
             files: ligandPdbqtPaths,
@@ -271,11 +362,14 @@ export default function ProjectCreatePage({
           if (!staged.ok) throw new Error(staged.error?.message || "多配体导入失败。");
           writeDockingWorkspaceMode(project.project_dir, "batch");
         }
-        onCreated(project, "import-pdbqt");
+        onCreated(project, taskProtocol.runMode === "dock" ? "import-pdbqt" : "run-prepare");
         return;
       }
 
       if (startMode === "assisted") {
+        if (isEvaluationTask && assistedSource === "online") {
+          throw new Error("姿势评分与局部优化不能使用独立的在线 PubChem 配体构象；请导入与受体处在同一坐标系中的本地原始结构。");
+        }
         if (assistedSource === "online") {
           onCreated(project, "structure-fetch");
           return;
@@ -289,7 +383,7 @@ export default function ProjectCreatePage({
           { projectDir: project.project_dir, sourcePath: receptorRawPath },
           "受体结构文件导入失败。",
         );
-        if (ligandRawPaths.length > 1) {
+        if (taskProtocol.runMode === "dock" && ligandRawPaths.length > 1) {
           const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
             projectDir: project.project_dir,
             files: ligandRawPaths,
@@ -334,7 +428,9 @@ export default function ProjectCreatePage({
     projectName,
     receptorPdbqtPath,
     receptorRawPath,
+    isEvaluationTask,
     startMode,
+    taskIntent,
   ]);
 
   const handledOpenRequestRef = useRef(0);
@@ -417,11 +513,13 @@ export default function ProjectCreatePage({
     }
   }, [baseDir]);
 
-  const pickLigandFiles = useCallback(async (kind: "pdbqt" | "raw") => {
+  const pickLigandFiles = useCallback(async (kind: "pdbqt" | "raw", single = false) => {
     const selected = await open({
       directory: false,
-      multiple: true,
-      title: kind === "pdbqt" ? "选择一个或多个配体 PDBQT" : "选择一个或多个配体 SDF / MOL",
+      multiple: !single,
+      title: kind === "pdbqt"
+        ? single ? "选择一个配体 PDBQT" : "选择一个或多个配体 PDBQT"
+        : single ? "选择一个配体 SDF / MOL" : "选择一个或多个配体 SDF / MOL",
       filters: [kind === "pdbqt"
         ? { name: "AutoDock PDBQT", extensions: ["pdbqt"] }
         : { name: "Ligand structure", extensions: ["sdf", "mol"] }],
@@ -467,12 +565,25 @@ export default function ProjectCreatePage({
   );
 
   const canCreateBasic = Boolean(
-    projectName.trim() && baseDir.trim() && receptorPdbqtPath.trim() && ligandPdbqtPaths.length,
+    projectName.trim()
+      && baseDir.trim()
+      && receptorPdbqtPath.trim()
+      && ligandPdbqtPaths.length
+      && (!isEvaluationTask || ligandPdbqtPaths.length === 1),
   );
   const canCreateAssisted = Boolean(
     projectName.trim()
       && baseDir.trim()
-      && (assistedSource === "online" || (receptorRawPath.trim() && ligandRawPaths.length)),
+      && (
+        (!isEvaluationTask && assistedSource === "online")
+        || (
+          assistedSource === "local"
+          &&
+          receptorRawPath.trim()
+          && ligandRawPaths.length
+          && (!isEvaluationTask || ligandRawPaths.length === 1)
+        )
+      ),
   );
   const canCreate = startMode === "basic" ? canCreateBasic : canCreateAssisted;
 
@@ -533,8 +644,10 @@ export default function ProjectCreatePage({
         <div className="main-panel-section-header">
           <h2>项目信息</h2>
           <p>
-            {startMode === "basic"
-              ? "选择项目保存位置，并导入已经准备好的受体和配体 PDBQT。"
+            {isEvaluationTask
+              ? "选择项目保存位置，并提供处在同一受体坐标系中的受体与配体结构。"
+              : startMode === "basic"
+                ? "选择项目保存位置，并导入已经准备好的受体和配体 PDBQT。"
               : "先选择在线获取或本地导入；原始结构随后会准备并转换为 PDBQT。"}
           </p>
         </div>
@@ -580,10 +693,26 @@ export default function ProjectCreatePage({
               <div className="form-field" data-layout="form-row">
                 <label>配体 PDBQT 文件</label>
                 <div className="multi-ligand-file-picker">
-                  <ActionButton onClick={() => void pickLigandFiles("pdbqt")}>选择一个或多个 PDBQT</ActionButton>
-                  <span>{ligandPdbqtPaths.length ? `已选择 ${ligandPdbqtPaths.length} 个；${ligandPdbqtPaths.length > 1 ? "将进入多配体模式" : "将进入单配体模式"}` : "尚未选择"}</span>
+                  <ActionButton onClick={() => void pickLigandFiles("pdbqt", isEvaluationTask)}>
+                    {isEvaluationTask ? "选择一个配体 PDBQT" : "选择一个或多个 PDBQT"}
+                  </ActionButton>
+                  <span>
+                    {ligandPdbqtPaths.length
+                      ? isEvaluationTask
+                        ? ligandPdbqtPaths.length === 1
+                          ? "已选择 1 个待评价姿势"
+                          : "姿势评分与局部优化一次只能使用一个配体"
+                        : `已选择 ${ligandPdbqtPaths.length} 个；${ligandPdbqtPaths.length > 1 ? "将默认进入串行批量筛选" : "将进入单配体任务"}`
+                      : "尚未选择"}
+                  </span>
                 </div>
               </div>
+              {isEvaluationTask ? (
+                <div className="pose-context-note" role="note">
+                  <strong>坐标系要求</strong>
+                  <p>配体应已位于当前受体中的待评价位置；{selectedTask.label}不会搜索新的结合位点。</p>
+                </div>
+              ) : null}
             </>
           ) : (
             <>
@@ -593,12 +722,17 @@ export default function ProjectCreatePage({
                   <button
                     aria-pressed={assistedSource === "online"}
                     className={assistedSource === "online" ? "selected" : ""}
+                    disabled={isEvaluationTask}
                     onClick={() => setAssistedSource("online")}
                     type="button"
                   >
                     <strong>在线搜索并下载</strong>
                     <span>受体使用 RCSB PDB ID；配体使用 PubChem CID 或名称。需要联网。</span>
-                    <small>适合还没有原始结构文件</small>
+                    <small>
+                      {isEvaluationTask
+                        ? "不适用于姿势评价：独立 PubChem 构象不在受体坐标系中"
+                        : "适合还没有原始结构文件"}
+                    </small>
                   </button>
                   <button
                     aria-pressed={assistedSource === "local"}
@@ -631,10 +765,26 @@ export default function ProjectCreatePage({
                   <div className="form-field" data-layout="form-row">
                     <label>配体原始结构：SDF / MOL</label>
                     <div className="multi-ligand-file-picker">
-                      <ActionButton onClick={() => void pickLigandFiles("raw")}>选择一个或多个 SDF / MOL</ActionButton>
-                      <span>{ligandRawPaths.length ? `已选择 ${ligandRawPaths.length} 个；${ligandRawPaths.length > 1 ? "将自动准备并进入多配体模式" : "将进入单配体准备"}` : "尚未选择"}</span>
+                      <ActionButton onClick={() => void pickLigandFiles("raw", isEvaluationTask)}>
+                        {isEvaluationTask ? "选择一个配体 SDF / MOL" : "选择一个或多个 SDF / MOL"}
+                      </ActionButton>
+                      <span>
+                        {ligandRawPaths.length
+                          ? isEvaluationTask
+                            ? ligandRawPaths.length === 1
+                              ? "已选择 1 个待评价结构"
+                              : "姿势评分与局部优化一次只能使用一个配体"
+                            : `已选择 ${ligandRawPaths.length} 个；${ligandRawPaths.length > 1 ? "将自动准备并默认进入串行批量筛选" : "将进入单配体准备"}`
+                          : "尚未选择"}
+                      </span>
                     </div>
                   </div>
+                  {isEvaluationTask ? (
+                    <div className="pose-context-note" role="note">
+                      <strong>准备后仍需复核坐标</strong>
+                      <p>格式准备可能改变配体坐标或构象。进入运行工作台前，请确认准备后的配体仍位于受体中的目标位置。</p>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <div className="assisted-online-note" role="note">
@@ -650,8 +800,12 @@ export default function ProjectCreatePage({
               {isBusy
                 ? "处理中..."
                 : startMode === "assisted" && assistedSource === "online"
-                  ? "创建项目并在线获取结构"
-                  : currentConfig.primaryLabel}
+                  ? isEvaluationTask
+                    ? effectiveTaskIntent === "score_only"
+                      ? "创建项目并获取待评分结构"
+                      : "创建项目并获取待优化结构"
+                    : "创建项目并在线获取结构"
+                  : currentTaskCopy?.primaryLabel ?? currentConfig.primaryLabel}
             </ActionButton>
           </div>
         </div>
@@ -669,9 +823,9 @@ export default function ProjectCreatePage({
       />
       <PageHero
         eyebrow="项目"
-        title={currentConfig.title}
+        title={currentTaskCopy?.title ?? currentConfig.title}
         titleId="project-create-title"
-        description={currentConfig.subtitle}
+        description={currentTaskCopy?.subtitle ?? currentConfig.subtitle}
         actions={
           <>
           <ActionButton variant="text" onClick={() => void pickAndLoadExistingProject()}>
@@ -694,6 +848,38 @@ export default function ProjectCreatePage({
             }}
             options={modeOptions}
           />
+          {startMode !== "demo" ? (
+            <fieldset className="project-task-intent-picker">
+              <legend>本次任务</legend>
+              <div className="project-task-intent-options">
+                {projectTaskOptions.map((option) => {
+                  const descriptionId = `project-task-${option.id}-description`;
+                  return (
+                    <label
+                      className={effectiveTaskIntent === option.id ? "selected" : ""}
+                      key={option.id}
+                    >
+                      <input
+                        aria-describedby={descriptionId}
+                        checked={effectiveTaskIntent === option.id}
+                        name="project-task-intent"
+                        onChange={() => {
+                          resetFeedback();
+                          onTaskIntentChange(option.id);
+                        }}
+                        type="radio"
+                        value={option.id}
+                      />
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small id={descriptionId}>{option.description}</small>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
           {modeOptions.map((option, index) =>
             option.id === startMode ? null : (
               <div
@@ -759,8 +945,8 @@ export default function ProjectCreatePage({
                 <dt>当前路径</dt>
                 <dd>
                   {startMode === "assisted"
-                    ? assistedSource === "online" ? "在线获取 → PDBQT" : "本地文件 → PDBQT"
-                    : currentConfig.currentPath}
+                    ? `${assistedSource === "online" ? "在线获取" : "本地文件"} → PDBQT${isEvaluationTask ? ` → ${selectedTask.label}` : ""}`
+                    : currentTaskCopy?.currentPath ?? currentConfig.currentPath}
                 </dd>
               </div>
               <div>
@@ -768,9 +954,15 @@ export default function ProjectCreatePage({
                 <dd>
                   {startMode === "assisted" && assistedSource === "online"
                     ? "搜索或导入原始结构"
-                    : currentConfig.nextStep}
+                    : currentTaskCopy?.nextStep ?? currentConfig.nextStep}
                 </dd>
               </div>
+              {startMode !== "demo" ? (
+                <div>
+                  <dt>本次任务</dt>
+                  <dd>{taskIntentLabel(effectiveTaskIntent)}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>需要</dt>
                 <dd>{currentConfig.requirement}</dd>

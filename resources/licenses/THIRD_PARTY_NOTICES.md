@@ -110,6 +110,26 @@ maps. Upstream AutoGrid4 4.2.6 is GPL-licensed; users obtain and install it
 separately. No AutoGrid4 binary, installer, parameter data, or GPL source is
 included in this package.
 
+## External AD4Zn parameter file
+
+The current source tree contains an unreleased AD4Zn beta workflow, but the
+v0.12.0 Basic and Assisted packages do not contain that workflow or its parameter
+file. AD4Zn requires AutoGrid4 4.2.7 or later and a user-provided `AD4Zn.dat`.
+The upstream file itself declares GPL-2.0-or-later in its header, even though the
+AutoDock Vina repository is generally Apache-2.0 licensed. DockStart does not
+commit or bundle `AD4Zn.dat` in its repository or installers and does not
+download it automatically.
+
+Users obtain the fixed v1.2.7 file separately from
+`https://github.com/ccsb-scripps/AutoDock-Vina/blob/v1.2.7/data/AD4Zn.dat`.
+When explicitly selected, DockStart copies the file into the user's project and
+later run snapshots for reproducibility. It records the local source path,
+observed SHA256, GPL-2.0-or-later identifier, supported parameter profile, and
+fixed upstream reference. A user who shares a project containing this copy is
+responsible for the corresponding GPL redistribution obligations. Any future
+in-app download or bundled distribution requires a separate GPL compliance
+review.
+
 ## Generated production dependency bundle
 
 Every Basic and Assisted Windows release also contains the target-specific

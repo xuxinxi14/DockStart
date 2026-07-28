@@ -11,6 +11,7 @@ import {
   FolderOpen,
   HardDrives,
   Play,
+  ShieldCheck,
   SpinnerGap,
   Stop,
   WarningCircle,
@@ -21,6 +22,7 @@ import AdvancedDetails from "../components/AdvancedDetails";
 import AutoGridMapsPanel from "../components/AutoGridMapsPanel";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
 import FlexibleReceptorPanel from "../components/FlexibleReceptorPanel";
+import MultiLigandDockingPanel from "../components/MultiLigandDockingPanel";
 import RunBoxInspector, {
   type RunAxisSpacing,
   type RunBoxFieldKey,
@@ -36,6 +38,8 @@ import type {
   RunPreflightCheck,
   RunPreflightResponse,
   RunRuntimeStatusResponse,
+  VinaCliCapabilities,
+  VinaRunMode,
 } from "../types";
 import {
   cancelQueuedBackgroundTask,
@@ -45,6 +49,23 @@ import {
   type BackgroundTaskStatus,
 } from "../utils/backgroundTasks";
 import { readDockingWorkspaceMode, writeDockingWorkspaceMode, type DockingWorkspaceMode } from "../utils/dockingMode";
+import { multipleLigandCompatibilityIssues } from "../utils/multipleLigandSelection";
+import {
+  customizedAdvancedVinaCount,
+  getApplicableAdvancedVinaKeys,
+  getVinaExpertToggleState,
+  getVinaExpertValueState,
+  isVinaExpertOptionApplicable,
+  parseVinaForm,
+  resetAdvancedVinaFields,
+  vinaFormsEqual,
+  vinaSettingsToForm,
+  type VinaAdvancedKey,
+  type VinaExpertToggleKey,
+  type VinaForm,
+  type VinaNumericKey,
+  type VinaTextKey,
+} from "../utils/vinaForm";
 
 const RunStructurePreview = lazy(() => import("../components/RunStructurePreview"));
 
@@ -59,14 +80,24 @@ type RunPreparePageProps = {
 
 type RunActionMode = "full" | "prepare" | "config";
 type BoxForm = Record<keyof DockStartProject["box"], string>;
-type VinaForm = Record<keyof DockStartProject["vina"], string>;
-type VinaNumericKey = Exclude<keyof DockStartProject["vina"], "scoring">;
 const minBoxDimension = 0.1;
 
 const runActionLabels: Record<RunActionMode, string> = {
   full: "开始对接",
   prepare: "创建运行记录",
   config: "生成配置",
+};
+
+const vinaRunModeLabels: Record<VinaRunMode, string> = {
+  dock: "全局对接",
+  score_only: "仅评分",
+  local_only: "局部优化",
+};
+
+const vinaRunModeActions: Record<VinaRunMode, string> = {
+  dock: "开始对接",
+  score_only: "评估当前姿势",
+  local_only: "局部优化当前姿势",
 };
 
 const runActionDescriptions: Record<RunActionMode, string> = {
@@ -85,11 +116,18 @@ const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string }> = 
 
 const stageLabels: Record<string, string> = {
   idle: "等待开始",
+  queued: "等待后台队列",
   saving: "保存设置",
   configuring: "生成配置",
   preparing: "创建运行记录",
   starting: "启动 Vina",
   running: "AutoDock Vina 正在搜索构象",
+  baseline_starting: "准备记录输入姿势评分",
+  baseline_scoring: "正在记录输入姿势评分",
+  baseline_recorded: "输入姿势评分已记录",
+  local_starting: "准备局部优化",
+  local_optimizing: "正在局部优化当前姿势",
+  local_recorded: "局部优化结果已记录",
   cancelling: "正在终止运行",
   cancel_pending: "等待安全取消",
   cancelled: "已取消",
@@ -99,6 +137,20 @@ const stageLabels: Record<string, string> = {
   failed: "运行失败",
   interrupted: "运行已中断",
 };
+
+const activeRunStages = new Set([
+  "queued",
+  "starting",
+  "running",
+  "baseline_starting",
+  "baseline_scoring",
+  "baseline_recorded",
+  "local_starting",
+  "local_optimizing",
+  "local_recorded",
+  "cancelling",
+  "cancel_pending",
+]);
 
 function monotonicRunStage(current: string, observed: string): string {
   const next = observed === "cancel_pending" ? "cancelling" : observed;
@@ -132,14 +184,7 @@ function boxToForm(project: DockStartProject): BoxForm {
 }
 
 function vinaToForm(project: DockStartProject): VinaForm {
-  return {
-    scoring: project.vina.scoring ?? "vina",
-    exhaustiveness: String(project.vina.exhaustiveness),
-    num_modes: String(project.vina.num_modes),
-    energy_range: String(project.vina.energy_range),
-    cpu: String(project.vina.cpu),
-    seed: project.vina.seed === null ? "" : String(project.vina.seed),
-  };
+  return vinaSettingsToForm(project.vina);
 }
 
 function projectFromResponse(response: ProjectResponse, fallback: DockStartProject): DockStartProject {
@@ -157,32 +202,17 @@ function boxFormsEqual(left: BoxForm, right: BoxForm): boolean {
   return (Object.keys(left) as Array<keyof BoxForm>).every((key) => Number(left[key]) === Number(right[key]));
 }
 
-function vinaFormsEqual(left: VinaForm, right: VinaForm): boolean {
-  return (Object.keys(left) as Array<keyof VinaForm>).every((key) => {
-    if (key === "scoring") return left[key] === right[key];
-    if (key === "seed" && left[key].trim() === "" && right[key].trim() === "") return true;
-    return Number(left[key]) === Number(right[key]);
-  });
+function projectRunMode(project: DockStartProject): VinaRunMode {
+  const value = project.docking_protocol?.run_mode;
+  return value === "score_only" || value === "local_only" ? value : "dock";
+}
+
+function projectAutobox(project: DockStartProject): boolean {
+  return projectRunMode(project) === "dock" ? false : Boolean(project.docking_protocol?.autobox);
 }
 
 function boxCoordinate(value: number): string {
   return String(Number(value.toFixed(3)));
-}
-
-function parseVinaForm(form: VinaForm): DockStartProject["vina"] | null {
-  const scoring = form.scoring.trim().toLowerCase();
-  const exhaustiveness = Number(form.exhaustiveness);
-  const num_modes = Number(form.num_modes);
-  const energy_range = Number(form.energy_range);
-  const cpu = Number(form.cpu);
-  const seed = form.seed.trim() ? Number(form.seed) : null;
-  if (scoring !== "vina" && scoring !== "vinardo") return null;
-  if (!Number.isInteger(exhaustiveness) || exhaustiveness <= 0) return null;
-  if (!Number.isInteger(num_modes) || num_modes <= 0) return null;
-  if (!Number.isFinite(energy_range) || energy_range <= 0) return null;
-  if (!Number.isInteger(cpu) || cpu < 0) return null;
-  if (seed !== null && !Number.isInteger(seed)) return null;
-  return { scoring, exhaustiveness, num_modes, energy_range, cpu, seed };
 }
 
 function formatBytes(bytes: number): string {
@@ -218,6 +248,42 @@ function statusTone(status: string): "ok" | "warning" | "error" | "muted" | "inf
   return "muted";
 }
 
+function vinaCapabilitySummary(
+  capabilities: VinaCliCapabilities | undefined,
+  fallbackVersion: string,
+  checking: boolean,
+  applicableKeys: readonly VinaAdvancedKey[],
+): string {
+  const version = capabilities?.version || fallbackVersion;
+  const prefix = version ? `Vina ${version}` : "Vina";
+  const relevantKeys = applicableKeys.filter(
+    (key): key is "no_refine" | "force_even_voxels" | "unbound_energy" => (
+      key === "no_refine"
+      || key === "force_even_voxels"
+      || key === "unbound_energy"
+    ),
+  );
+  const relevantFeatures = relevantKeys.map((key) => capabilities?.features?.[key]);
+  if (checking && !capabilities?.checked) return `${prefix} · 正在检查专家选项`;
+  if (!capabilities?.checked || capabilities.status === "unknown") return `${prefix} · 专家选项尚未确认`;
+  if (
+    relevantFeatures.length > 0
+    && relevantFeatures.every(
+      (feature) => feature?.status === "supported" && feature.supported === true,
+    )
+  ) {
+    return `${prefix} · 当前相关专家选项已确认`;
+  }
+  if (
+    relevantFeatures.some(
+      (feature) => !feature || feature.status === "unknown" || feature.supported === null,
+    )
+  ) {
+    return `${prefix} · 当前相关专家选项尚未确认`;
+  }
+  return `${prefix} · 部分当前相关专家选项不可用`;
+}
+
 function checkIcon(check: RunPreflightCheck) {
   if (check.status === "ok") return <CheckCircle aria-hidden="true" size={20} weight="fill" />;
   if (check.status === "warning") return <WarningCircle aria-hidden="true" size={20} weight="fill" />;
@@ -236,6 +302,14 @@ function safeRepairPage(check: RunPreflightCheck): PageId | null {
   return null;
 }
 
+function latestMultipleLigandRunId(project: DockStartProject): string {
+  const value = [...project.runs]
+    .reverse()
+    .find((run) => run.protocol_id === "simultaneous_multi_ligand")
+    ?.run_id;
+  return typeof value === "string" ? value : "";
+}
+
 export default function RunPreparePage({
   project: initialProject,
   onBack,
@@ -247,6 +321,8 @@ export default function RunPreparePage({
   const [project, setProject] = useState(initialProject);
   const [boxForm, setBoxForm] = useState<BoxForm>(() => boxToForm(initialProject));
   const [vinaForm, setVinaForm] = useState<VinaForm>(() => vinaToForm(initialProject));
+  const [runMode, setRunMode] = useState<VinaRunMode>(() => projectRunMode(initialProject));
+  const [autobox, setAutobox] = useState(() => projectAutobox(initialProject));
   const [preflight, setPreflight] = useState<RunPreflightResponse | null>(null);
   const [runtime, setRuntime] = useState<RunRuntimeStatusResponse | null>(null);
   const [actionMode, setActionMode] = useState<RunActionMode>("full");
@@ -256,6 +332,7 @@ export default function RunPreparePage({
   const [rawError, setRawError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [isConfirmingPose, setIsConfirmingPose] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [activeBackgroundTask, setActiveBackgroundTask] = useState<BackgroundTaskStatus | null>(null);
   const [boxWheelBinding, setBoxWheelBinding] = useState<RunBoxFieldKey | null>(null);
@@ -277,16 +354,116 @@ export default function RunPreparePage({
     form: boxToForm(initialProject),
   });
 
+  const isAd4Maps = project.docking_protocol?.engine === "ad4_maps";
+  const isEvaluationMode = runMode !== "dock";
+  const receptorMode = project.docking_protocol?.receptor_mode ?? project.docking_protocol?.mode ?? "rigid";
+  const applicableAdvancedVinaKeys = useMemo(
+    () => getApplicableAdvancedVinaKeys(project.docking_protocol?.engine, runMode, receptorMode),
+    [project.docking_protocol?.engine, receptorMode, runMode],
+  );
   const parsedBox = useMemo(() => parseBoxForm(boxForm), [boxForm]);
-  const parsedVina = useMemo(() => parseVinaForm(vinaForm), [vinaForm]);
-  const formIsValid = Boolean(parsedBox && parsedVina);
+  const parsedVina = useMemo(
+    () => parseVinaForm(vinaForm, {
+      engine: project.docking_protocol?.engine,
+      runMode,
+      receptorMode,
+    }),
+    [project.docking_protocol?.engine, receptorMode, runMode, vinaForm],
+  );
+  const boxRequired = isAd4Maps || runMode === "dock" || !autobox;
+  const vinaCapabilities = preflight?.tool?.capabilities;
+  const capabilityChecking = isRefreshing && !vinaCapabilities?.checked;
+  const noRefineApplicable = isVinaExpertOptionApplicable(project.docking_protocol?.engine, runMode, "no_refine");
+  const forceEvenVoxelsApplicable = isVinaExpertOptionApplicable(project.docking_protocol?.engine, runMode, "force_even_voxels");
+  const unboundEnergyApplicable = applicableAdvancedVinaKeys.includes("unbound_energy");
+  const poseInputAttestation = preflight?.pose_input_attestation;
+  const activeRunGuard = preflight?.active_run_guard;
+  const activeRunBlocked = activeRunGuard?.blocked === true;
+  const poseInputConfirmed =
+    isEvaluationMode
+    && poseInputAttestation?.required === true
+    && poseInputAttestation.valid === true
+    && poseInputAttestation.status === "confirmed";
+  const attestedReceptorSha256 =
+    poseInputAttestation?.current_receptor_sha256
+    || poseInputAttestation?.receptor_sha256
+    || "";
+  const attestedLigandSha256 =
+    poseInputAttestation?.current_ligand_sha256
+    || poseInputAttestation?.ligand_sha256
+    || "";
+  const attestedFlexSha256 =
+    poseInputAttestation?.current_flex_sha256
+    || poseInputAttestation?.flex_sha256
+    || "";
+  const hasUnboundEnergy = vinaForm.unbound_energy.trim() !== "";
+  const noRefineControl = getVinaExpertToggleState(
+    vinaCapabilities?.features?.no_refine,
+    vinaForm.no_refine,
+    isBusy,
+  );
+  const forceEvenVoxelsControl = getVinaExpertToggleState(
+    vinaCapabilities?.features?.force_even_voxels,
+    vinaForm.force_even_voxels,
+    isBusy,
+  );
+  const unboundEnergyControl = getVinaExpertValueState(
+    vinaCapabilities?.features?.unbound_energy,
+    hasUnboundEnergy,
+    isBusy,
+  );
+  const expertCapabilityBlocked = (
+    (noRefineApplicable && noRefineControl.blocking)
+    || (forceEvenVoxelsApplicable && forceEvenVoxelsControl.blocking)
+    || (unboundEnergyApplicable && unboundEnergyControl.blocking)
+  );
+  const multipleLigandFeature = vinaCapabilities?.features?.multiple_ligands;
+  const multipleLigandIssues = useMemo(
+    () => multipleLigandCompatibilityIssues({
+      engine: project.docking_protocol?.engine,
+      protocolId: project.docking_protocol?.protocol_id,
+      receptorMode,
+      runMode,
+      capabilityChecked: Boolean(
+        vinaCapabilities?.checked
+        && multipleLigandFeature
+        && multipleLigandFeature.status !== "unknown"
+      ),
+      capabilitySupported: multipleLigandFeature?.supported,
+    }),
+    [
+      multipleLigandFeature,
+      project.docking_protocol?.engine,
+      project.docking_protocol?.protocol_id,
+      receptorMode,
+      runMode,
+      vinaCapabilities?.checked,
+    ],
+  );
+  const latestJointRunId = useMemo(() => latestMultipleLigandRunId(project), [project]);
+  const latestJointRunOwnsActiveGuard = Boolean(
+    latestJointRunId
+    && activeRunGuard?.active_runs?.some((run) => run.run_id === latestJointRunId),
+  );
+  const numericFormIsValid = Boolean(parsedVina && (parsedBox || !boxRequired));
+  const formIsValid = numericFormIsValid && !expertCapabilityBlocked;
   const displayBox = parsedBox ?? project.box;
   const volume = displayBox.size_x * displayBox.size_y * displayBox.size_z;
-  const running = stage === "starting" || stage === "running" || stage === "cancelling" || stage === "cancel_pending";
-  const isAd4Maps = project.docking_protocol?.engine === "ad4_maps";
+  const running = activeRunStages.has(stage);
   const progress = runtime?.progress?.percent ?? (stage === "finished" ? 100 : 0);
   const receptorCenter = preflight?.input_stats?.receptor?.coordinate_center ?? null;
   const canResetBox = !boxFormsEqual(boxForm, initialBoxSnapshotRef.current.form);
+  const runProtocolChanged = runMode !== projectRunMode(project) || autobox !== projectAutobox(project);
+  const advancedVinaCustomCount = useMemo(
+    () => customizedAdvancedVinaCount(vinaForm, applicableAdvancedVinaKeys),
+    [applicableAdvancedVinaKeys, vinaForm],
+  );
+  const advancedCapabilitySummary = vinaCapabilitySummary(
+    vinaCapabilities,
+    preflight?.tool?.version ?? "",
+    capabilityChecking,
+    applicableAdvancedVinaKeys,
+  );
 
   const commitProject = useCallback((nextProject: DockStartProject, syncForms = false) => {
     if (!mountedRef.current) return;
@@ -295,16 +472,32 @@ export default function RunPreparePage({
     if (syncForms) {
       setBoxForm(boxToForm(nextProject));
       setVinaForm(vinaToForm(nextProject));
+      setRunMode(projectRunMode(nextProject));
+      setAutobox(projectAutobox(nextProject));
       setIsDirty(false);
       dirtyRef.current = false;
     }
   }, [onProjectChange]);
 
   const selectWorkspaceMode = useCallback((mode: DockingWorkspaceMode) => {
+    if (mode !== "single") setResidueSelectionActive(false);
     setWorkspaceMode(mode);
     writeDockingWorkspaceMode(project.project_dir, mode);
   }, [project.project_dir]);
-  const handleBatchModeDetected = useCallback(() => selectWorkspaceMode("batch"), [selectWorkspaceMode]);
+  const selectRunMode = useCallback((mode: VinaRunMode) => {
+    if (activeRunBlocked) return;
+    setRunMode(mode);
+    if (mode === "dock" || isAd4Maps) {
+      setAutobox(false);
+    } else if (projectRunMode(project) === "dock") {
+      setAutobox(true);
+    }
+    if (mode !== "dock" && workspaceMode === "batch") {
+      selectWorkspaceMode("single");
+    }
+    setIsDirty(true);
+    dirtyRef.current = true;
+  }, [activeRunBlocked, isAd4Maps, project, selectWorkspaceMode, workspaceMode]);
   const handleResidueSelect = useCallback((selector: string) => {
     setPickedResidue((current) => ({ selector, token: current.token + 1 }));
   }, []);
@@ -314,11 +507,19 @@ export default function RunPreparePage({
   }, [initialProject.project_dir]);
 
   useEffect(() => {
-    if (isAd4Maps && workspaceMode === "batch") {
+    if ((isAd4Maps || isEvaluationMode) && workspaceMode === "batch") {
       setWorkspaceMode("single");
       writeDockingWorkspaceMode(project.project_dir, "single");
     }
-  }, [isAd4Maps, project.project_dir, workspaceMode]);
+  }, [isAd4Maps, isEvaluationMode, project.project_dir, workspaceMode]);
+
+  useEffect(() => {
+    if (isAd4Maps && autobox) {
+      setAutobox(false);
+      setIsDirty(true);
+      dirtyRef.current = true;
+    }
+  }, [autobox, isAd4Maps]);
 
   const refreshPreflight = useCallback(async (syncForms = false): Promise<RunPreflightResponse | null> => {
     if (!mountedRef.current) return null;
@@ -364,6 +565,52 @@ export default function RunPreparePage({
       if (mountedRef.current && requestId === preflightRequestRef.current) setIsRefreshing(false);
     }
   }, [commitProject, initialProject.project_dir]);
+
+  const confirmPoseInput = useCallback(async () => {
+    if (!isEvaluationMode || isBusy || isConfirmingPose) return;
+    setIsConfirmingPose(true);
+    setRawError("");
+    setMessage(
+      receptorMode === "flexible"
+        ? "正在记录当前运行受体、柔性侧链与配体文件的用户确认…"
+        : "正在记录当前受体与配体文件的用户确认…",
+    );
+    try {
+      const rawPayload = await invoke<string>("update_vina_run_protocol", {
+        projectDir: project.project_dir,
+        runMode,
+        autobox: isAd4Maps ? false : autobox,
+        confirmPoseContext: true,
+      });
+      const response = parseProjectResponse(rawPayload);
+      if (!response.ok || !response.project) {
+        throw new Error(response.error?.message ?? "输入姿势确认保存失败。");
+      }
+      commitProject(response.project);
+      setMessage(
+        receptorMode === "flexible"
+          ? "已记录用户对当前运行受体、柔性侧链与配体坐标关系的确认，正在重新检查文件哈希…"
+          : "已记录用户对当前受体与配体坐标关系的确认，正在重新检查文件哈希…",
+      );
+      await refreshPreflight(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "输入姿势确认保存失败。");
+      setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
+    } finally {
+      if (mountedRef.current) setIsConfirmingPose(false);
+    }
+  }, [
+    autobox,
+    commitProject,
+    isAd4Maps,
+    isBusy,
+    isConfirmingPose,
+    isEvaluationMode,
+    project.project_dir,
+    receptorMode,
+    refreshPreflight,
+    runMode,
+  ]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -533,10 +780,12 @@ export default function RunPreparePage({
       `已移动到受体坐标范围中心：${boxCoordinate(receptorCenter.x)}, ${boxCoordinate(receptorCenter.y)}, ${boxCoordinate(receptorCenter.z)} Å。`,
     );
     setPreviewFitRequestKey((current) => current + 1);
-    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project)) || !vinaFormsEqual(vinaForm, vinaToForm(project));
+    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project))
+      || !vinaFormsEqual(vinaForm, vinaToForm(project))
+      || runProtocolChanged;
     setIsDirty(nextDirty);
     dirtyRef.current = nextDirty;
-  }, [boxForm, isBusy, project, receptorCenter, vinaForm]);
+  }, [boxForm, isBusy, project, receptorCenter, runProtocolChanged, vinaForm]);
 
   const resetBoxToInitial = useCallback(() => {
     if (isBusy) return;
@@ -545,20 +794,44 @@ export default function RunPreparePage({
     setBoxWheelBinding(null);
     setBoxPlacementMessage("已恢复进入对接工作台时的 Box 参数。");
     setPreviewFitRequestKey((current) => current + 1);
-    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project)) || !vinaFormsEqual(vinaForm, vinaToForm(project));
+    const nextDirty = !boxFormsEqual(nextForm, boxToForm(project))
+      || !vinaFormsEqual(vinaForm, vinaToForm(project))
+      || runProtocolChanged;
     setIsDirty(nextDirty);
     dirtyRef.current = nextDirty;
-  }, [isBusy, project, vinaForm]);
+  }, [isBusy, project, runProtocolChanged, vinaForm]);
 
-  const updateVinaField = (key: keyof VinaForm, value: string) => {
+  const updateVinaField = (key: VinaTextKey, value: string) => {
     setVinaForm((current) => ({ ...current, [key]: value }));
     setIsDirty(true);
     dirtyRef.current = true;
   };
 
+  const updateVinaToggle = (key: VinaExpertToggleKey, checked: boolean) => {
+    setVinaForm((current) => ({ ...current, [key]: checked }));
+    setIsDirty(true);
+    dirtyRef.current = true;
+  };
+
+  const resetAdvancedVina = () => {
+    if (isBusy) return;
+    setVinaForm((current) => resetAdvancedVinaFields(current, applicableAdvancedVinaKeys));
+    setIsDirty(true);
+    dirtyRef.current = true;
+  };
+
   const saveSettings = useCallback(async (announce = true): Promise<DockStartProject> => {
-    const nextBox = parseBoxForm(boxForm);
-    const nextVina = parseVinaForm(vinaForm);
+    if (activeRunBlocked) {
+      throw new Error(
+        "当前 Vina 运行尚未结束，不能修改 Box、Vina 参数或任务类型。",
+      );
+    }
+    const nextBox = parseBoxForm(boxForm) ?? (!boxRequired ? project.box : null);
+    const nextVina = parseVinaForm(vinaForm, {
+      engine: project.docking_protocol?.engine,
+      runMode,
+      receptorMode,
+    });
     if (!nextBox || !nextVina) throw new Error("Box 或 Vina 参数格式无效，请检查高亮字段。");
     setStage("saving");
     const boxPayload = await invoke<string>("update_box_params", {
@@ -573,11 +846,21 @@ export default function RunPreparePage({
     });
     const vinaResponse = parseProjectResponse(vinaPayload);
     if (!vinaResponse.ok || !vinaResponse.project) throw new Error(vinaResponse.error?.message ?? "Vina 参数保存失败。");
-    const nextProject = projectFromResponse(vinaResponse, boxResponse.project);
+    const protocolPayload = await invoke<string>("update_vina_run_protocol", {
+      projectDir: project.project_dir,
+      runMode,
+      autobox: runMode === "dock" || isAd4Maps ? false : autobox,
+      confirmPoseContext: false,
+    });
+    const protocolResponse = parseProjectResponse(protocolPayload);
+    if (!protocolResponse.ok || !protocolResponse.project) {
+      throw new Error(protocolResponse.error?.message ?? "运行任务类型保存失败。");
+    }
+    const nextProject = projectFromResponse(protocolResponse, projectFromResponse(vinaResponse, boxResponse.project));
     commitProject(nextProject, true);
-    if (announce) setMessage("搜索范围与 Vina 参数已保存。正在重新检查…");
+    if (announce) setMessage("搜索范围、任务类型与 Vina 参数已保存。正在重新检查…");
     return nextProject;
-  }, [boxForm, commitProject, project.project_dir, vinaForm]);
+  }, [activeRunBlocked, autobox, boxForm, boxRequired, commitProject, isAd4Maps, project.box, project.docking_protocol?.engine, project.project_dir, receptorMode, runMode, vinaForm]);
 
   const runWorkflow = async () => {
     if (!preflight?.ready || !formIsValid || isBusy) return;
@@ -622,7 +905,11 @@ export default function RunPreparePage({
 
       const runId = prepareResponse.run_id;
       setStage("starting");
-      setMessage(`${runId} 正在启动 AutoDock Vina…`);
+      setMessage(
+        `${runId} 正在启动 ${
+          runMode === "score_only" ? "当前姿势评分" : runMode === "local_only" ? "局部优化" : "AutoDock Vina 对接"
+        }…`,
+      );
       activeTaskAbortRef.current?.abort();
       const taskController = new AbortController();
       activeTaskAbortRef.current = taskController;
@@ -668,7 +955,13 @@ export default function RunPreparePage({
       }
 
       setStage("analyzing");
-      setMessage("对接完成，正在解析评分并生成 scores.csv…");
+      setMessage(
+        runMode === "dock"
+          ? "对接完成，正在解析评分并生成 scores.csv…"
+          : runMode === "score_only"
+            ? "当前姿势评分完成，正在解析能量分解…"
+            : "局部优化完成，正在比较优化前后评分与几何变化…",
+      );
       const analyzePayload = await invoke<string>("analyze_vina_run_results", {
         projectDir: executedProject.project_dir,
         runId,
@@ -688,7 +981,9 @@ export default function RunPreparePage({
       if (!reportResponse.ok) throw new Error(reportResponse.error?.message ?? "实验记录导出失败。");
       if (reportResponse.project) commitProject(reportResponse.project);
       setStage("finished");
-      setMessage(`${runId} 已完成：Vina 执行、评分解析和实验记录导出全部成功。`);
+      setMessage(
+        `${runId} 已完成：${vinaRunModeLabels[runMode]}、结果解析和实验记录导出全部成功。`,
+      );
       await refreshPreflight();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -738,7 +1033,7 @@ export default function RunPreparePage({
   };
 
   const saveAndRefresh = async () => {
-    if (!formIsValid || isBusy) return;
+    if (!formIsValid || isBusy || activeRunBlocked) return;
     setIsBusy(true);
     setRawError("");
     try {
@@ -757,40 +1052,144 @@ export default function RunPreparePage({
   const receptor = preflight?.input_stats?.receptor;
   const ligand = preflight?.input_stats?.ligand;
   const history = preflight?.run_history ?? [];
-  const activeRunGuard = preflight?.active_run_guard;
   const guardedRun = activeRunGuard?.active_runs?.[0];
   const latestCompletedRun = activeRunId || history.find((run) => run.status === "finished")?.run_id || "";
-  const stageText = stageLabels[stage] ?? stage;
+  const stageText = stage === "running"
+    ? runMode === "score_only"
+      ? "正在评估当前姿势"
+      : runMode === "local_only"
+        ? "正在局部优化当前姿势"
+        : stageLabels.running
+    : stageLabels[stage] ?? stage;
 
   return (
     <section className={`run-cockpit-page is-${workspaceMode}-mode`} aria-labelledby="run-cockpit-title">
       <header className="run-cockpit-header">
         <div>
-          <span>对接工作台 · DOCKING CONSOLE</span>
-          <h1 id="run-cockpit-title">{workspaceMode === "batch" ? "多配体搜索范围与运行" : "搜索范围与运行"}</h1>
-          <p>{workspaceMode === "batch" ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建可恢复的多配体队列。" : isAd4Maps ? "复核网格范围与 AutoDock4 maps，检查运行条件并开始本地对接。" : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
+          <span>VINA 运行工作台 · VINA RUN CONSOLE</span>
+          <h1 id="run-cockpit-title">
+            {workspaceMode === "batch"
+              ? "串行批量筛选"
+              : workspaceMode === "simultaneous"
+                ? "多配体共同对接"
+              : runMode === "score_only"
+                ? "当前姿势评分"
+                : runMode === "local_only"
+                  ? "当前姿势局部优化"
+                  : "搜索范围与运行"}
+          </h1>
+          <p>{workspaceMode === "batch"
+            ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建逐个运行、可恢复的配体队列。"
+            : workspaceMode === "simultaneous"
+              ? "选择两个配体，让它们在同一次 Vina 全局搜索中共同优化并输出联合构象。"
+            : runMode === "score_only"
+              ? "计算输入姿势的评分与能量分解，不执行全局构象搜索。"
+              : runMode === "local_only"
+                ? "在输入姿势附近进行局部优化，并保存优化后的单个 PDBQT。"
+                : isAd4Maps
+                  ? "复核网格范围与 AutoDock4 maps，检查运行条件并开始本地对接。"
+                  : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
         </div>
         <div className="run-cockpit-header-actions">
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
-            {isDirty ? "参数待保存" : preflight?.ready ? (workspaceMode === "batch" ? "可创建队列" : "可开始对接") : preflight ? `${preflight.blockers.length} 个阻塞项` : "检查中"}
+            {isDirty
+              ? "参数待保存"
+              : preflight?.ready
+                ? workspaceMode === "batch"
+                  ? "可创建串行队列"
+                  : workspaceMode === "simultaneous"
+                    ? multipleLigandIssues.length
+                      ? "共同对接不可用"
+                      : "可选择两个成员"
+                    : `可开始${vinaRunModeLabels[runMode]}`
+                : preflight
+                  ? `${preflight.blockers.length} 个阻塞项`
+                  : "检查中"}
           </StatusBadge>
           <ActionButton variant="text" onClick={onBack}>返回格式转换</ActionButton>
         </div>
       </header>
 
       <nav className="run-workspace-mode" aria-label="配体运行模式">
-        <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>单配体对接</button>
-        <button type="button" className={workspaceMode === "batch" ? "active" : ""} aria-pressed={workspaceMode === "batch"} disabled={isAd4Maps} title={isAd4Maps ? "多配体队列当前仅支持 Vina / Vinardo 协议" : undefined} onClick={() => selectWorkspaceMode("batch")}>多配体对接</button>
-        <span>{workspaceMode === "batch" ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。" : isAd4Maps ? "一个受体与一个配体使用预计算 AutoDock4 maps。" : "一个受体与一个配体的标准对接流程。"}</span>
+        <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>单配体任务</button>
+        <button
+          type="button"
+          className={workspaceMode === "batch" ? "active" : ""}
+          aria-pressed={workspaceMode === "batch"}
+          disabled={isAd4Maps || isEvaluationMode}
+          title={isAd4Maps ? "串行批量筛选当前仅支持 Vina / Vinardo 协议" : isEvaluationMode ? "串行批量筛选仅支持全局对接" : undefined}
+          onClick={() => selectWorkspaceMode("batch")}
+        >
+          串行批量筛选
+        </button>
+        <button
+          type="button"
+          className={workspaceMode === "simultaneous" ? "active" : ""}
+          aria-pressed={workspaceMode === "simultaneous"}
+          disabled={multipleLigandIssues.length > 0 && workspaceMode !== "simultaneous"}
+          title={multipleLigandIssues.length ? multipleLigandIssues.join("；") : undefined}
+          onClick={() => selectWorkspaceMode("simultaneous")}
+        >
+          多配体共同对接 <small>实验性</small>
+        </button>
+        <span>
+          {workspaceMode === "batch"
+            ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。"
+            : workspaceMode === "simultaneous"
+              ? "恰好两个配体进入同一次搜索；每个 Mode 只有一个联合评分，不拆分成员贡献。"
+            : isEvaluationMode
+              ? "使用一个受体与一个已定位配体，执行当前姿势评分或局部优化。"
+              : isAd4Maps
+                ? "一个受体与一个配体使用预计算 AutoDock4 maps。"
+                : "一个受体与一个配体执行全局构象搜索。"}
+        </span>
       </nav>
+      {multipleLigandIssues.length && workspaceMode !== "simultaneous" ? (
+        <p className="run-workspace-mode-availability" role="status">
+          多配体共同对接暂不可用：{multipleLigandIssues.join("；")}。
+        </p>
+      ) : null}
+
+      {workspaceMode === "single" ? (
+        <nav className="run-task-mode-switch" aria-label="Vina 任务类型">
+          {(Object.keys(vinaRunModeLabels) as VinaRunMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={runMode === mode ? "active" : ""}
+              aria-pressed={runMode === mode}
+              disabled={isBusy || activeRunBlocked}
+              title={activeRunBlocked ? "当前 Vina 运行尚未结束，不能切换任务类型" : undefined}
+              onClick={() => selectRunMode(mode)}
+            >
+              <strong>{vinaRunModeLabels[mode]}</strong>
+              <span>
+                {mode === "dock"
+                  ? "搜索并输出多个候选构象"
+                  : mode === "score_only"
+                    ? "评价输入姿势，不生成新构象"
+                    : "优化输入姿势并输出单个构象"}
+              </span>
+            </button>
+          ))}
+        </nav>
+      ) : null}
 
       <div className="run-cockpit-layout">
         <main className="run-cockpit-main">
           {workspaceMode === "single" ? (
             <AutoGridMapsPanel
               project={project}
-              disabled={isBusy || isDirty}
-              disabledReason={isDirty ? "请先保存当前 Box 与 Vina 参数，再切换协议或处理 maps。" : isBusy ? "当前运行流程尚未结束。" : ""}
+              disabled={isBusy || isDirty || activeRunBlocked}
+              disabledReason={
+                activeRunBlocked
+                  ? "当前 Vina 运行尚未结束。"
+                  : isDirty
+                    ? "请先保存当前 Box 与 Vina 参数，再切换协议或处理 maps。"
+                    : isBusy
+                      ? "当前运行流程尚未结束。"
+                      : ""
+              }
               onProjectChange={(nextProject) => {
                 commitProject(nextProject, true);
               }}
@@ -804,7 +1203,13 @@ export default function RunPreparePage({
             <div className="run-cockpit-section-heading">
               <div>
                 <span className="run-cockpit-kicker">结构复核</span>
-                <h2>受体、配体与搜索范围</h2>
+                <h2>
+                  {isEvaluationMode
+                    ? "受体与当前配体姿势"
+                    : workspaceMode === "simultaneous"
+                      ? "受体、参考配体与搜索范围"
+                      : "受体、配体与搜索范围"}
+                </h2>
               </div>
             </div>
             <div className="run-preview-grid">
@@ -821,6 +1226,11 @@ export default function RunPreparePage({
                   selectedResidues={flexibleResidues}
                   onResidueSelect={handleResidueSelect}
                   onResidueSelectionComplete={() => setResidueSelectionActive(false)}
+                  useActiveReceptorInputs={
+                    isEvaluationMode
+                    && receptorMode === "flexible"
+                    && !residueSelectionActive
+                  }
                   fullscreenInspector={(
                     <RunBoxInspector
                       boxForm={boxForm}
@@ -868,11 +1278,68 @@ export default function RunPreparePage({
             </div>
           </section>
 
+          {workspaceMode === "single" && isEvaluationMode ? (
+            <section
+              className={`run-pose-attestation ${poseInputConfirmed ? "is-confirmed" : "is-required"}`}
+              aria-labelledby="pose-input-attestation-title"
+            >
+              <div className="run-pose-attestation-icon" aria-hidden="true">
+                {poseInputConfirmed
+                  ? <ShieldCheck size={22} weight="fill" />
+                  : <WarningCircle size={22} weight="fill" />}
+              </div>
+              <div className="run-pose-attestation-copy">
+                <div>
+                  <h2 id="pose-input-attestation-title">确认输入姿势</h2>
+                  <StatusBadge tone={poseInputConfirmed ? "ok" : "warning"}>
+                    {poseInputConfirmed ? "用户已确认" : "运行前需要确认"}
+                  </StatusBadge>
+                </div>
+                <p>
+                  请在上方 3D 视图中确认配体已经位于受体中的待评价位置，并与受体使用同一坐标系。
+                  DockStart 只记录你的确认，不会把几何显示当作科学验证。
+                </p>
+                <small>
+                  {poseInputConfirmed
+                    ? `确认时间 ${formatTime(poseInputAttestation?.confirmed_at ?? "")} · 记录已绑定当前${attestedFlexSha256 ? "运行受体、柔性侧链与配体" : "受体与配体"} SHA256`
+                    : poseInputAttestation?.message || `确认会绑定当前${receptorMode === "flexible" ? "运行受体、柔性侧链与配体" : "受体与配体"} PDBQT 的 SHA256；重新导入或替换任一文件后自动失效。`}
+                </small>
+                {attestedReceptorSha256 && attestedLigandSha256 ? (
+                  <dl className="run-pose-attestation-hashes">
+                    <div><dt>运行受体</dt><dd>{attestedReceptorSha256.slice(0, 12)}…</dd></div>
+                    {attestedFlexSha256 ? <div><dt>柔性侧链</dt><dd>{attestedFlexSha256.slice(0, 12)}…</dd></div> : null}
+                    <div><dt>配体</dt><dd>{attestedLigandSha256.slice(0, 12)}…</dd></div>
+                  </dl>
+                ) : null}
+              </div>
+              <ActionButton
+                variant={poseInputConfirmed ? "secondary" : "primary"}
+                disabled={
+                  isBusy
+                  || activeRunBlocked
+                  || isConfirmingPose
+                  || !receptor
+                  || !ligand
+                }
+                onClick={() => void confirmPoseInput()}
+              >
+                {isConfirmingPose
+                  ? <SpinnerGap className="run-monitor-spinner" size={17} />
+                  : <ShieldCheck size={17} />}
+                {isConfirmingPose
+                  ? "正在记录…"
+                  : poseInputConfirmed
+                    ? "重新确认当前文件"
+                    : "确认当前输入姿势"}
+              </ActionButton>
+            </section>
+          ) : null}
+
           <section className="run-cockpit-card run-settings-card">
             <div className="run-cockpit-section-heading">
               <div>
                 <span className="run-cockpit-kicker">运行设置</span>
-                <h2>{workspaceMode === "batch" ? "共享输入、参数与输出" : "输入、参数与输出"}</h2>
+                <h2>{workspaceMode === "single" ? "输入、参数与输出" : "共享输入、参数与输出"}</h2>
               </div>
               <span className={`run-save-state ${isDirty ? "dirty" : "saved"}`}>
                 <FloppyDisk aria-hidden="true" size={15} />
@@ -890,12 +1357,18 @@ export default function RunPreparePage({
                   <button type="button" onClick={() => onNavigate("import-pdbqt")}>查看</button>
                 </div>
                 <div className="run-ledger-row">
-                  <span>{workspaceMode === "batch" ? "当前预览配体" : "配体 PDBQT"}</span>
+                  <span>{workspaceMode === "single" ? "配体 PDBQT" : "当前预览配体"}</span>
                   <strong>{project.ligand.file || "未导入"}</strong>
-                  <small>{workspaceMode === "batch"
+                  <small>{workspaceMode !== "single"
                     ? ligand
-                      ? `${ligand.atom_count.toLocaleString()} 原子 · 其余配体在下方队列中管理`
-                      : "用于 3D 预览；完整配体库在下方队列中管理"
+                      ? `${ligand.atom_count.toLocaleString()} 原子 · ${
+                        workspaceMode === "batch"
+                          ? "其余配体在下方串行队列中管理"
+                          : "共同对接的两个成员在下方面板中选择"
+                      }`
+                      : workspaceMode === "batch"
+                        ? "用于 3D 预览；完整配体库在下方串行队列中管理"
+                        : "用于 3D 预览；共同对接成员在下方面板中选择"
                     : ligand
                       ? `${ligand.atom_count.toLocaleString()} 原子 · PDBQT 活性扭转 ${ligand.torsdof ?? "未记录"}`
                       : "等待检查"}</small>
@@ -904,7 +1377,18 @@ export default function RunPreparePage({
               </div>
 
               <div className="run-ledger-group">
-                <h3>{isAd4Maps ? "AutoDock4 运行参数" : "AutoDock Vina 参数"}</h3>
+                <h3>{isAd4Maps ? "AutoDock4 运行参数" : `${vinaRunModeLabels[runMode]}参数`}</h3>
+                <div className="run-task-mode-summary">
+                  <span>任务类型</span>
+                  <strong>{vinaRunModeLabels[runMode]}</strong>
+                  <small>
+                    {runMode === "dock"
+                      ? "生成构象排名、scores.csv 与对接报告"
+                      : runMode === "score_only"
+                        ? "只读取当前姿势的评分和能量分解"
+                        : "先记录输入评分，再输出 optimized.pdbqt 并比较前后变化"}
+                  </small>
+                </div>
                 <div className="run-vina-fields">
                   <label>
                     <span>评分协议</span>
@@ -918,7 +1402,26 @@ export default function RunPreparePage({
                     )}
                     <small>{isAd4Maps ? "与 Vina / Vinardo 评分不可直接比较" : "Vina 与 Vinardo 分值不可直接比较"}</small>
                   </label>
-                  {vinaFields.map((field) => {
+                  {isEvaluationMode ? (
+                    <label className="run-autobox-option">
+                      <span>评价范围</span>
+                      <span className="run-autobox-toggle">
+                        <input
+                          type="checkbox"
+                          checked={!isAd4Maps && autobox}
+                          disabled={isBusy || isAd4Maps}
+                          onChange={(event) => {
+                            setAutobox(event.target.checked);
+                            setIsDirty(true);
+                            dirtyRef.current = true;
+                          }}
+                        />
+                        <strong>{isAd4Maps ? "由 AutoDock4 maps 定义" : autobox ? "按当前配体自动建立" : "使用项目 Box"}</strong>
+                      </span>
+                      <small>{isAd4Maps ? "预计算 maps 已固定网格范围" : "autobox 只用于仅评分和局部优化"}</small>
+                    </label>
+                  ) : null}
+                  {vinaFields.filter((field) => runMode === "dock" || field.key === "cpu").map((field) => {
                     const value = vinaForm[field.key];
                     const invalid = field.key === "seed"
                       ? Boolean(value.trim() && !Number.isInteger(Number(value)))
@@ -932,12 +1435,180 @@ export default function RunPreparePage({
                     );
                   })}
                 </div>
+                <AdvancedDetails
+                  className="run-vina-advanced"
+                  summary={`高级设置 · ${advancedVinaCustomCount ? `已自定义 ${advancedVinaCustomCount} 项` : isAd4Maps ? "AutoDock4 默认" : "Vina 默认"}`}
+                >
+                    {isAd4Maps ? (
+                      <p className="run-advanced-protocol-note">
+                        AutoDock4 maps 不使用网格间距、体素取偶或受体原子精修选项。
+                      </p>
+                    ) : null}
+                    <div className="run-advanced-groups">
+                      {runMode === "dock" ? (
+                        <section className="run-advanced-group run-advanced-group-search">
+                          <h4>搜索与构象</h4>
+                          <label className={!Number.isInteger(Number(vinaForm.max_evals)) || Number(vinaForm.max_evals) < 0 || Number(vinaForm.max_evals) > 2_147_483_647 ? "is-invalid" : ""}>
+                            <span>每次搜索评估上限</span>
+                            <input
+                              disabled={isBusy}
+                              inputMode="numeric"
+                              value={vinaForm.max_evals}
+                              onChange={(event) => updateVinaField("max_evals", event.target.value)}
+                            />
+                            <small>0 = Vina 自动</small>
+                          </label>
+                          <label className={!Number.isFinite(Number(vinaForm.min_rmsd)) || Number(vinaForm.min_rmsd) < 0 || Number(vinaForm.min_rmsd) > 100 ? "is-invalid" : ""}>
+                            <span>构象最小间距</span>
+                            <input
+                              disabled={isBusy}
+                              inputMode="decimal"
+                              value={vinaForm.min_rmsd}
+                              onChange={(event) => updateVinaField("min_rmsd", event.target.value)}
+                            />
+                            <small>默认 1 Å；仅全局对接</small>
+                          </label>
+                        </section>
+                      ) : null}
+                      {!isAd4Maps ? (
+                        <section className="run-advanced-group">
+                          <h4>网格计算</h4>
+                          <label className={!Number.isFinite(Number(vinaForm.spacing)) || Number(vinaForm.spacing) < 0.1 || Number(vinaForm.spacing) > 2 ? "is-invalid" : ""}>
+                            <span>网格间距</span>
+                            <input
+                              disabled={isBusy}
+                              inputMode="decimal"
+                              value={vinaForm.spacing}
+                              onChange={(event) => updateVinaField("spacing", event.target.value)}
+                            />
+                            <small>默认 0.375 Å</small>
+                          </label>
+                          {forceEvenVoxelsApplicable ? (
+                            <label className={`run-advanced-toggle ${forceEvenVoxelsControl.status}${forceEvenVoxelsControl.blocking ? " is-blocking" : ""}`}>
+                              <span className="run-advanced-toggle-row">
+                                <input
+                                  type="checkbox"
+                                  checked={vinaForm.force_even_voxels}
+                                  disabled={forceEvenVoxelsControl.disabled}
+                                  aria-invalid={forceEvenVoxelsControl.blocking}
+                                  aria-describedby="force-even-voxels-hint force-even-voxels-capability"
+                                  onChange={(event) => updateVinaToggle("force_even_voxels", event.target.checked)}
+                                />
+                                <span>网格体素数取偶数</span>
+                              </span>
+                              <small id="force-even-voxels-hint">可能调整实际网格边界</small>
+                              <small id="force-even-voxels-capability" className="run-advanced-capability">
+                                {capabilityChecking ? "正在检查当前 Vina" : forceEvenVoxelsControl.label}
+                              </small>
+                              {vinaForm.force_even_voxels ? (
+                                <small className="run-advanced-active-note">实际网格边界可能随体素取整调整。</small>
+                              ) : null}
+                            </label>
+                          ) : null}
+                        </section>
+                      ) : null}
+                      <section className="run-advanced-group">
+                        <h4>评分与日志</h4>
+                        {!isAd4Maps && runMode === "score_only" && receptorMode === "flexible" ? (
+                          <p className="run-advanced-protocol-note">柔性受体暂不开放自定义未结合态参考能量。</p>
+                        ) : null}
+                        {unboundEnergyApplicable ? (
+                          <label
+                            className={`run-advanced-capability-field ${unboundEnergyControl.status}${unboundEnergyControl.blocking ? " is-blocking" : ""}${hasUnboundEnergy && !Number.isFinite(Number(vinaForm.unbound_energy)) ? " is-invalid" : ""}`}
+                          >
+                            <span>显式未结合体系能量参考（kcal/mol）</span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={vinaForm.unbound_energy}
+                              disabled={unboundEnergyControl.disabled}
+                              aria-invalid={unboundEnergyControl.blocking || (hasUnboundEnergy && !Number.isFinite(Number(vinaForm.unbound_energy)))}
+                              aria-describedby="unbound-energy-hint unbound-energy-capability"
+                              placeholder="留空使用 Vina 默认"
+                              onChange={(event) => updateVinaField("unbound_energy", event.target.value)}
+                            />
+                            <small id="unbound-energy-hint">仅用于当前姿势评分；空值由 Vina 计算</small>
+                            <small id="unbound-energy-capability" className="run-advanced-capability">
+                              {capabilityChecking ? "正在检查当前 Vina" : unboundEnergyControl.label}
+                            </small>
+                            {hasUnboundEnergy && Number.isFinite(Number(vinaForm.unbound_energy)) ? (
+                              <small className="run-advanced-active-note">不是实验结合自由能；只与相同设置的结果比较。</small>
+                            ) : null}
+                          </label>
+                        ) : null}
+                        {noRefineApplicable ? (
+                          <label className={`run-advanced-toggle ${noRefineControl.status}${noRefineControl.blocking ? " is-blocking" : ""}`}>
+                            <span className="run-advanced-toggle-row">
+                              <input
+                                type="checkbox"
+                                checked={vinaForm.no_refine}
+                                disabled={noRefineControl.disabled}
+                                aria-invalid={noRefineControl.blocking}
+                                aria-describedby="no-refine-hint no-refine-capability"
+                                onChange={(event) => updateVinaToggle("no_refine", event.target.checked)}
+                              />
+                              <span>关闭显式受体原子精修</span>
+                            </span>
+                            <small id="no-refine-hint">使用网格完成最终精修与评分</small>
+                            <small id="no-refine-capability" className="run-advanced-capability">
+                              {capabilityChecking ? "正在检查当前 Vina" : noRefineControl.label}
+                            </small>
+                            {vinaForm.no_refine ? (
+                              <small className="run-advanced-active-note">已关闭显式受体原子精修；只与相同设置的结果比较。</small>
+                            ) : null}
+                          </label>
+                        ) : null}
+                        <label>
+                          <span>日志详细程度</span>
+                          <select
+                            disabled={isBusy}
+                            value={vinaForm.verbosity}
+                            onChange={(event) => updateVinaField("verbosity", event.target.value)}
+                          >
+                            <option value="1">标准（1）</option>
+                            <option value="2">详细（2）</option>
+                          </select>
+                          <small>详细模式会保存更多 Vina 诊断</small>
+                        </label>
+                      </section>
+                    </div>
+                    <div className="run-advanced-toolbar">
+                      <div className="run-advanced-toolbar-copy">
+                        <strong>
+                          {isAd4Maps
+                            ? preflight?.tool?.version
+                              ? `Vina ${preflight.tool.version} · AutoDock4 maps`
+                              : "AutoDock4 maps"
+                            : advancedCapabilitySummary}
+                        </strong>
+                        <span>
+                          {workspaceMode === "batch"
+                            ? "适用值会写入项目配置，并冻结到新建的批量队列。"
+                            : workspaceMode === "simultaneous"
+                              ? "适用值会写入项目配置，并冻结到两个成员共享的联合 run。"
+                            : "非默认值会写入项目配置与本次 run 快照。"}
+                        </span>
+                      </div>
+                      <ActionButton
+                        variant="text"
+                        disabled={isBusy || advancedVinaCustomCount === 0}
+                        onClick={resetAdvancedVina}
+                      >
+                        恢复 Vina 默认值
+                      </ActionButton>
+                    </div>
+                </AdvancedDetails>
                 <p className="run-science-note">
-                  {isAd4Maps
+                  {runMode === "score_only"
+                    ? "仅评分不会搜索新姿势，也不会生成构象排名或新的 PDBQT。"
+                    : runMode === "local_only"
+                      ? "局部优化只探索输入姿势附近，不等同于全局分子对接。"
+                      : isAd4Maps
                     ? "当前运行使用预计算 AutoDock4 网格图；AD4、Vina 与 Vinardo 的分值不能直接横向比较。"
                     : "Vina 使用随机搜索与局部优化，而不是遗传算法。Vina 与 Vinardo 的分值不能直接横向比较。"}
                 </p>
-                {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到每个配体任务中；修改后需要重新创建队列。</p> : null}
+                {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与适用的 Vina 参数会冻结到每个配体任务中；显式未结合态参考能量不适用于批量全局对接。修改后需要重新创建队列。</p> : null}
+                {workspaceMode === "simultaneous" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到一个联合 run；两个成员不会分别运行，也不会产生可独立解释的成员评分。</p> : null}
                 <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
                   <div>
                     <FloppyDisk aria-hidden="true" size={18} weight="duotone" />
@@ -949,7 +1620,7 @@ export default function RunPreparePage({
                   <ActionButton
                     className="run-parameter-save-button"
                     variant={isDirty ? "primary" : "secondary"}
-                    disabled={isBusy || !formIsValid}
+                    disabled={isBusy || activeRunBlocked || !formIsValid}
                     onClick={() => void saveAndRefresh()}
                   >
                     <FloppyDisk size={16} /> 保存参数并重新检查
@@ -994,9 +1665,15 @@ export default function RunPreparePage({
               </AdvancedDetails>
             ) : null}
 
-            {!formIsValid ? (
+            {!numericFormIsValid ? (
               <WarningCallout title="参数格式需要修正">
-                <p>Box 尺寸必须大于 0；Vina 的整数参数和能量范围也必须有效。</p>
+                <p>请检查 Box 尺寸、基础参数和高级设置中的数值范围。</p>
+              </WarningCallout>
+            ) : null}
+
+            {expertCapabilityBlocked ? (
+              <WarningCallout title="专家选项尚不可用">
+                <p>已启用的选项未通过当前 Vina 能力检查。请关闭标记的选项，或重新检查工具。</p>
               </WarningCallout>
             ) : null}
 
@@ -1058,7 +1735,7 @@ export default function RunPreparePage({
                 ) : null}
               </div>
               <div className="run-primary-action">
-                <div className="run-split-action" role="group" aria-label="对接执行操作">
+                <div className="run-split-action" role="group" aria-label={`${vinaRunModeLabels[runMode]}执行操作`}>
                   <ActionButton
                     className="run-split-action-main"
                     variant="primary"
@@ -1066,16 +1743,25 @@ export default function RunPreparePage({
                     onClick={() => void runWorkflow()}
                   >
                     {isBusy ? <SpinnerGap className="run-monitor-spinner" size={18} /> : <Play size={18} weight="fill" />}
-                    {isBusy ? "运行中…" : runActionLabels[actionMode]}
+                    {isBusy ? "运行中…" : actionMode === "full" ? vinaRunModeActions[runMode] : runActionLabels[actionMode]}
                   </ActionButton>
-                  <span className="run-split-action-selector" title={runActionDescriptions[actionMode]}>
+                  <span
+                    className="run-split-action-selector"
+                    title={actionMode === "full" && runMode !== "dock" ? `${vinaRunModeLabels[runMode]}、解析与报告` : runActionDescriptions[actionMode]}
+                  >
                     <select
                       aria-label="选择执行方式"
                       value={actionMode}
                       disabled={isBusy}
                       onChange={(event) => setActionMode(event.target.value as RunActionMode)}
                     >
-                      <option value="full">{runActionDescriptions.full}</option>
+                      <option value="full">
+                        {runMode === "dock"
+                          ? runActionDescriptions.full
+                          : runMode === "score_only"
+                            ? "完整流程：评分、解析、报告"
+                            : "完整流程：局部优化、解析、报告"}
+                      </option>
                       <option value="prepare">{runActionDescriptions.prepare}</option>
                       <option value="config">{runActionDescriptions.config}</option>
                     </select>
@@ -1090,7 +1776,7 @@ export default function RunPreparePage({
 
           {workspaceMode === "single" && !isAd4Maps ? <FlexibleReceptorPanel
             project={project}
-            disabled={isBusy || isDirty}
+            disabled={isBusy || activeRunBlocked || isDirty}
             pickedResidue={pickedResidue.selector}
             pickedResidueToken={pickedResidue.token}
             selectionActive={residueSelectionActive}
@@ -1102,29 +1788,69 @@ export default function RunPreparePage({
             }}
           /> : null}
 
-          <BatchScreeningPanel
-            projectDir={project.project_dir}
-            receptorFile={project.receptor.file}
-            box={project.box}
-            vina={project.vina}
-            disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible" || isAd4Maps}
-            disabledReason={isAd4Maps
-              ? "多配体筛选当前只支持 Vina / Vinardo。请先切换评分协议。"
-              : project.docking_protocol?.mode === "flexible"
-              ? "批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
-              : isBusy
-              ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
-              : isDirty
-                ? "请先保存当前 Box 与 Vina 参数，再创建可复现的筛选快照。"
-                : !project.receptor.file
-                  ? "请先导入受体 PDBQT。"
-                : !formIsValid
-                    ? "请先修正 Box 与 Vina 参数。"
-                    : !preflight?.ready
-                      ? "请先处理右侧运行前检查中的阻塞项。"
-                  : ""}
-            onBatchModeDetected={handleBatchModeDetected}
-          />
+          {workspaceMode === "batch" ? (
+            <BatchScreeningPanel
+              projectDir={project.project_dir}
+              receptorFile={project.receptor.file}
+              box={project.box}
+              vina={project.vina}
+              disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible" || isAd4Maps || isEvaluationMode}
+              disabledReason={isEvaluationMode
+                ? "串行批量筛选只执行全局对接。请先将任务类型切换为“全局对接”。"
+                : isAd4Maps
+                ? "串行批量筛选当前只支持 Vina / Vinardo。请先切换评分协议。"
+                : project.docking_protocol?.mode === "flexible"
+                ? "串行批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
+                : isBusy
+                ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
+                : isDirty
+                  ? "请先保存当前 Box 与 Vina 参数，再创建可复现的筛选快照。"
+                  : !project.receptor.file
+                    ? "请先导入受体 PDBQT。"
+                    : !formIsValid
+                      ? "请先修正 Box 与 Vina 参数。"
+                      : !preflight?.ready
+                        ? "请先处理右侧运行前检查中的阻塞项。"
+                    : ""}
+            />
+          ) : null}
+
+          {workspaceMode === "simultaneous" ? (
+            <MultiLigandDockingPanel
+              projectDir={project.project_dir}
+              receptorFile={project.receptor.file}
+              box={project.box}
+              vina={project.vina}
+              compatibilityIssues={multipleLigandIssues}
+              disabled={
+                isBusy
+                || isDirty
+                || !formIsValid
+                || (!preflight?.ready && !latestJointRunOwnsActiveGuard)
+                || !project.receptor.file
+                || (activeRunBlocked && !latestJointRunOwnsActiveGuard)
+              }
+              disabledReason={activeRunBlocked && !latestJointRunOwnsActiveGuard
+                ? "当前项目已有未完成的 Vina 运行，请先恢复或结束该任务。"
+                : isBusy
+                  ? "当前单配体流程尚未结束。"
+                  : isDirty
+                    ? "请先保存当前 Box 与 Vina 参数，再冻结共同对接输入。"
+                    : !project.receptor.file
+                      ? "请先导入受体 PDBQT。"
+                      : !formIsValid
+                        ? "请先修正 Box 与 Vina 参数。"
+                        : !preflight?.ready && !latestJointRunOwnsActiveGuard
+                          ? "请先处理右侧运行前检查中的阻塞项。"
+                          : ""}
+              initialRunId={latestJointRunId}
+              onOpenImport={() => onNavigate("import-pdbqt")}
+              onOpenResult={(runId) => onOpenResultPage(project, runId)}
+              onStatusChange={() => {
+                void refreshPreflight(true);
+              }}
+            />
+          ) : null}
 
           {workspaceMode === "single" ? <section className="run-cockpit-card run-history-card">
             <div className="run-cockpit-section-heading">
@@ -1137,16 +1863,18 @@ export default function RunPreparePage({
             {history.length ? (
               <div className="run-history-table-wrap">
                 <table className="run-history-table">
-                  <thead><tr><th>Run</th><th>协议</th><th>状态</th><th>开始时间</th><th>耗时</th><th>最佳评分</th><th>操作</th></tr></thead>
+                  <thead><tr><th>Run</th><th>任务 / 协议</th><th>状态</th><th>开始时间</th><th>耗时</th><th>主要结果</th><th>操作</th></tr></thead>
                   <tbody>
                     {history.slice(0, 8).map((run) => (
                       <tr key={run.run_id}>
                         <td><strong>{run.run_id}</strong></td>
-                        <td>{run.scoring_protocol === "ad4_maps" ? "AD4 maps" : run.scoring_function === "vinardo" ? "Vinardo" : "Vina"}</td>
+                        <td>
+                          {vinaRunModeLabels[run.run_mode ?? "dock"]} · {run.scoring_protocol === "ad4_maps" ? "AD4 maps" : run.scoring_function === "vinardo" ? "Vinardo" : "Vina"}
+                        </td>
                         <td><StatusBadge tone={statusTone(run.status)}>{run.status}</StatusBadge></td>
                         <td>{formatTime(run.started_at || run.created_at)}</td>
                         <td>{formatDuration(run.duration_seconds)}</td>
-                        <td>{run.best_affinity ?? "—"}</td>
+                        <td>{run.run_mode && run.run_mode !== "dock" ? run.primary_score_kcal_mol ?? "—" : run.best_affinity ?? "—"}</td>
                         <td>
                           {run.status === "finished" ? <button type="button" onClick={() => onOpenResultPage(project, run.run_id)}>查看结果</button> : <button type="button" onClick={() => onOpenRunExecute(project, run.run_id)}>运行详情</button>}
                         </td>
@@ -1163,9 +1891,15 @@ export default function RunPreparePage({
           <header>
             <div>
               <span>Preflight</span>
-              <h2>{workspaceMode === "batch" ? "多配体运行前检查" : "运行前检查"}</h2>
+              <h2>
+                {workspaceMode === "batch"
+                  ? "串行筛选运行前检查"
+                  : workspaceMode === "simultaneous"
+                    ? "共同对接运行前检查"
+                    : "运行前检查"}
+              </h2>
             </div>
-            <button type="button" disabled={isRefreshing || isBusy} onClick={() => void (isDirty ? saveAndRefresh() : refreshPreflight())}>
+            <button type="button" disabled={isRefreshing || isBusy || activeRunBlocked} onClick={() => void (isDirty ? saveAndRefresh() : refreshPreflight())}>
               <ArrowRight className={isRefreshing ? "run-monitor-spinner" : ""} size={16} /> {isDirty ? "保存并检查" : "重新检查"}
             </button>
           </header>
@@ -1173,8 +1907,34 @@ export default function RunPreparePage({
           <section className={`run-readiness-summary ${preflight?.ready && !isDirty ? "ready" : "blocked"}`}>
             {preflight?.ready && !isDirty ? <CheckCircle size={25} weight="fill" /> : <WarningCircle size={25} weight="fill" />}
             <div>
-              <strong>{isDirty ? "屏幕参数尚未保存" : preflight?.ready ? (workspaceMode === "batch" ? "共享运行条件已满足" : "执行条件已满足") : preflight ? "仍有阻塞项" : "正在检查"}</strong>
-              <p>{isDirty ? "请先保存 Box 与 Vina 参数，再创建多配体队列。" : preflight?.ready ? (workspaceMode === "batch" ? "受体、Box、Vina 与输出环境可用；配体队列状态请看主工作区。" : "表示当前文件与环境可执行，不代表结构方案科学正确。") : preflight?.blockers?.[0] || "正在读取本机状态。"}</p>
+              <strong>
+                {isDirty
+                  ? "屏幕参数尚未保存"
+                  : preflight?.ready
+                    ? workspaceMode === "batch"
+                      ? "串行队列共享条件已满足"
+                      : workspaceMode === "simultaneous"
+                        ? multipleLigandIssues.length
+                          ? "共同对接协议仍有阻塞项"
+                          : "共同运行条件已满足"
+                        : "执行条件已满足"
+                    : preflight
+                      ? "仍有阻塞项"
+                      : "正在检查"}
+              </strong>
+              <p>
+                {isDirty
+                  ? "请先保存任务类型、范围与 Vina 参数。"
+                  : preflight?.ready
+                    ? workspaceMode === "batch"
+                      ? "受体、Box、Vina 与输出环境可用；配体队列状态请看主工作区。"
+                      : workspaceMode === "simultaneous"
+                        ? multipleLigandIssues.length
+                          ? multipleLigandIssues.join("；")
+                          : "受体、Box、Vina 与输出环境可用；请在主工作区选择两个 staging 配体。"
+                        : "表示当前文件与环境可执行，不代表结构方案科学正确。"
+                    : preflight?.blockers?.[0] || "正在读取本机状态。"}
+              </p>
             </div>
           </section>
 
@@ -1227,7 +1987,13 @@ export default function RunPreparePage({
 
           <section className="run-rail-section run-rail-disclaimer">
             <div className="run-rail-section-title"><Database size={18} /><strong>科学边界</strong></div>
-            <p>Docking score 仅供结构结合趋势参考，不能替代实验验证。</p>
+            <p>
+              {workspaceMode === "simultaneous"
+                ? "联合评分描述两个成员与受体构成的整体体系，不能拆分成单个成员贡献，也不能替代实验验证。"
+                : isEvaluationMode
+                  ? "姿势评分只描述当前输入或其局部优化结果，不能替代全局搜索或实验验证。"
+                  : "Docking score 仅供结构结合趋势参考，不能替代实验验证。"}
+            </p>
           </section>
         </aside>
       </div>

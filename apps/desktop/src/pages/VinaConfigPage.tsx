@@ -8,7 +8,7 @@ import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
-import type { DockStartProject, ProjectResponse } from "../types";
+import type { DockStartProject, ProjectResponse, VinaRunMode } from "../types";
 
 type VinaConfigPageProps = {
   project: DockStartProject;
@@ -31,6 +31,11 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
   };
 }
 
+function projectRunMode(project: DockStartProject): VinaRunMode {
+  const value = project.docking_protocol?.run_mode;
+  return value === "score_only" || value === "local_only" ? value : "dock";
+}
+
 export default function VinaConfigPage({
   project: initialProject,
   onBack,
@@ -45,6 +50,8 @@ export default function VinaConfigPage({
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [canOpenRunPrepare, setCanOpenRunPrepare] = useState(Boolean(initialProject.config?.vina_config_file));
+  const runMode = projectRunMode(project);
+  const autobox = runMode !== "dock" && project.docking_protocol?.autobox === true;
 
   const applyProjectResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string, showRunPrepare = false) => {
@@ -112,9 +119,11 @@ export default function VinaConfigPage({
     <PageShell labelledBy="vina-config-title">
       <PageHero
         eyebrow="运行对接"
-        title="生成运行配置"
+        title={runMode === "score_only" ? "生成姿势评分配置" : runMode === "local_only" ? "生成局部优化配置" : "生成运行配置"}
         titleId="vina-config-title"
-        description="根据 PDBQT、Box 和 Vina 参数生成 vina_config.txt。"
+        description={runMode === "dock"
+          ? "根据 PDBQT、Box 和 Vina 参数生成 vina_config.txt。"
+          : `根据 PDBQT、评分函数与 CPU 生成评价配置${autobox ? "；范围由当前配体自动建立" : "；范围使用项目 Box"}。`}
         actions={
           <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
@@ -125,7 +134,7 @@ export default function VinaConfigPage({
       <BodyGrid>
         <MainPanel>
           <div className="main-panel-content">
-            <VinaWorkflowBar current="config" />
+            <VinaWorkflowBar current="config" runMode={runMode} />
 
             <div className="status-strip">
               <article className="metric-card">
@@ -146,7 +155,13 @@ export default function VinaConfigPage({
             </div>
 
             <SectionCard title="配置预览">
-              <pre className="config-preview">{configText || "补全 PDBQT、Box 和 Vina 参数后会显示配置预览。"}</pre>
+              <pre className="config-preview">
+                {configText || (
+                  autobox
+                    ? "补全受体、配体 PDBQT 与评价参数后会显示配置预览。"
+                    : "补全 PDBQT、Box 和 Vina 参数后会显示配置预览。"
+                )}
+              </pre>
               <div className="button-row end">
                 <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadPreview()}>刷新预览</ActionButton>
                 <ActionButton variant="primary" disabled={isBusy} onClick={() => void generateConfig()}>

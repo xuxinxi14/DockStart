@@ -88,6 +88,14 @@ export async function startVinaRunTask(projectDir: string, runId: string): Promi
   return assertStarted(normalizeTaskStatus(payload));
 }
 
+export async function startMultipleLigandTask(
+  projectDir: string,
+  runId: string,
+): Promise<BackgroundTaskStatus> {
+  const payload = await invoke<string>("start_multiple_ligand_task", { projectDir, runId });
+  return assertStarted(normalizeTaskStatus(payload));
+}
+
 export async function startScreeningTask(projectDir: string): Promise<BackgroundTaskStatus> {
   const payload = await invoke<string>("start_screening_task", { projectDir });
   return assertStarted(normalizeTaskStatus(payload));

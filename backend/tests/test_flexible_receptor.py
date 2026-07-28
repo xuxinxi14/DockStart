@@ -19,7 +19,13 @@ from dockstart_core.flexible_receptor import (  # noqa: E402
     validate_flexible_receptor_preparation,
 )
 from dockstart_core.models import ToolCheckResult  # noqa: E402
-from dockstart_core.project import create_project  # noqa: E402
+from dockstart_core.project import (  # noqa: E402
+    _validate_frozen_pose_input_attestation,
+    create_project,
+    get_run_preflight,
+    import_ligand_pdbqt,
+    update_vina_run_protocol,
+)
 
 
 def _pdb_atom(serial: int = 1) -> str:
@@ -142,6 +148,34 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
         self.assertEqual(status["mode"], "rigid")
         self.assertEqual(status["effective_mode"], "rigid")
 
+    def test_legacy_mode_field_preserves_verified_flexible_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project, _ = self._project(Path(temp_dir))
+            with patch(
+                "dockstart_core.flexible_receptor.get_resolved_python",
+                return_value=self._python_tool(),
+            ):
+                prepared = prepare_flexible_receptor(
+                    str(project),
+                    ["A:42"],
+                    runner=self._runner(),
+                )
+            self.assertTrue(prepared["ok"], prepared)
+            project_json = project / "project.json"
+            payload = json.loads(project_json.read_text(encoding="utf-8"))
+            protocol = payload["docking_protocol"]
+            protocol["mode"] = protocol.pop("receptor_mode")
+            project_json.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            status = get_flexible_receptor_status(str(project))
+
+            self.assertTrue(status["ok"], status)
+            self.assertEqual(status["mode"], "flexible")
+            self.assertEqual(status["effective_mode"], "flexible")
+
     def test_switching_back_to_rigid_retains_verified_flexible_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project, _ = self._project(Path(temp_dir))
@@ -163,6 +197,81 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
             restored = set_receptor_docking_mode(str(project), "flexible")
             self.assertTrue(restored["ok"])
             self.assertEqual(get_flexible_receptor_status(str(project))["effective_mode"], "flexible")
+
+    def test_evaluation_attestation_binds_active_rigid_flex_and_ligand(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project, _ = self._project(root)
+            ligand_source = root / "ligand.pdbqt"
+            ligand_source.write_text(PDBQT_OUTPUT, encoding="utf-8")
+            imported = import_ligand_pdbqt(str(project), str(ligand_source))
+            self.assertTrue(imported["ok"], imported)
+            with patch(
+                "dockstart_core.flexible_receptor.get_resolved_python",
+                return_value=self._python_tool(),
+            ):
+                prepared = prepare_flexible_receptor(
+                    str(project),
+                    ["A:42"],
+                    runner=self._runner(),
+                )
+            self.assertTrue(prepared["ok"], prepared)
+
+            confirmed = update_vina_run_protocol(
+                str(project),
+                "score_only",
+                True,
+                True,
+            )
+
+            self.assertTrue(confirmed["ok"], confirmed)
+            attestation = confirmed["project"]["docking_protocol"][
+                "pose_input_attestation"
+            ]
+            self.assertRegex(attestation["receptor_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(attestation["flex_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(attestation["ligand_sha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue(confirmed["pose_input_attestation"]["valid"])
+            self.assertEqual(
+                confirmed["pose_input_attestation"]["current_flex_sha256"],
+                attestation["flex_sha256"],
+            )
+            self.assertIsNone(
+                _validate_frozen_pose_input_attestation(
+                    {"pose_input_attestation": attestation},
+                    "score_only",
+                    {
+                        "receptor": attestation["receptor_sha256"],
+                        "flex": attestation["flex_sha256"],
+                        "ligand": attestation["ligand_sha256"],
+                    },
+                )
+            )
+            flex_mismatch = _validate_frozen_pose_input_attestation(
+                {"pose_input_attestation": attestation},
+                "score_only",
+                {
+                    "receptor": attestation["receptor_sha256"],
+                    "flex": "0" * 64,
+                    "ligand": attestation["ligand_sha256"],
+                },
+            )
+            self.assertEqual(
+                flex_mismatch["error"]["code"],
+                "RUN_POSE_INPUT_ATTESTATION_HASH_MISMATCH",
+            )
+
+            preflight = get_run_preflight(str(project))
+            self.assertIn("--flex", preflight["command_preview"])
+            self.assertIn(
+                prepared["outputs"]["flex_pdbqt"],
+                preflight["command_preview"],
+            )
+            receptor_stats = preflight["input_stats"]["receptor"]
+            self.assertEqual(
+                receptor_stats["relative_path"],
+                prepared["outputs"]["rigid_pdbqt"],
+            )
 
     def test_cif_is_explicitly_rejected_without_audited_bridge(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

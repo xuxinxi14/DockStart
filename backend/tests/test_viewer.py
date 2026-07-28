@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -30,6 +31,198 @@ class ViewerTests(unittest.TestCase):
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _pdbqt_atom(
+        serial: int,
+        name: str,
+        atom_type: str,
+        x: float,
+        y: float,
+        z: float,
+        *,
+        residue: str = "LIG",
+        charge: float = 0.0,
+    ) -> str:
+        return (
+            f"{'ATOM':<6}{serial:>5} "
+            f"{name:<4} "
+            f"{residue:>3} "
+            f"L{1:>4}    "
+            f"{x:>8.3f}{y:>8.3f}{z:>8.3f}"
+            f"{1.0:>6.2f}{0.0:>6.2f}    "
+            f"{charge:>6.3f} {atom_type:>2}"
+        )
+
+    def _create_local_only_pair_run(
+        self,
+        project_dir: Path,
+        *,
+        modern: bool,
+        flexible: bool = False,
+    ) -> dict[str, Path]:
+        run_id = "run_001"
+        run_dir = project_dir / "runs" / run_id
+        inputs_dir = run_dir / "inputs"
+        inputs_dir.mkdir(parents=True)
+        receptor_path = inputs_dir / "receptor.pdbqt"
+        input_path = inputs_dir / "ligand.pdbqt"
+        flex_path = inputs_dir / "flex.pdbqt"
+        optimized_path = run_dir / "optimized.pdbqt"
+        receptor_path.write_text(
+            self._pdbqt_atom(
+                1,
+                "CA",
+                "C",
+                10.0,
+                11.0,
+                12.0,
+                residue="REC",
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        input_path.write_text(
+            "\n".join(
+                [
+                    "ROOT",
+                    self._pdbqt_atom(1, "C1", "C", 0.0, 0.0, 0.0, charge=0.1),
+                    self._pdbqt_atom(2, "O1", "OA", 2.0, 0.0, 0.0, charge=-0.1),
+                    "ENDROOT",
+                    "TORSDOF 0",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        optimized_lines = [
+            "ROOT",
+            self._pdbqt_atom(1, "C1", "C", 1.0, 0.0, 0.0, charge=0.1),
+            self._pdbqt_atom(2, "O1", "OA", 3.0, 0.0, 0.0, charge=-0.1),
+            "ENDROOT",
+        ]
+        if flexible:
+            flex_path.write_text(
+                "\n".join(
+                    [
+                        "BEGIN_RES TYR A 42",
+                        "ROOT",
+                        self._pdbqt_atom(
+                            101,
+                            "CB",
+                            "C",
+                            8.0,
+                            8.0,
+                            8.0,
+                            residue="TYR",
+                        ),
+                        "ENDROOT",
+                        "END_RES TYR A 42",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            optimized_lines.extend(
+                [
+                    "BEGIN_RES TYR A 42",
+                    "ROOT",
+                    self._pdbqt_atom(
+                        101,
+                        "CB",
+                        "C",
+                        9.0,
+                        8.0,
+                        8.0,
+                        residue="TYR",
+                    ),
+                    "ENDROOT",
+                    "END_RES TYR A 42",
+                ]
+            )
+        optimized_lines.append("TORSDOF 0")
+        optimized_path.write_text(
+            "\n".join(optimized_lines) + "\n",
+            encoding="utf-8",
+        )
+
+        receptor_relative = f"runs/{run_id}/inputs/receptor.pdbqt"
+        input_relative = f"runs/{run_id}/inputs/ligand.pdbqt"
+        flex_relative = f"runs/{run_id}/inputs/flex.pdbqt"
+        optimized_relative = f"runs/{run_id}/optimized.pdbqt"
+
+        def sha256(path: Path) -> str:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        metadata: dict[str, object] = {
+            "run_id": run_id,
+            "status": "finished",
+            "run_mode": "local_only",
+            "output_file": optimized_relative,
+            "pose_file": optimized_relative,
+        }
+        if modern:
+            metadata.update(
+                {
+                    "execution_plan": {
+                        "schema_version": 2,
+                        "kind": "local_only_with_baseline",
+                    },
+                    "execution_phases": {
+                        "input_score": {"status": "finished"},
+                        "local_optimization": {"status": "finished"},
+                    },
+                    "input_sha256": {
+                        "receptor": sha256(receptor_path),
+                        "ligand": sha256(input_path),
+                        **({"flex": sha256(flex_path)} if flexible else {}),
+                    },
+                    "snapshots": {
+                        "inputs": {
+                            "receptor": {
+                                "relative_path": receptor_relative,
+                                "sha256": sha256(receptor_path),
+                            },
+                            "ligand": {
+                                "relative_path": input_relative,
+                                "sha256": sha256(input_path),
+                            },
+                            **(
+                                {
+                                    "flex": {
+                                        "relative_path": flex_relative,
+                                        "sha256": sha256(flex_path),
+                                    }
+                                }
+                                if flexible
+                                else {}
+                            ),
+                        },
+                    },
+                    "artifacts": {
+                        "out": {
+                            "relative_path": optimized_relative,
+                            "sha256": sha256(optimized_path),
+                        },
+                    },
+                    "docking_protocol": {
+                        "mode": "flexible" if flexible else "rigid",
+                        "receptor_mode": "flexible" if flexible else "rigid",
+                    },
+                }
+            )
+        (run_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        paths = {
+            "receptor": receptor_path,
+            "input": input_path,
+            "optimized": optimized_path,
+        }
+        if flexible:
+            paths["flex"] = flex_path
+        return paths
 
     def test_missing_project_fields_do_not_crash(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -188,6 +381,177 @@ class ViewerTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertEqual(response["format"], "pdb")
             self.assertEqual(response["relative_path"], "prepared/ligand.pdbqt")
+
+    def test_modern_local_only_pair_loads_verified_run_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            paths = self._create_local_only_pair_run(project_dir, modern=True)
+            (project_dir / "prepared" / "receptor.pdbqt").write_text(
+                "REMARK mutable current receptor\n",
+                encoding="utf-8",
+            )
+            (project_dir / "prepared" / "ligand.pdbqt").write_text(
+                "REMARK mutable current ligand\n",
+                encoding="utf-8",
+            )
+
+            response = viewer.load_local_only_pose_pair_for_viewer(
+                str(project_dir),
+                "run_001",
+            )
+
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(response["run_mode"], "local_only")
+            self.assertEqual(response["integrity"]["status"], "verified")
+            self.assertEqual(
+                response["integrity"]["receptor_sha256"],
+                hashlib.sha256(paths["receptor"].read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                response["integrity"]["input_sha256"],
+                hashlib.sha256(paths["input"].read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                response["integrity"]["optimized_sha256"],
+                hashlib.sha256(paths["optimized"].read_bytes()).hexdigest(),
+            )
+            self.assertEqual(response["coordinate_frame"]["source"], "run_snapshot")
+            self.assertTrue(response["coordinate_frame"]["same_receptor_frame"])
+            self.assertFalse(response["coordinate_frame"]["alignment_applied"])
+            self.assertEqual(response["receptor"]["format"], "pdb")
+            self.assertEqual(response["input"]["format"], "pdb")
+            self.assertEqual(response["optimized"]["format"], "pdb")
+            self.assertIn("  10.000  11.000  12.000", response["receptor"]["content"])
+            self.assertIn("   0.000   0.000   0.000", response["input"]["content"])
+            self.assertIn("   1.000   0.000   0.000", response["optimized"]["content"])
+            self.assertNotIn("mutable current", response["receptor"]["content"])
+            self.assertNotIn("mutable current", response["input"]["content"])
+            self.assertNotIn("mutable current", response["optimized"]["content"])
+            self.assertEqual(response["input"]["pose_kind"], "input")
+            self.assertEqual(response["optimized"]["pose_kind"], "optimized")
+            self.assertEqual(
+                response["comparison"]["mapping_method"],
+                "pdbqt_serial_full_identity",
+            )
+            self.assertAlmostEqual(
+                response["comparison"]["heavy_atom_rmsd_no_alignment_angstrom"],
+                1.0,
+            )
+
+    def test_flexible_local_only_pair_returns_verified_flex_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            paths = self._create_local_only_pair_run(
+                project_dir,
+                modern=True,
+                flexible=True,
+            )
+
+            response = viewer.load_local_only_pose_pair_for_viewer(
+                str(project_dir),
+                "run_001",
+            )
+
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(response["integrity"]["status"], "verified")
+            self.assertEqual(
+                response["integrity"]["flex_input_sha256"],
+                hashlib.sha256(paths["flex"].read_bytes()).hexdigest(),
+            )
+            self.assertIn("   8.000   8.000   8.000", response["flex_receptor_input"]["content"])
+            self.assertIn(
+                "   9.000   8.000   8.000",
+                response["flex_receptor_optimized"]["content"],
+            )
+            self.assertNotIn(" TYR ", response["optimized"]["content"])
+            self.assertEqual(
+                response["comparison"]["excluded_atom_counts"][
+                    "optimized_flexible_receptor"
+                ],
+                1,
+            )
+
+    def test_modern_local_only_pair_rejects_changed_snapshots(self) -> None:
+        for changed_key in ("receptor", "input", "optimized"):
+            with self.subTest(changed_key=changed_key), tempfile.TemporaryDirectory() as temp_dir:
+                project_dir = self._create_project(temp_dir)
+                paths = self._create_local_only_pair_run(project_dir, modern=True)
+                with paths[changed_key].open("a", encoding="utf-8") as handle:
+                    handle.write("REMARK changed after run\n")
+
+                response = viewer.load_local_only_pose_pair_for_viewer(
+                    str(project_dir),
+                    "run_001",
+                )
+
+                self.assertFalse(response["ok"])
+                self.assertEqual(
+                    response["error"]["code"],
+                    "VIEWER_LOCAL_POSE_PAIR_HASH_MISMATCH",
+                )
+
+    def test_flexible_local_only_pair_rejects_changed_flex_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            paths = self._create_local_only_pair_run(
+                project_dir,
+                modern=True,
+                flexible=True,
+            )
+            with paths["flex"].open("a", encoding="utf-8") as handle:
+                handle.write("REMARK changed after run\n")
+
+            response = viewer.load_local_only_pose_pair_for_viewer(
+                str(project_dir),
+                "run_001",
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(
+                response["error"]["code"],
+                "VIEWER_LOCAL_POSE_PAIR_HASH_MISMATCH",
+            )
+
+    def test_legacy_local_only_pair_detects_flex_from_run_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._create_local_only_pair_run(
+                project_dir,
+                modern=False,
+                flexible=True,
+            )
+
+            response = viewer.load_local_only_pose_pair_for_viewer(
+                str(project_dir),
+                "run_001",
+            )
+
+            self.assertTrue(response["ok"], response)
+            self.assertTrue(response["coordinate_frame"]["flexible_receptor"])
+            self.assertIn("flex_receptor_input", response)
+            self.assertIn("flex_receptor_optimized", response)
+            self.assertEqual(response["integrity"]["status"], "legacy_unverified")
+
+    def test_legacy_local_only_pair_is_explicitly_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._create_local_only_pair_run(project_dir, modern=False)
+
+            response = viewer.load_local_only_pose_pair_for_viewer(
+                str(project_dir),
+                "run_001",
+            )
+
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(response["integrity"]["status"], "legacy_unverified")
+            self.assertEqual(
+                response["integrity"]["source"],
+                "current_file_observation",
+            )
+            self.assertTrue(
+                any("历史 local_only run" in warning for warning in response["warnings"])
+            )
+            self.assertTrue(response["comparison"]["ok"])
 
     def test_docking_pose_removes_pdbqt_branch_terminators_for_viewer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

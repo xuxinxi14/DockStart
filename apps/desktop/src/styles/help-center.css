@@ -233,6 +233,93 @@
 
 .help-route-card > button:hover { color: var(--ds-text-strong); }
 
+.help-pose-task {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 9px;
+  background: var(--ds-surface-raised);
+  padding: 14px 16px;
+}
+
+.help-pose-task-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.help-pose-task-copy > span {
+  color: var(--ds-accent);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.055em;
+}
+
+.help-pose-task-copy h2,
+.help-pose-task-copy p {
+  margin: 0;
+}
+
+.help-pose-task-copy h2 {
+  color: var(--ds-text-strong);
+  font-size: 16px;
+}
+
+.help-pose-task-copy p {
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.help-pose-task-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.help-pose-task-actions button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 7px;
+  background: var(--ds-bg-panel-soft);
+  color: var(--ds-accent);
+  cursor: pointer;
+  padding: 10px 11px;
+  text-align: left;
+}
+
+.help-pose-task-actions button:hover {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-surface-hover);
+}
+
+.help-pose-task-actions button:focus-visible {
+  outline: 2px solid var(--ds-focus-outline);
+  outline-offset: 2px;
+}
+
+.help-pose-task-actions button > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.help-pose-task-actions strong {
+  color: var(--ds-text-strong);
+  font-size: 12px;
+}
+
+.help-pose-task-actions small {
+  color: var(--ds-text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .help-route-card > button:focus-visible,
 .help-workflow button:focus-visible,
 .help-rail-actions button:focus-visible,
@@ -440,6 +527,7 @@
 
 @media (max-width: 1180px) {
   .help-center-layout { grid-template-columns: minmax(0, 1fr) 270px; }
+  .help-pose-task { grid-template-columns: 1fr; }
   .help-route-grid { grid-template-columns: 1fr; }
   .help-route-card { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: start; }
   .help-route-card > .status-badge { align-self: center; }
@@ -456,6 +544,7 @@
 }
 
 @media (max-width: 680px) {
+  .help-pose-task-actions { grid-template-columns: 1fr; }
   .help-feature-grid,
   .help-reliability-grid { grid-template-columns: 1fr; }
   .help-section-heading { align-items: flex-start; flex-direction: column; }

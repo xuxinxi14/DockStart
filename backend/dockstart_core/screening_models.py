@@ -72,6 +72,17 @@ class ScreeningStagedInput:
     original_name: str
     sha256: str
     size_bytes: int
+    source_file: str = ""
+    source_format: str = ""
+    prepared_during_import: bool = False
+    source_record_index: int = 1
+    source_record_name: str = ""
+    source_record_sha256: str = ""
+    source_topology_file: str = ""
+    source_topology_sha256: str = ""
+    source_topology_size_bytes: int = 0
+    source_records: list[dict[str, Any]] = field(default_factory=list)
+    display_label: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,7 +103,19 @@ class ScreeningItem:
     attempts: list[dict[str, Any]] = field(default_factory=list)
     best_affinity_kcal_mol: float | None = None
     best_output_file: str = ""
+    best_output_sha256: str = ""
+    best_output_size_bytes: int = 0
     last_error: str = ""
+    source_original_file: str = ""
+    source_format: str = ""
+    source_record_index: int = 1
+    source_record_name: str = ""
+    source_record_sha256: str = ""
+    source_topology_file: str = ""
+    source_topology_sha256: str = ""
+    source_topology_size_bytes: int = 0
+    source_records: list[dict[str, Any]] = field(default_factory=list)
+    display_label: str = ""
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ScreeningItem":
@@ -112,7 +135,21 @@ class ScreeningItem:
                 else None
             ),
             best_output_file=str(value.get("best_output_file") or ""),
+            best_output_sha256=str(value.get("best_output_sha256") or ""),
+            best_output_size_bytes=int(value.get("best_output_size_bytes") or 0),
             last_error=str(value.get("last_error") or ""),
+            source_original_file=str(value.get("source_original_file") or ""),
+            source_format=str(value.get("source_format") or ""),
+            source_record_index=int(value.get("source_record_index") or 1),
+            source_record_name=str(value.get("source_record_name") or ""),
+            source_record_sha256=str(value.get("source_record_sha256") or ""),
+            source_topology_file=str(value.get("source_topology_file") or ""),
+            source_topology_sha256=str(value.get("source_topology_sha256") or ""),
+            source_topology_size_bytes=int(
+                value.get("source_topology_size_bytes") or 0
+            ),
+            source_records=list(value.get("source_records") or []),
+            display_label=str(value.get("display_label") or ""),
         )
 
     def to_dict(self) -> dict[str, Any]:

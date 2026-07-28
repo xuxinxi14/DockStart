@@ -42,8 +42,8 @@ const startRoutes: StartRoute[] = [
     mode: "basic",
     icon: Database,
     eyebrow: "BASIC STABLE",
-    title: "已有 PDBQT（直接对接）",
-    description: "直接导入受体与配体 PDBQT，设置搜索范围后运行 AutoDock Vina。",
+    title: "已有 PDBQT（直接使用）",
+    description: "直接导入受体与配体 PDBQT，再选择全局对接、当前姿势评分或局部优化。",
     requirement: "随附 Vina · 不需要 RDKit / Meeko",
     action: "从 PDBQT 开始",
     tone: "ok",
@@ -99,8 +99,8 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <span>DOCKSTART HELP CENTER</span>
             <StatusBadge tone="info">{`v${appVersion}`}</StatusBadge>
           </div>
-          <h1 id="help-title">从结构文件到可复现对接记录</h1>
-          <p>已有 PDBQT 可直接开始；只有 PDB、CIF、SDF 或 MOL 时，可先搜索或导入并转换。</p>
+          <h1 id="help-title">从结构文件到可复现运行记录</h1>
+          <p>已有 PDBQT 可直接作为输入执行全局对接、姿势评分或局部优化；只有 PDB、CIF、SDF 或 MOL 时，可先搜索或导入并转换。</p>
         </div>
         <div className="help-center-hero-actions">
           <ActionButton variant="secondary" onClick={() => onNavigate("toolchain-status")}>
@@ -143,6 +143,38 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             </div>
           </section>
 
+          <section className="help-pose-task" aria-labelledby="help-pose-task-title">
+            <div className="help-pose-task-copy">
+              <span>已有受体中的配体姿势</span>
+              <h2 id="help-pose-task-title">评价或局部优化当前姿势</h2>
+              <p>受体与配体必须处在同一坐标系；这两项任务从输入姿势开始，不会搜索新的结合位点。</p>
+            </div>
+            <div className="help-pose-task-actions">
+              <button
+                type="button"
+                onClick={() => onNavigate("project-create", {
+                  startMode: "basic",
+                  taskIntent: "score_only",
+                })}
+              >
+                <ChartBar aria-hidden="true" size={18} />
+                <span><strong>姿势评分</strong><small>保留输入坐标并计算能量项</small></span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate("project-create", {
+                  startMode: "basic",
+                  taskIntent: "local_only",
+                })}
+              >
+                <Crosshair aria-hidden="true" size={18} />
+                <span><strong>局部优化</strong><small>从当前姿势附近进行优化</small></span>
+                <ArrowRight aria-hidden="true" size={15} />
+              </button>
+            </div>
+          </section>
+
           <section className="help-center-section" aria-labelledby="help-workflow-title">
             <div className="help-section-heading">
               <div>
@@ -178,7 +210,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
                 variant="text"
                 onClick={() => onNavigate(projectTarget(project, "run-prepare"))}
               >
-                打开对接工作台 <ArrowRight aria-hidden="true" size={15} />
+                打开运行工作台 <ArrowRight aria-hidden="true" size={15} />
               </ActionButton>
             </div>
             <div className="help-feature-grid">
@@ -188,7 +220,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
               </article>
               <article>
                 <ArrowCounterClockwise aria-hidden="true" size={21} />
-                <div><strong>重置参数</strong><p>恢复进入对接工作台时的 Box 中心和尺寸，适合撤销一轮大幅调整。</p></div>
+                <div><strong>重置参数</strong><p>恢复进入运行工作台时的 Box 中心和尺寸，适合撤销一轮大幅调整。</p></div>
               </article>
               <article>
                 <Cube aria-hidden="true" size={21} />
@@ -213,6 +245,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
               <article><Play aria-hidden="true" size={20} /><div><strong>长任务进度</strong><p>格式准备和 Vina 运行期间会显示进度；切换页面不会自动终止任务。</p></div></article>
               <article><FileText aria-hidden="true" size={20} /><div><strong>可追踪产物</strong><p>配置、命令、stdout、stderr、日志、输入快照、SHA256 和报告随运行记录保存。</p></div></article>
               <article><ArrowCounterClockwise aria-hidden="true" size={20} /><div><strong>中断恢复</strong><p>异常退出后重新打开项目，可根据保留的状态和日志检查或恢复未完成任务。</p></div></article>
+              <article><ChartBar aria-hidden="true" size={20} /><div><strong>多配体结果</strong><p>批量任务可检索、筛选和排序全部配体；归档后可只读查看、比较两个有效批次，或把一条有效归档导出为带 SHA256 清单的 ZIP。</p></div></article>
             </div>
           </section>
 
@@ -239,7 +272,19 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
               </details>
               <details>
                 <summary><span><ChartBar aria-hidden="true" size={18} />完成后没有评分或报告</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>确认运行状态为 finished，并检查 out.pdbqt 与 log.txt 是否存在。完整流程会继续生成 scores.csv 和 Markdown 实验记录。</p>
+                <p>单配体请确认运行状态为 finished，并先检查 log.txt。全局对接还应生成 out.pdbqt 与 scores.csv；当前姿势评分生成 evaluation.json；局部优化另生成 optimized.pdbqt。批量任务结束或安全取消后，可在配体结果工作区生成整批实验记录。</p>
+              </details>
+              <details>
+                <summary><span><ChartBar aria-hidden="true" size={18} />历史筛选无法打开</span><ArrowRight aria-hidden="true" size={15} /></summary>
+                <p>损坏归档会保留在历史列表中并显示原因，但不能打开详情或 3D 构象。旧归档缺少输出哈希时可只读查看，界面会提示“未完全验证”。归档不能恢复为活动队列或修改。</p>
+              </details>
+              <details>
+                <summary><span><ChartBar aria-hidden="true" size={18} />两个历史批次为什么没有差值</span><ArrowRight aria-hidden="true" size={15} /></summary>
+                <p>请恰好选择两个不同的有效归档：先选的是基线，后选的是对照。DockStart 只按冻结配体输入的 SHA256 匹配；协议不同、同批出现重复 SHA256、任一侧未成功或评分与排名无效时只显示原记录，不计算“对照－基线”差值。比较不会修改项目或归档。</p>
+              </details>
+              <details>
+                <summary><span><FileText aria-hidden="true" size={18} />如何分享一条历史筛选记录</span><ArrowRight aria-hidden="true" size={15} /></summary>
+                <p>在“历史归档”中点击“导出 ZIP”。ZIP 包含只读归档和逐文件 SHA256 清单，不包含 Vina 或活动队列，也不能直接恢复运行。为保护已有文件，GUI 不执行覆盖；保存位置已被占用时请重新导出并选择新文件名。已有记录可能含本机绝对路径，导出不会自动匿名化；对外发送前请先检查。</p>
               </details>
             </div>
           </section>
@@ -260,7 +305,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <nav className="help-rail-actions" aria-label="帮助快捷入口">
               <button type="button" onClick={() => onNavigate(project ? "home" : "project-create")}><FolderOpen aria-hidden="true" size={17} /><span>{project ? "项目总览" : "创建项目"}</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate(projectTarget(project, "preparation"))}><Wrench aria-hidden="true" size={17} /><span>格式转换</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate(projectTarget(project, "run-prepare"))}><Cube aria-hidden="true" size={17} /><span>对接工作台</span><ArrowRight aria-hidden="true" size={14} /></button>
+              <button type="button" onClick={() => onNavigate(projectTarget(project, "run-prepare"))}><Cube aria-hidden="true" size={17} /><span>运行工作台</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate(projectTarget(project, "result"))}><ChartBar aria-hidden="true" size={17} /><span>结果与报告</span><ArrowRight aria-hidden="true" size={14} /></button>
               <button type="button" onClick={() => onNavigate("toolchain-status")}><ShieldCheck aria-hidden="true" size={17} /><span>工具链与自检</span><ArrowRight aria-hidden="true" size={14} /></button>
             </nav>

@@ -7,6 +7,7 @@ streamed, queried, or terminated.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import signal
@@ -24,6 +25,36 @@ from dockstart_core.process_utils import hidden_subprocess_kwargs
 from dockstart_core.toolchain_paths import get_existing_bundled_vina_path
 
 _VINA_CANDIDATES = ("vina", "vina.exe")
+_VINA_ADVANCED_FEATURES = {
+    "multiple_ligands": {
+        "option": "--ligand",
+        "minimum_version": "1.2.0",
+    },
+    "maps": {
+        "option": "--maps",
+        "minimum_version": "1.2.0",
+    },
+    "write_maps": {
+        "option": "--write_maps",
+        "minimum_version": "1.2.0",
+    },
+    "autobox": {
+        "option": "--autobox",
+        "minimum_version": "1.2.3",
+    },
+    "no_refine": {
+        "option": "--no_refine",
+        "minimum_version": "1.2.4",
+    },
+    "force_even_voxels": {
+        "option": "--force_even_voxels",
+        "minimum_version": "1.2.0",
+    },
+    "unbound_energy": {
+        "option": "--unbound_energy",
+        "minimum_version": "1.2.4",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -48,9 +79,218 @@ def _find_vina() -> str:
 
 
 def _parse_version(output: str) -> str:
-    first_line = output.strip().splitlines()[0] if output.strip() else ""
-    match = re.search(r"(\d+(?:\.\d+)+)", first_line)
-    return match.group(1) if match else first_line
+    stripped = output.strip()
+    first_line = stripped.splitlines()[0] if stripped else ""
+    identity_match = re.search(
+        r"\bAutoDock\s+Vina(?:\s+version)?\s+v?(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?)",
+        output,
+        flags=re.IGNORECASE,
+    )
+    if identity_match:
+        return identity_match.group(1)
+    version_match = re.search(
+        r"(?<!\d)(\d+(?:\.\d+){1,3}(?:[-+][0-9A-Za-z.-]+)?)(?!\d)",
+        output,
+    )
+    return version_match.group(1) if version_match else first_line
+
+
+def _has_vina_identity(output: str) -> bool:
+    """Reject an unrelated executable that happens to return a zero exit code."""
+
+    return re.search(r"\b(?:AutoDock\s+)?Vina\b", output, flags=re.IGNORECASE) is not None
+
+
+def _parse_semver(value: str) -> tuple[int, int, int, bool] | None:
+    """Return the numeric core plus stable-release precedence.
+
+    Build metadata does not affect precedence. A pre-release such as
+    ``1.2.4-rc1`` sorts below the corresponding stable ``1.2.4`` release so
+    scientific capability gates do not treat an unfinalized build as safe.
+    """
+
+    match = re.search(
+        r"(?<!\d)(\d+)\.(\d+)(?:\.(\d+))?"
+        r"(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?"
+        r"(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?(?!\d)",
+        value,
+    )
+    if not match:
+        return None
+    return (
+        int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3) or 0),
+        match.group(4) is None,
+    )
+
+
+def _version_at_least(version: str, minimum_version: str) -> bool | None:
+    parsed = _parse_semver(version)
+    minimum = _parse_semver(minimum_version)
+    if parsed is None or minimum is None:
+        return None
+    return parsed >= minimum
+
+
+def _process_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+def _combined_process_output(stdout: object, stderr: object) -> tuple[str, str]:
+    stdout_text = _process_text(stdout)
+    stderr_text = _process_text(stderr)
+    combined = "\n".join(part for part in (stdout_text, stderr_text) if part)
+    return combined, stderr_text
+
+
+def _output_sha256(output: str) -> str:
+    return hashlib.sha256(output.encode("utf-8")).hexdigest() if output else ""
+
+
+def _option_is_declared(help_output: str, option: str) -> bool:
+    """Match an option declaration, not a mention inside another option's prose."""
+
+    pattern = rf"(?m)^[ \t]*{re.escape(option)}(?=[ \t]|$)"
+    return re.search(pattern, help_output) is not None
+
+
+def _unknown_vina_capabilities(
+    version: str,
+    *,
+    help_exit_code: int | None,
+    help_output: str,
+    message: str,
+    raw_error: str,
+) -> dict[str, object]:
+    features: dict[str, dict[str, object]] = {}
+    for key, definition in _VINA_ADVANCED_FEATURES.items():
+        minimum_version = str(definition["minimum_version"])
+        features[key] = {
+            "option": str(definition["option"]),
+            "status": "unknown",
+            "supported": None,
+            "advertised": None,
+            "minimum_version": minimum_version,
+            "version_compatible": _version_at_least(version, minimum_version),
+            "message": "无法从 Vina --help_advanced 输出确认此选项。",
+        }
+    return {
+        "status": "unknown",
+        "source": "help_advanced",
+        "checked": True,
+        "version": version,
+        "help_exit_code": help_exit_code,
+        "help_sha256": _output_sha256(help_output),
+        "features": features,
+        "message": message,
+        "raw_error": raw_error,
+    }
+
+
+def _build_vina_capabilities(version: str, help_output: str, stderr: str) -> dict[str, object]:
+    features: dict[str, dict[str, object]] = {}
+    for key, definition in _VINA_ADVANCED_FEATURES.items():
+        option = str(definition["option"])
+        minimum_version = str(definition["minimum_version"])
+        advertised = _option_is_declared(help_output, option)
+        version_compatible = _version_at_least(version, minimum_version)
+        if not advertised:
+            status = "unsupported"
+            supported: bool | None = False
+            message = f"Vina --help_advanced 未声明 {option}。"
+        elif version_compatible is False:
+            status = "unsupported"
+            supported = False
+            message = (
+                f"{option} 已被 Vina 声明，但当前版本 {version or '未知'} "
+                f"低于 DockStart 的最低安全版本 {minimum_version}。"
+            )
+        elif version_compatible is None:
+            status = "unknown"
+            supported = None
+            message = (
+                f"{option} 已被 Vina 声明，但无法确认当前版本是否达到 "
+                f"{minimum_version}。"
+            )
+        else:
+            status = "supported"
+            supported = True
+            message = f"当前 Vina 已声明并安全支持 {option}。"
+        features[key] = {
+            "option": option,
+            "status": status,
+            "supported": supported,
+            "advertised": advertised,
+            "minimum_version": minimum_version,
+            "version_compatible": version_compatible,
+            "message": message,
+        }
+
+    all_supported = all(
+        feature.get("status") == "supported"
+        for feature in features.values()
+    )
+    return {
+        "status": "ok" if all_supported else "partial",
+        "source": "help_advanced",
+        "checked": True,
+        "version": version,
+        "help_exit_code": 0,
+        "help_sha256": _output_sha256(help_output),
+        "features": features,
+        "message": (
+            "已确认当前 Vina 支持 DockStart 的专家选项。"
+            if all_supported
+            else "已完成 Vina 专家选项检查，但部分选项不可用或安全版本未确认。"
+        ),
+        "raw_error": stderr,
+    }
+
+
+def _detect_vina_capabilities(path: str, version: str) -> dict[str, object]:
+    try:
+        completed = subprocess.run(
+            [path, "--help_advanced"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        output, stderr = _combined_process_output(exc.stdout, exc.stderr)
+        detail = "\n".join(part for part in (str(exc), stderr) if part)
+        return _unknown_vina_capabilities(
+            version,
+            help_exit_code=None,
+            help_output=output,
+            message="Vina 专家选项检查超时，基础 Vina 仍可使用。",
+            raw_error=detail,
+        )
+    except Exception as exc:  # noqa: BLE001 - capability failure must not hide a usable Vina.
+        return _unknown_vina_capabilities(
+            version,
+            help_exit_code=None,
+            help_output="",
+            message="Vina 专家选项检查失败，基础 Vina 仍可使用。",
+            raw_error=str(exc),
+        )
+
+    output, stderr = _combined_process_output(completed.stdout, completed.stderr)
+    if completed.returncode != 0:
+        return _unknown_vina_capabilities(
+            version,
+            help_exit_code=completed.returncode,
+            help_output=output,
+            message="Vina --help_advanced 执行失败，基础 Vina 仍可使用。",
+            raw_error=output,
+        )
+    return _build_vina_capabilities(version, output, stderr)
 
 
 def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCheckResult:
@@ -96,6 +336,20 @@ def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCh
     version = _parse_version(raw_output)
 
     if completed.returncode == 0:
+        if not _has_vina_identity(raw_output):
+            return ToolCheckResult(
+                key="vina",
+                name="AutoDock Vina",
+                status="error",
+                version=version,
+                path=path,
+                message="所选程序可以运行，但版本输出无法确认其为 AutoDock Vina。",
+                raw_error=raw_output,
+                source=source,
+                bundled_path=bundled_path,
+                is_bundled=is_bundled,
+            )
+        capabilities = _detect_vina_capabilities(path, version)
         return ToolCheckResult(
             key="vina",
             name="AutoDock Vina",
@@ -107,6 +361,7 @@ def _run_version_check(path: str, source: str, bundled_path: str = "") -> ToolCh
             source=source,
             bundled_path=bundled_path,
             is_bundled=is_bundled,
+            capabilities=capabilities,
         )
 
     return ToolCheckResult(
@@ -508,6 +763,38 @@ def run_managed(
         for thread in threads:
             thread.join(timeout=5)
         return ManagedRunResult(process.pid if process is not None else None, process.returncode if process else None, str(exc))
+
+
+def run_command(
+    command: list[str],
+    cwd: str | Path,
+    stdout_path: str | Path,
+    stderr_path: str | Path,
+    log_path: str | Path,
+) -> dict[str, object]:
+    """Run one foreground Vina command through the managed adapter boundary.
+
+    Map generation and compatibility probes are synchronous operations, but
+    they still need the same argument-array execution, durable output capture,
+    hidden-window handling, and child cleanup guarantees as normal docking
+    runs.  Keeping this small wrapper in the adapter prevents workflows from
+    reaching for ``subprocess`` directly.
+    """
+
+    result = run_managed(
+        command,
+        cwd,
+        stdout_path,
+        stderr_path,
+        log_path,
+    )
+    return {
+        "ok": result.exit_code == 0 and not result.error,
+        "command": list(command),
+        "pid": result.pid,
+        "exit_code": result.exit_code,
+        "error": result.error,
+    }
 
 
 def is_process_running(pid: int) -> bool:

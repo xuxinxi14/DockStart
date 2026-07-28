@@ -143,7 +143,11 @@ def _normalized_protocol(payload: Mapping[str, Any]) -> tuple[dict[str, Any], bo
     raw = payload.get(PROTOCOL_KEY)
     legacy = not isinstance(raw, Mapping)
     protocol = dict(raw) if isinstance(raw, Mapping) else {}
-    mode = str(protocol.get("receptor_mode") or "rigid").strip().lower()
+    mode = str(
+        protocol.get("receptor_mode")
+        or protocol.get("mode")
+        or "rigid"
+    ).strip().lower()
     if mode not in {"rigid", "flexible"}:
         mode = "rigid"
     protocol["schema_version"] = FLEX_PROTOCOL_VERSION

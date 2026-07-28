@@ -7,7 +7,7 @@ import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection }
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
-import type { NavigateHandler, PageId } from "../navigation/pages";
+import type { NavigateHandler, PageId, ProjectTaskIntent } from "../navigation/pages";
 import type {
   DockStartProject,
   ProjectWorkflowStatusResponse,
@@ -15,6 +15,14 @@ import type {
   ToolchainStatusResponse,
   WorkflowFileStatus,
 } from "../types";
+import { writeDockingWorkspaceMode } from "../utils/dockingMode";
+import {
+  projectTaskOptions,
+  projectTaskSwitch,
+  taskIntentFromProject,
+  taskIntentLabel,
+  workflowRunForTask,
+} from "../utils/vinaTask";
 
 type ProjectDashboardPageProps = {
   project: DockStartProject | null;
@@ -35,6 +43,78 @@ type FirstRunToolchainSummary = {
 
 const dockingStepperSteps = ["准备结构", "搜索范围", "运行对接", "查看结果"];
 
+type DashboardTaskCopy = {
+  stepperSteps: string[];
+  stepperLabel: string;
+  rangeTitle: string;
+  rangeText: string;
+  runTitle: string;
+  runText: string;
+  resultText: string;
+  resultArtifactLabel: string;
+  resultArtifactDetail: string;
+  reportWaiting: string;
+  heroDescription: string;
+};
+
+function dashboardTaskCopy(
+  intent: ProjectTaskIntent,
+  autobox: boolean,
+  isAd4Maps = false,
+): DashboardTaskCopy {
+  if (intent === "score_only") {
+    return {
+      stepperSteps: ["准备结构", "评价范围", "姿势评分", "查看结果"],
+      stepperLabel: "姿势评分流程进度",
+      rangeTitle: "3 设置评价范围",
+      rangeText: isAd4Maps
+        ? "使用当前 AutoDock4 maps 网格评价输入姿势"
+        : autobox
+          ? "围绕输入姿势自动建立评分网格"
+          : "使用项目 Box 评价当前姿势",
+      runTitle: "4 评价当前姿势",
+      runText: "配置、能量项与运行记录",
+      resultText: "evaluation.json 与 Markdown 实验记录",
+      resultArtifactLabel: "评分结果",
+      resultArtifactDetail: "evaluation.json 与能量项",
+      reportWaiting: "等待姿势评分完成",
+      heroDescription: "评价当前输入姿势的能量项，不执行构象或新位点搜索。",
+    };
+  }
+  if (intent === "local_only") {
+    return {
+      stepperSteps: ["准备结构", "优化范围", "局部优化", "查看结果"],
+      stepperLabel: "局部优化流程进度",
+      rangeTitle: "3 设置优化范围",
+      rangeText: isAd4Maps
+        ? "使用当前 AutoDock4 maps 网格进行局部优化"
+        : autobox
+          ? "围绕输入姿势自动建立优化网格"
+          : "使用项目 Box 进行局部优化",
+      runTitle: "4 局部优化当前姿势",
+      runText: "输入评分、优化后姿势与运行记录",
+      resultText: "输入/优化后评分、位移与 Markdown 实验记录",
+      resultArtifactLabel: "优化结果",
+      resultArtifactDetail: "evaluation.json 与优化后 PDBQT",
+      reportWaiting: "等待局部优化完成",
+      heroDescription: "从当前输入姿势附近进行优化，不执行全局位点搜索。",
+    };
+  }
+  return {
+    stepperSteps: dockingStepperSteps,
+    stepperLabel: "对接流程进度",
+    rangeTitle: "3 设置搜索范围",
+    rangeText: "搜索范围中心与尺寸",
+    runTitle: "4 运行对接",
+    runText: "配置、记录、执行",
+    resultText: "scores、构象与 Markdown 实验记录",
+    resultArtifactLabel: "对接结果",
+    resultArtifactDetail: "scores.csv 与构象输出",
+    reportWaiting: "等待对接完成",
+    heroDescription: "准备结构、设置搜索范围并运行 AutoDock Vina。",
+  };
+}
+
 function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse {
   const parsed = JSON.parse(rawPayload) as Partial<ProjectWorkflowStatusResponse>;
   return {
@@ -48,6 +128,7 @@ function parseWorkflowStatus(rawPayload: string): ProjectWorkflowStatusResponse 
     vina: parsed.vina,
     config: parsed.config,
     latest_run: parsed.latest_run ?? null,
+    latest_run_for_current_mode: parsed.latest_run_for_current_mode,
     viewer: parsed.viewer,
     next_recommended_action: parsed.next_recommended_action,
     message: parsed.message,
@@ -95,20 +176,30 @@ function fileState(file?: WorkflowFileStatus): UiState {
   return "缺失";
 }
 
-function runState(workflow: ProjectWorkflowStatusResponse | null): UiState {
-  const status = String(workflow?.latest_run?.status ?? "");
-  if (!workflow?.latest_run) return workflow?.config?.status === "ok" ? "可进行" : "未开始";
+function runState(
+  workflow: ProjectWorkflowStatusResponse | null,
+  intent: ProjectTaskIntent = "dock",
+): UiState {
+  const modeRun = workflowRunForTask(workflow, intent);
+  const status = String(modeRun?.status ?? "");
+  if (!modeRun) return workflow?.config?.status === "ok" ? "可进行" : "未开始";
   if (status === "finished") return "已完成";
   if (status === "failed") return "失败";
   if (status === "running") return "进行中";
   return "可进行";
 }
 
-function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
+function workflowRows(
+  workflow: ProjectWorkflowStatusResponse | null,
+  intent: ProjectTaskIntent = "dock",
+  autobox = false,
+  isAd4Maps = false,
+): Array<{
   title: string;
   state: UiState;
   text: string;
   target: PageId;
+  runId?: string;
 }> {
   const receptorRaw = fileReady(workflow?.raw?.receptor);
   const ligandRaw = fileReady(workflow?.raw?.ligand);
@@ -117,7 +208,10 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
   const preparedInputsReady = receptorPrepared && ligandPrepared;
   const rawInputsReady = receptorRaw && ligandRaw;
   const rawStageSkipped = preparedInputsReady && !rawInputsReady;
-  const run = runState(workflow);
+  const modeRun = workflowRunForTask(workflow, intent);
+  const run = runState(workflow, intent);
+  const copy = dashboardTaskCopy(intent, autobox, isAd4Maps);
+  const rangeReady = autobox || workflow?.box?.status === "ok";
   return [
     {
       title: "1 获取结构",
@@ -132,28 +226,44 @@ function workflowRows(workflow: ProjectWorkflowStatusResponse | null): Array<{
       target: "preparation",
     },
     {
-      title: "3 设置搜索范围",
-      state: workflow?.box?.status === "ok" ? "已完成" : "可进行",
-      text: "搜索范围中心与尺寸",
+      title: copy.rangeTitle,
+      state: rangeReady ? "已完成" : "可进行",
+      text: copy.rangeText,
       target: "run-prepare",
     },
     {
-      title: "4 运行对接",
+      title: copy.runTitle,
       state: run,
-      text: "配置、记录、执行",
-      target: "run-prepare",
+      text: copy.runText,
+      target: modeRun ? "run-execute" : "run-prepare",
+      runId: typeof modeRun?.run_id === "string" ? modeRun.run_id : undefined,
     },
     {
       title: "5 结果与报告",
-      state: String(workflow?.latest_run?.status ?? "") === "finished" ? "可进行" : "未开始",
-      text: "scores 与 Markdown 实验记录",
-      target: "result",
+      state: String(modeRun?.status ?? "") === "finished"
+        ? "可进行"
+        : "未开始",
+      text: copy.resultText,
+      target:
+        String(modeRun?.status ?? "") === "finished"
+          ? "result"
+          : modeRun
+            ? "run-execute"
+            : "run-prepare",
+      runId: typeof modeRun?.run_id === "string" ? modeRun.run_id : undefined,
     },
   ];
 }
 
-function nextTarget(workflow: ProjectWorkflowStatusResponse | null): PageId {
-  const row = workflowRows(workflow).find((item) => !isTerminalState(item.state));
+function nextTarget(
+  workflow: ProjectWorkflowStatusResponse | null,
+  intent: ProjectTaskIntent = "dock",
+  autobox = false,
+  isAd4Maps = false,
+): PageId {
+  const row = workflowRows(workflow, intent, autobox, isAd4Maps).find(
+    (item) => !isTerminalState(item.state),
+  );
   return row?.target ?? "result";
 }
 
@@ -217,19 +327,31 @@ function stepperState(index: number, activeIndex: number | null): StepperState {
   return "not-started";
 }
 
-function projectStepperIndex(workflow: ProjectWorkflowStatusResponse | null): number {
+function projectStepperIndex(
+  workflow: ProjectWorkflowStatusResponse | null,
+  autobox = false,
+  intent: ProjectTaskIntent = "dock",
+): number {
   const receptorPrepared = fileReady(workflow?.prepared?.receptor);
   const ligandPrepared = fileReady(workflow?.prepared?.ligand);
   if (!(receptorPrepared && ligandPrepared)) return 0;
-  if (workflow?.box?.status !== "ok") return 1;
-  if (String(workflow?.latest_run?.status ?? "") !== "finished") return 2;
+  if (!autobox && workflow?.box?.status !== "ok") return 1;
+  if (String(workflowRunForTask(workflow, intent)?.status ?? "") !== "finished") return 2;
   return 3;
 }
 
-function DockingStepper({ activeIndex }: { activeIndex: number | null }) {
+function DockingStepper({
+  activeIndex,
+  labels = dockingStepperSteps,
+  ariaLabel = "对接流程进度",
+}: {
+  activeIndex: number | null;
+  labels?: string[];
+  ariaLabel?: string;
+}) {
   return (
-    <ol className="first-run-stepper" aria-label="对接流程进度">
-      {dockingStepperSteps.map((label, index) => {
+    <ol className="first-run-stepper" aria-label={ariaLabel}>
+      {labels.map((label, index) => {
         const state = stepperState(index, activeIndex);
         return (
           <li className={state} key={label}>
@@ -255,7 +377,27 @@ export default function ProjectDashboardPage({
   const [rawError, setRawError] = useState("");
   const [firstRunToolchain, setFirstRunToolchain] = useState<FirstRunToolchainSummary | null>(null);
   const [toolchainChecked, setToolchainChecked] = useState(false);
+  const [taskSwitching, setTaskSwitching] = useState<ProjectTaskIntent | null>(null);
   const projectDir = project?.project_dir;
+  const taskIntent = taskIntentFromProject(project);
+  const isAd4Maps = project?.docking_protocol?.engine === "ad4_maps";
+  const taskAutobox =
+    taskIntent !== "dock"
+    && !isAd4Maps
+    && project?.docking_protocol?.autobox === true;
+  const taskSwitchBlockedByActiveRun =
+    String(workflow?.latest_run?.status ?? "") === "running"
+    || [
+      "queued",
+      "starting",
+      "baseline_starting",
+      "baseline_scoring",
+      "local_starting",
+      "local_optimizing",
+      "cancelling",
+      "cancel_pending",
+    ].includes(String(workflow?.latest_run?.stage ?? ""));
+  const taskCopy = dashboardTaskCopy(taskIntent, taskAutobox, isAd4Maps);
 
   const loadWorkflow = useCallback(async () => {
     if (!projectDir) {
@@ -320,8 +462,67 @@ export default function ProjectDashboardPage({
     };
   }, [project]);
 
-  const rows = useMemo(() => workflowRows(workflow), [workflow]);
-  const nextPage = nextTarget(workflow);
+  const switchProjectTask = useCallback(async (requestedIntent: ProjectTaskIntent) => {
+    if (
+      !project
+      || requestedIntent === taskIntent
+      || taskSwitching
+      || taskSwitchBlockedByActiveRun
+    ) return;
+    const selection = projectTaskSwitch(
+      taskIntent,
+      project.docking_protocol?.autobox,
+      requestedIntent,
+    );
+    setTaskSwitching(requestedIntent);
+    setErrorMessage("");
+    setRawError("");
+    try {
+      const rawPayload = await invoke<string>("update_vina_run_protocol", {
+        projectDir: project.project_dir,
+        runMode: selection.runMode,
+        autobox: isAd4Maps ? false : selection.autobox,
+        confirmPoseContext: selection.confirmPoseContext,
+      });
+      const response = JSON.parse(rawPayload) as {
+        ok?: boolean;
+        project?: DockStartProject | null;
+        error?: { message?: string; raw_error?: string };
+      };
+      if (!response.ok || !response.project) {
+        throw new Error(response.error?.message || "运行任务类型保存失败。");
+      }
+      if (selection.workspaceMode) {
+        writeDockingWorkspaceMode(response.project.project_dir, selection.workspaceMode);
+      }
+      onProjectChange(response.project);
+      onNavigate("run-prepare");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "运行任务类型保存失败。");
+      setRawError(error instanceof Error ? error.stack ?? error.message : String(error));
+    } finally {
+      setTaskSwitching(null);
+    }
+  }, [
+    isAd4Maps,
+    onNavigate,
+    onProjectChange,
+    project,
+    taskIntent,
+    taskSwitchBlockedByActiveRun,
+    taskSwitching,
+  ]);
+
+  const rows = useMemo(
+    () => workflowRows(workflow, taskIntent, taskAutobox, isAd4Maps),
+    [isAd4Maps, taskAutobox, taskIntent, workflow],
+  );
+  const nextPage = nextTarget(workflow, taskIntent, taskAutobox, isAd4Maps);
+  const currentTaskRun = workflowRunForTask(workflow, taskIntent);
+  const nextRunId =
+    nextPage === "run-execute" || nextPage === "result"
+      ? String(currentTaskRun?.run_id || "")
+      : "";
   const artifacts = useMemo(
     () => {
       const preparedInputsReady = fileReady(workflow?.prepared?.receptor) && fileReady(workflow?.prepared?.ligand);
@@ -357,18 +558,30 @@ export default function ProjectDashboardPage({
           workflow?.prepared?.ligand?.path || "未记录",
         ),
         artifact(
-          "latest run",
-          runState(workflow),
-          workflow?.latest_run?.run_id ? String(workflow.latest_run.run_id) : "未创建",
+          "最近运行",
+          runState(workflow, taskIntent),
+          workflowRunForTask(workflow, taskIntent)?.run_id
+            ? String(workflowRunForTask(workflow, taskIntent)?.run_id)
+            : "当前任务尚未创建运行记录",
         ),
         artifact(
-          "report",
-          String(workflow?.latest_run?.status ?? "") === "finished" ? "可进行" : "未开始",
-          String(workflow?.latest_run?.status ?? "") === "finished" ? "可生成结果分析报告" : "等待对接完成",
+          taskCopy.resultArtifactLabel,
+          String(workflowRunForTask(workflow, taskIntent)?.status ?? "") === "finished"
+            ? "可进行"
+            : "未开始",
+          String(workflowRunForTask(workflow, taskIntent)?.status ?? "") === "finished"
+            ? taskCopy.resultArtifactDetail
+            : taskCopy.reportWaiting,
         ),
       ];
     },
-    [workflow],
+    [
+      taskCopy.reportWaiting,
+      taskCopy.resultArtifactDetail,
+      taskCopy.resultArtifactLabel,
+      taskIntent,
+      workflow,
+    ],
   );
 
   if (!project) {
@@ -376,9 +589,9 @@ export default function ProjectDashboardPage({
     return (
       <PageShell className="first-run-landing" labelledBy="first-run-title">
         <PageHero
-          title="新建对接项目"
+          title="新建分子任务"
           titleId="first-run-title"
-          description="导入受体和配体，设置搜索范围，然后运行 AutoDock Vina。"
+          description="先选择文件来源；已有受体中的配体姿势也可直接评分或局部优化。"
           actions={
             <ActionButton variant="text" onClick={onOpenProject}>
               打开已有项目
@@ -401,7 +614,7 @@ export default function ProjectDashboardPage({
                 <div className="start-route-grid">
                   <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "basic" })}>
                     <div className="start-route-card-copy">
-                      <h3>已有 PDBQT（直接对接）</h3>
+                      <h3>已有 PDBQT（直接使用）</h3>
                       <p>导入受体和配体 PDBQT，跳过格式转换。</p>
                     </div>
                     <span className="secondary-button start-route-button start-route-button-proxy">选择 PDBQT 文件</span>
@@ -430,8 +643,38 @@ export default function ProjectDashboardPage({
                 </div>
               </section>
 
+              <section className="dashboard-pose-task-entry" aria-labelledby="dashboard-pose-task-title">
+                <div>
+                  <span>已有受体中的配体姿势</span>
+                  <h2 id="dashboard-pose-task-title">评价当前姿势</h2>
+                  <p>受体与配体需处在同一坐标系；这些任务不会搜索新的结合位点。</p>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("project-create", {
+                      startMode: "basic",
+                      taskIntent: "score_only",
+                    })}
+                  >
+                    <strong>姿势评分</strong>
+                    <span>计算当前姿势的能量项</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("project-create", {
+                      startMode: "basic",
+                      taskIntent: "local_only",
+                    })}
+                  >
+                    <strong>局部优化</strong>
+                    <span>从当前姿势附近优化</span>
+                  </button>
+                </div>
+              </section>
+
               <p className="first-run-storage-note">
-                DockStart 项目将保存受体、配体、搜索范围、配置文件、运行日志和结果报告。
+                DockStart 项目将保存受体、配体、任务类型、范围参数、运行日志和结果报告。
               </p>
               </div>
           </MainPanel>
@@ -481,11 +724,15 @@ export default function ProjectDashboardPage({
               <div className="side-rail-help">
                 <p>
                   <strong>已有 receptor.pdbqt 和 ligand.pdbqt？</strong>
-                  <span>选择“已有 PDBQT（直接对接）”。</span>
+                  <span>选择“已有 PDBQT（直接使用）”。</span>
                 </p>
                 <p>
                   <strong>只有 PDB 或 SDF？</strong>
                   <span>选择“PDB/CIF + SDF/MOL（准备并转换）”。</span>
+                </p>
+                <p>
+                  <strong>已经有放在受体中的配体姿势？</strong>
+                  <span>使用姿势评分或局部优化入口。</span>
                 </p>
               </div>
             </RightRailSection>
@@ -495,7 +742,7 @@ export default function ProjectDashboardPage({
     );
   }
 
-  const dashboardStepperIndex = projectStepperIndex(workflow);
+  const dashboardStepperIndex = projectStepperIndex(workflow, taskAutobox, taskIntent);
 
   return (
     <PageShell labelledBy="project-dashboard-title">
@@ -503,12 +750,19 @@ export default function ProjectDashboardPage({
         eyebrow="项目总览"
         title={project.project_name || "DockStart 项目"}
         titleId="project-dashboard-title"
-        description={workflow?.next_recommended_action || "读取项目状态后会给出下一步。"}
+        description={taskIntent === "dock"
+          ? workflow?.next_recommended_action || taskCopy.heroDescription
+          : taskCopy.heroDescription}
         actions={
           <>
           <ActionButton onClick={() => void loadWorkflow()}>{isBusy ? "刷新中..." : "刷新状态"}</ActionButton>
           <ActionButton onClick={() => onNavigate("project-create")}>创建项目</ActionButton>
-          <ActionButton variant="primary" onClick={() => onNavigate(nextPage)}>继续当前步骤</ActionButton>
+          <ActionButton
+            variant="primary"
+            onClick={() => onNavigate(nextPage, { runId: nextRunId })}
+          >
+            继续当前步骤
+          </ActionButton>
           </>
         }
       />
@@ -518,17 +772,62 @@ export default function ProjectDashboardPage({
           <div className="main-panel-content">
             <FilePathText value={project.project_dir} />
 
-            <section className="dashboard-progress-strip" aria-label="对接流程状态">
+            <SectionCard title="本次任务">
+              <div className="project-task-switch" role="group" aria-label="切换运行任务类型">
+                {projectTaskOptions.map((option) => {
+                  const active = taskIntent === option.id;
+                  return (
+                    <button
+                      aria-pressed={active}
+                      className={active ? "active" : ""}
+                      disabled={Boolean(taskSwitching) || taskSwitchBlockedByActiveRun || active}
+                      key={option.id}
+                      onClick={() => void switchProjectTask(option.id)}
+                      type="button"
+                    >
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.description}</small>
+                      </span>
+                      <StatusBadge tone={active ? "ok" : "info"}>
+                        {active ? "当前任务" : taskSwitching === option.id ? "切换中" : "切换"}
+                      </StatusBadge>
+                    </button>
+                  );
+                })}
+              </div>
+              {taskIntent !== "dock" ? (
+                <p className="project-task-context-note">
+                  受体与配体应处在同一坐标系；{taskIntentLabel(taskIntent)}不会搜索新的结合位点。
+                </p>
+              ) : null}
+              {taskSwitchBlockedByActiveRun ? (
+                <p className="project-task-context-note">
+                  当前 Vina 运行尚未结束。请先打开运行工作台等待完成或安全取消，再切换任务类型。
+                </p>
+              ) : null}
+            </SectionCard>
+
+            <section className="dashboard-progress-strip" aria-label={taskCopy.stepperLabel}>
               <p className="first-run-stepper-status active">
-                第 {dashboardStepperIndex + 1} 步 / 共 4 步：{dockingStepperSteps[dashboardStepperIndex]}
+                第 {dashboardStepperIndex + 1} 步 / 共 4 步：{taskCopy.stepperSteps[dashboardStepperIndex]}
               </p>
-              <DockingStepper activeIndex={dashboardStepperIndex} />
+              <DockingStepper
+                activeIndex={dashboardStepperIndex}
+                ariaLabel={taskCopy.stepperLabel}
+                labels={taskCopy.stepperSteps}
+              />
             </section>
 
             <SectionCard title="工作流">
               <div className="dashboard-timeline">
                 {rows.map((row) => (
-                  <button className="workflow-step action-card" key={row.title} type="button" onClick={() => onNavigate(row.target)}>
+                  <button
+                    className="workflow-step action-card"
+                    key={row.title}
+                    type="button"
+                    onClick={() => onNavigate(row.target, { runId: row.runId })}
+                  >
                     <span>{row.title}</span>
                     <strong>{row.text}</strong>
                     <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
@@ -571,7 +870,7 @@ export default function ProjectDashboardPage({
             <dl className="mode-context-list">
               <div>
                 <dt>当前步骤</dt>
-                <dd>{dockingStepperSteps[dashboardStepperIndex]}</dd>
+                <dd>{taskCopy.stepperSteps[dashboardStepperIndex]}</dd>
               </div>
               <div>
                 <dt>下一步</dt>
@@ -585,7 +884,7 @@ export default function ProjectDashboardPage({
           </RightRailSection>
 
           <RightRailSection title="提示">
-            <p>工作流卡片可直接进入对应步骤；右侧信息只显示当前项目的辅助状态。</p>
+            <p>切换任务后会进入运行工作台。姿势评分与局部优化只适用于单个配体。</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

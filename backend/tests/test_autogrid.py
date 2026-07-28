@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from dockstart_core.autogrid import (  # noqa: E402
     get_maps_defaults,
     get_maps_status,
     import_maps,
+    set_scoring_protocol,
     validate_active_maps,
 )
 from dockstart_core.models import ToolCheckResult  # noqa: E402
@@ -22,10 +24,12 @@ from dockstart_core.project import (  # noqa: E402
     create_project,
     execute_prepared_vina_run,
     generate_vina_config,
+    get_project_workflow_status,
     import_ligand_pdbqt,
     import_receptor_pdbqt,
     prepare_vina_run,
     update_box_params,
+    update_vina_run_protocol,
 )
 
 
@@ -155,6 +159,42 @@ class AutoGridWorkflowTests(unittest.TestCase):
             self.assertTrue(status["ok"])
             self.assertTrue(status["ready"])
             self.assertTrue(status["protocol_active"])
+
+    def test_ad4_protocol_forces_evaluation_autobox_off(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            evaluation = update_vina_run_protocol(
+                str(project_dir),
+                "score_only",
+                True,
+            )
+            self.assertTrue(evaluation["ok"], evaluation)
+            self.assertTrue(
+                evaluation["project"]["docking_protocol"]["autobox"]
+            )
+
+            switched = set_scoring_protocol(str(project_dir), "ad4_maps")
+
+            self.assertTrue(switched["ok"], switched)
+            self.assertFalse(
+                switched["project"]["docking_protocol"]["autobox"]
+            )
+            workflow = get_project_workflow_status(str(project_dir))
+            self.assertFalse(workflow["project"]["docking_protocol"]["autobox"])
+
+            project_json = project_dir / "project.json"
+            payload = json.loads(project_json.read_text(encoding="utf-8"))
+            payload["docking_protocol"]["autobox"] = True
+            payload["box"]["size_x"] = 0
+            project_json.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            defended = get_project_workflow_status(str(project_dir))
+            self.assertIn(
+                "合法的 docking box",
+                defended["next_recommended_action"],
+            )
 
     def test_receptor_change_invalidates_active_maps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

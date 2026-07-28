@@ -41,10 +41,12 @@ type RunStructurePreviewProps = {
   selectedResidues?: string[];
   onResidueSelect?: (selector: string) => void;
   onResidueSelectionComplete?: () => void;
+  useActiveReceptorInputs?: boolean;
 };
 
 type PreviewStructures = {
   receptor: ViewerStructureResult | null;
+  flexReceptor: ViewerStructureResult | null;
   ligand: ViewerStructureResult | null;
 };
 
@@ -142,11 +144,13 @@ export default function RunStructurePreview({
   selectedResidues = [],
   onResidueSelect,
   onResidueSelectionComplete,
+  useActiveReceptorInputs = false,
 }: RunStructurePreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
   const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
   const receptorModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
+  const flexReceptorModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
   const ligandModelRef = useRef<{ fingerprint: string; model: ThreeDmolModel } | null>(null);
   const hasFitRef = useRef(false);
   const identityRef = useRef("");
@@ -155,7 +159,11 @@ export default function RunStructurePreview({
   const boxRef = useRef(box);
   const wheelAccumulatorRef = useRef(0);
   const wheelResetRef = useRef<number | null>(null);
-  const [structures, setStructures] = useState<PreviewStructures>({ receptor: null, ligand: null });
+  const [structures, setStructures] = useState<PreviewStructures>({
+    receptor: null,
+    flexReceptor: null,
+    ligand: null,
+  });
   const [message, setMessage] = useState("正在读取受体、配体与搜索范围…");
   const [isSpinning, setIsSpinning] = useState(false);
 
@@ -258,6 +266,39 @@ export default function RunStructurePreview({
       } : undefined);
     }
 
+    const flexReceptorFingerprint = structures.flexReceptor?.ok
+      ? structureFingerprint(
+          structures.flexReceptor.content,
+          structures.flexReceptor.format,
+          `${structures.flexReceptor.relative_path}:${refreshKey}`,
+        )
+      : "";
+    if (
+      flexReceptorFingerprint
+      && flexReceptorModelRef.current?.fingerprint !== flexReceptorFingerprint
+    ) {
+      if (flexReceptorModelRef.current) {
+        viewer.removeModel(flexReceptorModelRef.current.model);
+      }
+      const model = viewer.addModel(
+        structures.flexReceptor!.content,
+        structures.flexReceptor!.format,
+      );
+      model.setStyle({}, {
+        stick: { radius: 0.28, color: "#f4c95d" },
+        sphere: { scale: 0.2, color: "#f4c95d" },
+      });
+      flexReceptorModelRef.current = {
+        fingerprint: flexReceptorFingerprint,
+        model,
+      };
+    } else if (!flexReceptorFingerprint && flexReceptorModelRef.current) {
+      viewer.removeModel(flexReceptorModelRef.current.model);
+      flexReceptorModelRef.current = null;
+    }
+    if (showReceptor) flexReceptorModelRef.current?.model.show();
+    else flexReceptorModelRef.current?.model.hide();
+
     const ligandFingerprint = structures.ligand?.ok
       ? structureFingerprint(structures.ligand.content, structures.ligand.format, `${structures.ligand.relative_path}:${refreshKey}`)
       : "";
@@ -307,14 +348,18 @@ export default function RunStructurePreview({
     sceneGenerationRef.current += 1;
     loadGenerationRef.current += 1;
     hasFitRef.current = false;
-    setStructures({ receptor: null, ligand: null });
+    setStructures({ receptor: null, flexReceptor: null, ligand: null });
     setMessage("正在读取受体、配体与搜索范围…");
     setIsSpinning(false);
     const viewer = viewerRef.current;
     (viewer as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null)?.spin?.(false);
     if (viewer && receptorModelRef.current) viewer.removeModel(receptorModelRef.current.model);
+    if (viewer && flexReceptorModelRef.current) {
+      viewer.removeModel(flexReceptorModelRef.current.model);
+    }
     if (viewer && ligandModelRef.current) viewer.removeModel(ligandModelRef.current.model);
     receptorModelRef.current = null;
+    flexReceptorModelRef.current = null;
     ligandModelRef.current = null;
     viewer?.removeAllShapes();
     viewer?.removeAllLabels();
@@ -376,15 +421,33 @@ export default function RunStructurePreview({
     async function loadPreview() {
       setMessage("正在读取受体、配体与搜索范围…");
       try {
-        const [receptorPayload, ligandPayload] = await Promise.all([
-          invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "receptor_prepared" }),
+        const [receptorPayload, flexReceptorPayload, ligandPayload] = await Promise.all([
+          invoke<string>("load_structure_for_viewer", {
+            projectDir,
+            fileKind: useActiveReceptorInputs ? "receptor_run" : "receptor_prepared",
+          }),
+          useActiveReceptorInputs
+            ? invoke<string>("load_structure_for_viewer", {
+                projectDir,
+                fileKind: "receptor_flex",
+              })
+            : Promise.resolve(""),
           invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "ligand_prepared" }),
         ]);
         if (cancelled || generation !== loadGenerationRef.current) return;
         const receptor = parseStructure(receptorPayload);
+        const flexReceptor = flexReceptorPayload
+          ? parseStructure(flexReceptorPayload)
+          : null;
         const ligand = parseStructure(ligandPayload);
-        setStructures({ receptor, ligand });
-        if (receptor.ok && ligand.ok) setMessage("受体、配体与搜索范围已加载");
+        setStructures({ receptor, flexReceptor, ligand });
+        if (receptor.ok && ligand.ok && (!useActiveReceptorInputs || flexReceptor?.ok)) {
+          setMessage(
+            useActiveReceptorInputs
+              ? "运行受体、柔性侧链、配体与搜索范围已加载"
+              : "受体、配体与搜索范围已加载",
+          );
+        }
         else if (receptor.ok || ligand.ok) setMessage("部分结构可显示；请查看运行前检查");
         else setMessage("尚无可显示的 prepared PDBQT");
       } catch (error) {
@@ -397,7 +460,7 @@ export default function RunStructurePreview({
     return () => {
       cancelled = true;
     };
-  }, [projectDir, refreshKey]);
+  }, [projectDir, refreshKey, useActiveReceptorInputs]);
 
   useEffect(() => {
     const shouldFit = !hasFitRef.current && Boolean(structures.receptor?.ok || structures.ligand?.ok);
@@ -459,6 +522,7 @@ export default function RunStructurePreview({
     viewerRef.current = null;
     viewerInitRef.current = null;
     receptorModelRef.current = null;
+    flexReceptorModelRef.current = null;
     ligandModelRef.current = null;
     if (containerRef.current) containerRef.current.replaceChildren();
   }, []);
@@ -555,7 +619,7 @@ export default function RunStructurePreview({
                   aria-pressed={showReceptor}
                 >
                   <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-                  受体
+                  {useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体"}
                 </button>
                 <button
                   type="button"
@@ -599,7 +663,7 @@ export default function RunStructurePreview({
             aria-pressed={showReceptor}
           >
             <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-            受体
+            {useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体"}
           </button>
           <button
             type="button"

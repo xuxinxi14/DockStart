@@ -861,6 +861,41 @@ async fn update_vina_params(project_dir: String, vina_json: String) -> String {
 }
 
 #[tauri::command]
+async fn update_vina_run_protocol(
+    project_dir: String,
+    run_mode: String,
+    autobox: bool,
+    confirm_pose_context: Option<bool>,
+) -> String {
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _guard_lock = project_run_guard_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = inspect_project_run_guard(&project_dir, true)?;
+        if guard.blocked {
+            return Ok(project_run_guard_error_json(&guard));
+        }
+        run_backend_module(
+            "dockstart_core.project",
+            vec![
+                "update-run-protocol".to_string(),
+                project_dir,
+                run_mode,
+                autobox.to_string(),
+                confirm_pose_context.unwrap_or(false).to_string(),
+            ],
+        )
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法保存运行任务类型。", &error),
+        Err(error) => {
+            fallback_project_error_json("运行任务类型保存任务异常结束。", &error.to_string())
+        }
+    }
+}
+
+#[tauri::command]
 async fn get_vina_config_preview(project_dir: String) -> String {
     match run_backend_module_cached_async(
         "dockstart_core.project",
@@ -929,6 +964,59 @@ async fn set_scoring_protocol(project_dir: String, protocol: String) -> String {
 }
 
 #[tauri::command]
+async fn get_ad4zn_status(project_dir: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.ad4zn",
+        vec!["status".to_string(), project_dir],
+        Duration::from_millis(200),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 AutoDock4Zn beta 状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn save_ad4zn_review(project_dir: String, review_json: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.ad4zn",
+        vec!["review".to_string(), project_dir, review_json],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法保存 Zn 位点复核。", &error),
+    }
+}
+
+#[tauri::command]
+async fn prepare_ad4zn_receptor(project_dir: String, options_json: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.ad4zn",
+        vec!["prepare".to_string(), project_dir, options_json],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成 AD4Zn TZ 受体。", &error),
+    }
+}
+
+#[tauri::command]
+async fn set_ad4zn_parameter_file(project_dir: String, parameter_file: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.ad4zn",
+        vec!["parameter".to_string(), project_dir, parameter_file],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法校验并记录 AD4Zn.dat。", &error),
+    }
+}
+
+#[tauri::command]
 async fn generate_autogrid_maps(project_dir: String, options_json: String) -> String {
     match run_backend_module_async(
         "dockstart_core.autogrid",
@@ -951,6 +1039,63 @@ async fn import_autogrid_maps(project_dir: String, fld_file: String) -> String {
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法导入 AutoDock4 affinity maps。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_vina_maps_status(project_dir: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.vina_maps",
+        vec!["status".to_string(), project_dir],
+        Duration::from_millis(200),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 Vina maps 状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn set_vina_maps_mode(project_dir: String, mode: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.vina_maps",
+        vec!["set-mode".to_string(), project_dir, mode],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法切换 Vina 网格来源。", &error),
+    }
+}
+
+#[tauri::command]
+async fn generate_vina_maps(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.vina_maps",
+        vec!["generate".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成 Vina maps。", &error),
+    }
+}
+
+#[tauri::command]
+async fn import_vina_maps(
+    project_dir: String,
+    source_path: String,
+    options_json: String,
+) -> String {
+    match run_backend_module_async(
+        "dockstart_core.vina_maps",
+        vec!["import".to_string(), project_dir, source_path, options_json],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导入 Vina maps。", &error),
     }
 }
 
@@ -1028,6 +1173,40 @@ async fn prepare_vina_run(project_dir: String) -> String {
     }
 }
 
+fn multiple_ligand_prepare_args(
+    project_dir: String,
+    ligand_files: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let ligand_files_json =
+        serde_json::to_string(&ligand_files).map_err(|error| error.to_string())?;
+    Ok(vec!["prepare".to_string(), project_dir, ligand_files_json])
+}
+
+#[tauri::command]
+async fn prepare_multiple_ligand_run(project_dir: String, ligand_files: Vec<String>) -> String {
+    let args = match multiple_ligand_prepare_args(project_dir.clone(), ligand_files) {
+        Ok(args) => args,
+        Err(error) => return fallback_project_error_json("无法序列化多配体共同对接输入。", &error),
+    };
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _guard_lock = project_run_guard_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = inspect_project_run_guard(&project_dir, true)?;
+        if guard.blocked {
+            return Ok(project_run_guard_error_json(&guard));
+        }
+        run_backend_module("dockstart_core.multiple_ligands", args)
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法准备多配体共同对接运行记录。", &error),
+        Err(error) => {
+            fallback_project_error_json("多配体共同对接准备任务异常结束。", &error.to_string())
+        }
+    }
+}
+
 #[tauri::command]
 async fn get_project_workflow_status(project_dir: String) -> String {
     match run_backend_module_async(
@@ -1099,6 +1278,22 @@ async fn get_run_runtime_status(project_dir: String, run_id: String) -> String {
 }
 
 #[tauri::command]
+async fn get_multiple_ligand_run_status(project_dir: String, run_id: String) -> String {
+    if let Err(error) = validate_run_directory(&project_dir, &run_id) {
+        return fallback_project_error_json("多配体共同对接运行目录校验失败。", &error);
+    }
+    match run_backend_module_async(
+        "dockstart_core.multiple_ligands",
+        vec!["status".to_string(), project_dir, run_id],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取多配体共同对接状态。", &error),
+    }
+}
+
+#[tauri::command]
 async fn cancel_vina_run(project_dir: String, run_id: String) -> String {
     if let Err(error) = validate_run_directory(&project_dir, &run_id) {
         return fallback_project_error_json("运行目录校验失败。", &error);
@@ -1113,6 +1308,26 @@ async fn cancel_vina_run(project_dir: String, run_id: String) -> String {
         Ok(Ok(payload)) => payload,
         Ok(Err(error)) => fallback_project_error_json("无法取消 Vina 运行。", &error),
         Err(error) => fallback_project_error_json("Vina 取消任务异常结束。", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+async fn cancel_multiple_ligand_run(project_dir: String, run_id: String) -> String {
+    if let Err(error) = validate_run_directory(&project_dir, &run_id) {
+        return fallback_project_error_json("多配体共同对接运行目录校验失败。", &error);
+    }
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        run_backend_module(
+            "dockstart_core.multiple_ligands",
+            vec!["cancel".to_string(), project_dir, run_id],
+        )
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法取消多配体共同对接。", &error),
+        Err(error) => {
+            fallback_project_error_json("多配体共同对接取消过程异常结束。", &error.to_string())
+        }
     }
 }
 
@@ -1182,6 +1397,20 @@ async fn load_scores_csv(project_dir: String, run_id: String) -> String {
 }
 
 #[tauri::command]
+async fn load_vina_evaluation(project_dir: String, run_id: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.project",
+        vec!["load-evaluation".to_string(), project_dir, run_id],
+        Duration::from_millis(200),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取姿势评价结果。", &error),
+    }
+}
+
+#[tauri::command]
 async fn export_markdown_report(project_dir: String, run_id: String) -> String {
     match run_backend_module_async(
         "dockstart_core.project",
@@ -1191,6 +1420,22 @@ async fn export_markdown_report(project_dir: String, run_id: String) -> String {
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法导出 Markdown 报告。", &error),
+    }
+}
+
+#[tauri::command]
+async fn export_multiple_ligand_markdown_report(project_dir: String, run_id: String) -> String {
+    if let Err(error) = validate_run_directory(&project_dir, &run_id) {
+        return fallback_project_error_json("多配体共同对接运行目录校验失败。", &error);
+    }
+    match run_backend_module_async(
+        "dockstart_core.multiple_ligands",
+        vec!["report".to_string(), project_dir, run_id],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导出多配体共同对接 Markdown 报告。", &error),
     }
 }
 
@@ -1255,14 +1500,125 @@ async fn load_docking_pose_for_viewer(
     project_dir: String,
     run_id: String,
     mode: Option<i32>,
+    pose_kind: Option<String>,
 ) -> String {
     let mut args = vec!["load-pose".to_string(), project_dir, run_id];
+    if let Some(value) = mode.or_else(|| pose_kind.as_ref().map(|_| 1)) {
+        args.push(value.to_string());
+    }
+    if let Some(value) = pose_kind.filter(|value| !value.trim().is_empty()) {
+        args.push(value);
+    }
+    match run_backend_module_cached_async("dockstart_core.viewer", args, VIEWER_CACHE_TTL).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 docking pose 内容。", &error),
+    }
+}
+
+#[tauri::command]
+async fn load_multiple_ligand_pose(
+    project_dir: String,
+    run_id: String,
+    mode: i32,
+    member_index: i32,
+) -> String {
+    if let Err(error) = validate_run_directory(&project_dir, &run_id) {
+        return fallback_project_error_json("多配体共同对接运行目录校验失败。", &error);
+    }
+    match run_backend_module_async(
+        "dockstart_core.multiple_ligands",
+        vec![
+            "load-pose".to_string(),
+            project_dir,
+            run_id,
+            mode.to_string(),
+            member_index.to_string(),
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取多配体联合构象。", &error),
+    }
+}
+
+#[tauri::command]
+async fn load_screening_pose_for_viewer(
+    project_dir: String,
+    item_id: String,
+    mode: Option<i32>,
+) -> String {
+    let mut args = vec!["load-screening-pose".to_string(), project_dir, item_id];
     if let Some(value) = mode {
         args.push(value.to_string());
     }
     match run_backend_module_cached_async("dockstart_core.viewer", args, VIEWER_CACHE_TTL).await {
         Ok(payload) => payload,
-        Err(error) => fallback_project_error_json("无法读取 docking pose 内容。", &error),
+        Err(error) => fallback_project_error_json("无法读取批量筛选构象。", &error),
+    }
+}
+
+#[tauri::command]
+async fn load_archived_screening_pose_for_viewer(
+    project_dir: String,
+    archive_id: String,
+    item_id: String,
+    mode: Option<i32>,
+) -> String {
+    if !is_safe_screening_archive_id(&archive_id) {
+        return screening_argument_error_json(
+            "VIEWER_SCREENING_ARCHIVE_ID_INVALID",
+            "批量筛选归档编号无效。",
+            &archive_id,
+            "请从历史筛选列表中重新选择归档。",
+        );
+    }
+    if !is_safe_screening_item_id(&item_id) {
+        return screening_argument_error_json(
+            "VIEWER_SCREENING_ITEM_INVALID",
+            "批量筛选配体编号无效。",
+            &item_id,
+            "请从所选历史筛选的结果表中重新选择配体。",
+        );
+    }
+    if !is_safe_screening_pose_mode(mode) {
+        return screening_argument_error_json(
+            "VIEWER_SCREENING_MODE_INVALID",
+            "批量筛选构象编号必须在 1 到 50 之间。",
+            &mode.map(|value| value.to_string()).unwrap_or_default(),
+            "请从该配体实际包含的构象编号中选择。",
+        );
+    }
+
+    let mut args = vec![
+        "load-screening-archive-pose".to_string(),
+        project_dir,
+        archive_id,
+        item_id,
+    ];
+    if let Some(value) = mode {
+        args.push(value.to_string());
+    }
+    // Archived structures are integrity-checked snapshots. Avoid the viewer
+    // cache here so an external same-size file replacement cannot reuse an
+    // earlier verified payload during the long viewer cache TTL.
+    match run_backend_module_async("dockstart_core.viewer", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取历史筛选构象。", &error),
+    }
+}
+
+#[tauri::command]
+async fn load_local_only_pose_pair_for_viewer(project_dir: String, run_id: String) -> String {
+    match run_backend_module_cached_async(
+        "dockstart_core.viewer",
+        vec!["load-local-pose-pair".to_string(), project_dir, run_id],
+        VIEWER_CACHE_TTL,
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取 local_only 优化前后姿势叠合。", &error),
     }
 }
 
@@ -1373,6 +1729,103 @@ async fn get_screening_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+async fn list_screening_archives(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["archives".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取批量筛选历史记录。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_screening_archive(project_dir: String, archive_id: String) -> String {
+    if !is_safe_screening_archive_id(&archive_id) {
+        return screening_argument_error_json(
+            "SCREENING_ARCHIVE_ID_INVALID",
+            "批量筛选归档编号无效。",
+            &archive_id,
+            "请从历史筛选列表中重新选择归档。",
+        );
+    }
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec![
+            "archive-detail".to_string(),
+            "--project".to_string(),
+            project_dir,
+            "--archive-id".to_string(),
+            archive_id,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取批量筛选历史详情。", &error),
+    }
+}
+
+#[tauri::command]
+async fn export_screening_archive_zip(
+    project_dir: String,
+    archive_id: String,
+    output_path: String,
+    overwrite: Option<bool>,
+) -> String {
+    if !is_safe_screening_archive_id(&archive_id) {
+        return screening_argument_error_json(
+            "SCREENING_ARCHIVE_ID_INVALID",
+            "批量筛选归档编号无效。",
+            &archive_id,
+            "请从历史筛选列表中重新选择归档。",
+        );
+    }
+    let args = match build_screening_archive_export_args(
+        &project_dir,
+        &archive_id,
+        &output_path,
+        overwrite,
+    ) {
+        Ok(args) => args,
+        Err(ScreeningArchiveExportArgumentError::OverwriteUnsupported) => {
+            return screening_archive_export_overwrite_error_json();
+        }
+    };
+    match run_screening_archive_export_async(args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法导出批量筛选归档 ZIP。", &error),
+    }
+}
+
+#[tauri::command]
+async fn compare_screening_archives(project_dir: String, archive_ids: Vec<String>) -> String {
+    if !are_safe_screening_archive_comparison_ids(&archive_ids) {
+        return screening_argument_error_json(
+            "SCREENING_ARCHIVE_COMPARE_IDS_INVALID",
+            "请选择两个不同且有效的批量筛选归档。",
+            &archive_ids.join(", "),
+            "请先选择基线归档，再选择一个对照归档。",
+        );
+    }
+    let mut args = vec![
+        "archive-compare".to_string(),
+        "--project".to_string(),
+        project_dir,
+    ];
+    for archive_id in archive_ids {
+        args.push("--archive-id".to_string());
+        args.push(archive_id);
+    }
+    match run_backend_module_async("dockstart_core.screening", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法比较批量筛选历史归档。", &error),
+    }
+}
+
+#[tauri::command]
 async fn request_screening_cancel(project_dir: String) -> String {
     match run_backend_module_async(
         "dockstart_core.screening",
@@ -1408,6 +1861,19 @@ async fn archive_screening(project_dir: String) -> String {
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法归档批量筛选。", &error),
+    }
+}
+
+#[tauri::command]
+async fn export_screening_report(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec!["report".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成批量筛选实验记录。", &error),
     }
 }
 
@@ -1638,7 +2104,7 @@ fn inspect_project_run_guard(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     for record in registry.tasks.values().filter(|record| {
-        record.kind == "vina"
+        matches!(record.kind.as_str(), "vina" | "multiple-ligand")
             && record.project_key == project_key
             && !is_terminal_task_status(&record.status)
     }) {
@@ -1764,6 +2230,113 @@ fn is_safe_run_id(run_id: &str) -> bool {
         return false;
     };
     sequence.len() >= 3 && sequence.bytes().all(|value| value.is_ascii_digit())
+}
+
+fn is_safe_screening_item_id(item_id: &str) -> bool {
+    if item_id.len() > 80 {
+        return false;
+    }
+    let Some(sequence) = item_id.strip_prefix("ligand_") else {
+        return false;
+    };
+    sequence.len() >= 4 && sequence.bytes().all(|value| value.is_ascii_digit())
+}
+
+fn is_safe_screening_archive_id(archive_id: &str) -> bool {
+    if archive_id.len() > 96 {
+        return false;
+    }
+    let Some(value) = archive_id.strip_prefix("screening_") else {
+        return false;
+    };
+    let mut parts = value.split('_');
+    let Some(sequence) = parts.next() else {
+        return false;
+    };
+    let Some(timestamp) = parts.next() else {
+        return false;
+    };
+    let collision_suffix = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    sequence.len() >= 3
+        && sequence.bytes().all(|value| value.is_ascii_digit())
+        && timestamp.len() == 14
+        && timestamp.bytes().all(|value| value.is_ascii_digit())
+        && match collision_suffix {
+            None => true,
+            Some(suffix) => suffix.len() >= 2 && suffix.bytes().all(|value| value.is_ascii_digit()),
+        }
+}
+
+fn are_safe_screening_archive_comparison_ids(archive_ids: &[String]) -> bool {
+    archive_ids.len() == 2
+        && archive_ids[0] != archive_ids[1]
+        && archive_ids
+            .iter()
+            .all(|archive_id| is_safe_screening_archive_id(archive_id))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScreeningArchiveExportArgumentError {
+    OverwriteUnsupported,
+}
+
+fn build_screening_archive_export_args(
+    project_dir: &str,
+    archive_id: &str,
+    output_path: &str,
+    overwrite: Option<bool>,
+) -> Result<Vec<String>, ScreeningArchiveExportArgumentError> {
+    if overwrite == Some(true) {
+        return Err(ScreeningArchiveExportArgumentError::OverwriteUnsupported);
+    }
+    Ok(vec![
+        "archive-export".to_string(),
+        "--project".to_string(),
+        project_dir.to_string(),
+        "--archive-id".to_string(),
+        archive_id.to_string(),
+        "--output".to_string(),
+        output_path.to_string(),
+    ])
+}
+
+fn screening_archive_export_overwrite_error_json() -> String {
+    screening_argument_error_json(
+        "SCREENING_ARCHIVE_EXPORT_OVERWRITE_UNSUPPORTED",
+        "图形界面不支持覆盖已有的归档 ZIP。",
+        "overwrite=true",
+        "请选择新的文件名或新位置后再次导出。",
+    )
+}
+
+fn is_safe_screening_pose_mode(mode: Option<i32>) -> bool {
+    match mode {
+        None => true,
+        Some(value) => (1..=50).contains(&value),
+    }
+}
+
+fn screening_argument_error_json(
+    code: &str,
+    message: &str,
+    raw_error: &str,
+    suggestion: &str,
+) -> String {
+    serde_json::json!({
+        "ok": false,
+        "screening": serde_json::Value::Null,
+        "error": {
+            "code": code,
+            "title": message,
+            "message": message,
+            "raw_error": raw_error,
+            "suggestion": suggestion,
+        },
+    })
+    .to_string()
 }
 
 fn validate_run_directory(project_dir: &str, run_id: &str) -> Result<PathBuf, String> {
@@ -1951,8 +2524,10 @@ fn watch_vina_progress(
     task_id: String,
     project_dir: String,
     run_id: String,
+    kind: String,
     stop: Arc<AtomicBool>,
 ) {
+    let is_multiple_ligand = kind == "multiple-ligand";
     let run_dir = PathBuf::from(project_dir).join("runs").join(run_id);
     while !stop.load(Ordering::Acquire) {
         std::thread::sleep(Duration::from_millis(750));
@@ -1972,17 +2547,41 @@ fn watch_vina_progress(
         let cancelling = matches!(observed_stage.as_str(), "cancel_pending" | "cancelling")
             || status == "cancelling";
         let (percent, message) = if cancelling {
-            (0, "正在安全取消 AutoDock Vina；不会启动新的运行。")
+            if is_multiple_ligand {
+                (0, "正在安全取消多配体共同对接；不会启动新的运行。")
+            } else {
+                (0, "正在安全取消 AutoDock Vina；不会启动新的运行。")
+            }
         } else if output_ready {
-            (92, "Vina 已生成输出，正在收尾并核验记录。")
+            if is_multiple_ligand {
+                (92, "联合构象输出已生成，正在核验两个成员与运行记录。")
+            } else {
+                (92, "Vina 已生成输出，正在收尾并核验记录。")
+            }
         } else if log_tail.contains("mode |") || log_tail.contains("affinity") {
-            (82, "Vina 正在整理对接构象与评分。")
+            if is_multiple_ligand {
+                (82, "Vina 正在整理联合构象与整体评分。")
+            } else {
+                (82, "Vina 正在整理对接构象与评分。")
+            }
         } else if log_tail.contains("Performing docking") || log_tail.contains("Computing") {
-            (55, "AutoDock Vina 正在搜索构象空间。")
+            if is_multiple_ligand {
+                (55, "AutoDock Vina 正在搜索两个配体的联合构象空间。")
+            } else {
+                (55, "AutoDock Vina 正在搜索构象空间。")
+            }
         } else if status == "running" {
-            (28, "AutoDock Vina 已启动，正在初始化计算。")
+            if is_multiple_ligand {
+                (28, "多配体共同对接已启动，正在初始化联合搜索。")
+            } else {
+                (28, "AutoDock Vina 已启动，正在初始化计算。")
+            }
         } else {
-            (18, "正在等待 AutoDock Vina 写入运行进度。")
+            if is_multiple_ligand {
+                (18, "正在等待多配体共同对接写入运行进度。")
+            } else {
+                (18, "正在等待 AutoDock Vina 写入运行进度。")
+            }
         };
 
         let record = {
@@ -2067,6 +2666,7 @@ fn background_worker_loop() {
                     record.progress_percent = 12;
                     record.progress_message = match record.kind.as_str() {
                         "vina" => "正在启动 AutoDock Vina。",
+                        "multiple-ligand" => "正在启动两个配体的共同对接。",
                         "structure-fetch" => "正在获取原始结构并校验下载内容。",
                         "screening" => "正在运行批量虚拟筛选队列。",
                         _ => "正在启动结构准备工具链。",
@@ -2099,11 +2699,12 @@ fn ensure_background_workers() {
 fn run_background_job(job: QueuedBackgroundJob) {
     let QueuedBackgroundJob { app, task_id, spec } = job;
     let watcher_stop = Arc::new(AtomicBool::new(false));
-    let watcher = if spec.kind == "vina" {
+    let watcher = if matches!(spec.kind.as_str(), "vina" | "multiple-ligand") {
         let watcher_app = app.clone();
         let watcher_task_id = task_id.clone();
         let watcher_project_dir = spec.project_dir.clone();
         let watcher_run_id = spec.run_id.clone();
+        let watcher_kind = spec.kind.clone();
         let watcher_stop_clone = Arc::clone(&watcher_stop);
         Some(std::thread::spawn(move || {
             watch_vina_progress(
@@ -2111,6 +2712,7 @@ fn run_background_job(job: QueuedBackgroundJob) {
                 watcher_task_id,
                 watcher_project_dir,
                 watcher_run_id,
+                watcher_kind,
                 watcher_stop_clone,
             );
         }))
@@ -2179,6 +2781,7 @@ fn run_background_job(job: QueuedBackgroundJob) {
                 record.progress_percent = 100;
                 record.progress_message = match record.kind.as_str() {
                     "vina" => "AutoDock Vina 运行已结束。",
+                    "multiple-ligand" => "多配体共同对接运行已结束。",
                     "structure-fetch" => "原始结构获取任务已结束。",
                     "screening" => "批量虚拟筛选队列已结束。",
                     _ => "结构准备任务已结束。",
@@ -2492,10 +3095,7 @@ fn start_flexible_receptor_task(
     if allow_bad_res {
         args.push("--allow-bad-res".to_string());
         for residue in &acknowledged {
-            args.extend([
-                "--acknowledge-bad-residue".to_string(),
-                residue.clone(),
-            ]);
+            args.extend(["--acknowledge-bad-residue".to_string(), residue.clone()]);
         }
     }
     start_background_job(
@@ -2670,6 +3270,57 @@ async fn start_vina_run_task(app: tauri::AppHandle, project_dir: String, run_id:
         Err(error) => {
             fallback_project_error_json("Vina 后台任务创建过程异常结束。", &error.to_string())
         }
+    }
+}
+
+#[tauri::command]
+async fn start_multiple_ligand_task(
+    app: tauri::AppHandle,
+    project_dir: String,
+    run_id: String,
+) -> String {
+    if let Err(error) = validate_run_directory(&project_dir, &run_id) {
+        return fallback_project_error_json(
+            "无法创建多配体共同对接后台任务：运行目录校验失败。",
+            &error,
+        );
+    }
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _guard_lock = project_run_guard_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = inspect_project_run_guard(&project_dir, true)?;
+        let only_same_in_memory_task = guard.blocked
+            && guard
+                .active_runs
+                .iter()
+                .all(|item| item.run_id == run_id && !item.registry_task_id.is_empty());
+        if guard.blocked && !only_same_in_memory_task {
+            return Ok(project_run_guard_error_json(&guard));
+        }
+        let project_key = normalized_project_key(&project_dir);
+        Ok(start_background_job(
+            app,
+            BackgroundJobSpec {
+                kind: "multiple-ligand".to_string(),
+                key: format!("multiple-ligand|{project_key}|{}", run_id.to_lowercase()),
+                module: "dockstart_core.multiple_ligands".to_string(),
+                args: vec!["run".to_string(), project_dir.clone(), run_id.clone()],
+                project_dir,
+                run_id,
+                target: "simultaneous_multi_ligand".to_string(),
+                fallback_message: "多配体共同对接后台运行失败，请查看运行日志与成员输入记录。"
+                    .to_string(),
+            },
+        ))
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法检查项目中的未完成运行。", &error),
+        Err(error) => fallback_project_error_json(
+            "多配体共同对接后台任务创建过程异常结束。",
+            &error.to_string(),
+        ),
     }
 }
 
@@ -2910,6 +3561,29 @@ fn hash_directory_file_signatures(hasher: &mut DefaultHasher, directory: &Path) 
     }
 }
 
+fn hash_directory_tree_file_signatures(hasher: &mut DefaultHasher, directory: &Path) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        hash_path_signature(hasher, directory, false);
+        return;
+    };
+    let mut paths = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            hash_path_signature(hasher, &path, false);
+            continue;
+        };
+        if metadata.file_type().is_symlink() || metadata.is_file() {
+            hash_path_signature(hasher, &path, false);
+        } else if metadata.is_dir() {
+            hash_directory_tree_file_signatures(hasher, &path);
+        }
+    }
+}
+
 fn viewer_artifact_fingerprint(args: &[String]) -> String {
     let mut hasher = DefaultHasher::new();
     let command = args.first().map(String::as_str).unwrap_or("");
@@ -2920,11 +3594,57 @@ fn viewer_artifact_fingerprint(args: &[String]) -> String {
     hash_path_signature(&mut hasher, &project_dir.join("project.json"), true);
 
     match command {
+        "load-screening-pose" => {
+            let screening_dir = project_dir.join("screening");
+            hash_path_signature(&mut hasher, &screening_dir.join("screening.json"), true);
+            hash_path_signature(
+                &mut hasher,
+                &screening_dir.join("inputs").join("receptor.pdbqt"),
+                false,
+            );
+            if let Some(item_id) = args
+                .get(2)
+                .filter(|item_id| is_safe_screening_item_id(item_id))
+            {
+                hash_directory_tree_file_signatures(
+                    &mut hasher,
+                    &screening_dir.join("attempts").join(item_id),
+                );
+            }
+        }
         "load-pose" | "list-poses" | "score-summary" => {
             if let Some(run_id) = args.get(2) {
                 let run_dir = project_dir.join("runs").join(run_id);
                 hash_path_signature(&mut hasher, &run_dir.join("out.pdbqt"), false);
+                hash_path_signature(&mut hasher, &run_dir.join("optimized.pdbqt"), false);
+                hash_path_signature(
+                    &mut hasher,
+                    &run_dir.join("inputs").join("ligand.pdbqt"),
+                    false,
+                );
                 hash_path_signature(&mut hasher, &run_dir.join("scores.csv"), false);
+                hash_path_signature(&mut hasher, &run_dir.join("metadata.json"), true);
+            }
+        }
+        "load-local-pose-pair" => {
+            if let Some(run_id) = args.get(2) {
+                let run_dir = project_dir.join("runs").join(run_id);
+                hash_path_signature(
+                    &mut hasher,
+                    &run_dir.join("inputs").join("receptor.pdbqt"),
+                    false,
+                );
+                hash_path_signature(
+                    &mut hasher,
+                    &run_dir.join("inputs").join("ligand.pdbqt"),
+                    false,
+                );
+                hash_path_signature(
+                    &mut hasher,
+                    &run_dir.join("inputs").join("flex.pdbqt"),
+                    false,
+                );
+                hash_path_signature(&mut hasher, &run_dir.join("optimized.pdbqt"), false);
                 hash_path_signature(&mut hasher, &run_dir.join("metadata.json"), true);
             }
         }
@@ -2942,6 +3662,17 @@ fn viewer_artifact_fingerprint(args: &[String]) -> String {
                     &project_dir.join("prepared").join("ligand.pdbqt"),
                     false,
                 ),
+                "receptor_run" | "receptor_flex" => {
+                    hash_directory_tree_file_signatures(
+                        &mut hasher,
+                        &project_dir.join("prepared").join("flexible_receptor"),
+                    );
+                    hash_path_signature(
+                        &mut hasher,
+                        &project_dir.join("prepared").join("receptor.pdbqt"),
+                        false,
+                    );
+                }
                 "receptor_raw" | "ligand_raw" => {
                     hash_directory_file_signatures(&mut hasher, &project_dir.join("raw"));
                 }
@@ -2984,8 +3715,11 @@ fn project_artifact_fingerprint(module: &str, args: &[String]) -> String {
                 let run_dir = project_dir.join("runs").join(run_id);
                 hash_path_signature(&mut hasher, &run_dir.join("metadata.json"), false);
                 hash_path_signature(&mut hasher, &run_dir.join("out.pdbqt"), false);
+                hash_path_signature(&mut hasher, &run_dir.join("optimized.pdbqt"), false);
                 hash_path_signature(&mut hasher, &run_dir.join("scores.csv"), false);
+                hash_path_signature(&mut hasher, &run_dir.join("evaluation.json"), false);
                 hash_path_signature(&mut hasher, &run_dir.join("docking_report.md"), false);
+                hash_path_signature(&mut hasher, &run_dir.join("evaluation_report.md"), false);
             } else {
                 hash_path_signature(&mut hasher, &project_dir.join("runs"), false);
             }
@@ -3345,6 +4079,12 @@ async fn run_backend_module_async(
         .map_err(|error| error.to_string())?
 }
 
+async fn run_screening_archive_export_async(args: Vec<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_screening_archive_export(args))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 async fn run_backend_module_cached_async(
     module: &'static str,
     args: Vec<String>,
@@ -3396,6 +4136,88 @@ fn run_backend_module_uncached_with_env(
     }
 
     Err(errors.join("\n"))
+}
+
+fn run_screening_archive_export(args: Vec<String>) -> Result<String, String> {
+    if args.first().map(String::as_str) != Some("archive-export") {
+        return Err("批量筛选归档导出命令参数无效。".to_string());
+    }
+    let backend_dir = find_backend_dir().ok_or_else(|| {
+        "未找到 DockStart 本地服务文件。请重新安装或恢复完整应用目录。".to_string()
+    })?;
+    let candidates = python_candidates(&backend_dir);
+    run_screening_archive_export_candidates(candidates, |python| {
+        run_python_screening_archive_export(&backend_dir, python, &args)
+    })
+}
+
+fn run_screening_archive_export_candidates<F>(
+    candidates: Vec<String>,
+    mut runner: F,
+) -> Result<String, String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    let mut errors = Vec::new();
+    for python in candidates {
+        match runner(&python) {
+            Ok(payload) => return Ok(payload),
+            Err(error) => errors.push(format!("{python}: {error}")),
+        }
+    }
+    Err(errors.join("\n"))
+}
+
+fn run_python_screening_archive_export(
+    backend_dir: &Path,
+    python: &str,
+    args: &[String],
+) -> Result<String, String> {
+    let mut command = build_python_module_command_with_env(
+        backend_dir,
+        python,
+        "dockstart_core.screening",
+        args,
+        &[],
+    );
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    classify_screening_archive_export_output(
+        output.status.success(),
+        &output.stdout,
+        &output.stderr,
+    )
+}
+
+fn classify_screening_archive_export_output(
+    status_success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<String, String> {
+    if status_success {
+        return String::from_utf8(stdout.to_vec()).map_err(|error| error.to_string());
+    }
+    if let Some(payload) = screening_archive_business_error_payload(stdout) {
+        return Ok(payload);
+    }
+
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
+}
+
+fn screening_archive_business_error_payload(stdout: &[u8]) -> Option<String> {
+    let payload = std::str::from_utf8(stdout).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
+    let object = value.as_object()?;
+    if object.get("ok") == Some(&serde_json::Value::Bool(false)) {
+        Some(payload.to_string())
+    } else {
+        None
+    }
 }
 
 fn run_python_module_with_env(
@@ -3724,8 +4546,25 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
             CacheInvalidation::Project
         }
         "dockstart_core.reference_rmsd" if command == "calculate" => CacheInvalidation::Project,
-        "dockstart_core.autogrid"
-            if matches!(command, "set-protocol" | "generate" | "import") =>
+        "dockstart_core.autogrid" if matches!(command, "set-protocol" | "generate" | "import") => {
+            CacheInvalidation::Project
+        }
+        "dockstart_core.ad4zn" if matches!(command, "review" | "prepare" | "parameter") => {
+            CacheInvalidation::Project
+        }
+        "dockstart_core.vina_maps" if matches!(command, "set-mode" | "generate" | "import") => {
+            CacheInvalidation::Project
+        }
+        "dockstart_core.screening"
+            if matches!(
+                command,
+                "stage" | "create" | "run" | "cancel" | "resume" | "archive" | "report"
+            ) =>
+        {
+            CacheInvalidation::Project
+        }
+        "dockstart_core.multiple_ligands"
+            if matches!(command, "prepare" | "run" | "cancel" | "report") =>
         {
             CacheInvalidation::Project
         }
@@ -3737,6 +4576,7 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
                     | "import-ligand"
                     | "update-box"
                     | "update-vina"
+                    | "update-run-protocol"
                     | "generate-config"
                     | "prepare-run"
                     | "execute-run"
@@ -3962,23 +4802,36 @@ fn main() {
             update_box_params,
             get_vina_params,
             update_vina_params,
+            update_vina_run_protocol,
             get_vina_config_preview,
             generate_vina_config,
             get_autogrid_maps_defaults,
             get_autogrid_maps_status,
             set_scoring_protocol,
+            get_ad4zn_status,
+            save_ad4zn_review,
+            prepare_ad4zn_receptor,
+            set_ad4zn_parameter_file,
             generate_autogrid_maps,
             import_autogrid_maps,
+            get_vina_maps_status,
+            set_vina_maps_mode,
+            generate_vina_maps,
+            import_vina_maps,
             validate_run_prerequisites,
             get_run_preflight,
             get_project_run_guard,
             prepare_vina_run,
+            prepare_multiple_ligand_run,
             get_project_workflow_status,
             load_run_metadata,
             start_vina_run_task,
+            start_multiple_ligand_task,
             execute_prepared_vina_run,
             get_run_runtime_status,
+            get_multiple_ligand_run_status,
             cancel_vina_run,
+            cancel_multiple_ligand_run,
             get_background_task_status,
             find_active_background_task,
             cancel_background_task,
@@ -3986,21 +4839,32 @@ fn main() {
             analyze_vina_run_results,
             calculate_reference_ligand_rmsd,
             load_scores_csv,
+            load_vina_evaluation,
             export_markdown_report,
+            export_multiple_ligand_markdown_report,
             get_report_status,
             get_viewer_file_status,
             load_structure_for_viewer,
             list_docking_poses,
             load_docking_pose_for_viewer,
+            load_multiple_ligand_pose,
+            load_screening_pose_for_viewer,
+            load_archived_screening_pose_for_viewer,
+            load_local_only_pose_pair_for_viewer,
             load_pose_score_summary,
             get_box_visualization,
             update_box_from_visualization,
             stage_screening_inputs,
             create_screening,
             get_screening_status,
+            list_screening_archives,
+            get_screening_archive,
+            export_screening_archive_zip,
+            compare_screening_archives,
             request_screening_cancel,
             resume_screening,
             archive_screening,
+            export_screening_report,
             start_screening_task
         ])
         .run(tauri::generate_context!())
@@ -4367,7 +5231,309 @@ mod tests {
         fs::write(run_dir.join("out.pdbqt"), b"AB").unwrap();
         let after = viewer_artifact_fingerprint(&args);
         assert_ne!(before, after);
+
+        fs::write(run_dir.join("optimized.pdbqt"), b"A").unwrap();
+        let optimized_before = viewer_artifact_fingerprint(&args);
+        fs::write(run_dir.join("optimized.pdbqt"), b"AB").unwrap();
+        let optimized_after = viewer_artifact_fingerprint(&args);
+        assert_ne!(optimized_before, optimized_after);
+
+        let inputs_dir = run_dir.join("inputs");
+        fs::create_dir_all(&inputs_dir).unwrap();
+        fs::write(inputs_dir.join("ligand.pdbqt"), b"A").unwrap();
+        let score_only_before = viewer_artifact_fingerprint(&args);
+        fs::write(inputs_dir.join("ligand.pdbqt"), b"AB").unwrap();
+        let score_only_after = viewer_artifact_fingerprint(&args);
+        assert_ne!(score_only_before, score_only_after);
+
+        fs::write(inputs_dir.join("receptor.pdbqt"), b"A").unwrap();
+        let pair_args = vec![
+            "load-local-pose-pair".to_string(),
+            test_root.to_string_lossy().into_owned(),
+            "run_001".to_string(),
+        ];
+        let pair_before = viewer_artifact_fingerprint(&pair_args);
+        fs::write(inputs_dir.join("receptor.pdbqt"), b"AB").unwrap();
+        let receptor_after = viewer_artifact_fingerprint(&pair_args);
+        assert_ne!(pair_before, receptor_after);
+        fs::write(inputs_dir.join("ligand.pdbqt"), b"ABC").unwrap();
+        let ligand_after = viewer_artifact_fingerprint(&pair_args);
+        assert_ne!(receptor_after, ligand_after);
+        fs::write(run_dir.join("optimized.pdbqt"), b"ABC").unwrap();
+        let pair_optimized_after = viewer_artifact_fingerprint(&pair_args);
+        assert_ne!(ligand_after, pair_optimized_after);
+        fs::write(inputs_dir.join("flex.pdbqt"), b"A").unwrap();
+        let pair_flex_after = viewer_artifact_fingerprint(&pair_args);
+        assert_ne!(pair_optimized_after, pair_flex_after);
         let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn viewer_screening_pose_fingerprint_tracks_scoped_artifacts() {
+        assert!(is_safe_screening_item_id("ligand_0001"));
+        assert!(is_safe_screening_item_id("ligand_10000"));
+        for invalid in [
+            "",
+            "ligand_001",
+            "ligand_abcd",
+            "../ligand_0001",
+            "ligand_0001/child",
+            "ligand_0001\\child",
+        ] {
+            assert!(
+                !is_safe_screening_item_id(invalid),
+                "unexpectedly accepted {invalid}"
+            );
+        }
+
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-screening-viewer-cache-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let screening_dir = test_root.join("screening");
+        let attempt_dir = screening_dir
+            .join("attempts")
+            .join("ligand_0001")
+            .join("attempt_001");
+        fs::create_dir_all(screening_dir.join("inputs")).unwrap();
+        fs::create_dir_all(&attempt_dir).unwrap();
+        fs::write(test_root.join("project.json"), b"{}").unwrap();
+        fs::write(
+            screening_dir.join("screening.json"),
+            b"{\"status\":\"completed\"}",
+        )
+        .unwrap();
+        fs::write(screening_dir.join("inputs").join("receptor.pdbqt"), b"A").unwrap();
+        fs::write(attempt_dir.join("out.pdbqt"), b"A").unwrap();
+
+        let args = vec![
+            "load-screening-pose".to_string(),
+            test_root.to_string_lossy().into_owned(),
+            "ligand_0001".to_string(),
+            "1".to_string(),
+        ];
+        let before = viewer_artifact_fingerprint(&args);
+        fs::write(
+            screening_dir.join("screening.json"),
+            b"{\"status\":\"completed\",\"reported\":true}",
+        )
+        .unwrap();
+        let state_after = viewer_artifact_fingerprint(&args);
+        assert_ne!(before, state_after);
+
+        fs::write(screening_dir.join("inputs").join("receptor.pdbqt"), b"AB").unwrap();
+        let receptor_after = viewer_artifact_fingerprint(&args);
+        assert_ne!(state_after, receptor_after);
+
+        fs::write(attempt_dir.join("out.pdbqt"), b"ABC").unwrap();
+        let output_after = viewer_artifact_fingerprint(&args);
+        assert_ne!(receptor_after, output_after);
+
+        let unsafe_args = vec![
+            "load-screening-pose".to_string(),
+            test_root.to_string_lossy().into_owned(),
+            "../ligand_0001".to_string(),
+            "1".to_string(),
+        ];
+        let unsafe_before = viewer_artifact_fingerprint(&unsafe_args);
+        fs::write(attempt_dir.join("out.pdbqt"), b"ABCD").unwrap();
+        let unsafe_after = viewer_artifact_fingerprint(&unsafe_args);
+        assert_eq!(unsafe_before, unsafe_after);
+
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn screening_archive_argument_validation_is_strict() {
+        for valid in [
+            "screening_001_20260728123456",
+            "screening_1000_20260728123456",
+            "screening_001_20260728123456_01",
+            "screening_001_20260728123456_100",
+        ] {
+            assert!(
+                is_safe_screening_archive_id(valid),
+                "unexpectedly rejected {valid}"
+            );
+        }
+        for invalid in [
+            "",
+            "screening_01_20260728123456",
+            "screening_001_2026072812345",
+            "screening_001_202607281234567",
+            "screening_001_20260728123456_1",
+            "screening_001_20260728123456_extra",
+            "screening_001_20260728123456_01_extra",
+            "../screening_001_20260728123456",
+            "screening_001/20260728123456",
+            "screening_001\\20260728123456",
+            "screening_００１_20260728123456",
+        ] {
+            assert!(
+                !is_safe_screening_archive_id(invalid),
+                "unexpectedly accepted {invalid}"
+            );
+        }
+
+        assert!(is_safe_screening_pose_mode(None));
+        assert!(is_safe_screening_pose_mode(Some(1)));
+        assert!(is_safe_screening_pose_mode(Some(50)));
+        assert!(!is_safe_screening_pose_mode(Some(-1)));
+        assert!(!is_safe_screening_pose_mode(Some(0)));
+        assert!(!is_safe_screening_pose_mode(Some(51)));
+
+        let baseline = "screening_001_20260728123456".to_string();
+        let comparison = "screening_002_20260728123556".to_string();
+        assert!(are_safe_screening_archive_comparison_ids(&[
+            baseline.clone(),
+            comparison,
+        ]));
+        assert!(!are_safe_screening_archive_comparison_ids(&[
+            baseline.clone(),
+        ]));
+        assert!(!are_safe_screening_archive_comparison_ids(&[
+            baseline.clone(),
+            baseline,
+        ]));
+        assert!(!are_safe_screening_archive_comparison_ids(&[
+            "screening_001_20260728123456".to_string(),
+            "../screening_002_20260728123556".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn screening_archive_export_args_preserve_values_and_reject_overwrite() {
+        let expected_without_overwrite = vec![
+            "archive-export".to_string(),
+            "--project".to_string(),
+            r"C:\projects\screening demo".to_string(),
+            "--archive-id".to_string(),
+            "screening_001_20260728123456".to_string(),
+            "--output".to_string(),
+            r"D:\exports\screening result.zip".to_string(),
+        ];
+
+        assert_eq!(
+            build_screening_archive_export_args(
+                r"C:\projects\screening demo",
+                "screening_001_20260728123456",
+                r"D:\exports\screening result.zip",
+                None,
+            ),
+            Ok(expected_without_overwrite.clone())
+        );
+        assert_eq!(
+            build_screening_archive_export_args(
+                r"C:\projects\screening demo",
+                "screening_001_20260728123456",
+                r"D:\exports\screening result.zip",
+                Some(false),
+            ),
+            Ok(expected_without_overwrite.clone())
+        );
+        assert_eq!(
+            build_screening_archive_export_args(
+                r"C:\projects\screening demo",
+                "screening_001_20260728123456",
+                r"D:\exports\screening result.zip",
+                Some(true),
+            ),
+            Err(ScreeningArchiveExportArgumentError::OverwriteUnsupported)
+        );
+        assert!(!expected_without_overwrite.iter().any(|value| {
+            matches!(
+                value.as_str(),
+                "--overwrite"
+                    | "--expected-destination-sha256"
+                    | "--expected-destination-size-bytes"
+            )
+        }));
+
+        let error_payload = screening_archive_export_overwrite_error_json();
+        let error_value: serde_json::Value = serde_json::from_str(&error_payload).unwrap();
+        assert_eq!(
+            error_value
+                .pointer("/error/code")
+                .and_then(serde_json::Value::as_str),
+            Some("SCREENING_ARCHIVE_EXPORT_OVERWRITE_UNSUPPORTED")
+        );
+    }
+
+    #[test]
+    fn screening_archive_export_output_only_preserves_structured_business_errors() {
+        let business_error = b" \n{\"ok\":false,\"error\":{\"code\":\"SCREENING_ARCHIVE_EXPORT_DESTINATION_EXISTS\",\"details\":{\"destination_file\":\"D:\\\\exports\\\\screening.zip\",\"destination_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"destination_size_bytes\":12345}}}\r\n";
+        assert_eq!(
+            classify_screening_archive_export_output(false, business_error, b""),
+            Ok(String::from_utf8(business_error.to_vec()).unwrap())
+        );
+        let preserved: serde_json::Value = serde_json::from_slice(business_error).unwrap();
+        assert_eq!(
+            preserved
+                .pointer("/error/details/destination_size_bytes")
+                .and_then(serde_json::Value::as_u64),
+            Some(12345)
+        );
+
+        for rejected in [
+            b"{\"ok\":true,\"message\":\"unexpected exit\"}".as_slice(),
+            b"{\"error\":{\"code\":\"ARCHIVE_EXISTS\"}}".as_slice(),
+            b"backend import failed".as_slice(),
+            b"{\"ok\":false}\n{\"ok\":false}".as_slice(),
+        ] {
+            assert!(
+                classify_screening_archive_export_output(false, rejected, b"traceback").is_err(),
+                "unexpectedly preserved {}",
+                String::from_utf8_lossy(rejected)
+            );
+        }
+    }
+
+    #[test]
+    fn screening_archive_export_runner_continues_after_non_business_failures() {
+        let business_error = "{\"ok\":false,\"error\":{\"code\":\"ARCHIVE_EXISTS\"}}";
+        let mut attempted = Vec::new();
+        let result = run_screening_archive_export_candidates(
+            vec![
+                "missing-python".to_string(),
+                "wrong-runtime".to_string(),
+                "working-runtime".to_string(),
+            ],
+            |python| {
+                attempted.push(python.to_string());
+                match python {
+                    "missing-python" => Err("interpreter unavailable".to_string()),
+                    "wrong-runtime" => classify_screening_archive_export_output(
+                        false,
+                        b"{\"ok\":true}",
+                        b"module import failed",
+                    ),
+                    _ => classify_screening_archive_export_output(
+                        false,
+                        business_error.as_bytes(),
+                        b"",
+                    ),
+                }
+            },
+        );
+
+        assert_eq!(result, Ok(business_error.to_string()));
+        assert_eq!(
+            attempted,
+            vec![
+                "missing-python".to_string(),
+                "wrong-runtime".to_string(),
+                "working-runtime".to_string(),
+            ]
+        );
+
+        let failure = run_screening_archive_export_candidates(
+            vec!["python-a".to_string(), "python-b".to_string()],
+            |python| Err(format!("{python} unavailable")),
+        )
+        .unwrap_err();
+        assert!(failure.contains("python-a: python-a unavailable"));
+        assert!(failure.contains("python-b: python-b unavailable"));
     }
 
     #[test]
@@ -4388,10 +5554,112 @@ mod tests {
         );
         assert_eq!(
             backend_command_invalidation(
+                "dockstart_core.project",
+                &[
+                    "update-run-protocol".to_string(),
+                    "project".to_string(),
+                    "score_only".to_string(),
+                    "true".to_string(),
+                ],
+            ),
+            CacheInvalidation::Project
+        );
+        assert_eq!(
+            backend_command_invalidation(
                 "dockstart_core.settings",
                 &["update-tool-path".to_string()],
             ),
             CacheInvalidation::Both
+        );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.screening",
+                &[
+                    "archive".to_string(),
+                    "--project".to_string(),
+                    "project".to_string(),
+                ],
+            ),
+            CacheInvalidation::Project
+        );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.screening",
+                &[
+                    "archives".to_string(),
+                    "--project".to_string(),
+                    "project".to_string(),
+                ],
+            ),
+            CacheInvalidation::None
+        );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.screening",
+                &[
+                    "archive-export".to_string(),
+                    "--project".to_string(),
+                    "project".to_string(),
+                    "--archive-id".to_string(),
+                    "screening_001_20260728123456".to_string(),
+                    "--output".to_string(),
+                    "screening.zip".to_string(),
+                ],
+            ),
+            CacheInvalidation::None
+        );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.vina_maps",
+                &["status".to_string(), "project".to_string()],
+            ),
+            CacheInvalidation::None
+        );
+        for command in ["set-mode", "generate", "import"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.vina_maps",
+                    &[command.to_string(), "project".to_string()],
+                ),
+                CacheInvalidation::Project
+            );
+        }
+        for command in ["prepare", "run", "cancel", "report"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.multiple_ligands",
+                    &[command.to_string(), "project".to_string()],
+                ),
+                CacheInvalidation::Project
+            );
+        }
+        for command in ["status", "load-pose"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.multiple_ligands",
+                    &[command.to_string(), "project".to_string()],
+                ),
+                CacheInvalidation::None
+            );
+        }
+    }
+
+    #[test]
+    fn multiple_ligand_prepare_uses_one_json_argument_and_preserves_member_order() {
+        let args = multiple_ligand_prepare_args(
+            "C:\\project path".to_string(),
+            vec![
+                "C:\\ligands\\first ligand.pdbqt".to_string(),
+                "D:\\second.pdbqt".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(args[0], "prepare");
+        assert_eq!(args[1], "C:\\project path");
+        let members: Vec<String> = serde_json::from_str(&args[2]).unwrap();
+        assert_eq!(
+            members,
+            vec!["C:\\ligands\\first ligand.pdbqt", "D:\\second.pdbqt"]
         );
     }
 

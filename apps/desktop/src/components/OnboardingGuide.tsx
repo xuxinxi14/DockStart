@@ -23,8 +23,8 @@ type StartChoice = {
 const choices: StartChoice[] = [
   {
     mode: "basic",
-    title: "已有 PDBQT（直接对接）",
-    summary: "直接导入受体和配体 PDBQT，设置 Box 后运行 AutoDock Vina。",
+    title: "已有 PDBQT（直接使用）",
+    summary: "直接导入受体和配体 PDBQT，再选择全局对接、当前姿势评分或局部优化。",
     needs: "需要：AutoDock Vina",
     readyText: "可走最低依赖路径",
     blockedText: "缺少 AutoDock Vina",

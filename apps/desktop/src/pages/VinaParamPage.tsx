@@ -7,6 +7,16 @@ import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse } from "../types";
+import {
+  VINA_NUMERIC_ADVANCED_KEYS,
+  customizedAdvancedVinaCount,
+  parseVinaForm,
+  resetAdvancedVinaFields,
+  vinaSettingsToForm,
+  type VinaForm,
+  type VinaNumericKey,
+  type VinaTextKey,
+} from "../utils/vinaForm";
 
 type VinaParamPageProps = {
   project: DockStartProject;
@@ -15,15 +25,25 @@ type VinaParamPageProps = {
   onOpenVinaConfig: (project: DockStartProject) => void;
 };
 
-type VinaFormState = Record<keyof DockStartProject["vina"], string>;
-type VinaNumericKey = Exclude<keyof DockStartProject["vina"], "scoring">;
-
 const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string; inputMode: "numeric" | "decimal" }> = [
   { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议 8", inputMode: "numeric" },
   { key: "num_modes", label: "输出构象数量", hint: "建议 9", inputMode: "numeric" },
   { key: "energy_range", label: "能量范围", hint: "kcal/mol", inputMode: "decimal" },
   { key: "cpu", label: "CPU 核心数", hint: "0 表示自动", inputMode: "numeric" },
   { key: "seed", label: "随机种子", hint: "可留空", inputMode: "numeric" },
+];
+
+type VinaNumericAdvancedKey = (typeof VINA_NUMERIC_ADVANCED_KEYS)[number];
+
+const advancedVinaFields: Array<{
+  key: Exclude<VinaNumericAdvancedKey, "verbosity">;
+  label: string;
+  hint: string;
+  inputMode: "numeric" | "decimal";
+}> = [
+  { key: "max_evals", label: "每次搜索评估上限", hint: "0 = Vina 自动；仅全局对接", inputMode: "numeric" },
+  { key: "min_rmsd", label: "构象最小间距", hint: "默认 1 Å；仅全局对接", inputMode: "decimal" },
+  { key: "spacing", label: "网格间距", hint: "默认 0.375 Å；AD4 maps 不使用", inputMode: "decimal" },
 ];
 
 function parseProjectResponse(rawPayload: string): ProjectResponse {
@@ -39,15 +59,8 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
   };
 }
 
-function vinaToForm(project: DockStartProject): VinaFormState {
-  return {
-    scoring: project.vina.scoring ?? "vina",
-    exhaustiveness: String(project.vina.exhaustiveness),
-    num_modes: String(project.vina.num_modes),
-    energy_range: String(project.vina.energy_range),
-    cpu: String(project.vina.cpu),
-    seed: project.vina.seed === null ? "" : String(project.vina.seed),
-  };
+function vinaToForm(project: DockStartProject): VinaForm {
+  return vinaSettingsToForm(project.vina);
 }
 
 function hasPreparedFiles(project: DockStartProject): boolean {
@@ -55,18 +68,7 @@ function hasPreparedFiles(project: DockStartProject): boolean {
 }
 
 function isValidVinaParams(vina: DockStartProject["vina"]): boolean {
-  return (
-    (vina.scoring === "vina" || vina.scoring === "vinardo") &&
-    Number.isInteger(vina.exhaustiveness) &&
-    vina.exhaustiveness > 0 &&
-    Number.isInteger(vina.num_modes) &&
-    vina.num_modes > 0 &&
-    Number.isFinite(vina.energy_range) &&
-    vina.energy_range > 0 &&
-    Number.isInteger(vina.cpu) &&
-    vina.cpu >= 0 &&
-    (vina.seed === null || Number.isInteger(vina.seed))
-  );
+  return parseVinaForm(vinaSettingsToForm(vina)) !== null;
 }
 
 export default function VinaParamPage({
@@ -76,7 +78,7 @@ export default function VinaParamPage({
   onOpenVinaConfig,
 }: VinaParamPageProps) {
   const [project, setProject] = useState<DockStartProject>(initialProject);
-  const [vinaForm, setVinaForm] = useState<VinaFormState>(() => vinaToForm(initialProject));
+  const [vinaForm, setVinaForm] = useState<VinaForm>(() => vinaToForm(initialProject));
   const [message, setMessage] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [rawError, setRawError] = useState("");
@@ -125,12 +127,20 @@ export default function VinaParamPage({
     void reloadVina();
   }, [reloadVina]);
 
-  const updateField = (key: keyof DockStartProject["vina"], value: string) => {
+  const updateField = (key: VinaTextKey, value: string) => {
     setCanOpenConfig(false);
     setVinaForm((current) => ({ ...current, [key]: value }));
   };
 
   const saveVina = async () => {
+    const parsedVina = parseVinaForm(vinaForm);
+    if (!parsedVina) {
+      setCanOpenConfig(false);
+      setMessage("Vina 参数格式无效，请检查输入值。");
+      setWarnings([]);
+      setRawError("");
+      return;
+    }
     setIsBusy(true);
     setCanOpenConfig(false);
     setMessage("");
@@ -139,7 +149,7 @@ export default function VinaParamPage({
     try {
       const rawPayload = await invoke<string>("update_vina_params", {
         projectDir: project.project_dir,
-        vinaJson: JSON.stringify(vinaForm),
+        vinaJson: JSON.stringify(parsedVina),
       });
       applyProjectResponse(parseProjectResponse(rawPayload), "Vina 参数已保存。");
     } catch (error) {
@@ -150,6 +160,8 @@ export default function VinaParamPage({
       setIsBusy(false);
     }
   };
+
+  const advancedCustomCount = customizedAdvancedVinaCount(vinaForm, VINA_NUMERIC_ADVANCED_KEYS);
 
   return (
     <PageShell labelledBy="vina-param-title">
@@ -218,6 +230,44 @@ export default function VinaParamPage({
                   </label>
                 ))}
               </div>
+              <AdvancedDetails
+                summary={`高级设置 · ${advancedCustomCount ? `已自定义 ${advancedCustomCount} 项` : "Vina 默认"}`}
+              >
+                <div className="param-form">
+                  {advancedVinaFields.map((field) => (
+                    <label className="param-field" key={field.key}>
+                      <span>{field.label}</span>
+                      <input
+                        type="text"
+                        value={vinaForm[field.key]}
+                        onChange={(event) => updateField(field.key, event.target.value)}
+                        inputMode={field.inputMode}
+                      />
+                      <small>{field.hint}</small>
+                    </label>
+                  ))}
+                  <label className="param-field">
+                    <span>日志详细程度</span>
+                    <select value={vinaForm.verbosity} onChange={(event) => updateField("verbosity", event.target.value)}>
+                      <option value="1">标准（1）</option>
+                      <option value="2">详细（2）</option>
+                    </select>
+                    <small>详细模式会保存更多 Vina 诊断</small>
+                  </label>
+                </div>
+                <div className="button-row end">
+                  <ActionButton
+                    variant="text"
+                    disabled={isBusy || advancedCustomCount === 0}
+                    onClick={() => {
+                      setCanOpenConfig(false);
+                      setVinaForm((current) => resetAdvancedVinaFields(current, VINA_NUMERIC_ADVANCED_KEYS));
+                    }}
+                  >
+                    恢复 Vina 默认值
+                  </ActionButton>
+                </div>
+              </AdvancedDetails>
               <div className="button-row end">
                 <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadVina()}>重新加载</ActionButton>
                 <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveVina()}>

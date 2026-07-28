@@ -2203,6 +2203,320 @@ print(json.dumps(project_module.update_project_run_summary(sys.argv[1], sys.argv
 
             self.assertEqual(response["progress"]["percent"], 100)
 
+    def test_multiple_ligand_scores_use_immutable_verified_snapshots(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            created = create_project("multi_integrity", temp_dir)
+            self.assertTrue(created["ok"], created)
+            project_dir = Path(created["project_dir"])
+            run_id = "run_001"
+            run_dir = project_dir / "runs" / run_id
+            run_dir.mkdir()
+            scores_path = run_dir / "scores.csv"
+            joint_path = run_dir / "joint_poses.json"
+            scores_text = (
+                "mode,joint_affinity_kcal_mol,rmsd_lb,rmsd_ub,"
+                "pose_available,score_scope\n"
+                "1,-10.0,0.0,0.0,true,joint_two_ligand_pose\n"
+                "2,-9.2,1.1,1.5,false,joint_two_ligand_pose\n"
+            )
+            scores_path.write_text(scores_text, encoding="utf-8")
+            manifest = {
+                "schema_version": 1,
+                "protocol_id": "simultaneous_multi_ligand",
+                "run_id": run_id,
+                "member_count": 2,
+                "scores": [
+                    {
+                        "mode": 1,
+                        "joint_affinity_kcal_mol": -10.0,
+                        "rmsd_lb": 0.0,
+                        "rmsd_ub": 0.0,
+                        "pose_available": True,
+                    },
+                    {
+                        "mode": 2,
+                        "joint_affinity_kcal_mol": -9.2,
+                        "rmsd_lb": 1.1,
+                        "rmsd_ub": 1.5,
+                        "pose_available": False,
+                    },
+                ],
+            }
+            joint_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            def attestation(path: Path, relative: str) -> dict[str, object]:
+                return {
+                    "relative_path": relative,
+                    "exists": True,
+                    "size_bytes": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+
+            scores_relative = f"runs/{run_id}/scores.csv"
+            joint_relative = f"runs/{run_id}/joint_poses.json"
+            metadata_path = run_dir / "metadata.json"
+            metadata = {
+                "run_id": run_id,
+                "status": "finished",
+                "stage": "finished",
+                "protocol_id": "simultaneous_multi_ligand",
+                "scores_file": scores_relative,
+                "joint_poses_file": joint_relative,
+                "best_affinity": -10.0,
+                "artifacts": {
+                    "scores": attestation(scores_path, scores_relative),
+                    "joint_poses": attestation(
+                        joint_path,
+                        joint_relative,
+                    ),
+                },
+            }
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            loaded = project_module.load_scores_csv(
+                str(project_dir),
+                run_id,
+            )
+            self.assertTrue(loaded["ok"], loaded)
+            self.assertEqual(
+                [row["joint_affinity_kcal_mol"] for row in loaded["scores"]],
+                [-10.0, -9.2],
+            )
+
+            replacement_manifest = json.loads(json.dumps(manifest))
+            replacement_manifest["scores"][0]["joint_affinity_kcal_mol"] = -7.5
+            original_snapshot_reader = (
+                project_module._read_multiple_ligand_result_artifact_snapshot
+            )
+
+            def replace_path_after_snapshot(*args, **kwargs):
+                snapshot, snapshot_error = original_snapshot_reader(
+                    *args,
+                    **kwargs,
+                )
+                if snapshot_error is None:
+                    filename = kwargs["filename"]
+                    if filename == "scores.csv":
+                        scores_path.write_text(
+                            scores_text.replace("-10.0", "-7.5", 1),
+                            encoding="utf-8",
+                        )
+                    elif filename == "joint_poses.json":
+                        joint_path.write_text(
+                            json.dumps(
+                                replacement_manifest,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                return snapshot, snapshot_error
+
+            with unittest.mock.patch.object(
+                project_module,
+                "_read_multiple_ligand_result_artifact_snapshot",
+                side_effect=replace_path_after_snapshot,
+            ):
+                raced = project_module.load_scores_csv(
+                    str(project_dir),
+                    run_id,
+                )
+            self.assertTrue(raced["ok"], raced)
+            self.assertEqual(
+                [row["joint_affinity_kcal_mol"] for row in raced["scores"]],
+                [-10.0, -9.2],
+            )
+            self.assertIn("-7.5", scores_path.read_text(encoding="utf-8"))
+
+            scores_path.write_text(scores_text, encoding="utf-8")
+            joint_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            scores_path.write_text(
+                scores_text.replace("-10.0", "-10.1", 1),
+                encoding="utf-8",
+            )
+            tampered_scores = project_module.load_scores_csv(
+                str(project_dir),
+                run_id,
+            )
+            self.assertFalse(tampered_scores["ok"])
+            self.assertEqual(
+                tampered_scores["error"]["code"],
+                "MULTIPLE_LIGAND_SCORES_INTEGRITY_ERROR",
+            )
+
+            scores_path.write_text(scores_text, encoding="utf-8")
+            manifest["scores"][1]["pose_available"] = True
+            joint_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            metadata["artifacts"]["joint_poses"] = attestation(
+                joint_path,
+                joint_relative,
+            )
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            mismatched_manifest = project_module.load_scores_csv(
+                str(project_dir),
+                run_id,
+            )
+            self.assertFalse(mismatched_manifest["ok"])
+            self.assertEqual(
+                mismatched_manifest["error"]["code"],
+                "MULTIPLE_LIGAND_SCORE_MANIFEST_MISMATCH",
+            )
+
+    def test_recovery_restores_multiple_ligand_summary_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            created = create_project("multi_summary", temp_dir)
+            self.assertTrue(created["ok"], created)
+            project_dir = Path(created["project_dir"])
+            run_id = "run_001"
+            run_dir = project_dir / "runs" / run_id
+            run_dir.mkdir()
+            members = [
+                {
+                    "member_index": 1,
+                    "member_id": "ligand_001",
+                    "display_name": "first.pdbqt",
+                },
+                {
+                    "member_index": 2,
+                    "member_id": "ligand_002",
+                    "display_name": "second.pdbqt",
+                },
+            ]
+            (run_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status": "prepared",
+                        "stage": "prepared",
+                        "protocol_id": "simultaneous_multi_ligand",
+                        "protocol_name": "多配体共同对接（实验性）",
+                        "member_count": 2,
+                        "members": members,
+                        "run_mode": "dock",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            recovered = project_module.recover_project_state(
+                str(project_dir),
+            )
+
+            self.assertTrue(recovered["ok"], recovered)
+            summary = next(
+                item
+                for item in recovered["project"]["runs"]
+                if item["run_id"] == run_id
+            )
+            self.assertEqual(
+                summary["protocol_id"],
+                "simultaneous_multi_ligand",
+            )
+            self.assertEqual(
+                summary["protocol_name"],
+                "多配体共同对接（实验性）",
+            )
+            self.assertEqual(summary["member_count"], 2)
+            self.assertEqual(summary["members"], members)
+
+    def test_recovery_preserves_multiple_ligand_artifact_names_and_vina_proof(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            created = create_project("multi_recovery", temp_dir)
+            self.assertTrue(created["ok"], created)
+            project_dir = Path(created["project_dir"])
+            run_id = "run_001"
+            run_dir = project_dir / "runs" / run_id
+            run_dir.mkdir()
+            output_path = run_dir / "out.pdbqt"
+            output_path.write_text(
+                "MODEL 1\nENDMDL\n",
+                encoding="utf-8",
+            )
+            output_relative = f"runs/{run_id}/out.pdbqt"
+            executed_bytes = b"vina-at-execution"
+            executed_sha256 = hashlib.sha256(executed_bytes).hexdigest()
+            vina_path = project_dir / "recorded-vina.exe"
+            vina_path.write_bytes(b"vina-observed-afterwards")
+            metadata_path = run_dir / "metadata.json"
+            metadata_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status": "finished",
+                        "stage": "finished",
+                        "protocol_id": "simultaneous_multi_ligand",
+                        "run_mode": "dock",
+                        "output_file": output_relative,
+                        "execution_vina": {
+                            "path": str(vina_path),
+                            "version": "1.2.7",
+                            "source": "configured",
+                            "size_bytes": len(executed_bytes),
+                            "sha256": executed_sha256,
+                        },
+                        "artifacts": {
+                            "output": {
+                                "relative_path": output_relative,
+                                "exists": True,
+                                "size_bytes": output_path.stat().st_size,
+                                "sha256": hashlib.sha256(
+                                    output_path.read_bytes(),
+                                ).hexdigest(),
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            recovered = project_module.recover_project_state(
+                str(project_dir),
+            )
+            final = json.loads(metadata_path.read_text(encoding="utf-8"))
+            artifacts = final["artifacts"]
+
+            self.assertTrue(recovered["ok"], recovered)
+            self.assertIn("output", artifacts)
+            self.assertNotIn("out", artifacts)
+            vina_artifact = artifacts["vina_binary_executed"]
+            self.assertEqual(vina_artifact["sha256"], executed_sha256)
+            self.assertEqual(
+                vina_artifact["size_bytes"],
+                len(executed_bytes),
+            )
+            self.assertEqual(
+                vina_artifact["verification_status"],
+                "verified",
+            )
+            self.assertTrue(vina_artifact["recorded_at_execution"])
+            self.assertNotIn("backfilled_unverified", vina_artifact)
+
     def test_cancel_vina_run_terminates_process_and_keeps_cancelled_status(self) -> None:
         for _iteration in range(5):
             with tempfile.TemporaryDirectory() as temp_dir:

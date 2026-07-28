@@ -2,7 +2,13 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
-import { normalizeNavigationPage, type NavigateOptions, type PageId, type StartMode } from "./navigation/pages";
+import {
+  normalizeNavigationPage,
+  type NavigateOptions,
+  type PageId,
+  type ProjectTaskIntent,
+  type StartMode,
+} from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import HelpPage from "./pages/HelpPage";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
@@ -28,6 +34,7 @@ import {
   isSameProjectDir,
   shouldRefreshProjectAfterTask,
 } from "./utils/backgroundProjectRefresh";
+import { taskIntentFromProject, workflowRunForTask } from "./utils/vinaTask";
 import { getWorkflowSummary } from "./utils/workflowSummary";
 import { buildWorkflowSteps } from "./utils/workflowSteps";
 
@@ -41,13 +48,27 @@ export default function App() {
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [projectStartMode, setProjectStartMode] = useState<StartMode>("basic");
+  const [projectTaskIntent, setProjectTaskIntent] = useState<ProjectTaskIntent>("dock");
   const [openProjectRequestKey, setOpenProjectRequestKey] = useState(0);
   const [projectRevision, setProjectRevision] = useState(0);
   const [navigationNotice, setNavigationNotice] = useState("");
   const committedProjectKeyRef = useRef("");
+  const committedProjectTaskRef = useRef<{ projectDir: string; taskIntent: ProjectTaskIntent } | null>(null);
   const currentPageRef = useRef<PageId>("help");
 
   const commitProject = useCallback((project: DockStartProject) => {
+    const nextTask = {
+      projectDir: project.project_dir,
+      taskIntent: taskIntentFromProject(project),
+    };
+    const previousTask = committedProjectTaskRef.current;
+    if (
+      previousTask?.projectDir === nextTask.projectDir
+      && previousTask.taskIntent !== nextTask.taskIntent
+    ) {
+      setCurrentRunId("");
+    }
+    committedProjectTaskRef.current = nextTask;
     setCurrentProject(project);
     const nextKey = projectStateKey(project);
     if (committedProjectKeyRef.current === nextKey) return;
@@ -59,12 +80,19 @@ export default function App() {
     // This snapshot already came from a workflow-status read. Updating the
     // revision here would immediately schedule the same Python read again.
     committedProjectKeyRef.current = projectStateKey(project);
+    committedProjectTaskRef.current = {
+      projectDir: project.project_dir,
+      taskIntent: taskIntentFromProject(project),
+    };
     setCurrentProject(project);
   }, []);
 
   const commitWorkflowStatus = useCallback((status: ProjectWorkflowStatusResponse | null) => {
     setWorkflowStatus(status);
-    const latestRunId = status?.latest_run?.run_id;
+    const modeRun = status?.project
+      ? workflowRunForTask(status, taskIntentFromProject(status.project))
+      : null;
+    const latestRunId = modeRun?.run_id;
     if (typeof latestRunId === "string" && latestRunId) {
       setCurrentRunId(latestRunId);
     }
@@ -72,7 +100,10 @@ export default function App() {
 
   const commitWorkflowSnapshot = useCallback((status: ProjectWorkflowStatusResponse) => {
     setWorkflowStatus(status);
-    const latestRunId = status.latest_run?.run_id;
+    const modeRun = status.project
+      ? workflowRunForTask(status, taskIntentFromProject(status.project))
+      : null;
+    const latestRunId = modeRun?.run_id;
     if (typeof latestRunId === "string" && latestRunId) {
       setCurrentRunId((runId) => runId || latestRunId);
     }
@@ -180,20 +211,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commitProjectSnapshot, commitWorkflowSnapshot, currentProject?.project_dir, projectRevision]);
 
-  function navigateTo(page: PageId, options?: NavigateOptions) {
+  function navigateTo(
+    page: PageId,
+    options?: NavigateOptions,
+    projectOverride?: DockStartProject | null,
+  ) {
     let destination = normalizeNavigationPage(page);
+    if (options?.runId !== undefined) {
+      setCurrentRunId(options.runId);
+    }
+    const navigationProject =
+      projectOverride === undefined ? currentProject : projectOverride;
     if (
       destination === "run-prepare"
-      && currentProject
-      && !(currentProject.receptor.file && currentProject.ligand.file)
+      && navigationProject
+      && !(navigationProject.receptor.file && navigationProject.ligand.file)
     ) {
       destination = "preparation";
-      setNavigationNotice("对接工作台需要受体和配体 PDBQT；已带你回到结构转换步骤。");
+      setNavigationNotice("运行工作台需要受体和配体 PDBQT；已带你回到结构转换步骤。");
     } else {
       setNavigationNotice("");
     }
     if (destination === "project-create") {
       setProjectStartMode(options?.startMode ?? "basic");
+      setProjectTaskIntent(options?.taskIntent ?? "dock");
     }
     if (currentPageRef.current === destination) return;
     currentPageRef.current = destination;
@@ -202,6 +243,7 @@ export default function App() {
 
   const requestOpenProject = useCallback(() => {
     setOpenProjectRequestKey((key) => key + 1);
+    setProjectTaskIntent("dock");
     currentPageRef.current = "project-create";
     setCurrentPage("project-create");
   }, []);
@@ -242,13 +284,15 @@ export default function App() {
         <ProjectCreatePage
           openExistingRequestKey={openProjectRequestKey}
           startMode={projectStartMode}
+          taskIntent={projectTaskIntent}
           onBack={() => navigateTo("home")}
           onStartModeChange={setProjectStartMode}
+          onTaskIntentChange={setProjectTaskIntent}
           onCreated={(project, nextPage = "structure-fetch", runId = "") => {
             commitProject(project);
             setCurrentRunId(runId);
             setWorkflowStatus(null);
-            navigateTo(nextPage);
+            navigateTo(nextPage, undefined, project);
           }}
         />
       );
@@ -288,7 +332,7 @@ export default function App() {
           }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
-            navigateTo("run-prepare");
+            navigateTo("run-prepare", undefined, project);
           }}
         />
       );
@@ -305,7 +349,7 @@ export default function App() {
           }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
-            navigateTo("run-prepare");
+            navigateTo("run-prepare", undefined, project);
           }}
           onProjectChange={commitProject}
         />
@@ -348,7 +392,7 @@ export default function App() {
           onProjectChange={commitProject}
           onOpenRunPrepare={(project) => {
             commitProject(project);
-            navigateTo("run-prepare");
+            navigateTo("run-prepare", undefined, project);
           }}
         />
       );

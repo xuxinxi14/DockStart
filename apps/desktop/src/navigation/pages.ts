@@ -17,9 +17,12 @@ export type PageId =
   | "help";
 
 export type StartMode = "basic" | "assisted" | "demo";
+export type ProjectTaskIntent = "dock" | "score_only" | "local_only";
 
 export type NavigateOptions = {
   startMode?: StartMode;
+  taskIntent?: ProjectTaskIntent;
+  runId?: string;
 };
 
 export type NavigateHandler = (page: PageId, options?: NavigateOptions) => void;
@@ -33,7 +36,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.12.0";
+export const appVersion = "0.12.2";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -52,8 +55,8 @@ export const navigationItems: NavigationItem[] = [
   {
     id: "run-prepare",
     group: "Workflow",
-    label: "对接工作台",
-    description: "搜索范围与运行",
+    label: "运行工作台",
+    description: "对接、评分与局部优化",
     requiresProject: true,
   },
   {
@@ -77,9 +80,9 @@ export const pageTitles: Record<PageId, string> = {
   "box-setup": "设置搜索范围",
   "vina-param": "设置 Vina 参数",
   "vina-config": "生成运行配置",
-  "run-prepare": "准备对接运行",
+  "run-prepare": "准备运行任务",
   "run-execute": "执行 AutoDock Vina",
-  result: "查看对接结果",
+  result: "查看运行结果",
   report: "结果分析报告",
   help: "文档帮助",
 };
@@ -96,7 +99,7 @@ export function resolveNavigationTarget(item: NavigationItem, hasProject: boolea
 
 /**
  * V0.9.5 consolidated the former Box, Vina-parameter and config wizard pages
- * into the docking console. Keep the legacy ids as compatibility inputs, but
+ * into the run workbench. Keep the legacy ids as compatibility inputs, but
  * never send a normal user flow back to the retired screens.
  */
 export function normalizeNavigationPage(page: PageId): PageId {

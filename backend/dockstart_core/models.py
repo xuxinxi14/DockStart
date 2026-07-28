@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar, Literal
 
 ToolStatus = Literal["ok", "missing", "error", "unknown"]
@@ -31,6 +31,7 @@ class ToolCheckResult:
     source: ToolSource = "unknown"
     bundled_path: str = ""
     is_bundled: bool = False
+    capabilities: dict[str, Any] = field(default_factory=dict)
 
     ALLOWED_STATUSES: ClassVar[set[str]] = {"ok", "missing", "error", "unknown"}
     ALLOWED_SOURCES: ClassVar[set[str]] = {

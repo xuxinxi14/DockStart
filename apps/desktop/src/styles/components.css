@@ -1469,6 +1469,144 @@ pre,
   color: var(--ds-accent-hover);
 }
 
+.dashboard-pose-task-entry {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
+  gap: var(--ds-space-4);
+  align-items: center;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-card);
+  background: var(--ds-bg-panel-soft);
+  padding: var(--ds-space-4);
+}
+
+.dashboard-pose-task-entry > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.dashboard-pose-task-entry > div:first-child > span {
+  color: var(--ds-accent);
+  font-size: var(--ds-text-xs);
+  font-weight: 720;
+}
+
+.dashboard-pose-task-entry h2,
+.dashboard-pose-task-entry p {
+  margin: 0;
+}
+
+.dashboard-pose-task-entry h2 {
+  color: var(--ds-text-strong);
+  font-size: var(--ds-title-sm);
+}
+
+.dashboard-pose-task-entry p {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+.dashboard-pose-task-entry > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ds-space-2);
+}
+
+.dashboard-pose-task-entry button {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-panel);
+  color: var(--ds-text-primary);
+  cursor: pointer;
+  padding: var(--ds-space-3);
+  text-align: left;
+}
+
+.dashboard-pose-task-entry button:hover {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-surface-hover);
+}
+
+.dashboard-pose-task-entry button:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.dashboard-pose-task-entry button span {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-xs);
+}
+
+.project-task-switch {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ds-space-2);
+}
+
+.project-task-switch > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--ds-space-2);
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-panel-soft);
+  color: inherit;
+  cursor: pointer;
+  padding: var(--ds-space-3);
+  text-align: left;
+}
+
+.project-task-switch > button:hover:not(:disabled) {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-surface-hover);
+}
+
+.project-task-switch > button:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.project-task-switch > button.active {
+  border-color: var(--ds-accent);
+  background: var(--ds-surface-selected);
+  box-shadow: inset 3px 0 0 var(--ds-accent);
+}
+
+.project-task-switch > button:disabled:not(.active) {
+  cursor: not-allowed;
+  opacity: 0.66;
+}
+
+.project-task-switch > button > span:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.project-task-switch strong {
+  color: var(--ds-text-strong);
+  font-size: var(--ds-text-sm);
+}
+
+.project-task-switch small {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-xs);
+  line-height: var(--ds-leading-normal);
+}
+
+.project-task-context-note {
+  margin: var(--ds-space-3) 0 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
 .first-run-storage-note {
   margin: 0;
   color: var(--ds-text-muted);
@@ -1538,6 +1676,98 @@ pre,
   padding: 8px var(--ds-space-3);
   line-height: 1.35;
   white-space: normal;
+}
+
+.project-task-intent-picker {
+  display: grid;
+  gap: var(--ds-space-2);
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--ds-border-subtle);
+  padding: var(--ds-space-3) var(--ds-space-5) var(--ds-space-4);
+}
+
+.project-task-intent-picker legend {
+  padding: 0;
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-sm);
+  font-weight: 720;
+}
+
+.project-task-intent-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ds-space-2);
+}
+
+.project-task-intent-options label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--ds-space-2);
+  align-items: start;
+  min-width: 0;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-bg-panel-soft);
+  cursor: pointer;
+  padding: var(--ds-space-3);
+}
+
+.project-task-intent-options label:hover {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-surface-hover);
+}
+
+.project-task-intent-options label.selected {
+  border-color: var(--ds-accent);
+  background: var(--ds-surface-selected);
+  box-shadow: inset 3px 0 0 var(--ds-accent);
+}
+
+.project-task-intent-options label:has(input:focus-visible) {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+.project-task-intent-options input {
+  margin: 3px 0 0;
+  accent-color: var(--ds-accent);
+}
+
+.project-task-intent-options label > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.project-task-intent-options strong {
+  color: var(--ds-text-strong);
+  font-size: var(--ds-text-sm);
+}
+
+.project-task-intent-options small {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-xs);
+  line-height: var(--ds-leading-normal);
+}
+
+.pose-context-note {
+  border-left: 3px solid var(--ds-accent);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-surface-selected);
+  padding: var(--ds-space-3) var(--ds-space-4);
+}
+
+.pose-context-note strong {
+  color: var(--ds-text-strong);
+  font-size: var(--ds-text-sm);
+}
+
+.pose-context-note p {
+  margin: 4px 0 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
 }
 
 .assisted-source-picker {
@@ -1623,6 +1853,19 @@ pre,
 }
 
 @media (max-width: 760px) {
+  .dashboard-pose-task-entry,
+  .project-task-switch {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-pose-task-entry > div:last-child {
+    grid-template-columns: 1fr;
+  }
+
+  .project-task-intent-options {
+    grid-template-columns: 1fr;
+  }
+
   .assisted-source-options {
     grid-template-columns: 1fr;
   }

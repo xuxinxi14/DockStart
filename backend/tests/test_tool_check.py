@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -57,6 +58,7 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(payload["source"], "unknown")
         self.assertEqual(payload["bundled_path"], "")
         self.assertFalse(payload["is_bundled"])
+        self.assertEqual(payload["capabilities"], {})
 
     def test_settings_loads_default_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -427,6 +429,333 @@ class ToolCheckTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.source, "configured")
         self.assertFalse(result.is_bundled)
+
+    def test_vina_capability_probe_matches_only_option_declaration_lines(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.7\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "Output:\n"
+                "  --write_maps arg  output maps. Options --force_even_voxels and "
+                "--unbound_energy may be needed\n"
+                "Advanced options:\n"
+                "  --no_refine       use precalculated grids for final scoring\n"
+            ),
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ):
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        features = result.capabilities["features"]
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.capabilities["status"], "partial")
+        self.assertEqual(features["no_refine"]["status"], "supported")
+        self.assertTrue(features["no_refine"]["advertised"])
+        self.assertEqual(features["write_maps"]["status"], "supported")
+        self.assertTrue(features["write_maps"]["advertised"])
+        self.assertEqual(features["maps"]["status"], "unsupported")
+        self.assertFalse(features["maps"]["advertised"])
+        self.assertEqual(features["force_even_voxels"]["status"], "unsupported")
+        self.assertFalse(features["force_even_voxels"]["advertised"])
+        self.assertEqual(features["unbound_energy"]["status"], "unsupported")
+        self.assertFalse(features["unbound_energy"]["advertised"])
+
+    def test_vina_detection_rejects_unrelated_executable_identity(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="Python 3.13.5\n",
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            return_value=completed,
+        ) as run_mock:
+            result = vina_adapter._run_version_check("C:/tools/not-vina.exe", "configured")
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(result.capabilities, {})
+        self.assertEqual(run_mock.call_count, 1)
+        self.assertIn("AutoDock Vina", result.message)
+
+    def test_vina_advanced_features_require_safe_minimum_versions(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.3\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "Input:\n"
+                "  --ligand arg      ligand (PDBQT)\n"
+                "  --autobox\n"
+                "  --no_refine\n"
+                "  --force_even_voxels\n"
+                "  --unbound_energy arg (=nan)\n"
+            ),
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ):
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        no_refine = result.capabilities["features"]["no_refine"]
+        autobox = result.capabilities["features"]["autobox"]
+        force_even = result.capabilities["features"]["force_even_voxels"]
+        unbound_energy = result.capabilities["features"]["unbound_energy"]
+        multiple_ligands = result.capabilities["features"]["multiple_ligands"]
+        self.assertEqual(multiple_ligands["status"], "supported")
+        self.assertTrue(multiple_ligands["advertised"])
+        self.assertEqual(multiple_ligands["minimum_version"], "1.2.0")
+        self.assertEqual(no_refine["status"], "unsupported")
+        self.assertEqual(autobox["status"], "supported")
+        self.assertEqual(autobox["minimum_version"], "1.2.3")
+        self.assertFalse(no_refine["supported"])
+        self.assertTrue(no_refine["advertised"])
+        self.assertFalse(no_refine["version_compatible"])
+        self.assertEqual(force_even["status"], "supported")
+        self.assertTrue(force_even["version_compatible"])
+        self.assertEqual(unbound_energy["status"], "unsupported")
+        self.assertFalse(unbound_energy["supported"])
+        self.assertTrue(unbound_energy["advertised"])
+        self.assertEqual(unbound_energy["minimum_version"], "1.2.4")
+        self.assertFalse(unbound_energy["version_compatible"])
+
+    def test_vina_multiple_ligands_requires_stable_1_2_0_and_ligand_option(self) -> None:
+        cases = (
+            ("1.1.2", "  --ligand arg  ligand (PDBQT)\n", "unsupported"),
+            ("1.2.0-rc1", "  --ligand arg  ligand (PDBQT)\n", "unsupported"),
+            ("1.2.0", "  --ligand arg  ligand (PDBQT)\n", "supported"),
+            ("1.2.7", "  --batch arg  batch ligands (PDBQT)\n", "unsupported"),
+        )
+        for version, help_text, expected_status in cases:
+            with self.subTest(version=version, help_text=help_text):
+                version_completed = SimpleNamespace(
+                    returncode=0,
+                    stdout=f"AutoDock Vina v{version}\n",
+                    stderr="",
+                )
+                help_completed = SimpleNamespace(
+                    returncode=0,
+                    stdout=help_text,
+                    stderr="",
+                )
+                with patch.object(
+                    vina_adapter.subprocess,
+                    "run",
+                    side_effect=[version_completed, help_completed],
+                ):
+                    result = vina_adapter._run_version_check(
+                        "C:/tools/vina.exe",
+                        "configured",
+                    )
+
+                feature = result.capabilities["features"]["multiple_ligands"]
+                self.assertEqual(feature["status"], expected_status)
+                self.assertEqual(feature["minimum_version"], "1.2.0")
+                self.assertEqual(
+                    feature["supported"],
+                    expected_status == "supported",
+                )
+
+    def test_vina_autobox_requires_version_1_2_3_or_newer(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.2\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  --ligand arg  ligand (PDBQT)\n"
+                "  --maps arg  load precomputed affinity maps\n"
+                "  --write_maps arg  write precomputed affinity maps\n"
+                "  --autobox  derive the grid from the input ligand\n"
+                "  --force_even_voxels  use even voxel counts\n"
+            ),
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ):
+            result = vina_adapter._run_version_check(
+                "C:/tools/vina.exe",
+                "configured",
+            )
+
+        autobox = result.capabilities["features"]["autobox"]
+        self.assertEqual(autobox["status"], "unsupported")
+        self.assertFalse(autobox["supported"])
+        self.assertTrue(autobox["advertised"])
+        self.assertEqual(autobox["minimum_version"], "1.2.3")
+        self.assertFalse(autobox["version_compatible"])
+
+    def test_vina_semver_comparison_treats_1_2_10_as_newer_than_1_2_4(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="wrapper notice\nAutoDock Vina v1.2.10\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  --ligand arg  ligand (PDBQT)\n"
+                "  --maps arg  load precomputed affinity maps\n"
+                "  --write_maps arg  write precomputed affinity maps\n"
+                "  --autobox  derive the grid from the input ligand\n"
+                "  --no_refine       use precalculated grids\n"
+                "  --force_even_voxels  use even voxel counts\n"
+                "  --unbound_energy arg (=nan)  set unbound energy for score-only jobs\n"
+            ),
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ):
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        self.assertEqual(result.version, "1.2.10")
+        self.assertEqual(result.capabilities["status"], "ok")
+        self.assertTrue(
+            result.capabilities["features"]["no_refine"]["version_compatible"],
+        )
+        self.assertTrue(result.capabilities["features"]["no_refine"]["supported"])
+        self.assertTrue(result.capabilities["features"]["unbound_energy"]["supported"])
+
+    def test_vina_prerelease_same_core_fails_closed(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.4-rc1\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  --autobox  derive the grid from the input ligand\n"
+                "  --no_refine       use precalculated grids\n"
+                "  --force_even_voxels  use even voxel counts\n"
+                "  --unbound_energy arg (=nan)  set unbound energy for score-only jobs\n"
+            ),
+            stderr="",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ):
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        features = result.capabilities["features"]
+        self.assertEqual(result.version, "1.2.4-rc1")
+        self.assertEqual(result.capabilities["status"], "partial")
+        self.assertEqual(features["no_refine"]["status"], "unsupported")
+        self.assertFalse(features["no_refine"]["version_compatible"])
+        self.assertEqual(features["unbound_energy"]["status"], "unsupported")
+        self.assertFalse(features["unbound_energy"]["version_compatible"])
+        self.assertEqual(features["force_even_voxels"]["status"], "supported")
+        self.assertIn("1.2.4-rc1", features["unbound_energy"]["message"])
+        self.assertIn("1.2.4", features["unbound_energy"]["message"])
+
+    def test_vina_semver_comparison_accepts_stable_and_build_metadata(self) -> None:
+        self.assertTrue(vina_adapter._version_at_least("1.2.4", "1.2.4"))
+        self.assertTrue(vina_adapter._version_at_least("1.2.4+build.7", "1.2.4"))
+        self.assertTrue(vina_adapter._version_at_least("1.2.10", "1.2.4"))
+        self.assertFalse(vina_adapter._version_at_least("1.2.4-rc1", "1.2.4"))
+
+    def test_vina_help_failure_keeps_base_detection_available(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.7\n",
+            stderr="",
+        )
+        help_completed = SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="unknown option --help_advanced",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, help_completed],
+        ) as run_mock:
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.version, "1.2.7")
+        self.assertEqual(result.capabilities["status"], "unknown")
+        self.assertTrue(result.capabilities["checked"])
+        self.assertEqual(result.capabilities["help_exit_code"], 2)
+        self.assertEqual(
+            result.capabilities["features"]["no_refine"]["status"],
+            "unknown",
+        )
+        self.assertEqual(
+            result.capabilities["features"]["unbound_energy"]["status"],
+            "unknown",
+        )
+        self.assertEqual(
+            result.capabilities["features"]["unbound_energy"]["minimum_version"],
+            "1.2.4",
+        )
+        self.assertEqual(
+            run_mock.call_args_list[1].args[0],
+            ["C:/tools/vina.exe", "--help_advanced"],
+        )
+
+    def test_vina_help_timeout_reports_unknown_capabilities(self) -> None:
+        version_completed = SimpleNamespace(
+            returncode=0,
+            stdout="AutoDock Vina v1.2.7\n",
+            stderr="",
+        )
+        timeout = subprocess.TimeoutExpired(
+            cmd=["C:/tools/vina.exe", "--help_advanced"],
+            timeout=10,
+            output="partial help",
+            stderr="probe timed out",
+        )
+
+        with patch.object(
+            vina_adapter.subprocess,
+            "run",
+            side_effect=[version_completed, timeout],
+        ):
+            result = vina_adapter._run_version_check("C:/tools/vina.exe", "configured")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.capabilities["status"], "unknown")
+        self.assertIsNone(result.capabilities["help_exit_code"])
+        self.assertEqual(
+            result.capabilities["features"]["force_even_voxels"]["status"],
+            "unknown",
+        )
+        self.assertEqual(
+            result.capabilities["features"]["unbound_energy"]["status"],
+            "unknown",
+        )
 
     def test_toolchain_paths_use_dev_project_resources_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

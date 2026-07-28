@@ -1,4 +1,4 @@
-export type DockingWorkspaceMode = "single" | "batch";
+export type DockingWorkspaceMode = "single" | "batch" | "simultaneous";
 
 function key(projectDir: string): string {
   return `dockstart:docking-workspace:${projectDir}`;
@@ -6,7 +6,8 @@ function key(projectDir: string): string {
 
 export function readDockingWorkspaceMode(projectDir: string): DockingWorkspaceMode {
   try {
-    return window.localStorage.getItem(key(projectDir)) === "batch" ? "batch" : "single";
+    const value = window.localStorage.getItem(key(projectDir));
+    return value === "batch" || value === "simultaneous" ? value : "single";
   } catch {
     return "single";
   }

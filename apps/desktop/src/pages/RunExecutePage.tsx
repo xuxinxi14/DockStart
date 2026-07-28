@@ -16,6 +16,7 @@ import {
   waitForBackgroundTask,
   type BackgroundTaskStatus,
 } from "../utils/backgroundTasks";
+import { metadataExecutionPlanStages } from "../utils/runExecutionPlan";
 
 type RunExecutePageProps = {
   project: DockStartProject;
@@ -112,8 +113,15 @@ export default function RunExecutePage({
   useEffect(() => () => activeTaskAbortRef.current?.abort(), []);
 
   const status = metadataString(metadata, "status") || "unknown";
+  const rawRunMode = metadataString(metadata, "run_mode");
+  const runMode = rawRunMode === "score_only" || rawRunMode === "local_only" ? rawRunMode : "dock";
+  const runModeLabel = runMode === "score_only" ? "当前姿势评分" : runMode === "local_only" ? "局部优化" : "全局对接";
   const exitCode = metadataNumber(metadata, "exit_code");
   const command = useMemo(() => metadataCommand(metadata), [metadata]);
+  const executionPlanStages = useMemo(
+    () => metadataExecutionPlanStages(metadata),
+    [metadata],
+  );
   const commandPreview = command.length > 0 ? JSON.stringify(command, null, 2) : "命令记录为空。";
   const taskIsActive = activeTask?.status === "queued" || activeTask?.status === "running";
   const runIsActive = taskIsActive || status === "running";
@@ -307,10 +315,14 @@ export default function RunExecutePage({
   return (
     <PageShell labelledBy="run-execute-title">
       <PageHero
-        eyebrow="运行对接"
-        title="执行 AutoDock Vina"
+        eyebrow="运行 Vina"
+        title={`执行${runModeLabel}`}
         titleId="run-execute-title"
-        description="运行已准备的命令，保存 stdout、stderr、log 和 out 文件。"
+        description={runMode === "score_only"
+          ? "运行已准备的仅评分命令，保存 stdout、stderr、log 和能量结果。"
+          : runMode === "local_only"
+            ? "先记录输入姿势评分，再运行局部优化；保存两阶段日志与 optimized.pdbqt。"
+            : "运行已准备的命令，保存 stdout、stderr、log 和 out 文件。"}
         actions={
           <>
           <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
@@ -322,7 +334,7 @@ export default function RunExecutePage({
       <BodyGrid>
         <MainPanel>
           <div className="main-panel-content">
-            <VinaWorkflowBar current="execute" runId={runId} />
+            <VinaWorkflowBar current="execute" runId={runId} runMode={runMode} />
 
             <div className="status-strip">
               <article className="metric-card">
@@ -355,7 +367,7 @@ export default function RunExecutePage({
             <SectionCard title="执行">
               <div className="button-row">
                 <ActionButton variant="primary" disabled={!canExecute} onClick={() => void executeRun()}>
-                  {isBusy ? "执行中..." : "开始对接"}
+                  {isBusy ? "执行中..." : `开始${runModeLabel}`}
                 </ActionButton>
                 {runIsActive ? (
                   <ActionButton variant="secondary" onClick={() => void cancelRun()}>
@@ -364,7 +376,23 @@ export default function RunExecutePage({
                 ) : null}
               </div>
               <AdvancedDetails summary="命令与运行文件">
-                <pre>{commandPreview}</pre>
+                {executionPlanStages.length > 0 ? (
+                  <div className="run-execution-plan">
+                    {executionPlanStages.map((planStage, index) => (
+                      <article className="file-card" key={planStage.id || planStage.label}>
+                        <span>阶段 {index + 1}</span>
+                        <strong>{planStage.label}</strong>
+                        <pre>{JSON.stringify(planStage.command, null, 2)}</pre>
+                        <small>
+                          日志：{planStage.logFile || "未设置"}
+                          {planStage.outputFile ? ` · 输出：${planStage.outputFile}` : " · 不生成新姿势"}
+                        </small>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <pre>{commandPreview}</pre>
+                )}
                 <div className="compact-grid">
                   {files.map((file) => (
                     <article className="file-card" key={file.key}>
@@ -384,7 +412,7 @@ export default function RunExecutePage({
                   <p>{metadataString(metadata, "log_file") || "log.txt 已记录。"}</p>
                 </div>
                 <ActionButton variant="primary" onClick={() => onOpenResultPage(project, runId)}>
-                  查看对接结果
+                  查看{runModeLabel}结果
                 </ActionButton>
               </div>
             ) : null}
@@ -418,7 +446,7 @@ export default function RunExecutePage({
           </RightRailSection>
 
           <RightRailSection title="下一步">
-            <p>{status === "finished" ? "解析结果并生成 scores.csv。" : "运行完成后进入结果页。"}</p>
+            <p>{status === "finished" ? (runMode === "dock" ? "解析结果并生成 scores.csv。" : "解析能量分解并生成 evaluation.json。") : "运行完成后进入结果页。"}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>
