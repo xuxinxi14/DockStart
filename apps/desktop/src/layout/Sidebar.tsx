@@ -4,6 +4,7 @@ import {
   CheckCircle,
   Circle,
   Cube,
+  Drop,
   FolderOpen,
   House,
   PlayCircle,
@@ -48,6 +49,8 @@ function NavigationIcon({ page }: { page: PageId }) {
       return <Cube {...props} weight="duotone" />;
     case "run-prepare":
       return <PlayCircle {...props} />;
+    case "hydrated-ad4":
+      return <Drop {...props} weight="duotone" />;
     case "result":
       return <ChartBar {...props} />;
     case "report":

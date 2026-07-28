@@ -65,6 +65,10 @@ LOCAL_ONLY_EXECUTION_PLAN_KIND = "local_only_with_baseline"
 VINA_GRID_MEMORY_WARNING_BYTES = 512 * 1024 * 1024
 VINA_GRID_MEMORY_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 AD4ZN_PROTOCOL_ID = "ad4zn_beta"
+HYDRATED_PROTOCOL_ID = "hydrated_ad4_experimental"
+HYDRATED_RETAINED_OUTPUT_NAME = "hydrated_retained.pdbqt"
+HYDRATED_WATER_FREE_OUTPUT_NAME = "ligand_water_free.pdbqt"
+HYDRATED_WATERS_MANIFEST_NAME = "waters_manifest.json"
 MULTIPLE_LIGAND_PROTOCOL_ID = "simultaneous_multi_ligand"
 AD4ZN_GPF_REQUIRED_LINES = (
     "dielectric -0.1465",
@@ -96,9 +100,9 @@ def _metadata_protocol_id(metadata: dict[str, Any]) -> str:
     ).strip().lower()
     if (
         _metadata_scoring_protocol(metadata) == "ad4_maps"
-        and protocol_id == AD4ZN_PROTOCOL_ID
+        and protocol_id in {AD4ZN_PROTOCOL_ID, HYDRATED_PROTOCOL_ID}
     ):
-        return AD4ZN_PROTOCOL_ID
+        return protocol_id
     if _metadata_scoring_protocol(metadata) == "ad4_maps":
         return "ad4_maps"
     return protocol_id or "rigid_single"
@@ -149,6 +153,8 @@ def _project_scores_file(metadata: dict[str, Any]) -> str:
     filename = (
         "simultaneous_multi_ligand_scores.csv"
         if _metadata_protocol_id(metadata) == MULTIPLE_LIGAND_PROTOCOL_ID
+        else "hydrated_ad4_scores.csv"
+        if _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
         else "ad4zn_scores.csv"
         if _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
         else "ad4_scores.csv"
@@ -172,6 +178,8 @@ def _project_report_file(metadata: dict[str, Any]) -> str:
     filename = (
         "simultaneous_multi_ligand_report.md"
         if _metadata_protocol_id(metadata) == MULTIPLE_LIGAND_PROTOCOL_ID
+        else "hydrated_ad4_docking_report.md"
+        if _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
         else "ad4zn_docking_report.md"
         if _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
         else "ad4_docking_report.md"
@@ -186,6 +194,8 @@ def _run_report_filename(metadata: dict[str, Any]) -> str:
         return "evaluation_report.md"
     if _metadata_protocol_id(metadata) == MULTIPLE_LIGAND_PROTOCOL_ID:
         return "multi_ligand_report.md"
+    if _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID:
+        return "hydrated_docking_report.md"
     return RUN_REPORT_FILE
 
 
@@ -8360,12 +8370,19 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     if metadata_error:
         return metadata_error
     assert metadata is not None
-    if _metadata_protocol_id(metadata) == MULTIPLE_LIGAND_PROTOCOL_ID:
+    protocol_id = _metadata_protocol_id(metadata)
+    if protocol_id == MULTIPLE_LIGAND_PROTOCOL_ID:
         from dockstart_core.multiple_ligands import (  # noqa: PLC0415
             build_multiple_ligand_markdown_report,
         )
 
         return build_multiple_ligand_markdown_report(project_dir, run_id)
+    if protocol_id == HYDRATED_PROTOCOL_ID:
+        from dockstart_core.hydrated_run import (  # noqa: PLC0415
+            build_hydrated_markdown_report,
+        )
+
+        return build_hydrated_markdown_report(project_dir, run_id)
     if _metadata_run_mode(metadata) != "dock":
         return _build_vina_evaluation_report(project_dir, run_id)
 
@@ -9208,6 +9225,10 @@ def _validate_execute_prerequisites(
         scoring_protocol == "ad4_maps"
         and protocol_id == AD4ZN_PROTOCOL_ID
     )
+    is_hydrated = (
+        scoring_protocol == "ad4_maps"
+        and protocol_id == HYDRATED_PROTOCOL_ID
+    )
     grid_source = _metadata_grid_source(metadata)
     uses_vina_maps = (
         scoring_protocol == "vina" and grid_source == "precomputed_maps"
@@ -9229,6 +9250,14 @@ def _validate_execute_prerequisites(
         "stdout": Path("runs", run_id, "stdout.txt").as_posix(),
         "stderr": Path("runs", run_id, "stderr.txt").as_posix(),
     }
+    if is_hydrated:
+        fixed_relative_paths["hydrated_ligand_manifest"] = Path(
+            "runs",
+            run_id,
+            "inputs",
+            "hydrated",
+            "ligand_manifest.json",
+        ).as_posix()
     composite_local_only = _local_only_execution_plan_enabled(metadata)
     if composite_local_only:
         baseline_files = _local_only_baseline_files(run_id)
@@ -9262,6 +9291,19 @@ def _validate_execute_prerequisites(
             "RUN_AD4ZN_FLEX_INVALID",
             "AutoDock4Zn beta 当前仅支持刚性受体。",
             suggestion="请以刚性受体重新准备 AD4Zn run。",
+        )
+    if is_hydrated and run_mode != "dock":
+        return _error(
+            "RUN_HYDRATED_MODE_INVALID",
+            "实验性水合 AD4 协议只能执行全局对接。",
+            raw_error=f"run_mode={run_mode}",
+            suggestion="请保留该 run 作为审计记录，并重新准备水合全局对接 run。",
+        )
+    if is_hydrated and str(protocol.get("mode") or "rigid") == "flexible":
+        return _error(
+            "RUN_HYDRATED_FLEX_INVALID",
+            "实验性水合 AD4 协议当前仅支持刚性受体。",
+            suggestion="请以刚性受体重新准备水合对接 run。",
         )
     if uses_vina_maps and run_mode != "dock":
         return _error(
@@ -9321,7 +9363,13 @@ def _validate_execute_prerequisites(
                 f"固定运行路径 {key} 越出项目目录，拒绝执行。",
                 raw_error=f"{lexical_path}: {exc}",
             )
-        expected_parent = run_dir / "inputs" if key in {"receptor", "ligand", "flex"} else run_dir
+        expected_parent = (
+            run_dir / "inputs" / "hydrated"
+            if key == "hydrated_ligand_manifest"
+            else run_dir / "inputs"
+            if key in {"receptor", "ligand", "flex"}
+            else run_dir
+        )
         if resolved.parent != expected_parent or resolved != lexical_path.absolute():
             return _error(
                 "RUN_PATH_REPARSE_UNSAFE",
@@ -9334,6 +9382,8 @@ def _validate_execute_prerequisites(
     required_inputs = ["receptor", "ligand", "config"]
     if "flex" in fixed_paths:
         required_inputs.append("flex")
+    if is_hydrated:
+        required_inputs.append("hydrated_ligand_manifest")
     for key in required_inputs:
         path = fixed_paths[key]
         if not path.is_file() or path.stat().st_size <= 0:
@@ -9347,11 +9397,25 @@ def _validate_execute_prerequisites(
     snapshots = metadata.get("snapshots") if isinstance(metadata.get("snapshots"), dict) else {}
     inputs = snapshots.get("inputs") if isinstance(snapshots.get("inputs"), dict) else {}
     config_snapshot = snapshots.get("config") if isinstance(snapshots.get("config"), dict) else {}
+    hydrated_snapshot = (
+        snapshots.get("hydrated")
+        if isinstance(snapshots.get("hydrated"), dict)
+        else {}
+    )
     expected_hashes = {
         "receptor": str((inputs.get("receptor") or {}).get("sha256") or "") if isinstance(inputs.get("receptor"), dict) else "",
         "ligand": str((inputs.get("ligand") or {}).get("sha256") or "") if isinstance(inputs.get("ligand"), dict) else "",
         "config": str(config_snapshot.get("sha256") or ""),
     }
+    if is_hydrated:
+        ligand_manifest_record = (
+            hydrated_snapshot.get("ligand_manifest")
+            if isinstance(hydrated_snapshot.get("ligand_manifest"), dict)
+            else {}
+        )
+        expected_hashes["hydrated_ligand_manifest"] = str(
+            ligand_manifest_record.get("sha256") or ""
+        )
     if "flex" in fixed_paths:
         expected_hashes["flex"] = (
             str((inputs.get("flex") or {}).get("sha256") or "")
@@ -9390,6 +9454,8 @@ def _validate_execute_prerequisites(
         map_label = (
             "AutoDock4Zn beta"
             if is_ad4zn
+            else "实验性水合 AD4"
+            if is_hydrated
             else "AutoDock4"
             if scoring_protocol == "ad4_maps"
             else "Vina/Vinardo"
@@ -9519,6 +9585,13 @@ def _validate_execute_prerequisites(
                 raw_error=", ".join(sorted(observed_names)),
                 suggestion="请重新生成或导入完整 maps 后准备新的 run。",
             )
+        if is_hydrated and f"{prefix_name}.W.map" not in observed_names:
+            return _error(
+                "RUN_HYDRATED_W_MAP_MISSING",
+                "水合对接 maps 快照缺少 W affinity map，拒绝执行。",
+                raw_error=", ".join(sorted(observed_names)),
+                suggestion="请重新生成完整的水合 maps 后准备新的 run。",
+            )
 
         manifest_record = maps_snapshot.get("manifest") if isinstance(maps_snapshot.get("manifest"), dict) else {}
         manifest_relative = str(manifest_record.get("relative_path") or "")
@@ -9632,7 +9705,11 @@ def _validate_execute_prerequisites(
                 )
         else:
             expected_protocol_id = (
-                AD4ZN_PROTOCOL_ID if is_ad4zn else "ad4_maps"
+                AD4ZN_PROTOCOL_ID
+                if is_ad4zn
+                else HYDRATED_PROTOCOL_ID
+                if is_hydrated
+                else "ad4_maps"
             )
             if (
                 str(frozen_manifest.get("protocol_id") or "")
@@ -9651,6 +9728,235 @@ def _validate_execute_prerequisites(
                     f"{map_label} maps manifest 未完整绑定本次受体、配体和 map 文件，拒绝执行。",
                     suggestion="请保留该 run 作为审计记录，并重新准备新的 run。",
                 )
+            if is_hydrated:
+                from dockstart_core import hydrated_maps as hydrated_map_core  # noqa: PLC0415
+
+                frozen_ligand_manifest = (
+                    frozen_manifest.get("hydrated_ligand_manifest")
+                    if isinstance(
+                        frozen_manifest.get("hydrated_ligand_manifest"),
+                        dict,
+                    )
+                    else {}
+                )
+                hydrated_metadata = (
+                    metadata.get("hydrated")
+                    if isinstance(metadata.get("hydrated"), dict)
+                    else {}
+                )
+                input_sha256 = (
+                    metadata.get("input_sha256")
+                    if isinstance(metadata.get("input_sha256"), dict)
+                    else {}
+                )
+                artifacts = (
+                    metadata.get("artifacts")
+                    if isinstance(metadata.get("artifacts"), dict)
+                    else {}
+                )
+                ligand_manifest_artifact = (
+                    artifacts.get("hydrated_ligand_manifest")
+                    if isinstance(
+                        artifacts.get("hydrated_ligand_manifest"),
+                        dict,
+                    )
+                    else {}
+                )
+                expected_ligand_manifest_hash = expected_hashes[
+                    "hydrated_ligand_manifest"
+                ].lower()
+                expected_ligand_manifest_snapshot = fixed_relative_paths[
+                    "hydrated_ligand_manifest"
+                ]
+                expected_ligand_manifest_source = str(
+                    hydrated_metadata.get(
+                        "ligand_preparation_manifest",
+                    )
+                    or ""
+                )
+                if (
+                    not expected_ligand_manifest_source
+                    or str(
+                        frozen_ligand_manifest.get("path") or ""
+                    )
+                    != expected_ligand_manifest_source
+                    or str(
+                        frozen_ligand_manifest.get("sha256") or ""
+                    ).lower()
+                    != expected_ligand_manifest_hash
+                    or str(
+                        hydrated_metadata.get(
+                            "ligand_preparation_manifest_snapshot",
+                        )
+                        or ""
+                    )
+                    != expected_ligand_manifest_snapshot
+                    or str(
+                        input_sha256.get(
+                            "hydrated_ligand_manifest",
+                        )
+                        or ""
+                    ).lower()
+                    != expected_ligand_manifest_hash
+                    or str(
+                        ligand_manifest_artifact.get(
+                            "relative_path",
+                        )
+                        or ""
+                    )
+                    != expected_ligand_manifest_snapshot
+                    or str(
+                        ligand_manifest_artifact.get("sha256") or ""
+                    ).lower()
+                    != expected_ligand_manifest_hash
+                ):
+                    return _error(
+                        "RUN_HYDRATED_LIGAND_MANIFEST_BINDING_MISMATCH",
+                        "水合配体 preparation manifest 的来源、冻结快照或 SHA256 绑定无效，拒绝执行。",
+                        suggestion=(
+                            "请保留该 run 作为审计记录，并重新准备水合配体、"
+                            "maps 和新的 run。"
+                        ),
+                    )
+                frozen_water = (
+                    frozen_maps.get("water_map")
+                    if isinstance(frozen_maps.get("water_map"), dict)
+                    else {}
+                )
+                frozen_water_parameters = (
+                    frozen_water.get("parameters")
+                    if isinstance(frozen_water.get("parameters"), dict)
+                    else {}
+                )
+                frozen_water_sources = (
+                    frozen_water.get("sources")
+                    if isinstance(frozen_water.get("sources"), dict)
+                    else {}
+                )
+                hydrated_types = {
+                    str(item)
+                    for item in (
+                        frozen_maps.get("ligand_atom_types")
+                        if isinstance(
+                            frozen_maps.get("ligand_atom_types"),
+                            list,
+                        )
+                        else []
+                    )
+                }
+                autogrid_types = {
+                    str(item)
+                    for item in (
+                        frozen_maps.get("autogrid_ligand_atom_types")
+                        if isinstance(
+                            frozen_maps.get(
+                                "autogrid_ligand_atom_types",
+                            ),
+                            list,
+                        )
+                        else []
+                    )
+                }
+                water_name = f"{prefix_name}.W.map"
+                oa_name = f"{prefix_name}.OA.map"
+                hd_name = f"{prefix_name}.HD.map"
+                frozen_records = {
+                    str(item.get("name") or ""): item
+                    for item in frozen_files
+                    if isinstance(item, dict)
+                }
+                water_record = (
+                    frozen_records.get(water_name)
+                    if isinstance(frozen_records.get(water_name), dict)
+                    else {}
+                )
+                oa_record = (
+                    frozen_records.get(oa_name)
+                    if isinstance(frozen_records.get(oa_name), dict)
+                    else {}
+                )
+                hd_record = (
+                    frozen_records.get(hd_name)
+                    if isinstance(frozen_records.get(hd_name), dict)
+                    else {}
+                )
+                expected_water_parameters = {
+                    "mode": "BEST",
+                    "weight": hydrated_map_core.BEST_WEIGHT,
+                    "entropy": hydrated_map_core.DISPLACEMENT_ENTROPY,
+                    "oa_weight": hydrated_map_core.OA_WEIGHT,
+                    "hd_weight": hydrated_map_core.HD_WEIGHT,
+                    "output_decimals": hydrated_map_core.OUTPUT_DECIMALS,
+                    "positive_value_rule": (
+                        "entropy_if_oa_gt_0_or_hd_gt_0"
+                    ),
+                }
+                if (
+                    "W" not in hydrated_types
+                    or "W" in autogrid_types
+                    or not {"OA", "HD"}.issubset(autogrid_types)
+                    or not (hydrated_types - {"W"}).issubset(
+                        autogrid_types
+                    )
+                    or str(frozen_water.get("name") or "")
+                    != water_name
+                    or str(frozen_water.get("method") or "")
+                    != "hydrated_ad4_best_v1"
+                    or frozen_water_parameters
+                    != expected_water_parameters
+                    or str(frozen_water.get("relative_path") or "")
+                    != str(water_record.get("relative_path") or "")
+                    or str(frozen_water.get("sha256") or "").lower()
+                    != str(water_record.get("sha256") or "").lower()
+                    or str(
+                        (
+                            frozen_water_sources.get("oa")
+                            if isinstance(
+                                frozen_water_sources.get("oa"),
+                                dict,
+                            )
+                            else {}
+                        ).get("sha256")
+                        or ""
+                    ).lower()
+                    != str(oa_record.get("sha256") or "").lower()
+                    or str(
+                        (
+                            frozen_water_sources.get("hd")
+                            if isinstance(
+                                frozen_water_sources.get("hd"),
+                                dict,
+                            )
+                            else {}
+                        ).get("sha256")
+                        or ""
+                    ).lower()
+                    != str(hd_record.get("sha256") or "").lower()
+                    or (
+                        frozen_water.get("geometry")
+                        if isinstance(
+                            frozen_water.get("geometry"),
+                            dict,
+                        )
+                        else {}
+                    )
+                    != (
+                        frozen_maps.get("geometry")
+                        if isinstance(
+                            frozen_maps.get("geometry"),
+                            dict,
+                        )
+                        else {}
+                    )
+                ):
+                    return _error(
+                        "RUN_HYDRATED_W_MAP_BINDING_MISMATCH",
+                        "水合 maps 的原子类型、BEST 参数或 OA/HD/W 绑定记录无效，拒绝执行。",
+                        suggestion=(
+                            "请保留该 run 作为审计记录，并重新生成水合 maps、"
+                            "准备新的 run。"
+                        ),
+                    )
             if is_ad4zn:
                 ad4zn_snapshot = (
                     snapshots.get("ad4zn")
@@ -10168,8 +10474,21 @@ def _validate_ad4_maps_post_run_integrity(
             "error": None,
         }
     is_ad4zn = _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
-    code_prefix = "RUN_AD4ZN_POST" if is_ad4zn else "RUN_AD4_MAPS_POST"
-    label = "AutoDock4Zn beta" if is_ad4zn else "AutoDock4"
+    is_hydrated = _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+    code_prefix = (
+        "RUN_AD4ZN_POST"
+        if is_ad4zn
+        else "RUN_HYDRATED_POST"
+        if is_hydrated
+        else "RUN_AD4_MAPS_POST"
+    )
+    label = (
+        "AutoDock4Zn beta"
+        if is_ad4zn
+        else "实验性水合 AD4"
+        if is_hydrated
+        else "AutoDock4"
+    )
     project_path = Path(project_dir).expanduser().resolve()
     try:
         run_dir = _safe_run_directory(project_path, run_id)
@@ -10200,6 +10519,11 @@ def _validate_ad4_maps_post_run_integrity(
         if isinstance(snapshots.get("ad4_maps"), dict)
         else {}
     )
+    hydrated_records = (
+        snapshots.get("hydrated")
+        if is_hydrated and isinstance(snapshots.get("hydrated"), dict)
+        else {}
+    )
     expected_records: list[tuple[str, str, str, Path]] = []
     for key in ("receptor", "ligand"):
         record = inputs.get(key) if isinstance(inputs.get(key), dict) else {}
@@ -10219,6 +10543,20 @@ def _validate_ad4_maps_post_run_integrity(
             run_dir,
         )
     )
+    if is_hydrated:
+        ligand_manifest_record = (
+            hydrated_records.get("ligand_manifest")
+            if isinstance(hydrated_records.get("ligand_manifest"), dict)
+            else {}
+        )
+        expected_records.append(
+            (
+                "hydrated:ligand_manifest",
+                str(ligand_manifest_record.get("relative_path") or ""),
+                str(ligand_manifest_record.get("sha256") or ""),
+                run_dir / "inputs" / "hydrated",
+            )
+        )
     map_files = (
         maps_record.get("files")
         if isinstance(maps_record.get("files"), list)
@@ -10394,7 +10732,13 @@ def _validate_ad4_maps_post_run_integrity(
         if isinstance(inputs.get("ligand"), dict)
         else {}
     )
-    expected_protocol = AD4ZN_PROTOCOL_ID if is_ad4zn else "ad4_maps"
+    expected_protocol = (
+        AD4ZN_PROTOCOL_ID
+        if is_ad4zn
+        else HYDRATED_PROTOCOL_ID
+        if is_hydrated
+        else "ad4_maps"
+    )
     frozen_prefix = Path(str(frozen_maps.get("prefix") or "")).name
     snapshot_prefix = Path(str(maps_record.get("prefix") or "")).name
     if (
@@ -10411,6 +10755,101 @@ def _validate_ad4_maps_post_run_integrity(
             f"{code_prefix}_MANIFEST_BINDING_MISMATCH",
             f"运行结束后 {label} maps manifest 与冻结受体、配体或 map 文件不一致，结果已拒绝。",
         )
+
+    if is_hydrated:
+        frozen_ligand_manifest = (
+            frozen_manifest.get("hydrated_ligand_manifest")
+            if isinstance(
+                frozen_manifest.get("hydrated_ligand_manifest"),
+                dict,
+            )
+            else {}
+        )
+        ligand_manifest_record = (
+            hydrated_records.get("ligand_manifest")
+            if isinstance(hydrated_records.get("ligand_manifest"), dict)
+            else {}
+        )
+        hydrated_metadata = (
+            metadata.get("hydrated")
+            if isinstance(metadata.get("hydrated"), dict)
+            else {}
+        )
+        input_sha256 = (
+            metadata.get("input_sha256")
+            if isinstance(metadata.get("input_sha256"), dict)
+            else {}
+        )
+        artifacts = (
+            metadata.get("artifacts")
+            if isinstance(metadata.get("artifacts"), dict)
+            else {}
+        )
+        ligand_manifest_artifact = (
+            artifacts.get("hydrated_ligand_manifest")
+            if isinstance(
+                artifacts.get("hydrated_ligand_manifest"),
+                dict,
+            )
+            else {}
+        )
+        expected_ligand_manifest_relative = Path(
+            "runs",
+            run_id,
+            "inputs",
+            "hydrated",
+            "ligand_manifest.json",
+        ).as_posix()
+        expected_ligand_manifest_hash = str(
+            ligand_manifest_record.get("sha256") or ""
+        ).lower()
+        expected_ligand_manifest_source = str(
+            hydrated_metadata.get("ligand_preparation_manifest") or ""
+        )
+        if (
+            str(ligand_manifest_record.get("relative_path") or "")
+            != expected_ligand_manifest_relative
+            or not SHA256_PATTERN.fullmatch(
+                expected_ligand_manifest_hash,
+            )
+            or not expected_ligand_manifest_source
+            or str(frozen_ligand_manifest.get("path") or "")
+            != expected_ligand_manifest_source
+            or str(
+                frozen_ligand_manifest.get("sha256") or ""
+            ).lower()
+            != expected_ligand_manifest_hash
+            or str(
+                hydrated_metadata.get(
+                    "ligand_preparation_manifest_snapshot",
+                )
+                or ""
+            )
+            != expected_ligand_manifest_relative
+            or str(
+                input_sha256.get("hydrated_ligand_manifest") or ""
+            ).lower()
+            != expected_ligand_manifest_hash
+            or str(
+                ligand_manifest_artifact.get("relative_path") or ""
+            )
+            != expected_ligand_manifest_relative
+            or str(
+                ligand_manifest_artifact.get("sha256") or ""
+            ).lower()
+            != expected_ligand_manifest_hash
+        ):
+            return _error(
+                f"{code_prefix}_LIGAND_MANIFEST_BINDING_MISMATCH",
+                "运行结束后水合配体 preparation manifest 的来源、冻结快照或 SHA256 绑定不一致，结果已拒绝。",
+            )
+        water_map_name = f"{frozen_prefix}.W.map"
+        if water_map_name not in frozen_hashes:
+            return _error(
+                f"{code_prefix}_W_MAP_MISSING",
+                "运行结束后冻结的水合 maps 缺少 W affinity map，结果已拒绝。",
+                raw_error=", ".join(sorted(frozen_hashes)),
+            )
 
     if is_ad4zn:
         frozen_parameter = (
@@ -10532,6 +10971,7 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
 
     project_path = Path(project_dir).expanduser()
     run_mode = _metadata_run_mode(metadata)
+    protocol_id = _metadata_protocol_id(metadata)
     files = [
         _file_status(project_path, _metadata_relative_path(run_id), "metadata", "metadata.json"),
         _file_status(
@@ -10598,17 +11038,21 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
                 Path("runs", run_id, "inputs", "maps", "manifest.json").as_posix(),
                 (
                     "ad4zn_maps_manifest"
-                    if _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
+                    if protocol_id == AD4ZN_PROTOCOL_ID
+                    else "hydrated_maps_manifest"
+                    if protocol_id == HYDRATED_PROTOCOL_ID
                     else "ad4_maps_manifest"
                 ),
                 (
                     "AutoDock4Zn beta maps manifest.json"
-                    if _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
+                    if protocol_id == AD4ZN_PROTOCOL_ID
+                    else "水合 AD4 maps manifest.json"
+                    if protocol_id == HYDRATED_PROTOCOL_ID
                     else "AutoDock4 maps manifest.json"
                 ),
             )
         )
-        if _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID:
+        if protocol_id == AD4ZN_PROTOCOL_ID:
             for key, filename, label in (
                 (
                     "ad4zn_original_receptor",
@@ -10633,6 +11077,32 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
                             "ad4zn",
                             filename,
                         ).as_posix(),
+                        key,
+                        label,
+                    )
+                )
+        elif protocol_id == HYDRATED_PROTOCOL_ID:
+            for key, filename, label in (
+                (
+                    "hydrated_retained",
+                    HYDRATED_RETAINED_OUTPUT_NAME,
+                    "保留强/弱水的构象",
+                ),
+                (
+                    "hydrated_water_free",
+                    HYDRATED_WATER_FREE_OUTPUT_NAME,
+                    "完全去水配体构象",
+                ),
+                (
+                    "hydrated_waters_manifest",
+                    HYDRATED_WATERS_MANIFEST_NAME,
+                    "水分子分类记录",
+                ),
+            ):
+                files.append(
+                    _file_status(
+                        project_path,
+                        Path("runs", run_id, filename).as_posix(),
                         key,
                         label,
                     )
@@ -10744,6 +11214,11 @@ def get_run_runtime_status(project_dir: str, run_id: str) -> dict[str, Any]:
             and stage in {"baseline_scoring", "baseline_recorded", "local_starting"}
             and executor_active
         )
+        hydrated_postprocessing = bool(
+            _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+            and stage == "postprocessing"
+            and executor_active
+        )
 
         if process_active and metadata.get("process_missing_since"):
             observed_probe = metadata.get("process_missing_since")
@@ -10768,7 +11243,12 @@ def get_run_runtime_status(project_dir: str, run_id: str) -> dict[str, Any]:
             assert cleared is not None
             metadata = cleared
 
-        if not process_active and not launch_grace and not between_composite_stages:
+        if (
+            not process_active
+            and not launch_grace
+            and not between_composite_stages
+            and not hydrated_postprocessing
+        ):
             identity_error = str(verification.get("message") or "没有找到可验证的 Vina 进程身份。")
             observed_probe = metadata.get("process_missing_since")
             if not observed_probe:
@@ -10963,6 +11443,7 @@ _RUN_SUMMARY_KEYS = (
     "scoring_function",
     "created_at",
     "started_at",
+    "vina_finished_at",
     "finished_at",
     "duration_seconds",
     "exit_code",
@@ -10974,6 +11455,7 @@ _RUN_SUMMARY_KEYS = (
     "comparison_available",
     "output_file",
     "pose_file",
+    "hydrated_postprocess",
     "log_file",
     "scores_file",
     "evaluation_file",
@@ -11021,7 +11503,96 @@ def _recover_run_metadata(project_root: Path, run_id: str) -> tuple[dict[str, An
             executable_key="executor_executable",
             identity_key="executor_identity",
         )
-        if not launch_grace and not first_child.get("ok") and not first_executor.get("ok"):
+        is_dead_hydrated_postprocess = bool(
+            _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+            and str(metadata.get("stage") or "") == "postprocessing"
+            and not first_child.get("ok")
+            and not first_executor.get("ok")
+        )
+        if is_dead_hydrated_postprocess:
+            finished_at = _now_iso()
+
+            def fail_interrupted_hydrated_postprocess(
+                current: dict[str, Any],
+            ) -> dict[str, Any]:
+                if (
+                    current.get("status") != "running"
+                    or str(current.get("stage") or "") != "postprocessing"
+                ):
+                    return current
+                child_now = _verify_metadata_process(
+                    current,
+                    pid_key="pid",
+                    executable_key="trusted_executable",
+                    identity_key="process_identity",
+                )
+                executor_now = _verify_metadata_process(
+                    current,
+                    pid_key="executor_pid",
+                    executable_key="executor_executable",
+                    identity_key="executor_identity",
+                )
+                if child_now.get("ok") or executor_now.get("ok"):
+                    return current
+                postprocess_error = {
+                    "code": "HYDRATED_POSTPROCESS_INTERRUPTED",
+                    "message": "水合结果后处理执行器意外退出，原始 Vina 输出已保留。",
+                    "raw_error": (
+                        "恢复检查确认 Vina 与 DockStart 执行器均已退出，"
+                        "无法证明派生结果完整。"
+                    ),
+                    "suggestion": (
+                        "请保留本次 run 作为审计记录，并从已验证的水合输入"
+                        "重新准备新的 run。"
+                    ),
+                }
+                current.update(
+                    {
+                        "status": "failed",
+                        "stage": "postprocess_failed",
+                        "finished_at": finished_at,
+                        "duration_seconds": _duration_seconds(
+                            current.get("started_at"),
+                            finished_at,
+                        ),
+                        "progress": {
+                            "percent": 100,
+                            "message": postprocess_error["message"],
+                        },
+                        "hydrated_postprocess": {
+                            "status": "failed",
+                            "finished_at": finished_at,
+                            "raw_output_file": str(
+                                current.get("output_file")
+                                or Path(
+                                    "runs",
+                                    run_id,
+                                    "out.pdbqt",
+                                ).as_posix()
+                            ),
+                            "error": copy.deepcopy(postprocess_error),
+                        },
+                        "error_message": postprocess_error["message"],
+                    },
+                )
+                current.pop("process_missing_since", None)
+                return current
+
+            recovered, transaction_error = _update_run_metadata_transaction(
+                str(project_root),
+                run_id,
+                fail_interrupted_hydrated_postprocess,
+            )
+            if transaction_error:
+                return metadata, False, transaction_error
+            assert recovered is not None
+            changed = recovered != metadata
+            metadata = recovered
+        elif (
+            not launch_grace
+            and not first_child.get("ok")
+            and not first_executor.get("ok")
+        ):
             finished_at = _now_iso()
 
             def interrupt_dead_run(current: dict[str, Any]) -> dict[str, Any]:
@@ -11090,6 +11661,9 @@ def _recover_run_metadata(project_root: Path, run_id: str) -> tuple[dict[str, An
             _metadata_protocol_id(metadata)
             == MULTIPLE_LIGAND_PROTOCOL_ID
         )
+        is_hydrated = (
+            _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+        )
         existing_artifacts = (
             metadata.get("artifacts")
             if isinstance(metadata.get("artifacts"), dict)
@@ -11139,6 +11713,36 @@ def _recover_run_metadata(project_root: Path, run_id: str) -> tuple[dict[str, An
                     ),
                 }
                 if _local_only_execution_plan_enabled(metadata)
+                else {}
+            ),
+            **(
+                {
+                    "hydrated_retained": (
+                        HYDRATED_RETAINED_OUTPUT_NAME,
+                        Path(
+                            "runs",
+                            run_id,
+                            HYDRATED_RETAINED_OUTPUT_NAME,
+                        ).as_posix(),
+                    ),
+                    "hydrated_water_free": (
+                        HYDRATED_WATER_FREE_OUTPUT_NAME,
+                        Path(
+                            "runs",
+                            run_id,
+                            HYDRATED_WATER_FREE_OUTPUT_NAME,
+                        ).as_posix(),
+                    ),
+                    "hydrated_waters_manifest": (
+                        HYDRATED_WATERS_MANIFEST_NAME,
+                        Path(
+                            "runs",
+                            run_id,
+                            HYDRATED_WATERS_MANIFEST_NAME,
+                        ).as_posix(),
+                    ),
+                }
+                if is_hydrated
                 else {}
             ),
         }
@@ -11527,6 +12131,26 @@ def cancel_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             f"当前 run 状态为 {metadata.get('status') or 'unknown'}，没有可取消的 Vina 进程。",
             suggestion="只能取消 running 状态的运行。",
         )
+    if (
+        _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+        and str(metadata.get("stage") or "") == "postprocessing"
+    ):
+        loaded = load_project(project_dir)
+        return {
+            "ok": True,
+            "accepted": False,
+            "cancelled": False,
+            "project": loaded.get("project") if loaded.get("ok") else None,
+            "project_dir": str(Path(project_dir).expanduser()),
+            "run_id": run_id,
+            "metadata": metadata,
+            "stage": "postprocessing",
+            "message": (
+                "Vina 已完成，DockStart 正在生成水分子分类与派生结构；"
+                "该确定性收尾阶段不再终止进程。"
+            ),
+            "error": None,
+        }
 
     pid = metadata.get("pid")
     requested_at = _now_iso()
@@ -12703,6 +13327,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
     if error:
         return error
     assert metadata is not None
+    protocol_id = _metadata_protocol_id(metadata)
+    is_hydrated = protocol_id == HYDRATED_PROTOCOL_ID
     status = str(metadata.get("status") or "")
     if status != "prepared":
         return _error(
@@ -12970,7 +13596,7 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
                 handle.write("\n")
             handle.write(run_result.error)
 
-    finished_at = _now_iso()
+    vina_finished_at = _now_iso()
     output_required = output_path is not None
     output_ok = not output_required or (output_path.is_file() and output_path.stat().st_size > 0)
     log_ok = log_path.is_file() and log_path.stat().st_size > 0
@@ -13015,6 +13641,259 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         _metadata_grid_source(metadata) == "precomputed_maps"
         or _metadata_scoring_protocol(metadata) == "ad4_maps"
     )
+    hydrated_postprocess_record: dict[str, Any] | None = None
+    hydrated_postprocess_error: dict[str, Any] | None = None
+    hydrated_artifacts: dict[str, dict[str, Any]] = {}
+    if (
+        is_hydrated
+        and run_result.exit_code == 0
+        and output_ok
+        and log_ok
+        and not run_result.error
+        and not cancel_requested
+        and post_run_input_integrity.get("ok")
+        and vina_hash_match is not False
+    ):
+        retained_relative = Path(
+            "runs",
+            run_id,
+            HYDRATED_RETAINED_OUTPUT_NAME,
+        ).as_posix()
+        water_free_relative = Path(
+            "runs",
+            run_id,
+            HYDRATED_WATER_FREE_OUTPUT_NAME,
+        ).as_posix()
+        waters_manifest_relative = Path(
+            "runs",
+            run_id,
+            HYDRATED_WATERS_MANIFEST_NAME,
+        ).as_posix()
+        try:
+            if output_path is None:
+                raise RuntimeError("水合对接缺少原始 out.pdbqt 路径。")
+            raw_output_snapshot = _hash_snapshot(output_path, output_file)
+
+            def mark_hydrated_postprocessing(
+                current: dict[str, Any],
+            ) -> dict[str, Any]:
+                if current.get("status") != "running":
+                    return current
+                current.update(
+                    {
+                        "stage": "postprocessing",
+                        "progress": {
+                            "percent": 95,
+                            "message": "Vina 已完成，正在分类水分子并生成派生结构。",
+                        },
+                        "vina_finished_at": vina_finished_at,
+                        "exit_code": run_result.exit_code,
+                        "pid": None,
+                        "process_identity": None,
+                    }
+                )
+                _with_artifact_hashes(current, {"out": raw_output_snapshot})
+                output_sha256 = (
+                    copy.deepcopy(current.get("output_sha256"))
+                    if isinstance(current.get("output_sha256"), dict)
+                    else {}
+                )
+                output_sha256["out"] = str(
+                    raw_output_snapshot.get("sha256") or ""
+                )
+                current["output_sha256"] = output_sha256
+                current.pop("process_missing_since", None)
+                return current
+
+            postprocessing_metadata, checkpoint_error = (
+                _update_run_metadata_transaction(
+                    project_dir,
+                    run_id,
+                    mark_hydrated_postprocessing,
+                )
+            )
+            if checkpoint_error:
+                raise RuntimeError(
+                    "无法写入水合后处理 checkpoint："
+                    + str(checkpoint_error.get("error") or checkpoint_error)
+                )
+            if (
+                postprocessing_metadata is None
+                or postprocessing_metadata.get("status") != "running"
+                or postprocessing_metadata.get("stage") != "postprocessing"
+            ):
+                raise RuntimeError("run 状态已变化，拒绝启动水合结果后处理。")
+            checkpoint_summary = update_project_run_summary(
+                project_dir,
+                run_id,
+                {
+                    "status": "running",
+                    "stage": "postprocessing",
+                    "vina_finished_at": vina_finished_at,
+                    "exit_code": run_result.exit_code,
+                },
+            )
+            if not checkpoint_summary.get("ok"):
+                raise RuntimeError(
+                    "水合后处理 checkpoint 无法同步到 project.json："
+                    + str(
+                        checkpoint_summary.get("error")
+                        or checkpoint_summary
+                    )
+                )
+
+            from dockstart_core.hydrated_postprocess import (
+                HydratedPostprocessError,
+                postprocess_hydrated_output,
+            )
+
+            maps_prefix_name = Path(
+                str(prerequisites.get("maps_prefix") or "")
+            ).name
+            if not maps_prefix_name:
+                raise RuntimeError("水合对接 maps prefix 无效。")
+            water_map_relative = Path(
+                "runs",
+                run_id,
+                "inputs",
+                "maps",
+                f"{maps_prefix_name}.W.map",
+            ).as_posix()
+            receptor_relative = str(prerequisites.get("receptor_file") or "")
+            water_map_path = project_path / water_map_relative
+            receptor_path = project_path / receptor_relative
+            retained_path = project_path / retained_relative
+            water_free_path = project_path / water_free_relative
+            waters_manifest_path = project_path / waters_manifest_relative
+
+            postprocessed = postprocess_hydrated_output(
+                output_path,
+                receptor_path,
+                water_map_path,
+                retained_path,
+                water_free_path,
+            )
+            manifest = copy.deepcopy(postprocessed.get("manifest") or {})
+            if not isinstance(manifest, dict):
+                raise RuntimeError("水合后处理没有返回有效 manifest。")
+            sources = (
+                manifest.get("sources")
+                if isinstance(manifest.get("sources"), dict)
+                else {}
+            )
+            outputs = (
+                manifest.get("outputs")
+                if isinstance(manifest.get("outputs"), dict)
+                else {}
+            )
+            source_paths = {
+                "hydrated_output": output_file,
+                "receptor": receptor_relative,
+                "water_map": water_map_relative,
+            }
+            for key, relative_path in source_paths.items():
+                record = sources.get(key)
+                if not isinstance(record, dict):
+                    raise RuntimeError(f"水合后处理 manifest 缺少 {key} 来源记录。")
+                record["path"] = relative_path
+            output_paths = {
+                "retained_water_annotated": retained_relative,
+                "water_free_ligand": water_free_relative,
+            }
+            for key, relative_path in output_paths.items():
+                record = outputs.get(key)
+                if not isinstance(record, dict):
+                    raise RuntimeError(f"水合后处理 manifest 缺少 {key} 输出记录。")
+                record["path"] = relative_path
+            postprocess_finished_at = _now_iso()
+            manifest.update(
+                {
+                    "protocol_id": HYDRATED_PROTOCOL_ID,
+                    "run_id": run_id,
+                    "created_at": postprocess_finished_at,
+                    "manifest_file": waters_manifest_relative,
+                    "sources": sources,
+                    "outputs": outputs,
+                }
+            )
+            _atomic_write_text(
+                waters_manifest_path,
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            )
+            hydrated_artifacts = {
+                "hydrated_retained": _hash_snapshot(
+                    retained_path,
+                    retained_relative,
+                ),
+                "hydrated_water_free": _hash_snapshot(
+                    water_free_path,
+                    water_free_relative,
+                ),
+                "hydrated_waters_manifest": _hash_snapshot(
+                    waters_manifest_path,
+                    waters_manifest_relative,
+                ),
+            }
+            for key, output_key in (
+                ("hydrated_retained", "retained_water_annotated"),
+                ("hydrated_water_free", "water_free_ligand"),
+            ):
+                recorded_hash = str(
+                    (outputs.get(output_key) or {}).get("sha256") or ""
+                ).lower()
+                actual_hash = str(
+                    hydrated_artifacts[key].get("sha256") or ""
+                ).lower()
+                if (
+                    not SHA256_PATTERN.fullmatch(recorded_hash)
+                    or recorded_hash != actual_hash
+                ):
+                    raise RuntimeError(
+                        f"水合后处理 {output_key} 输出哈希与 manifest 不一致。"
+                    )
+            hydrated_postprocess_record = {
+                "status": "finished",
+                "method": str(manifest.get("method") or ""),
+                "started_at": vina_finished_at,
+                "finished_at": postprocess_finished_at,
+                "manifest_file": waters_manifest_relative,
+                "manifest_sha256": str(
+                    hydrated_artifacts["hydrated_waters_manifest"].get(
+                        "sha256"
+                    )
+                    or ""
+                ),
+                "raw_output_file": output_file,
+                "retained_output_file": retained_relative,
+                "water_free_output_file": water_free_relative,
+                "summary": copy.deepcopy(manifest.get("summary") or {}),
+                "semantics": copy.deepcopy(manifest.get("semantics") or {}),
+                "outputs": copy.deepcopy(outputs),
+            }
+        except Exception as exc:  # noqa: BLE001 - fail closed after Vina.
+            postprocess_finished_at = _now_iso()
+            code = (
+                str(exc.code)
+                if "HydratedPostprocessError" in locals()
+                and isinstance(exc, HydratedPostprocessError)
+                else "HYDRATED_POSTPROCESS_ERROR"
+            )
+            hydrated_postprocess_error = {
+                "code": code,
+                "message": "Vina 已生成原始水合结果，但水分子后处理失败。",
+                "raw_error": str(exc),
+                "suggestion": (
+                    "请保留本次 raw out.pdbqt、日志和冻结 maps，检查输入完整性后重新准备新 run。"
+                ),
+            }
+            hydrated_postprocess_record = {
+                "status": "failed",
+                "started_at": vina_finished_at,
+                "finished_at": postprocess_finished_at,
+                "raw_output_file": output_file,
+                "error": copy.deepcopy(hydrated_postprocess_error),
+            }
+    finished_at = _now_iso()
     run_artifacts = {
         "vina_binary_executed": execution_vina_binary,
         "vina_binary_observed_after_execution": execution_vina_binary_after,
@@ -13022,12 +13901,21 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         "stdout": _hash_snapshot(stdout_path, stdout_file),
         "stderr": _hash_snapshot(stderr_path, stderr_file),
         **({"out": _hash_snapshot(output_path, output_file)} if output_path is not None else {}),
+        **hydrated_artifacts,
     }
 
     def finalize(current: dict[str, Any]) -> dict[str, Any]:
         current["input_snapshot_integrity"] = copy.deepcopy(
             post_run_input_integrity
         )
+        if is_hydrated:
+            current["hydrated_postprocess"] = copy.deepcopy(
+                hydrated_postprocess_record
+                or {
+                    "status": "not_run",
+                    "raw_output_file": output_file,
+                }
+            )
         current["vina_binary_integrity"] = {
             "start_sha256": start_vina_hash,
             "end_sha256": end_vina_hash,
@@ -13062,6 +13950,14 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             message = vina_integrity_warning
             error_message = vina_integrity_warning
             percent = 100
+        elif hydrated_postprocess_error is not None:
+            final_status = "failed"
+            message = str(
+                hydrated_postprocess_error.get("message")
+                or "水合结果后处理失败。"
+            )
+            error_message = message
+            percent = 100
         elif cancel_requested:
             final_status = "cancelled"
             message = "用户已取消运行。"
@@ -13080,6 +13976,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
                 if run_mode == "score_only"
                 else "局部优化完成。"
                 if run_mode == "local_only"
+                else "实验性水合 AD4 对接及水分子后处理完成。"
+                if is_hydrated
                 else "AutoDock Vina 运行完成。"
             )
             error_message = ""
@@ -13104,7 +14002,12 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         current.update(
             {
                 "status": final_status,
-                "stage": final_status,
+                "stage": (
+                    "postprocess_failed"
+                    if hydrated_postprocess_error is not None
+                    and final_status == "failed"
+                    else final_status
+                ),
                 "progress": {"percent": percent, "message": message},
                 "finished_at": finished_at,
                 "duration_seconds": _duration_seconds(current.get("started_at"), finished_at),
@@ -13113,6 +14016,19 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
                 "stdout_file": stdout_file,
                 "stderr_file": stderr_file,
                 "output_file": output_file,
+                **(
+                    {
+                        "pose_file": str(
+                            (
+                                hydrated_postprocess_record
+                                or {}
+                            ).get("retained_output_file")
+                            or output_file
+                        )
+                    }
+                    if is_hydrated
+                    else {}
+                ),
                 "log_file": log_file,
                 "best_affinity": None,
             },
@@ -13144,11 +14060,29 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "finished_at": final_metadata.get("finished_at"),
             "duration_seconds": final_metadata.get("duration_seconds"),
             "exit_code": final_metadata.get("exit_code"),
+            **(
+                {
+                    "pose_file": str(
+                        final_metadata.get("pose_file")
+                        or final_metadata.get("output_file")
+                        or ""
+                    ),
+                    "hydrated_postprocess": copy.deepcopy(
+                        final_metadata.get("hydrated_postprocess") or {}
+                    ),
+                }
+                if is_hydrated
+                else {}
+            ),
         },
     )
     files_status = get_run_files_status(project_dir, run_id)
     message = {
-        "finished": "Vina 运行完成。",
+        "finished": (
+            "实验性水合 AD4 对接完成。"
+            if is_hydrated
+            else "Vina 运行完成。"
+        ),
         "cancelled": "Vina 运行已取消。",
         "failed": str(final_metadata.get("error_message") or "Vina 运行失败。"),
         "interrupted": str(final_metadata.get("error_message") or "Vina 运行已中断。"),
@@ -13201,6 +14135,8 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "code": (
                 str(integrity_error.get("code") or "")
                 if integrity_error
+                else str(hydrated_postprocess_error.get("code") or "")
+                if hydrated_postprocess_error
                 else "RUN_VINA_BINARY_CHANGED"
                 if binary_integrity_failed
                 else "VINA_RUN_FAILED"
@@ -13211,6 +14147,10 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "raw_error": (
                 str(integrity_error.get("raw_error") or "")
                 if integrity_error
+                else str(
+                    hydrated_postprocess_error.get("raw_error") or ""
+                )
+                if hydrated_postprocess_error
                 else (
                     f"start={binary_integrity.get('start_sha256') or ''}; "
                     f"end={binary_integrity.get('end_sha256') or ''}"
@@ -13221,6 +14161,10 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "suggestion": (
                 str(integrity_error.get("suggestion") or "")
                 if integrity_error
+                else str(
+                    hydrated_postprocess_error.get("suggestion") or ""
+                )
+                if hydrated_postprocess_error
                 else "请恢复执行前的 Vina binary，并重新生成 maps、准备新 run。"
                 if binary_integrity_failed
                 else "请查看 stderr.txt、stdout.txt 和 log.txt 后重新准备运行。"

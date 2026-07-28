@@ -31,8 +31,10 @@ dockstart_settings.json
 *.log
 .workbuddy/
 .codex-ui-audit/
-output/playwright/
-output/qa-tools/
+.playwright-cli/
+
+# Local smoke tests, scientific verification, screenshots, and docking outputs
+output/
 
 # Third-party source archives and downloads
 *_master.zip

@@ -116,7 +116,7 @@ macrocycle
 ad4_maps
 multiple_ligands
 ad4zn
-hydrated
+hydrated_ad4_experimental
 ```
 
 每种协议拥有：
@@ -762,15 +762,16 @@ Vina 1.2.7 实测中 `randomize_only` 不遵守 CLI `--seed`，相同 seed 不�
 - AD4 项目级 scores/report 使用独立文件名，GUI 和报告禁止与 Vina/Vinardo 直接横向比较。
 - 官方 `1dwd` 非金属用例已穿过 DockStart 完整工作流，生成 `ad4_001` 与 `run_001`，最佳评分 -11.55 kcal/mol。
 
-v0.12.0 不进入阶段 6 的多配体共同对接或阶段 7 的 AD4Zn，也不开放柔性受体 AD4、批量 AD4 maps 或水合对接。按 2026-07-28 当前源码重新校准后的路径为：
+v0.12.0 不进入阶段 6 的多配体共同对接、阶段 7 的 AD4Zn 或阶段 8 的水合 AD4，也不开放柔性受体 AD4 或批量 AD4 maps。阶段 6～8 后来都已在 v0.12.2 当前源码中形成彼此隔离的实验性闭环，但仍不属于 v0.12.0 Release。按 2026-07-29 当前源码重新校准后的路径为：
 
 ```text
 v0.12.0 AutoDock4 maps 稳定发布
 → 大环、有限柔性与串行批量的真实工具链复核
 → 阶段 7 AD4Zn beta 源码闭环
 → 阶段 6 多配体共同对接实验性源码闭环
+→ 阶段 8 水合 AD4 Experimental 源码闭环
 → 各协议独立完成发布门禁
-→ 阶段 8 水合对接候选
+→ 只发布通过各自科学、安装态、GUI 与许可证门禁的协议
 ```
 
 ---
@@ -954,42 +955,107 @@ AD4 顶层协议中保留“标准 AD4 / AD4Zn beta”二级选择。AD4Zn 页�
 
 提供独立标记为实验性的 hydrated docking 工作流。
 
-## 前置条件
+## 当前状态
 
-- AD4 maps 稳定；
-- 特殊原子类型管理稳定；
-- 后处理流程稳定；
-- 专用基准完成。
+**`hydrated_ad4_experimental` 已在 v0.12.2 当前源码中形成后端、Tauri 桌面桥接和 GUI Experimental 闭环；本轮不修改版本号、不重新打包，也未进入正式 Release。**
 
-## 功能范围
+阶段 4 的标准 AD4 maps 基础设施、特殊 W 类型、clean-room W map、逐构象水分子后处理和固定 1UW6 外部验收已经存在。当前工作的重点已从“从零开发水合对接”转为“补真实项目级 AutoGrid/安装态/GUI 发布证据，并扩大科学基准”。
 
-- 水合配体准备；
-- W 原子类型；
-- 专用 water map；
-- hydrated docking；
-- dry 后处理；
-- 重评分；
-- 保留水分析；
-- 原始输出和处理后输出分离；
-- 实验性标签。
+## 已实现功能范围
+
+### 8.1 独立水合配体准备
+
+- 只接受项目内单分子 SDF/MOL，要求一个有效三维 conformer、有限坐标和明确键级；
+- 使用兼容 RDKit 与 Meeko `MoleculePreparation(hydrate=True)`，并先以真实小分子探针确认当前工具链可以生成 W 原子；
+- 生成独立的加氢 SDF 和水合 PDBQT，不覆盖 raw 配体、标准 `prepared/ligand.pdbqt` 或当前标准协议；
+- 每次准备写入 `protocols/hydrated/ligand_preparations/hydrated_ligand_NNN/`，保存源快照、独立脚本、命令、工具版本/路径/哈希、stdout/stderr、输出和 manifest；
+- 准备、发布或激活期间输入、脚本、Python、RDKit 或 Meeko 变化时保留失败审计并拒绝激活。
+
+### 8.2 水合 AD4 maps
+
+- 只接受当前项目刚性受体 PDBQT、显式项目 Box 和已激活的水合配体；
+- AutoGrid4 基础 GPF 不把 W 作为普通 ligand type 传给 AutoGrid；它为实际配体类型补齐 OA/HD 源 map；
+- DockStart 以 clean-room 固定 BEST 规则生成 `receptor.W.map`：OA/HD 权重均为 `1.0`，任一源值大于 `0` 时写入 `-0.2 kcal/mol` 置换熵，否则取更有利源值乘以 `0.6`；
+- 独立 `maps/hydrated_NNN/hydrated_manifest.json` 绑定受体、水合配体及其 manifest、Box、AutoGrid 证据、OA/HD/W 参数、全部 map 文件、网格几何和 SHA256；
+- 受体、Box、水合配体、manifest 或任何 map 改变时阻断运行；已经完整发布的 maps 不要求生成工具之后仍安装在同一路径。
+
+### 8.3 冻结运行与后处理状态
+
+- 最低要求 AutoDock Vina 1.2.0，并要求当前运行时明确通过 `--maps` 能力门禁；
+- 运行准备冻结刚性受体、水合配体、两个 manifest、全部 maps、配置和 Vina 二进制证据；
+- Vina 命令固定使用 `--maps <prefix> --scoring ad4`，不传 `--receptor`，只执行全局 `dock`；
+- Vina 成功后先保留 raw `runs/run_NNN/out.pdbqt`，再进入显式 `postprocessing` 阶段；
+- 后处理生成 `hydrated_retained.pdbqt`、`ligand_water_free.pdbqt` 和 `waters_manifest.json`。失败时 run 以 `postprocess_failed` 终止并保留 raw 输出，不发布部分派生结果；
+- CPU 内后处理阶段不接受取消；进程异常中断时保守收敛为失败，不伪装成可恢复成功。
+
+### 8.4 水分子分类与结果语义
+
+- 每个 Vina MODEL 独立处理，W 身份只按最终 PDBQT 原子类型判断，不按 atom name 猜测；
+- W 与配体重原子或受体非 HD 原子距离严格小于 `2.03 Å` 时移除；
+- 其余 W 在 `±1 Å` 邻域采样 W map 最小值，`< -0.5` 为强水，`< -0.3` 为弱水，其余为置换水；
+- 保留水输出只保留强/弱 W 并加入 DockStart 注释，去水输出移除全部最终类型为 W 的原子；原始 MODEL 顺序、扭转树、非 W 原子和 `REMARK VINA RESULT` 保持不变；
+- 结果页、`results/hydrated_ad4_scores.csv` 和水合 Markdown 报告显示 raw hydrated AD4 affinity、RMSD 和逐构象水统计；Viewer 默认读取保留水输出，SDF 导出只接受当前 run 已校验的去水文件；
+- raw affinity 只用于同一 run 内 pose 排序，不用于虚拟筛选、跨配体、跨协议或处理前后比较。**处理后评分未计算**，当前不存在 dry affinity、校正 affinity 或重评分结果。
+
+## 首版组合边界
+
+只支持：
+
+- 一个 SDF/MOL raw 配体；
+- 一个刚性受体 PDBQT；
+- 显式项目 Box；
+- AD4 预计算 maps；
+- 全局对接；
+- Vina 1.2.0+；
+- 外部 AutoGrid4 与兼容 RDKit/Meeko。
+
+明确不支持：
+
+- 柔性受体；
+- 串行批量筛选或跨配体排名；
+- 多配体共同对接；
+- Vina/Vinardo 评分或预计算 maps；
+- 标准 AD4、AD4Zn 与水合协议的静默互换；
+- `score_only`、`local_only`、autobox；
+- 大环 ghost atom、AD4Zn 或其他实验协议组合；
+- 处理后重评分。
+
+AutoGrid4 继续是用户自行安装/配置的 GPL 外部工具，不随 Basic 或 Assisted 分发。当前源码闭环没有新增随包 GPL 组件；水合配体准备仍依赖兼容 RDKit/Meeko，正式发布前必须明确 Basic、Assisted 与用户配置 Python 的实际支持矩阵。
 
 ## UI 设计
 
-入口位于：
+当前源码入口位于：
 
 ```text
-更多协议 → 实验性 → 水合对接
+打开项目 → 左侧工作台 → 水合 AD4
 ```
 
-启动前展示方法用途、适用范围、限制、工具要求和结果解释边界。
+页面标题和协议范围卡始终显示 Experimental。当前页面已经按五个有依赖关系的步骤呈现：
 
-## 验收标准
+1. 准备水合配体；
+2. 生成并校验水合 AD4 maps；
+3. 运行前检查；
+4. 创建 run 并进入现有 Vina 执行页；
+5. 读取水合结果。
 
-- 官方 hydrated docking 案例可复现；
-- W maps 完整；
-- dry 前后文件可追踪；
-- 报告区分原始分数与处理后分数；
-- 实验性功能不影响 Stable 协议。
+页面持续显示 Experimental、单配体、刚性受体、全局对接、AD4 maps、不用于虚拟筛选和“处理后评分未计算”。耗时操作使用统一加载窗口；受体、raw 配体、Box、active manifests、maps、运行记录和阻塞原因在同页可见。通用结果页也识别水合协议，显示协议边界和逐 Mode 水统计。
+
+## 源码验证状态
+
+- 自动化测试覆盖准备输入与工具门禁、TOCTOU/篡改、BEST W map、AutoGrid hydrated profile、项目 maps 生成/失效、逐 MODEL 后处理、run 冻结/执行/失败、取消/恢复、结果/报告、Viewer/SDF 边界和桌面 API 参数映射；
+- 外部 1UW6 fixture 只提交固定 tag/commit、文件大小、SHA256 和期望值，不复制上游结构/结果；
+- `scripts/verify_hydrated_1uw6.py` 使用用户提供的 AutoDock Vina v1.2.7 固定 checkout，分别验证 Meeko 0.7.1 生成 2 个 W；clean-room BEST W map 的 68,921 个值与上游参考逐点一致（规范化序列化后的文件字节不同，不宣称 SHA256 相同）；随附 Vina 1.2.7 以 AD4 maps 运行得到最佳评分 `-8.261 kcal/mol`，请求最多 9 个 Mode 时实际输出 8 个；官方独立 9-pose raw 输出的 18 个 W 被分类为 8 强、1 弱、9 置换且 raw affinity 不变；
+- 上游 v1.2.7 `dry.py` 的只读兼容统计为 7 强、4 弱、7 置换。差异来自上游按 atom name `W` 识别水及半个 spacing 的 map 原点偏移；DockStart 的运行规则按最终类型 `W` 和真实 AutoGrid 原点处理，不把旧脚本输出作为字节 oracle。
+
+## 进入发布的验收标准
+
+- 使用当前项目级 `generate_hydrated_maps` 和外部 AutoGrid4 完成一次真实“GUI → GPF → 基础 maps → W map → run → 后处理 → Viewer/报告”全链，而不只使用固定上游 maps 或 mock runner；
+- Basic/Assisted 干净 Windows 安装、升级、重启、卸载、中文长路径、含空格路径、亮暗主题和异常中断恢复通过；
+- 多个不同配体、口袋含水环境、Box/spacing、Vina/Meeko/AutoGrid 版本和失败案例完成科学回归；
+- 大网格状态复核/哈希性能、并发 maps 生成、磁盘不足、杀进程和项目迁移有明确证据；
+- 用户指南、FAQ、示例、许可证说明、CHANGELOG、发布说明和回滚方案完整。
+
+上述门禁全部满足前，水合 AD4 必须保持 Experimental，不进入默认首页，不与 Stable 结果混排，也不分配正式发布版本号。
 
 ---
 
@@ -1269,6 +1335,7 @@ developer
 - 当前源码还加入了 Vina/Vinardo 自身的预计算 maps 复用：使用 `--write_maps` 生成，用 `--maps` 运行，并与 AutoDock4 maps 保持独立 manifest、评分函数和报告语义。该增量尚未分配发布版本。
 - 当前源码还加入了 AD4Zn beta：TZ 受体准备、用户提供的 `AD4Zn.dat`、AutoGrid4 4.2.7+ 专用 GPF/maps、显式结构确认、不可变 run 证据和独立结果/报告已经接入；它尚未修改版本号、重新打包或完成正式发布门禁。
 - 当前源码还加入了多配体共同对接实验协议：Vina 1.2.0+、恰好两个已准备 PDBQT、刚性受体、Vina/Vinardo 和全局对接；官方 5X72 源码级真机链路已确认，安装态、历史项目与 GUI 发布门禁仍未完成。
+- 当前源码还加入了 `hydrated_ad4_experimental`：独立 SDF/MOL 水合配体准备、外部 AutoGrid4 基础 maps、clean-room BEST W map、不可变 run、raw/保留水/去水三类构象产物、逐 Mode 水分类、结果页和报告已接入。固定 1UW6 外部验收已覆盖 Meeko、W map、Vina 和后处理，但当前项目级 AutoGrid 全链、安装态、扩大基准和 GUI 发布门禁仍未完成；不存在处理后重评分。
 
 ### 11.1 已交付基线与近期确定路线
 
@@ -1278,7 +1345,8 @@ developer
 | v0.12.1–v0.12.2 之后的当前源码 | 源码维护增量 | 不增加新的评分算法；完成 GUI/工具链修复、姿势评价、局部优化定量比较、高级 Vina 参数、批量结果/归档，以及 Vina/Vinardo 预计算 maps 生成、导入、复用和 run 完整性闭环。发布前必须重新打包并复核历史项目兼容 |
 | 当前源码 AD4Zn beta | 源码协议增量 | 仅限单核 Zn；使用 TZ + 用户提供的 `AD4Zn.dat` + AutoGrid4 4.2.7+ maps + Vina `--scoring ad4`。近共面、多核、无 TZ、参数/许可证记录缺失或网格门禁失败时不降级；尚未打包或发布 |
 | 当前源码多配体共同对接 | 实验性协议增量 | 恰好两个已准备 PDBQT 在一次 Vina/Vinardo 全局搜索中联合运行；每个 Mode 只有联合评分，不能拆成成员 affinity。官方 5X72 源码级真机回归已通过；安装态、历史项目和 GUI 发布门禁仍待确认，尚未打包或发布 |
-| 可选 v0.12.x 维护 Release | 发布收口 | 只收口已通过门禁的能力；构建必须隐藏/剔除尚未过门禁的 AD4Zn 与多配体共同对接入口，并在 Basic/Assisted 干净 Windows 中完成安装生命周期与 GUI 回归 |
+| 当前源码水合 AD4 | Experimental 协议增量 | 一个 SDF/MOL 配体、刚性受体、显式 Box、外部 AutoGrid4、AD4 maps 与全局对接；raw affinity 只用于 run 内排序，处理后评分未计算。1UW6 固定外部验收通过，项目级 AutoGrid 真机全链、扩大样本和安装态/GUI 门禁仍待完成 |
+| 可选 v0.12.x 维护 Release | 发布收口 | 只收口已通过门禁的能力；构建必须隐藏/剔除尚未过门禁的 AD4Zn、多配体共同对接与水合 AD4 入口，并在 Basic/Assisted 干净 Windows 中完成安装生命周期与 GUI 回归 |
 | v0.13.0 | AD4Zn beta 发布候选 | 当前源码协议通过 1S63/多样本/失败路径、许可证、Basic/Assisted 安装态和 GUI 门禁后才可采用该版本号；保持 beta 和显式开启 |
 | v0.14.0 | AD4Zn stable | 补齐多样本失败路径、安装态回归、文档与发布门禁；只有达到本文件 Definition of Done 才从 beta 升为 stable |
 | v1.0.0 | 稳定整合 | 冻结 Stable 协议集合，完成历史项目兼容、安装/升级/卸载、签名、示例、用户文档、许可证材料和发布门禁；不以实验协议数量作为 v1.0 条件 |
@@ -1337,14 +1405,26 @@ AD4Zn beta 也已进入源码主链，但属于另一条显式协议：
 
 官方 5X72 案例已于 2026-07-28 用仓库随附 AutoDock Vina 1.2.7 完成源码级真实验收：一个 `--ligand` 后跟两个有序路径、联合解析、双成员 Viewer、评分表与报告均通过；官方参考输出 SHA256 `9fd1901bb52d0c767674fdd6e926f749e9995a35aa5b51e0318fd9e6f6922764` 可解析为 7 个双成员 Mode，最佳联合评分 -19.043 kcal/mol。之后仍需失败恢复、历史项目、Basic/Assisted 干净安装和 GUI 门禁。
 
+水合 AD4 Experimental 也已进入源码主链，但不属于标准 AD4 的透明扩展：
+
+- 一个项目内 SDF/MOL 通过兼容 RDKit/Meeko 生成独立水合 PDBQT，要求实际生成 W 类型；标准配体和 raw 输入不被覆盖；
+- 外部 AutoGrid4 生成不含 W ligand type 的基础 maps，DockStart 以固定 BEST 规则从 OA/HD clean-room 生成 W map；
+- 只允许刚性受体、显式 Box、单配体、全局 AD4 maps 和 Vina 1.2.0+；不与柔性、批量、多配体、Vina/Vinardo maps、AD4Zn、大环 ghost atom、评价任务或 autobox 组合；
+- run 冻结受体、水合配体、两个 manifest、全部 maps、配置和 Vina；raw Vina 输出后另设不可取消的 `postprocessing` 阶段，失败保留 raw 文件并终止；
+- 成功 run 同时保存 raw、保留强/弱水、去全部 W 和水清单四类证据；Viewer/结果页/报告已经识别该协议；
+- raw hydrated AD4 affinity 保持不变，只用于同一 run 内 pose 排序；水分类不产生新分值，报告必须直写“处理后评分未计算”。
+
+固定 1UW6 外部验收已于 2026-07-29 覆盖 Meeko 0.7.1 水合准备、BEST W map、随附 Vina 1.2.7 AD4 maps 运行和 clean-room 后处理：BEST 的 68,921 个值与上游参考逐点一致但规范化文件 SHA256 不同；Vina 请求最多 9 个 Mode 时实际输出 8 个，最佳评分为 `-8.261 kcal/mol`；官方独立 9-pose raw 输出共 18 个 W，按当前运行规则得到 8 强、1 弱、9 置换且 raw affinity 不变。fixture 只提交上游 tag/commit、文件 SHA256 和期望元数据；验证需要用户提供固定上游 checkout。它仍不能替代当前项目级 AutoGrid 真机全链、更多化学体系、历史项目、Basic/Assisted 干净安装和 GUI 发布门禁。
+
 ### 11.3 暂不绑定版本号的候选能力
 
 以下能力保留，但在基准、工具链、数据模型和许可证边界明确前，不再提前占用 v0.16–v0.22：
 
 - `randomize_only`、自定义评分权重等其余专家参数；
-- 水合对接；
 - 批量 AD4 maps 与柔性受体 AD4；
 - 自定义权重、Python API 和协议插件。
+
+水合 AD4 已不再属于“尚未立项候选”，而是**已进入源码、尚未分配发布版本的 Experimental 协议**。它与 AD4Zn、多配体共同对接一样，只有独立完成科学、安装态、GUI、历史项目、许可证和恢复门禁后才可进入版本表；现阶段不得据此承诺某个 v0.x 版本必然发布。
 
 schema v2 也不再作为一个脱离需求的版本目标。只有现有 schema v1 无法安全表达已批准的新协议时，才单独评审迁移；迁移必须提供旧项目备份、只读兼容、失败回滚和跨版本测试，不能为了版本编号而改写用户项目。
 
@@ -1369,6 +1449,7 @@ v0.12.1–v0.12.2 源码维护增量
 + Vina/Vinardo 预计算 maps 生成、导入、复用、run 前后完整性校验
 + AD4Zn beta 源码闭环（TZ + 外部 AD4Zn.dat + AutoGrid4 4.2.7+）
 + 多配体共同对接实验性源码闭环（Vina 1.2.0+、恰好两个已准备 PDBQT、联合 Mode/评分）
++ 水合 AD4 Experimental 源码闭环（RDKit/Meeko hydrate + 外部 AutoGrid4 + BEST W map + raw/保留水/去水后处理）
           ↓
 各实验协议独立完成科学、安装态与 GUI 门禁；未通过者必须从发布构建隐藏/剔除
           ↓
@@ -1376,7 +1457,7 @@ v0.13.0 AD4Zn beta 发布候选（通过独立门禁后）
           ↓
 v0.14.0 AD4Zn stable
           ↓
-多配体共同对接独立发布门禁；水合等候选实验协议逐项立项
+多配体共同对接与水合 AD4 分别完成独立发布门禁；其余候选协议逐项立项
           ↓
 v1.0.0 Stable 集合冻结
 ```
@@ -1396,7 +1477,7 @@ Basic/Assisted 安装态、用户文档与发布门禁
 通过后进入下一 v0.12.x Release
 ```
 
-这条分支不表示相关能力已经归属于 v0.12.x、v0.13.0 或其他正式版本。schema 演进是跨阶段安全门禁，不再被当成所有功能之前必须完成的独立产品能力。多配体共同对接虽已形成实验性源码闭环，仍必须独立完成官方案例与发布门禁；水合对接、自定义权重和 Python API 仍需分别立项。任何能力都不能因为批量任务引擎或 AD4 maps 已存在就被视为自然完成。
+这条分支不表示相关能力已经归属于 v0.12.x、v0.13.0 或其他正式版本。schema 演进是跨阶段安全门禁，不再被当成所有功能之前必须完成的独立产品能力。多配体共同对接和水合 AD4 虽已形成彼此隔离的实验性源码闭环，仍必须分别完成科学、项目级真实工具链、安装态与 GUI 发布门禁；自定义权重和 Python API 仍需另行立项。任何能力都不能因为批量任务引擎或 AD4 maps 已存在就被视为自然完成。
 
 ---
 
@@ -1499,9 +1580,10 @@ Basic/Assisted 安装态、用户文档与发布门禁
 3. 对 `score_only` / 双阶段 `local_only` 和高级参数完成 Basic/Assisted 安装态 GUI 回归；
 4. 对双归档严格只读比较和单归档 ZIP 导出完成安装态 GUI 回归，覆盖协议一致、不一致、重复 SHA256、输入完整性失败、中文长路径、覆盖确认与磁盘写入失败；归档恢复为活动队列、ZIP 导入、历史编辑和归档删除不进入当前设计；
 5. 对当前源码的 AD4Zn beta 完成 1S63、多样本、失败路径、GPL 参数文件记录、Basic/Assisted 安装态和 GUI 门禁；通过后才采用 v0.13.0 发布候选，再依据更广泛验证决定是否升为 v0.14.0 stable；
-6. 对多配体共同对接完成官方 5X72 真机全链路、stdout/输出 Mode 差异、成员顺序、失败路径、历史项目、Basic/Assisted 安装态和 GUI 门禁；通过前保持 Experimental 且不进入发布构建；
-7. 从水合对接、批量 AD4 maps 等候选中一次选择一个立项；`randomize_only` 在固定 seed 可复现问题解决前不作为普通用户功能；
-8. 冻结 Stable 协议集合并完成 v1.0.0 发布门禁。
+6. 多配体共同对接的官方 5X72 源码级真机全链已经完成；下一步只补 stdout/输出 Mode 差异的安装态展示、失败恢复、历史项目、Basic/Assisted 干净安装和 GUI 门禁，通过前保持 Experimental 且不进入发布构建；
+7. 对水合 AD4 Experimental 完成当前项目级 AutoGrid4 真机全链、多个化学体系/版本/失败案例、大网格性能、异常中断、Basic/Assisted 支持矩阵、干净安装和 GUI 门禁；1UW6 固定外部验收不重复冒充这些证据，处理后评分保持明确未计算；
+8. 在批量 AD4 maps、自定义评分权重等剩余候选中一次选择一个立项；`randomize_only` 在固定 seed 可复现问题解决前不作为普通用户功能；
+9. 冻结 Stable 协议集合并完成 v1.0.0 发布门禁。
 
 既有真实回归不能替代当前源码重新打包后的 GUI 与安装生命周期验收。schema 只有在实际数据契约出现阻塞时才升级。
 

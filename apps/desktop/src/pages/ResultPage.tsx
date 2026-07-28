@@ -2,15 +2,19 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type Keyboard
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer, TrayArrowDown } from "@phosphor-icons/react";
+import { hydratedApi } from "../api/hydrated";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import HydratedProtocolScope from "../components/HydratedProtocolScope";
+import HydratedResultSummary from "../components/HydratedResultSummary";
 import { PageHero, PageShell } from "../components/layout/PageLayout";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type {
   DockStartProject,
+  HydratedResultsSuccess,
   LocalPoseKind,
   LocalPoseView,
   MultipleLigandMemberSummary,
@@ -20,6 +24,10 @@ import type {
   VinaRunMode,
 } from "../types";
 import { startResultExportTask, waitForBackgroundTask } from "../utils/backgroundTasks";
+import {
+  HYDRATED_PROTOCOL_ID,
+  isHydratedProtocolId,
+} from "../utils/hydratedWorkflow";
 
 const PoseStructurePreview = lazy(() => import("../components/PoseStructurePreview"));
 const MultiLigandPosePreview = lazy(() => import("../components/MultiLigandPosePreview"));
@@ -248,6 +256,8 @@ export default function ResultPage({
   const [focusPoseRequest, setFocusPoseRequest] = useState<{ mode: number; token: number } | null>(null);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [scores, setScores] = useState<ScoreRow[]>([]);
+  const [hydratedResults, setHydratedResults] =
+    useState<HydratedResultsSuccess | null>(null);
   const [evaluation, setEvaluation] = useState<VinaEvaluation | null>(null);
   const [evaluationFile, setEvaluationFile] = useState("");
   const [logFile, setLogFile] = useState("");
@@ -269,15 +279,20 @@ export default function ResultPage({
   const scoringProtocol = metadataString(metadata, "scoring_protocol") || "vina";
   const scoringFunction = metadataString(metadata, "scoring_function") || "vina";
   const protocolId = metadataProtocolId(metadata);
+  const isHydrated = isHydratedProtocolId(protocolId);
   const isMultipleLigand = protocolId === "simultaneous_multi_ligand";
   const multipleLigandMembers = metadataMultipleLigandMembers(metadata);
   const isAd4Zn = protocolId === "ad4zn_beta";
   const isAd4Maps = scoringProtocol === "ad4_maps" || isAd4Zn;
-  const ad4ProtocolLabel = isAd4Zn ? "AutoDock4Zn beta" : "AutoDock4 maps";
+  const ad4ProtocolLabel = isHydrated
+    ? "实验性水合 AutoDock4"
+    : isAd4Zn
+      ? "AutoDock4Zn beta"
+      : "AutoDock4 maps";
   const poseInputAttestation = metadataPoseAttestation(metadata);
   const analysisReady = isEvaluationMode ? Boolean(evaluation) : scores.length > 0;
   const canGenerateReport = status === "finished" && analysisReady && !isBusy;
-  const canAnalyzeResults = status === "finished" && !analysisReady && !isBusy && !isMultipleLigand;
+  const canAnalyzeResults = status === "finished" && !analysisReady && !isBusy && !isMultipleLigand && !isHydrated;
   const logPath = logFile || metadataString(metadata, "log_file") || `runs/${runId}/log.txt`;
   const displayedScoresFile = scoresFile || metadataString(metadata, "scores_file");
   const displayedProjectScoresFile = projectScoresFile || metadataString(metadata, "project_scores_file");
@@ -322,6 +337,7 @@ export default function ResultPage({
     setFocusPoseRequest(null);
     setMetadata(null);
     setScores([]);
+    setHydratedResults(null);
     setEvaluation(null);
     setEvaluationFile("");
     setLogFile("");
@@ -369,6 +385,36 @@ export default function ResultPage({
     [onProjectChange],
   );
 
+  const applyHydratedResults = useCallback(
+    (response: Awaited<ReturnType<typeof hydratedApi.loadResults>>): boolean => {
+      if (!mountedRef.current) return false;
+      if (!response.ok) {
+        setHydratedResults(null);
+        setMessage(response.error.message || "无法读取水合结果。");
+        setRawError(
+          [
+            response.error.raw_error,
+            response.error.suggestion,
+          ].filter(Boolean).join("\n"),
+        );
+        return false;
+      }
+      setHydratedResults(response);
+      setMetadata(response.metadata);
+      setScores(response.scores);
+      setScoresFile(metadataString(response.metadata, "scores_file"));
+      setProjectScoresFile(
+        metadataString(response.metadata, "project_scores_file"),
+      );
+      setBestAffinity(metadataNumber(response.metadata, "best_affinity"));
+      setAnalyzedAt(metadataString(response.metadata, "analyzed_at"));
+      setMessage(response.message);
+      setRawError("");
+      return true;
+    },
+    [],
+  );
+
   const reloadRunMetadata = useCallback(async () => {
     const requestId = ++loadRequestRef.current;
     setIsBusy(true);
@@ -381,6 +427,16 @@ export default function ResultPage({
       const runResponse = parseProjectResponse(rawPayload);
       const runReady = applyResponse(runResponse, "运行记录已刷新。");
       if (runReady && metadataString(runResponse.metadata ?? null, "status") === "finished") {
+        const observedProtocol = metadataProtocolId(runResponse.metadata ?? null);
+        if (observedProtocol === HYDRATED_PROTOCOL_ID) {
+          const hydratedResponse = await hydratedApi.loadResults(
+            initialProject.project_dir,
+            runId,
+          );
+          if (!mountedRef.current || requestId !== loadRequestRef.current) return;
+          applyHydratedResults(hydratedResponse);
+          return;
+        }
         const observedMode = metadataString(runResponse.metadata ?? null, "run_mode");
         const evaluationMode = observedMode === "score_only" || observedMode === "local_only";
         const analysisPayload = await invoke<string>(evaluationMode ? "load_vina_evaluation" : "load_scores_csv", {
@@ -400,7 +456,7 @@ export default function ResultPage({
     } finally {
       if (mountedRef.current && requestId === loadRequestRef.current) setIsBusy(false);
     }
-  }, [applyResponse, initialProject.project_dir, runId]);
+  }, [applyHydratedResults, applyResponse, initialProject.project_dir, runId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -440,6 +496,12 @@ export default function ResultPage({
     setMessage("");
     setRawError("");
     try {
+      if (isHydrated) {
+        applyHydratedResults(
+          await hydratedApi.loadResults(project.project_dir, runId),
+        );
+        return;
+      }
       const rawPayload = await invoke<string>(isEvaluationMode ? "load_vina_evaluation" : "load_scores_csv", {
         projectDir: project.project_dir,
         runId,
@@ -599,6 +661,8 @@ export default function ResultPage({
           ? "当前姿势评分结果"
           : runMode === "local_only"
             ? "局部优化结果"
+            : isHydrated
+              ? "水合 AD4 对接结果"
             : isMultipleLigand
               ? "多配体共同对接结果"
               : "对接结果分析"}
@@ -607,6 +671,8 @@ export default function ResultPage({
           ? "查看输入姿势的单点评分、能量分解与可复现运行记录。"
           : runMode === "local_only"
             ? "比较输入姿势与局部优化后姿势的评分、能量项和几何变化。"
+            : isHydrated
+              ? "查看 raw AD4 affinity、逐构象水分子分类和独立保存的水合输出。"
             : isMultipleLigand
               ? "查看两个配体在同一次联合搜索中生成的构象组、联合评分与可复现运行记录。"
             : isAd4Maps
@@ -639,6 +705,7 @@ export default function ResultPage({
           <p>本页评分来自 {ad4ProtocolLabel}；不要与 Vina 或 Vinardo 的分值直接横向比较。</p>
         </WarningCallout>
       ) : null}
+      {isHydrated ? <HydratedProtocolScope /> : null}
       {isMultipleLigand ? (
         <WarningCallout title="联合构象与联合评分">
           <p>
@@ -686,6 +753,14 @@ export default function ResultPage({
         <WarningCallout title="显式未结合态参考能量">
           <p>{unboundEnergyComparisonWarning}</p>
         </WarningCallout>
+      ) : null}
+
+      {isHydrated && hydratedResults ? (
+        <HydratedResultSummary
+          onSelectMode={setViewerMode}
+          results={hydratedResults}
+          selectedMode={effectiveSelectedMode}
+        />
       ) : null}
 
       <div className="result-analysis-layout">
@@ -835,7 +910,7 @@ export default function ResultPage({
               ) : (
                 <>
                   <header><span>{isMultipleLigand ? "联合构象列表" : "构象列表"}</span><strong>按评分排序</strong></header>
-                  <div className="result-ranking-head"><span>排名</span><span>构象</span><span>{isMultipleLigand ? "联合评分" : "评分"}</span><span>RMSD l.b.</span><span>RMSD u.b.</span></div>
+                  <div className="result-ranking-head"><span>排名</span><span>构象</span><span>{isMultipleLigand ? "联合评分" : isHydrated ? "Raw AD4 affinity" : "评分"}</span><span>RMSD l.b.</span><span>RMSD u.b.</span></div>
                   <div className="result-ranking-list">
                     {scores.map((score, index) => (
                       <button
@@ -918,7 +993,15 @@ export default function ResultPage({
                 <span>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "尚未生成" : displayedScoresFile || "尚未生成"}</span>
               </div>
               <div>
-                {analysisReady ? (
+                {isHydrated && !analysisReady ? (
+                  <ActionButton
+                    variant="primary"
+                    disabled={isBusy || status !== "finished"}
+                    onClick={() => void reloadScores()}
+                  >
+                    {isBusy ? "读取中…" : "加载水合结果"}
+                  </ActionButton>
+                ) : analysisReady ? (
                   <ActionButton variant="primary" disabled={!canGenerateReport} onClick={() => void generateDetailedReport()}>
                     {isBusy ? "生成中…" : reportReady ? "重新生成分析" : "生成结果分析"}
                   </ActionButton>
@@ -970,7 +1053,7 @@ export default function ResultPage({
             ) : scores.length ? (
               <div className="scores-table-wrap">
                 <table className="scores-table">
-                  <thead><tr><th>{isMultipleLigand ? "联合构象" : "构象"}</th><th>{isMultipleLigand ? "联合评分 kcal/mol" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 评分 kcal/mol` : "对接评分 kcal/mol"}</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
+                  <thead><tr><th>{isMultipleLigand ? "联合构象" : "构象"}</th><th>{isMultipleLigand ? "联合评分 kcal/mol" : isHydrated ? "Raw AD4 affinity kcal/mol" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 评分 kcal/mol` : "对接评分 kcal/mol"}</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
                   <tbody>
                     {scores.map((score) => (
                       <tr
@@ -1039,7 +1122,7 @@ export default function ResultPage({
 
         <aside className="result-analysis-rail">
           <section className="result-selected-pose">
-            <span>{runMode === "local_only" ? "主要评价结果" : isEvaluationMode ? "姿势评价" : isMultipleLigand ? "所选联合构象" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 构象` : "所选构象"}</span>
+            <span>{runMode === "local_only" ? "主要评价结果" : isEvaluationMode ? "姿势评价" : isMultipleLigand ? "所选联合构象" : isHydrated ? "水合 AD4 构象" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 构象` : "所选构象"}</span>
             <strong>{isEvaluationMode ? (runMode === "score_only" ? "输入姿势" : "优化后评分") : `${isMultipleLigand ? "联合 " : ""}Mode ${effectiveSelectedMode}`}</strong>
             <b>{isEvaluationMode ? displayedPrimaryScore ?? "—" : selectedScore ? formatScoreValue(selectedScore.affinity_kcal_mol) : displayedBestAffinity ?? "—"} <small>kcal/mol</small></b>
           </section>
@@ -1056,7 +1139,7 @@ export default function ResultPage({
               </div>
             ) : null}
             <div><FileText aria-hidden="true" size={18} /><span><strong>{isEvaluationMode ? "evaluation.json" : "scores.csv"}</strong><small>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "未生成" : displayedScoresFile || "未生成"}</small></span></div>
-            <div><FileText aria-hidden="true" size={18} /><span><strong>{isEvaluationMode ? "evaluation_report.md" : isMultipleLigand ? "multi_ligand_report.md" : "docking_report.md"}</strong><small>{displayedReportFile || "未生成"}</small></span></div>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>{isEvaluationMode ? "evaluation_report.md" : isMultipleLigand ? "multi_ligand_report.md" : isHydrated ? "hydrated_docking_report.md" : "docking_report.md"}</strong><small>{displayedReportFile || "未生成"}</small></span></div>
             {runMode !== "score_only" && !isMultipleLigand ? <div><FileText aria-hidden="true" size={18} /><span><strong>{runMode === "local_only" ? "优化后姿势 SDF" : "poses.sdf"}</strong><small>{resultSdf || "未导出"}</small></span></div> : null}
           </section>
           {!isEvaluationMode && !isMultipleLigand ? <section className="result-reference-rmsd">

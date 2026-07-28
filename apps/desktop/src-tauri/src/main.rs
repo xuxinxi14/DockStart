@@ -1100,6 +1100,112 @@ async fn import_vina_maps(
 }
 
 #[tauri::command]
+async fn get_hydrated_status(project_dir: String) -> String {
+    match run_backend_json_module_async(
+        "dockstart_core.hydrated",
+        vec!["status".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取实验性水合 AD4 状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn prepare_hydrated_ligand(project_dir: String) -> String {
+    match run_backend_json_module_async(
+        "dockstart_core.hydrated",
+        vec!["prepare-ligand".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法准备水合配体。", &error),
+    }
+}
+
+fn hydrated_generate_maps_args(project_dir: String, options_json: Option<String>) -> Vec<String> {
+    let mut args = vec!["generate-maps".to_string(), project_dir];
+    if let Some(options_json) = options_json.filter(|value| !value.trim().is_empty()) {
+        args.push("--options-json".to_string());
+        args.push(options_json);
+    }
+    args
+}
+
+#[tauri::command]
+async fn generate_hydrated_maps(project_dir: String, options_json: Option<String>) -> String {
+    let args = hydrated_generate_maps_args(project_dir, options_json);
+    match run_backend_json_module_async("dockstart_core.hydrated", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成实验性水合 AD4 maps。", &error),
+    }
+}
+
+#[tauri::command]
+async fn get_hydrated_run_preflight(project_dir: String) -> String {
+    let project_dir_for_task = project_dir.clone();
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let payload = run_backend_json_module(
+            "dockstart_core.hydrated_run",
+            vec!["preflight".to_string(), project_dir_for_task.clone()],
+        )?;
+        Ok(enrich_run_preflight_with_guard(
+            &project_dir_for_task,
+            &payload,
+        ))
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => {
+            fallback_project_error_json("无法完成实验性水合 AD4 运行前检查。", &error)
+        }
+        Err(error) => fallback_project_error_json(
+            "实验性水合 AD4 运行前检查任务异常结束。",
+            &error.to_string(),
+        ),
+    }
+}
+
+#[tauri::command]
+async fn prepare_hydrated_run(project_dir: String) -> String {
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _guard_lock = project_run_guard_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = inspect_project_run_guard(&project_dir, true)?;
+        if guard.blocked {
+            return Ok(project_run_guard_error_json(&guard));
+        }
+        run_backend_json_module(
+            "dockstart_core.hydrated_run",
+            vec!["prepare".to_string(), project_dir],
+        )
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法准备实验性水合 AD4 run。", &error),
+        Err(error) => {
+            fallback_project_error_json("实验性水合 AD4 run 准备任务异常结束。", &error.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+async fn load_hydrated_results(project_dir: String, run_id: String) -> String {
+    match run_backend_json_module_async(
+        "dockstart_core.hydrated_run",
+        vec!["results".to_string(), project_dir, run_id],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取实验性水合 AD4 结果。", &error),
+    }
+}
+
+#[tauri::command]
 async fn validate_run_prerequisites(project_dir: String) -> String {
     match run_backend_module_cached_async(
         "dockstart_core.project",
@@ -4079,6 +4185,15 @@ async fn run_backend_module_async(
         .map_err(|error| error.to_string())?
 }
 
+async fn run_backend_json_module_async(
+    module: &'static str,
+    args: Vec<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_backend_json_module(module, args))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 async fn run_screening_archive_export_async(args: Vec<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || run_screening_archive_export(args))
         .await
@@ -4099,6 +4214,14 @@ fn run_backend_module(module: &str, args: Vec<String>) -> Result<String, String>
     run_backend_module_with_env(module, args, &[])
 }
 
+fn run_backend_json_module(module: &str, args: Vec<String>) -> Result<String, String> {
+    let invalidation = backend_command_invalidation(module, &args);
+    invalidate_backend_cache(invalidation);
+    let result = run_backend_json_module_uncached(module, args);
+    invalidate_backend_cache(invalidation);
+    result
+}
+
 fn run_backend_module_with_env(
     module: &str,
     args: Vec<String>,
@@ -4116,6 +4239,21 @@ fn run_backend_module_with_env(
 
 fn run_backend_module_uncached(module: &str, args: Vec<String>) -> Result<String, String> {
     run_backend_module_uncached_with_env(module, args, &[])
+}
+
+fn run_backend_json_module_uncached(module: &str, args: Vec<String>) -> Result<String, String> {
+    let backend_dir = find_backend_dir().ok_or_else(|| {
+        "未找到 DockStart 本地服务文件。请重新安装或恢复完整应用目录。".to_string()
+    })?;
+
+    let mut errors = Vec::new();
+    for python in python_candidates(&backend_dir) {
+        match run_python_json_module(&backend_dir, &python, module, &args) {
+            Ok(payload) => return Ok(payload),
+            Err(error) => errors.push(format!("{python}: {error}")),
+        }
+    }
+    Err(errors.join("\n"))
 }
 
 fn run_backend_module_uncached_with_env(
@@ -4192,7 +4330,22 @@ fn run_python_screening_archive_export(
     )
 }
 
-fn classify_screening_archive_export_output(
+fn run_python_json_module(
+    backend_dir: &Path,
+    python: &str,
+    module: &str,
+    args: &[String],
+) -> Result<String, String> {
+    let mut command = build_python_module_command_with_env(backend_dir, python, module, args, &[]);
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    classify_structured_backend_output(output.status.success(), &output.stdout, &output.stderr)
+}
+
+fn classify_structured_backend_output(
     status_success: bool,
     stdout: &[u8],
     stderr: &[u8],
@@ -4200,7 +4353,7 @@ fn classify_screening_archive_export_output(
     if status_success {
         return String::from_utf8(stdout.to_vec()).map_err(|error| error.to_string());
     }
-    if let Some(payload) = screening_archive_business_error_payload(stdout) {
+    if let Some(payload) = structured_business_error_payload(stdout) {
         return Ok(payload);
     }
 
@@ -4209,7 +4362,15 @@ fn classify_screening_archive_export_output(
     Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
 }
 
-fn screening_archive_business_error_payload(stdout: &[u8]) -> Option<String> {
+fn classify_screening_archive_export_output(
+    status_success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<String, String> {
+    classify_structured_backend_output(status_success, stdout, stderr)
+}
+
+fn structured_business_error_payload(stdout: &[u8]) -> Option<String> {
     let payload = std::str::from_utf8(stdout).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(payload).ok()?;
     let object = value.as_object()?;
@@ -4555,6 +4716,10 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
         "dockstart_core.vina_maps" if matches!(command, "set-mode" | "generate" | "import") => {
             CacheInvalidation::Project
         }
+        "dockstart_core.hydrated" if matches!(command, "prepare-ligand" | "generate-maps") => {
+            CacheInvalidation::Project
+        }
+        "dockstart_core.hydrated_run" if command == "prepare" => CacheInvalidation::Project,
         "dockstart_core.screening"
             if matches!(
                 command,
@@ -4818,6 +4983,12 @@ fn main() {
             set_vina_maps_mode,
             generate_vina_maps,
             import_vina_maps,
+            get_hydrated_status,
+            prepare_hydrated_ligand,
+            generate_hydrated_maps,
+            get_hydrated_run_preflight,
+            prepare_hydrated_run,
+            load_hydrated_results,
             validate_run_prerequisites,
             get_run_preflight,
             get_project_run_guard,
@@ -5642,6 +5813,60 @@ mod tests {
                 CacheInvalidation::None
             );
         }
+        for command in ["prepare-ligand", "generate-maps"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.hydrated",
+                    &[command.to_string(), "project".to_string()],
+                ),
+                CacheInvalidation::Project
+            );
+        }
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.hydrated",
+                &["status".to_string(), "project".to_string()],
+            ),
+            CacheInvalidation::None
+        );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.hydrated_run",
+                &["prepare".to_string(), "project".to_string()],
+            ),
+            CacheInvalidation::Project
+        );
+        for command in ["preflight", "results"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.hydrated_run",
+                    &[command.to_string(), "project".to_string()],
+                ),
+                CacheInvalidation::None
+            );
+        }
+    }
+
+    #[test]
+    fn hydrated_generate_maps_args_keep_options_as_one_json_argument() {
+        let options_json = r#"{"spacing":0.375,"grid_points":{"x":48,"y":50,"z":52}}"#.to_string();
+        assert_eq!(
+            hydrated_generate_maps_args("C:\\project path".to_string(), Some(options_json.clone()),),
+            vec![
+                "generate-maps".to_string(),
+                "C:\\project path".to_string(),
+                "--options-json".to_string(),
+                options_json,
+            ]
+        );
+        assert_eq!(
+            hydrated_generate_maps_args("C:\\project path".to_string(), None),
+            vec!["generate-maps".to_string(), "C:\\project path".to_string(),]
+        );
+        assert_eq!(
+            hydrated_generate_maps_args("C:\\project path".to_string(), Some("   ".to_string()),),
+            vec!["generate-maps".to_string(), "C:\\project path".to_string(),]
+        );
     }
 
     #[test]

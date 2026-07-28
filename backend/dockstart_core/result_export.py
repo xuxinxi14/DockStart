@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +17,13 @@ from dockstart_core.advanced_protocols import (
     execute_mk_export,
     inspect_meeko_ligand_pdbqt,
 )
-from dockstart_core.project import RUN_ID_PATTERN, _update_run_metadata_transaction, load_run_metadata
+from dockstart_core.project import (
+    HYDRATED_PROTOCOL_ID,
+    HYDRATED_WATER_FREE_OUTPUT_NAME,
+    RUN_ID_PATTERN,
+    _update_run_metadata_transaction,
+    load_run_metadata,
+)
 from dockstart_core.toolchain import get_resolved_python
 
 
@@ -44,6 +51,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_hydrated_run(metadata: dict[str, Any]) -> bool:
+    protocol = (
+        metadata.get("docking_protocol")
+        if isinstance(metadata.get("docking_protocol"), dict)
+        else {}
+    )
+    return (
+        str(metadata.get("protocol_id") or "") == HYDRATED_PROTOCOL_ID
+        or str(protocol.get("protocol_id") or "") == HYDRATED_PROTOCOL_ID
+    )
+
+
 def _run_context(project_dir: str, run_id: str) -> tuple[Path, dict[str, Any], Path] | dict[str, Any]:
     if not RUN_ID_PATTERN.fullmatch(str(run_id or "")):
         return _error("RUN_ID_INVALID", "run_id 格式无效。")
@@ -65,7 +84,36 @@ def _run_context(project_dir: str, run_id: str) -> tuple[Path, dict[str, Any], P
             "仅评分运行不会生成新构象，因此没有可导出的结果 SDF。",
             suggestion="如需导出优化后结构，请使用局部优化；如需构象集合，请使用全局对接。",
         )
-    output_file = str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())
+    if _is_hydrated_run(metadata):
+        postprocess = (
+            metadata.get("hydrated_postprocess")
+            if isinstance(metadata.get("hydrated_postprocess"), dict)
+            else {}
+        )
+        output_file = str(postprocess.get("water_free_output_file") or "")
+        expected_output = Path(
+            "runs",
+            run_id,
+            HYDRATED_WATER_FREE_OUTPUT_NAME,
+        ).as_posix()
+        if (
+            postprocess.get("status") != "finished"
+            or output_file != expected_output
+        ):
+            return _error(
+                "HYDRATED_WATER_FREE_RESULT_NOT_READY",
+                "水合对接尚未生成可信的去水配体结果，不能导出 SDF。",
+                raw_error=(
+                    f"status={postprocess.get('status')!r}; "
+                    f"path={output_file!r}"
+                ),
+                suggestion="请确认水合 run 已完成水分子后处理。",
+            )
+    else:
+        output_file = str(
+            metadata.get("output_file")
+            or Path("runs", run_id, "out.pdbqt").as_posix()
+        )
     relative = Path(output_file)
     if relative.is_absolute():
         return _error("RESULT_PATH_UNSAFE", "对接结果必须使用项目内相对路径。")
@@ -76,6 +124,35 @@ def _run_context(project_dir: str, run_id: str) -> tuple[Path, dict[str, Any], P
         return _error("RESULT_PATH_UNSAFE", "对接结果越过了当前 run 目录边界。")
     if not result_path.is_file() or result_path.is_symlink() or result_path.stat().st_size <= 0:
         return _error("RESULT_PDBQT_MISSING", "没有找到非空的对接结果 PDBQT。")
+    if _is_hydrated_run(metadata):
+        artifacts = (
+            metadata.get("artifacts")
+            if isinstance(metadata.get("artifacts"), dict)
+            else {}
+        )
+        record = (
+            artifacts.get("hydrated_water_free")
+            if isinstance(artifacts.get("hydrated_water_free"), dict)
+            else {}
+        )
+        expected_hash = str(record.get("sha256") or "").lower()
+        recorded_path = str(record.get("relative_path") or "")
+        actual_hash = _sha256(result_path).lower()
+        if (
+            recorded_path != output_file
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_hash)
+            or actual_hash != expected_hash
+        ):
+            return _error(
+                "HYDRATED_WATER_FREE_RESULT_INTEGRITY_MISMATCH",
+                "去水配体结果缺少可信哈希或已发生变化，拒绝导出 SDF。",
+                raw_error=(
+                    f"recorded_path={recorded_path!r}; "
+                    f"expected_sha256={expected_hash!r}; "
+                    f"actual_sha256={actual_hash!r}"
+                ),
+                suggestion="请保留该 run 作为审计记录，并重新执行新的水合 run。",
+            )
     return root, metadata, result_path
 
 

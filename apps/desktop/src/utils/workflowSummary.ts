@@ -8,6 +8,9 @@ export function getWorkflowSummary(project: DockStartProject | null, page: PageI
   if (page === "result" || page === "report") {
     return "结果与报告阶段";
   }
+  if (page === "hydrated-ad4") {
+    return "实验性水合 AD4 工作流";
+  }
   if (page === "run-prepare" || page === "run-execute") {
     return project.docking_protocol?.engine === "ad4_maps"
       ? "AutoDock4 maps 运行阶段"

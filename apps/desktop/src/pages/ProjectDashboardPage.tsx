@@ -394,6 +394,7 @@ export default function ProjectDashboardPage({
       "baseline_scoring",
       "local_starting",
       "local_optimizing",
+      "postprocessing",
       "cancelling",
       "cancel_pending",
     ].includes(String(workflow?.latest_run?.stage ?? ""));

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -111,6 +112,82 @@ class ResultExportTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "FLEXIBLE_RESULT_SDF_UNSUPPORTED")
         runner.assert_not_called()
+
+    def test_hydrated_export_uses_verified_water_free_pose(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = self._run(
+                temp_dir,
+                "MODEL 1\n"
+                "ATOM      1  W   WAT A   1       0.000   0.000   0.000  1.00  0.00     0.000 W\n"
+                "ENDMDL\n",
+            )
+            run_dir = project / "runs" / "run_001"
+            water_free = run_dir / "ligand_water_free.pdbqt"
+            water_free.write_text(PDBQT_WITH_TOPOLOGY, encoding="utf-8")
+            relative = "runs/run_001/ligand_water_free.pdbqt"
+            digest = hashlib.sha256(water_free.read_bytes()).hexdigest()
+            metadata_file = run_dir / "metadata.json"
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            metadata.update(
+                {
+                    "protocol_id": "hydrated_ad4_experimental",
+                    "hydrated_postprocess": {
+                        "status": "finished",
+                        "water_free_output_file": relative,
+                    },
+                    "artifacts": {
+                        "hydrated_water_free": {
+                            "relative_path": relative,
+                            "sha256": digest,
+                        }
+                    },
+                }
+            )
+            metadata_file.write_text(
+                json.dumps(metadata, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            result = get_result_export_status(str(project), "run_001")
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["inspection"]["embedded_topology"])
+
+    def test_hydrated_export_rejects_changed_water_free_pose(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = self._run(temp_dir)
+            run_dir = project / "runs" / "run_001"
+            water_free = run_dir / "ligand_water_free.pdbqt"
+            water_free.write_text(PDBQT_WITH_TOPOLOGY, encoding="utf-8")
+            relative = "runs/run_001/ligand_water_free.pdbqt"
+            metadata_file = run_dir / "metadata.json"
+            metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            metadata.update(
+                {
+                    "protocol_id": "hydrated_ad4_experimental",
+                    "hydrated_postprocess": {
+                        "status": "finished",
+                        "water_free_output_file": relative,
+                    },
+                    "artifacts": {
+                        "hydrated_water_free": {
+                            "relative_path": relative,
+                            "sha256": "0" * 64,
+                        }
+                    },
+                }
+            )
+            metadata_file.write_text(
+                json.dumps(metadata, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            result = get_result_export_status(str(project), "run_001")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["error"]["code"],
+            "HYDRATED_WATER_FREE_RESULT_INTEGRITY_MISMATCH",
+        )
 
     def test_export_directory_allocation_skips_existing_id(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

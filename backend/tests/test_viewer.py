@@ -582,6 +582,67 @@ class ViewerTests(unittest.TestCase):
             self.assertNotIn("ENDROOT", response["content"])
             self.assertNotIn("ENDBRANCH", response["content"])
 
+    def test_hydrated_pose_keeps_water_and_displays_w_as_oxygen(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            run_dir = project_dir / "runs" / "run_001"
+            run_dir.mkdir(parents=True)
+            retained_relative = "runs/run_001/hydrated_retained.pdbqt"
+            (run_dir / "hydrated_retained.pdbqt").write_text(
+                "\n".join(
+                    [
+                        "MODEL 1",
+                        self._pdbqt_atom(1, "C1", "C", 0.0, 0.0, 0.0),
+                        self._pdbqt_atom(
+                            2,
+                            "W",
+                            "W",
+                            2.0,
+                            0.0,
+                            0.0,
+                            residue="WAT",
+                        ),
+                        "ENDMDL",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run_001",
+                        "status": "finished",
+                        "protocol_id": "hydrated_ad4_experimental",
+                        "output_file": "runs/run_001/out.pdbqt",
+                        "pose_file": retained_relative,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            response = viewer.load_docking_pose_for_viewer(
+                str(project_dir),
+                "run_001",
+                1,
+            )
+
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["relative_path"], retained_relative)
+        self.assertEqual(response["format"], "pdb")
+        atom_lines = [
+            line
+            for line in response["content"].splitlines()
+            if line.startswith("ATOM")
+        ]
+        self.assertEqual(len(atom_lines), 2)
+        self.assertEqual(atom_lines[1][12:16].strip(), "O")
+        self.assertEqual(atom_lines[1][76:78].strip(), "O")
+        self.assertTrue(
+            any("W 原子" in warning for warning in response["warnings"])
+        )
+
     def test_docking_pose_reuses_raw_ligand_bonds_with_vina_coordinates(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)

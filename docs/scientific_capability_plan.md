@@ -235,7 +235,7 @@ npm run build
 - DockStart 新工作流完成 `ad4_001 → run_001 → results/ad4_scores.csv → reports/ad4_docking_report.md`；
 - 随附 Vina 1.2.7 以 `ad4` 评分完成运行，固定 seed 12345 下最佳评分为 -11.55 kcal/mol。
 
-v0.12.0 标准 AD4 工作流边界：只开放非金属、刚性受体、单配体协议。后续源码中的 Zn 专用能力进入四级 AD4Zn beta；批量 AD4 maps、柔性受体 AD4 和水合对接仍未开放。
+v0.12.0 标准 AD4 工作流边界：只开放非金属、刚性受体、单配体协议。后续源码中的 Zn 专用能力进入四级 AD4Zn beta；水合 AD4 已在当前 v0.12.2 源码中形成独立 Experimental 闭环，但不属于 v0.12.0 Release。批量 AD4 maps、柔性受体 AD4，以及水合协议与其他高级协议的组合仍未开放。
 
 ### 三级补充：Vina / Vinardo 预计算 maps 复用（当前源码增量）
 
@@ -284,9 +284,48 @@ v0.12.0 标准 AD4 工作流边界：只开放非金属、刚性受体、单配�
 
 2026-07-28 已使用 AutoDock Vina 官方 5X72 双配体输入和仓库随附的 AutoDock Vina 1.2.7 完成源码级真实全链路，覆盖“一个 `--ligand` + 两路径”的真实命令、成员顺序、联合 `MODEL`/评分解析、构象查看、报告与哈希。官方参考输出 SHA256 为 `9fd1901bb52d0c767674fdd6e926f749e9995a35aa5b51e0318fd9e6f6922764`，解析得到 7 个双成员 Mode，最佳联合评分 -19.043 kcal/mol。该结果不能替代 Basic/Assisted 安装态、历史项目、失败恢复和 GUI 发布门禁。
 
-### 5.2 水合对接（候选）
+### 5.2 水合 AutoDock4 对接（Experimental 源码闭环，待发布门禁）
 
-- 尚未进入源码闭环。
-- 需独立评审准备工具、原子类型、评分语义、许可证和真实案例，不能与多配体共同对接互相推定支持。
+状态：**`hydrated_ad4_experimental` 已在 v0.12.2 当前源码中完成后端、桌面桥接和 GUI 实验性闭环；本轮不改版本号、不重新打包，也不代表现有 Release 已包含。**
+
+它是独立的 AD4 maps 协议，不是“标准 AD4 加一个开关”，也不是多配体共同对接、串行批量筛选或普通显式水保留功能。打开项目后可从左侧“工作台 → 水合 AD4”进入，页面始终标记 Experimental；工作区按“准备水合配体 → 生成水合 maps → 运行前检查 → 创建并执行 run → 读取水合结果”逐步开放，标准单配体页面和标准配体文件不被覆盖。
+
+**输入、工具与组合边界**
+
+- 首版只接受一个项目内 raw SDF/MOL 配体；文件必须恰好包含一个可由 RDKit 读取的有效分子、一个三维 conformer、有限坐标和明确键级。准备过程使用兼容 RDKit + Meeko `MoleculePreparation(hydrate=True)`，能力探测必须实际生成 W 原子。
+- 水合配体和加氢 SDF 保存到独立的 `protocols/hydrated/ligand_preparations/hydrated_ligand_NNN/` 审计目录；原始配体、标准 `prepared/ligand.pdbqt` 和当前标准协议均不被改写。
+- 只支持项目内刚性受体 PDBQT、单配体、显式项目 Box、全局对接、AD4 maps 和 AutoDock Vina 1.2.0 或更高版本。当前 Vina 还必须明确通过 `--maps` 能力门禁。
+- 明确排除柔性受体、串行批量筛选、多配体共同对接、Vina/Vinardo 评分或 maps、标准 AD4/AD4Zn 混用、Meeko 大环 ghost atom 组合、`score_only`、`local_only`、autobox 和跨配体评分比较。任何组合扩展都需要独立的数据模型、科学回归和发布门禁。
+- AutoGrid4 继续是用户自行安装或配置的 GPL 外部工具，不进入 Basic/Assisted 安装包；本协议没有新增随包 GPL 组件。水合配体准备依赖兼容 RDKit/Meeko，正式发布前仍需明确 Basic、Assisted 与用户配置 Python 的实际可用边界。
+
+**maps、运行与异常恢复**
+
+- AutoGrid4 基础 GPF 不把 W 作为普通 ligand type 交给 AutoGrid；它为真实配体原子类型补齐 OA/HD 源 map，再由 DockStart 的 clean-room 实现生成 `receptor.W.map`。
+- W map 固定使用第一版 BEST 规则：OA/HD 权重均为 `1.0`；任一源值大于 `0` 时写入置换熵 `-0.2 kcal/mol`；否则取更有利的源值并乘以 `0.6`。OA、HD、W 的几何、来源、参数、文件大小和 SHA256 必须完全绑定。
+- 生成成功后保存独立 `maps/hydrated_NNN/hydrated_manifest.json`；受体、水合配体、配体 manifest、Box、maps 或 manifest 改变时，旧记录失效并阻止运行。AutoGrid4 只在生成阶段需要；已发布且完整性有效的 maps 不因之后移除生成工具而自动失效。
+- `prepare_hydrated_run` 把刚性受体、水合配体、两个 manifest、全部 maps、配置和 Vina 二进制证据复制进 `runs/run_NNN/` 不可变快照。Vina 命令使用 `--maps <prefix> --scoring ad4`，不传 `--receptor`，因此属于预计算网格的 `grid-only / no-refine` 等价语义。
+- Vina 成功后先保留原始 `out.pdbqt`，再进入显式 `postprocessing` 阶段。后处理失败时 run 以 `postprocess_failed` 终止并保留 raw 输出，不把不完整派生物标记为成功；该 CPU 内后处理阶段不接受取消，进程异常中断时保守收敛为失败，用户需要重新运行。
+
+**结果与评分语义**
+
+- 每个 MODEL 独立处理。W 身份只按 PDBQT 最终原子类型列判断，不按原子名猜测；后处理不改写 `REMARK VINA RESULT`、构象顺序、扭转树或非 W 原子。
+- W 与配体重原子或受体非 HD 原子距离严格小于 `2.03 Å` 时移除；其余 W 在 `±1 Å` 邻域采样 W map 最小值，`< -0.5` 记为强水，`< -0.3` 记为弱水，其余记为置换水。
+- run 同时保留原始 `out.pdbqt`、带强/弱水注释的 `hydrated_retained.pdbqt`、去除全部 W 的 `ligand_water_free.pdbqt` 和 `waters_manifest.json`。Viewer 默认使用保留水构象；需要 SDF 导出时只允许使用与本次 run 绑定并通过哈希校验的去水派生文件。
+- `results/hydrated_ad4_scores.csv`、run/project Markdown 报告和结果页显示的仍是原始 hydrated AD4 affinity。它只用于同一 run 内 pose 排序，不用于虚拟筛选、跨配体、跨协议或处理前后分值比较。
+- 水分子分类只是结构派生与记录，**处理后评分未计算**。界面和报告不得出现“校正 affinity”“dry affinity”或暗示保留/置换水已完成重评分的字段。
+
+**源码验证证据**
+
+- 自动化测试覆盖水合准备的输入/工具/TOCTOU/篡改门禁，BEST W map 数值和几何，AutoGrid hydrated profile，项目级 maps 生成与失效，逐 MODEL 后处理阈值与扭转树保护，run 冻结、执行、失败、取消/恢复、结果/报告，以及桌面 Tauri API 参数映射。
+- 外部验收 fixture 只提交元数据和固定 SHA256，不复制上游结构或结果文件。验收脚本要求用户提供 AutoDock Vina v1.2.7 固定 tag/commit 的 1UW6 checkout，并使用随附 Vina 1.2.7 与 Meeko 0.7.1 复核四个独立环节：水合配体准备生成 2 个 W；clean-room BEST W map 的 68,921 个网格值与上游参考逐点一致（DockStart 规范化序列化后的文件字节与上游文件不同，不宣称 SHA256 相同）；Vina AD4 maps 运行最佳评分为 `-8.261 kcal/mol`，请求最多 9 个 Mode 时实际输出 8 个；官方独立 9-pose raw 输出的 18 个 W 被分类为 8 个强水、1 个弱水和 9 个置换水且 raw affinity 不变。
+- clean-room 结果有意不复刻上游 `dry.py` 的 7 强/4 弱/7 置换统计：上游脚本按原子名 `W` 识别水并将 map 原点偏移半个 spacing；DockStart 按最终 PDBQT 类型 `W` 和真实 AutoGrid 原点处理。旧脚本统计只作为只读兼容证据，不是运行时规则。
+
+**进入发布前仍需完成**
+
+1. 用当前项目级 `generate_hydrated_maps` 真正调用外部 AutoGrid4 完成“GUI → GPF → 基础 maps → W map → run → 后处理 → 结果/报告”整链，而不只依赖固定上游 maps 和 mock runner。
+2. 完成 Basic/Assisted 干净 Windows 安装、升级、重启、卸载、长中文/空格路径、亮暗主题和异常恢复截图；确认实验入口不会出现在不满足工具条件的默认推荐中。
+3. 扩大到多个不同配体、口袋含水环境、Box/spacing、Vina/Meeko/AutoGrid 版本和失败案例；单个 1UW6 基准不能支持 Stable 声明。
+4. 测量大网格状态复核和逐文件哈希开销，并验证并发生成、磁盘不足、杀进程、maps 被替换及项目迁移场景。
+5. 补齐用户指南、FAQ、示例项目、许可证/发布材料和安装态 scientific gate。完成这些门禁前必须保持 Experimental，不进入默认入门流程，也不能与 Stable 协议结果混排。
 
 这些协议单独标记为实验性，不进入默认入门流程，也不与标准刚性对接混用参数页面。

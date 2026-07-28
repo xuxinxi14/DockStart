@@ -11,6 +11,7 @@ export type PageId =
   | "vina-param"
   | "vina-config"
   | "run-prepare"
+  | "hydrated-ad4"
   | "run-execute"
   | "result"
   | "report"
@@ -66,6 +67,13 @@ export const navigationItems: NavigationItem[] = [
     description: "结果分析与实验记录",
     requiresProject: true,
   },
+  {
+    id: "hydrated-ad4",
+    group: "Workbench",
+    label: "水合 AD4",
+    description: "实验性显式水对接流程",
+    requiresProject: true,
+  },
 ];
 
 export const pageTitles: Record<PageId, string> = {
@@ -81,6 +89,7 @@ export const pageTitles: Record<PageId, string> = {
   "vina-param": "设置 Vina 参数",
   "vina-config": "生成运行配置",
   "run-prepare": "准备运行任务",
+  "hydrated-ad4": "实验性水合 AD4",
   "run-execute": "执行 AutoDock Vina",
   result: "查看运行结果",
   report: "结果分析报告",

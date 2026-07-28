@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from dockstart_core.project import (
+    HYDRATED_PROTOCOL_ID,
     RUN_ID_PATTERN,
     _active_receptor_inputs,
     _error,
@@ -79,6 +80,7 @@ PDBQT_ELEMENT_BY_TYPE = {
     "CL": "Cl",
     "BR": "Br",
     "I": "I",
+    "W": "O",
 }
 
 
@@ -131,8 +133,34 @@ def _normalize_pdbqt_for_viewer(content: str) -> str:
     for line in content.splitlines():
         record = line[:6].strip().upper()
         if record in PDBQT_VIEWER_RECORDS:
+            if (
+                record in {"ATOM", "HETATM"}
+                and line.split()
+                and line.split()[-1].upper() == "W"
+            ):
+                display_line = line.ljust(80)
+                display_line = (
+                    display_line[:12]
+                    + " O  "
+                    + display_line[16:76]
+                    + " O"
+                    + display_line[78:]
+                )
+                line = display_line
             lines.append(line)
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _is_hydrated_run_metadata(metadata: dict[str, Any]) -> bool:
+    protocol = (
+        metadata.get("docking_protocol")
+        if isinstance(metadata.get("docking_protocol"), dict)
+        else {}
+    )
+    return (
+        str(metadata.get("protocol_id") or "") == HYDRATED_PROTOCOL_ID
+        or str(protocol.get("protocol_id") or "") == HYDRATED_PROTOCOL_ID
+    )
 
 
 def _viewer_content(content: str, structure_format: str) -> tuple[str, str, list[str]]:
@@ -2259,6 +2287,15 @@ def load_docking_pose_for_viewer(
         (score for score in score_summary.get("scores", []) if isinstance(score, dict) and score.get("mode") == selected_mode),
         None,
     )
+    run_metadata, run_metadata_error = _read_run_metadata(
+        project_dir,
+        run_id,
+    )
+    hydrated_pose = bool(
+        run_metadata_error is None
+        and isinstance(run_metadata, dict)
+        and _is_hydrated_run_metadata(run_metadata)
+    )
     project, project_error = _load_project_model(project_dir)
     display_pose = (
         _docking_pose_display_content(
@@ -2268,7 +2305,11 @@ def load_docking_pose_for_viewer(
             str(selected["content"]),
             selected_mode,
         )
-        if project_error is None and project is not None
+        if (
+            not hydrated_pose
+            and project_error is None
+            and project is not None
+        )
         else None
     )
     if display_pose is not None:
@@ -2278,6 +2319,10 @@ def load_docking_pose_for_viewer(
             str(selected["content"]),
             validation["format"],
         )
+        if hydrated_pose:
+            viewer_warnings.append(
+                "水合构象按保留水 PDBQT 显示；W 原子仅在 3D 显示副本中按水氧处理，原始文件未修改。"
+            )
     return ViewerStructureResult(
         ok=True,
         file_kind="docking_output",

@@ -8,6 +8,7 @@ import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/instrument-console.css";
 import "./styles/run-cockpit.css";
+import "./styles/hydrated-ad4.css";
 import "./styles/workspace-console.css";
 import "./styles/help-center.css";
 

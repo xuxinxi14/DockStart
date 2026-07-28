@@ -128,6 +128,8 @@ const stageLabels: Record<string, string> = {
   local_starting: "准备局部优化",
   local_optimizing: "正在局部优化当前姿势",
   local_recorded: "局部优化结果已记录",
+  postprocessing: "正在分类水分子并生成派生结构",
+  postprocess_failed: "水分子后处理失败",
   cancelling: "正在终止运行",
   cancel_pending: "等待安全取消",
   cancelled: "已取消",
@@ -148,6 +150,7 @@ const activeRunStages = new Set([
   "local_starting",
   "local_optimizing",
   "local_recorded",
+  "postprocessing",
   "cancelling",
   "cancel_pending",
 ]);

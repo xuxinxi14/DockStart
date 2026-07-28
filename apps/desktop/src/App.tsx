@@ -11,6 +11,7 @@ import {
 } from "./navigation/pages";
 import BoxSetupPage from "./pages/BoxSetupPage";
 import HelpPage from "./pages/HelpPage";
+import HydratedAd4Page from "./pages/HydratedAd4Page";
 import ImportPdbqtPage from "./pages/ImportPdbqtPage";
 import PreparationPage from "./pages/PreparationPage";
 import ProjectCreatePage from "./pages/ProjectCreatePage";
@@ -393,6 +394,22 @@ export default function App() {
           onOpenRunPrepare={(project) => {
             commitProject(project);
             navigateTo("run-prepare", undefined, project);
+          }}
+        />
+      );
+    }
+
+    if (currentPage === "hydrated-ad4" && currentProject) {
+      return (
+        <HydratedAd4Page
+          currentRunId={currentRunId}
+          project={currentProject}
+          onBack={() => navigateTo("run-prepare")}
+          onProjectChange={commitProject}
+          onOpenRunExecute={(project, runId) => {
+            commitProject(project);
+            setCurrentRunId(runId);
+            navigateTo("run-execute");
           }}
         />
       );

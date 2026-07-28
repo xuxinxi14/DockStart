@@ -1594,6 +1594,240 @@ export type VinaMapsStatusResponse = {
   } | null;
 };
 
+export type HydratedProtocolId = "hydrated_ad4_experimental";
+
+export type HydratedApiError = {
+  code: string;
+  title?: string;
+  message: string;
+  raw_error?: string;
+  suggestion?: string;
+  [key: string]: unknown;
+};
+
+export type HydratedFailureResponse = {
+  ok: false;
+  protocol_id?: HydratedProtocolId;
+  stability?: "experimental" | string;
+  project_dir?: string;
+  project?: DockStartProject | null;
+  run_id?: string;
+  message?: string;
+  error: HydratedApiError;
+  [key: string]: unknown;
+};
+
+export type HydratedArtifactSnapshot = {
+  name?: string;
+  path?: string;
+  relative_path?: string;
+  source_relative_path?: string;
+  size_bytes?: number;
+  sha256?: string;
+  water_count?: number;
+  [key: string]: unknown;
+};
+
+export type HydratedLigandManifest = {
+  schema_version?: number;
+  protocol_id: HydratedProtocolId;
+  preparation_id?: string;
+  status: string;
+  source?: HydratedArtifactSnapshot;
+  outputs?: {
+    added_h_sdf?: HydratedArtifactSnapshot;
+    hydrated_pdbqt?: HydratedArtifactSnapshot;
+    [key: string]: unknown;
+  };
+  water_count?: number;
+  [key: string]: unknown;
+};
+
+export type HydratedMapsManifest = {
+  schema_version?: number;
+  protocol_id: HydratedProtocolId;
+  map_set_id: string;
+  status: string;
+  receptor?: HydratedArtifactSnapshot;
+  ligand?: HydratedArtifactSnapshot;
+  hydrated_ligand_manifest?: HydratedArtifactSnapshot;
+  box?: {
+    center?: { x?: number; y?: number; z?: number };
+    size?: { x?: number; y?: number; z?: number };
+  };
+  grid?: Record<string, unknown>;
+  maps?: {
+    prefix?: string;
+    required_files?: string[];
+    files?: HydratedArtifactSnapshot[];
+    water_map?: HydratedArtifactSnapshot;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+export type HydratedStatusSuccess = {
+  ok: true;
+  protocol_id: HydratedProtocolId;
+  project_dir: string;
+  project: DockStartProject;
+  status: "not_prepared" | "ready" | "invalid" | string;
+  preparation_ready: boolean;
+  valid: boolean;
+  active_ligand_manifest: string;
+  manifest_sha256: string;
+  manifest: HydratedLigandManifest | null;
+  issues: string[];
+  maps_status: "not_prepared" | "ready" | "invalid" | string;
+  maps_ready: boolean;
+  maps_valid: boolean;
+  active_maps_manifest: string;
+  maps_manifest_sha256: string;
+  maps_manifest: HydratedMapsManifest | null;
+  maps_issues: string[];
+  maps: Record<string, unknown> | null;
+  preparation_id?: string;
+  manifest_file?: string;
+  water_count?: number;
+  message: string;
+  error: null;
+};
+
+export type HydratedStatusResponse =
+  | HydratedStatusSuccess
+  | HydratedFailureResponse;
+
+export type HydratedMapsOptions = {
+  spacing?: number;
+  grid_points?:
+    | { x: number; y: number; z: number }
+    | [number, number, number];
+  grid_points_x?: number;
+  grid_points_y?: number;
+  grid_points_z?: number;
+};
+
+export type HydratedMapsGenerationSuccess = {
+  ok: true;
+  protocol_id: HydratedProtocolId;
+  project_dir: string;
+  project: DockStartProject;
+  map_set_id: string;
+  manifest_file: string;
+  manifest_sha256: string;
+  manifest: HydratedMapsManifest;
+  active_maps_manifest: {
+    path: string;
+    sha256: string;
+  };
+  maps_prefix: string;
+  map_files: HydratedArtifactSnapshot[];
+  water_map: HydratedArtifactSnapshot;
+  maps_ready: true;
+  message: string;
+  error: null;
+};
+
+export type HydratedMapsGenerationResponse =
+  | HydratedMapsGenerationSuccess
+  | HydratedFailureResponse;
+
+export type HydratedRunPreflightSuccess = {
+  ok: true;
+  protocol_id: HydratedProtocolId;
+  stability: "experimental";
+  project_dir: string;
+  project: DockStartProject;
+  hydrated_status: HydratedStatusSuccess;
+  ligand_manifest: HydratedLigandManifest;
+  ligand_manifest_file: string;
+  ligand_manifest_sha256: string;
+  maps_manifest: HydratedMapsManifest;
+  maps_manifest_file: string;
+  maps_manifest_sha256: string;
+  receptor_file: string;
+  receptor_sha256: string;
+  ligand_file: string;
+  ligand_sha256: string;
+  map_prefix: string;
+  prefix_name: string;
+  map_files: HydratedArtifactSnapshot[];
+  vina_binary: HydratedArtifactSnapshot;
+  box: DockStartProject["box"];
+  vina: DockStartProject["vina"];
+  warnings: string[];
+  next_run_id: string;
+  active_run_guard?: ProjectRunGuardPayload;
+  message: string;
+  error: null;
+};
+
+export type HydratedRunPreflightResponse =
+  | HydratedRunPreflightSuccess
+  | HydratedFailureResponse;
+
+export type HydratedRunPrepareSuccess = {
+  ok: true;
+  protocol_id: HydratedProtocolId;
+  stability: "experimental";
+  project_dir: string;
+  project: DockStartProject;
+  run_id: string;
+  metadata: Record<string, unknown>;
+  metadata_file: string;
+  command: string[];
+  command_preview: string;
+  command_preview_file: string;
+  config_snapshot_file: string;
+  warnings: string[];
+  message: string;
+  error: null;
+};
+
+export type HydratedRunPrepareResponse =
+  | HydratedRunPrepareSuccess
+  | HydratedFailureResponse;
+
+export type HydratedWaterCounts = {
+  candidate_water_count?: number | null;
+  raw_water_count?: number | null;
+  retained_water_count?: number | null;
+  strong_water_count?: number | null;
+  weak_water_count?: number | null;
+  displaced_water_count?: number | null;
+  [key: string]: unknown;
+};
+
+export type HydratedResultMode = ScoreRow & {
+  raw_affinity_kcal_mol: number;
+  water_summary: HydratedWaterCounts;
+  waters: Array<Record<string, unknown>>;
+};
+
+export type HydratedResultsSuccess = {
+  ok: true;
+  protocol_id: HydratedProtocolId;
+  stability: "experimental";
+  project_dir: string;
+  run_id: string;
+  metadata: Record<string, unknown>;
+  score_semantics: Record<string, unknown>;
+  scores: ScoreRow[];
+  modes: HydratedResultMode[];
+  water_summary: HydratedWaterCounts;
+  waters_manifest: Record<string, unknown>;
+  raw_output_file: string;
+  retained_output_file: string;
+  water_free_output_file: string;
+  files: RunFileStatus[];
+  message: string;
+  error: null;
+};
+
+export type HydratedResultsResponse =
+  | HydratedResultsSuccess
+  | HydratedFailureResponse;
+
 export type PreparationStatusResponse = {
   ok: boolean;
   project_dir: string;
