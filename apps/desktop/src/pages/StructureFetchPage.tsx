@@ -38,6 +38,7 @@ import {
 import { PageOperationScope, type PageOperationToken } from "../utils/pageOperationScope";
 import { runRawToPreparedWorkflow } from "../utils/rawToPreparedWorkflow";
 import { writeDockingWorkspaceMode } from "../utils/dockingMode";
+import { normalizeLigandImportPreview } from "../utils/screeningLigandImport";
 
 const CandidateStructurePreview = lazy(() => import("../components/CandidateStructurePreview"));
 
@@ -76,6 +77,15 @@ const MAX_SEARCH_LIMIT = 20;
 const SEARCH_HISTORY_LIMIT = 8;
 const RCSB_SEARCH_HISTORY_KEY = "dockstart.search-history.rcsb";
 const PUBCHEM_SEARCH_HISTORY_KEY = "dockstart.search-history.pubchem";
+
+function projectStagedFilePath(projectDir: string, stagedFile: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(stagedFile)) return stagedFile;
+  return `${projectDir.replace(/[\\/]+$/, "")}\\${stagedFile.replace(/^[\\/]+/, "").replace(/\//g, "\\")}`;
+}
+
+function noReadyLigandMessage(): string {
+  return "导入结果中没有可用配体。重复、准备失败或需要正式大环审查的记录不会进入任务；请检查导入结果后重新选择。";
+}
 
 type SearchHistoryInputProps = {
   disabled: boolean;
@@ -1038,23 +1048,39 @@ export default function StructureFetchPage({
         setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
         setMessage(`正在导入${label}原始结构…`);
       });
-      if (!isReceptor && selectedPaths.length > 1) {
-        const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+      if (!isReceptor) {
+        const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
           projectDir: project.project_dir,
           files: selectedPaths,
-        })) as { ok?: boolean; staged?: Array<{ file?: string }>; error?: { message?: string; raw_error?: string } };
-        if (!staged.ok || !staged.staged?.length) {
-          throw new Error(staged.error?.raw_error || staged.error?.message || "多个配体自动准备失败。");
+        })) as {
+          ok?: boolean;
+          error?: { message?: string; raw_error?: string };
+          [key: string]: unknown;
+        };
+        if (!stageResponse.ok) {
+          throw new Error(stageResponse.error?.raw_error || stageResponse.error?.message || "配体自动准备失败。");
         }
-        const firstSnapshot = `${project.project_dir}\\${String(staged.staged[0].file || "").replace(/\//g, "\\")}`;
+        const preview = normalizeLigandImportPreview(stageResponse);
+        const firstReady = preview.candidates.find(
+          (candidate) => candidate.status === "ready" && candidate.stagedFile,
+        );
+        if (preview.counts.ready === 0 || !firstReady?.stagedFile) {
+          throw new Error(noReadyLigandMessage());
+        }
+        const firstSnapshot = projectStagedFilePath(project.project_dir, firstReady.stagedFile);
         const imported = parseProjectResponse(await invoke<string>("import_ligand_pdbqt", {
           projectDir: project.project_dir,
           sourcePath: firstSnapshot,
         }));
-        if (!imported.ok) throw new Error(imported.error?.raw_error || imported.error?.message || "无法载入首个配体预览。");
-        applyProjectResponse(imported, "多个配体已准备。", true, token);
-        writeDockingWorkspaceMode(project.project_dir, "batch");
-        operationScope.commit(token, () => setMessage(`已准备 ${staged.staged?.length} 个配体并自动进入串行批量筛选；首个配体用于搜索范围预览。也可在运行工作台明确选择多配体共同对接（实验性）。`));
+        if (!imported.ok) throw new Error(imported.error?.raw_error || imported.error?.message || "无法载入首个可用配体预览。");
+        applyProjectResponse(imported, "配体已准备。", true, token);
+        if (preview.counts.ready >= 2) {
+          writeDockingWorkspaceMode(project.project_dir, "batch");
+          operationScope.commit(token, () => setMessage(`已准备 ${preview.counts.ready} 个可用配体并自动进入串行批量筛选；首个可用配体用于搜索范围预览。`));
+        } else {
+          writeDockingWorkspaceMode(project.project_dir, "single");
+          operationScope.commit(token, () => setMessage("已准备 1 个可用配体，并保持单配体任务。"));
+        }
         await refreshRawStatus(token, false);
         return;
       }

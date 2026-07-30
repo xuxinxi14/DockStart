@@ -81,6 +81,12 @@ class ScreeningStagedInput:
     source_topology_file: str = ""
     source_topology_sha256: str = ""
     source_topology_size_bytes: int = 0
+    topology_integrity: str = "not_available"
+    import_id: str = ""
+    candidate_id: str = ""
+    record_id: str = ""
+    chemical_facts: dict[str, Any] = field(default_factory=dict)
+    preparation_evidence: dict[str, Any] = field(default_factory=dict)
     source_records: list[dict[str, Any]] = field(default_factory=list)
     display_label: str = ""
 
@@ -114,6 +120,12 @@ class ScreeningItem:
     source_topology_file: str = ""
     source_topology_sha256: str = ""
     source_topology_size_bytes: int = 0
+    topology_integrity: str = "not_available"
+    source_import_id: str = ""
+    source_candidate_id: str = ""
+    source_record_id: str = ""
+    chemical_facts: dict[str, Any] = field(default_factory=dict)
+    preparation_evidence: dict[str, Any] = field(default_factory=dict)
     source_records: list[dict[str, Any]] = field(default_factory=list)
     display_label: str = ""
 
@@ -147,6 +159,22 @@ class ScreeningItem:
             source_topology_sha256=str(value.get("source_topology_sha256") or ""),
             source_topology_size_bytes=int(
                 value.get("source_topology_size_bytes") or 0
+            ),
+            topology_integrity=str(
+                value.get("topology_integrity") or "not_available"
+            ),
+            source_import_id=str(value.get("source_import_id") or ""),
+            source_candidate_id=str(value.get("source_candidate_id") or ""),
+            source_record_id=str(value.get("source_record_id") or ""),
+            chemical_facts=(
+                dict(value.get("chemical_facts") or {})
+                if isinstance(value.get("chemical_facts"), dict)
+                else {}
+            ),
+            preparation_evidence=(
+                dict(value.get("preparation_evidence") or {})
+                if isinstance(value.get("preparation_evidence"), dict)
+                else {}
             ),
             source_records=list(value.get("source_records") or []),
             display_label=str(value.get("display_label") or ""),

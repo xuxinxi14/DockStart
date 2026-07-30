@@ -78,6 +78,50 @@ class LigandPreparationTests(unittest.TestCase):
         self.assertIn("Chem.AddHs", script)
         self.assertIn("prepare_ligand_for_meeko", script)
         self.assertIn("preparator.prepare(molecule)", script)
+        self.assertIn("MACROCYCLE_REVIEW_REQUIRED", script)
+        self.assertIn("detected_macrocycle_rings", script)
+
+    def test_standard_script_refuses_real_bace_macrocycle_without_review(self) -> None:
+        runtime = BACKEND_ROOT.parent / "resources" / "python" / "python.exe"
+        sample = (
+            BACKEND_ROOT
+            / "tests"
+            / "fixtures"
+            / "scientific"
+            / "macrocycle_bace1"
+            / "BACE_1_ligand.sdf"
+        )
+        if not runtime.is_file() or not sample.is_file():
+            self.skipTest("本地未装配 Assisted Python runtime 或 BACE_1 fixture。")
+
+        with tempfile.TemporaryDirectory(prefix="DockStart 标准大环门禁 ") as temp_dir:
+            root = Path(temp_dir)
+            script_path = root / "prepare.py"
+            input_path = root / "BACE 配体.sdf"
+            output_path = root / "ligand.pdbqt"
+            script_path.write_text(_ligand_preparation_script_text(), encoding="utf-8")
+            input_path.write_bytes(sample.read_bytes())
+            completed = subprocess.run(
+                [
+                    str(runtime),
+                    "-I",
+                    "-B",
+                    str(script_path),
+                    str(input_path),
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=60,
+            )
+            output_exists = output_path.exists()
+
+        self.assertEqual(completed.returncode, 5, completed.stderr or completed.stdout)
+        self.assertIn("MACROCYCLE_REVIEW_REQUIRED", completed.stderr)
+        self.assertFalse(output_exists)
 
     def _create_project(self, temp_dir: str) -> Path:
         created = create_project("ligand_prep", temp_dir)
@@ -211,6 +255,43 @@ class LigandPreparationTests(unittest.TestCase):
         self.assertEqual(updated["preparation"]["ligand"]["status"], "failed")
         self.assertEqual(updated["preparation"]["ligand"]["error"]["code"], "LIGAND_PREPARATION_FAILED")
         self.assertIsNotNone(updated["preparation"]["ligand"]["finished_at"])
+
+    def test_standard_preparation_surfaces_macrocycle_review_gate(self) -> None:
+        stderr = json.dumps(
+            {
+                "code": "MACROCYCLE_REVIEW_REQUIRED",
+                "message": "检测到大环配体。",
+            },
+            ensure_ascii=False,
+        )
+
+        def fake_run(
+            command: list[str],
+            cwd: str | Path,
+            timeout: int = 300,
+        ) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            return subprocess.CompletedProcess(command, 5, stdout="", stderr=stderr)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_ligand_raw(project_dir, "raw/ligand.sdf")
+            with (
+                patch(
+                    "dockstart_core.preparation.get_preparation_tool_status",
+                    return_value=_tool_status(),
+                ),
+                patch(
+                    "adapters.meeko_adapter.run_preparation_command",
+                    side_effect=fake_run,
+                ),
+            ):
+                result = prepare_ligand_pdbqt(str(project_dir), overwrite=False)
+            prepared_exists = (project_dir / LIGAND_PREPARATION_OUTPUT).exists()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "MACROCYCLE_REVIEW_REQUIRED")
+        self.assertFalse(prepared_exists)
 
 
 if __name__ == "__main__":

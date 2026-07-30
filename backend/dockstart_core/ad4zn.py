@@ -118,6 +118,7 @@ SUPPORTED_PARAMETER_UPSTREAM_REFERENCE = (
 SUPPORTED_PARAMETER_REFERENCE_SHA256 = (
     "12b45d377f081c9f3dc25fba2d4585bb01b8367023f309769e441b8457fb1c00"
 )
+SUPPORTED_PARAMETER_REFERENCE_HASH_BASIS = "line_endings_lf_v1"
 SUPPORTED_PARAMETER_LICENSE_ID = "GPL-2.0-or-later"
 _METAL_TYPES = {
     "CA": "Ca",
@@ -181,6 +182,17 @@ def _issue(
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _line_ending_canonical_sha256(payload: bytes) -> str:
+    """Hash text bytes after normalizing CRLF line endings to LF.
+
+    The pinned Git blob uses LF while an official Windows checkout may contain
+    the same AD4Zn.dat content with CRLF.  No other byte is normalized so BOM,
+    whitespace, comments, and parameter edits still change this identity.
+    """
+
+    return _sha256_bytes(payload.replace(b"\r\n", b"\n"))
 
 
 def _sha256(path: Path) -> str:
@@ -973,6 +985,120 @@ def _parse_receptor_text(text: str) -> dict[str, Any]:
     }
 
 
+def _pdbqt_atom_types(
+    parsed: dict[str, Any],
+    *,
+    role: str,
+) -> tuple[list[str] | None, dict[str, Any] | None]:
+    atoms = parsed.get("atoms")
+    if not isinstance(atoms, list) or not atoms:
+        return None, _error(
+            "AD4ZN_INPUT_ATOMS_MISSING",
+            f"{role}没有原子记录",
+            f"{role} PDBQT 中没有可读取的 ATOM/HETATM 记录。",
+        )
+    malformed = parsed.get("malformed_atom_lines")
+    if isinstance(malformed, list) and malformed:
+        return None, _error(
+            "AD4ZN_INPUT_COORDINATE_INVALID",
+            f"{role}坐标无效",
+            f"{role} PDBQT 中存在无法解析坐标的 ATOM/HETATM 记录。",
+            ", ".join(str(item) for item in malformed),
+        )
+    missing_lines = [
+        int(atom.get("line_number") or 0)
+        for atom in atoms
+        if not _type_key(atom)
+    ]
+    if missing_lines:
+        return None, _error(
+            "AD4ZN_INPUT_ATOM_TYPE_MISSING",
+            f"{role}原子类型缺失",
+            f"{role} PDBQT 的每条 ATOM/HETATM 记录都必须包含 AutoDock 原子类型。",
+            ", ".join(f"L{line}" for line in missing_lines),
+            f"请重新准备{role} PDBQT，并检查行尾原子类型。",
+        )
+    return sorted({_type_key(atom) for atom in atoms}), None
+
+
+def _load_optional_ligand_atom_types(
+    project: Any,
+    root: Path,
+) -> tuple[list[str] | None, dict[str, Any] | None]:
+    relative_path = str(project.ligand.file or "").strip()
+    if not relative_path:
+        return [], None
+    path, path_error = _contained_project_path(
+        root,
+        relative_path,
+        must_exist=True,
+    )
+    if path_error or path is None:
+        source_error = (path_error or {}).get("error") or {}
+        return None, _error(
+            "AD4ZN_LIGAND_UNAVAILABLE",
+            "配体 PDBQT 不可用",
+            str(
+                source_error.get("message")
+                or "当前项目记录的配体 PDBQT 不存在或路径不安全。"
+            ),
+            str(source_error.get("raw_error") or relative_path),
+            "请重新导入或准备配体 PDBQT。",
+        )
+    if not path.is_file():
+        return None, _error(
+            "AD4ZN_LIGAND_UNAVAILABLE",
+            "配体 PDBQT 不可用",
+            "当前项目记录的配体 PDBQT 不是普通文件。",
+            str(path),
+            "请重新导入或准备配体 PDBQT。",
+        )
+    text, _, read_error = _read_text_file(
+        path,
+        maximum_bytes=MAX_RECEPTOR_BYTES,
+        empty_code="AD4ZN_LIGAND_EMPTY",
+        too_large_code="AD4ZN_LIGAND_TOO_LARGE",
+        encoding_code="AD4ZN_LIGAND_TEXT_INVALID",
+    )
+    if read_error or text is None:
+        return None, read_error
+    return _pdbqt_atom_types(
+        _parse_receptor_text(text),
+        role="配体",
+    )
+
+
+def _actual_project_atom_types(
+    project: Any,
+    root: Path,
+    receptor: dict[str, Any] | None,
+) -> tuple[dict[str, list[str]] | None, dict[str, Any] | None]:
+    receptor_types: list[str] = []
+    if receptor is not None:
+        receptor_types, receptor_type_error = _pdbqt_atom_types(
+            receptor["parsed"],
+            role="受体",
+        )
+        if receptor_type_error or receptor_types is None:
+            return None, receptor_type_error
+    ligand_types, ligand_type_error = _load_optional_ligand_atom_types(
+        project,
+        root,
+    )
+    if ligand_type_error or ligand_types is None:
+        return None, ligand_type_error
+    required_types = sorted(
+        set(receptor_types)
+        | set(ligand_types)
+        | ({"TZ"} if "ZN" in receptor_types else set())
+    )
+    return {
+        "receptor": receptor_types,
+        "ligand": ligand_types,
+        "required": required_types,
+    }, None
+
+
 def _load_receptor(
     project: Any,
     root: Path,
@@ -1183,13 +1309,25 @@ def _prepared_validity(
     tz_atoms = [item for item in parsed["atoms"] if _type_key(item) == "TZ"]
     if parsed["malformed_atom_lines"]:
         return False, "派生受体含无效的 ATOM/HETATM 坐标。"
+    if len(zinc_atoms) != 1:
+        return False, "派生受体必须恰好包含一个 ZN。"
     if len(tz_atoms) != 1:
         return False, "派生受体必须恰好包含一个 TZ。"
-    if not zinc_atoms:
-        return False, "派生受体中没有 Zn/ZN 原子。"
     changes = record.get("all_zn_charge_changes")
-    if not isinstance(changes, list) or len(changes) != len(zinc_atoms):
-        return False, "派生受体中的 Zn 数量与电荷变更记录不一致。"
+    if not isinstance(changes, list) or len(changes) != 1:
+        return False, "派生受体必须恰好记录一次 Zn→ZN/0.000 电荷变更。"
+    charge_change = changes[0]
+    if (
+        not isinstance(charge_change, dict)
+        or str(charge_change.get("new_atom_type") or "").upper() != "ZN"
+        or _float_or_none(str(charge_change.get("new_charge"))) is None
+        or not math.isclose(
+            float(charge_change["new_charge"]),
+            0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        return False, "派生受体记录的唯一 Zn 电荷变更无效。"
     if any(
         _type_key(item) != "ZN"
         or item.get("charge") is None
@@ -1248,6 +1386,40 @@ def _parameter_validity(root: Path, record: Any) -> tuple[bool, str]:
             (semantic.get("error") or {}).get("message")
             or "参数文件内容校验失败。"
         )
+    if semantic.get("matches_reference_sha256") is not True:
+        return False, (
+            "参数文件的 canonical LF SHA256 与固定的 AutoDock Vina "
+            "v1.2.7 AD4Zn.dat 参考不一致。"
+        )
+    recorded_match = record.get("matches_reference_sha256")
+    current_match = semantic.get("matches_reference_sha256")
+    legacy_raw_match = (
+        semantic.get("sha256") == semantic.get("reference_sha256")
+    )
+    has_canonical_identity = (
+        "canonical_sha256" in record or "reference_hash_basis" in record
+    )
+    reference_match_record_valid = recorded_match is current_match
+    if not has_canonical_identity and recorded_match is legacy_raw_match:
+        # Older projects recorded this flag from the raw file hash.  A CRLF
+        # official checkout therefore stored False even though its normalized
+        # content is the pinned LF blob.  Preserve only that exact legacy
+        # representation; the current canonical identity gate above remains
+        # mandatory.
+        reference_match_record_valid = True
+    recorded_atom_types = record.get("atom_types")
+    atom_types_record_valid = (
+        isinstance(recorded_atom_types, list)
+        and sorted(
+            {
+                str(item).strip().upper()
+                for item in recorded_atom_types
+                if str(item).strip()
+            }
+        )
+        == semantic.get("atom_types")
+    )
+    has_parameter_table_identity = "atom_type_table_sha256" in record
     if (
         semantic.get("sha256") != record.get("sha256")
         or int(semantic.get("size_bytes") or 0) != int(record.get("size_bytes") or 0)
@@ -1258,10 +1430,24 @@ def _parameter_validity(root: Path, record: Any) -> tuple[bool, str]:
         != record.get("upstream_reference")
         or semantic.get("reference_sha256")
         != record.get("reference_sha256")
-        or semantic.get("matches_reference_sha256")
-        is not record.get("matches_reference_sha256")
+        or not reference_match_record_valid
         or semantic.get("license_notice_detected")
         is not record.get("license_notice_detected")
+        or not atom_types_record_valid
+        or (
+            has_parameter_table_identity
+            and semantic.get("atom_type_table_sha256")
+            != record.get("atom_type_table_sha256")
+        )
+        or (
+            has_canonical_identity
+            and (
+                semantic.get("canonical_sha256")
+                != record.get("canonical_sha256")
+                or semantic.get("reference_hash_basis")
+                != record.get("reference_hash_basis")
+            )
+        )
     ):
         return False, "参数文件的校验结果与项目记录不一致。"
     return True, ""
@@ -1303,6 +1489,15 @@ def _empty_status(project: Any, root: Path, issue: dict[str, Any]) -> dict[str, 
             "invalid_reason": "尚未记录 AD4Zn 参数文件。",
         },
         "parameter_file_valid": False,
+        "atom_type_coverage": {
+            "valid": False,
+            "receptor_atom_types": [],
+            "ligand_atom_types": [],
+            "required_atom_types": [],
+            "parameter_atom_types": [],
+            "missing_parameter_atom_types": [],
+            "invalid_reason": "当前受体不可用，尚不能核对 AD4Zn 参数原子类型覆盖。",
+        },
         "required_confirmations": list(REQUIRED_CONFIRMATIONS),
         "step_readiness": {
             "review": False,
@@ -1351,6 +1546,12 @@ def get_status(project_dir: str) -> dict[str, Any]:
         receptor["sha256"],
         set(site_by_id),
     )
+    if len(sites) != 1:
+        review_valid = False
+        review_reason = (
+            "AD4Zn beta 首版要求受体中恰好包含一个 Zn；"
+            f"当前检测到 {len(sites)} 个。"
+        )
     selected_site_id = (
         str(review_record.get("selected_site_id") or "")
         if isinstance(review_record, dict)
@@ -1376,6 +1577,43 @@ def get_status(project_dir: str) -> dict[str, Any]:
         else None
     )
     parameter_valid, parameter_reason = _parameter_validity(root, parameter_record)
+    actual_atom_types, atom_type_error = _actual_project_atom_types(
+        project,
+        root,
+        receptor,
+    )
+    parameter_atom_types = sorted(
+        {
+            str(item).strip().upper()
+            for item in (
+                parameter_record.get("atom_types", [])
+                if isinstance(parameter_record, dict)
+                else []
+            )
+            if str(item).strip()
+        }
+    )
+    required_atom_types = (
+        actual_atom_types["required"]
+        if isinstance(actual_atom_types, dict)
+        else []
+    )
+    missing_parameter_atom_types = sorted(
+        set(required_atom_types) - set(parameter_atom_types)
+    )
+    if parameter_valid and atom_type_error:
+        parameter_valid = False
+        parameter_reason = str(
+            ((atom_type_error or {}).get("error") or {}).get("message")
+            or "无法核对受体/配体 PDBQT 的实际原子类型。"
+        )
+    if parameter_valid and missing_parameter_atom_types:
+        parameter_valid = False
+        parameter_reason = (
+            "固定 AD4Zn.dat 未定义当前受体/配体实际使用的原子类型："
+            + ", ".join(missing_parameter_atom_types)
+            + "。"
+        )
 
     issues: list[dict[str, Any]] = []
     if not sites:
@@ -1401,13 +1639,16 @@ def get_status(project_dir: str) -> dict[str, Any]:
                 suggestion="请使用适合该金属的独立参数协议，或更换受体。",
             )
         )
-    if len(sites) > 1 and selected_site is None:
+    if len(sites) > 1:
         issues.append(
             _issue(
-                "AD4ZN_MULTIPLE_ZN_UNSELECTED",
-                "尚未选择目标锌位点",
-                "受体包含多个 Zn，必须明确选择其中一个位点生成 TZ。",
-                suggestion="请查看各位点配位信息后保存审查。",
+                "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
+                "受体包含多个 Zn",
+                (
+                    "AD4Zn beta 首版只接受总 Zn 数恰好为 1 的受体；"
+                    f"当前检测到 {len(sites)} 个 Zn，即使选择其中一个也不能继续。"
+                ),
+                suggestion="请使用仅包含一个目标 Zn 位点且经过独立科学审查的受体。",
             )
         )
     if existing_tz:
@@ -1503,11 +1744,14 @@ def get_status(project_dir: str) -> dict[str, Any]:
         parameter_view["valid"] = parameter_valid
         parameter_view["invalid_reason"] = "" if parameter_valid else parameter_reason
 
-    review_step_ready = any(
-        bool(site.get("can_generate")) for site in sites
-    ) and not other_metals
+    review_step_ready = (
+        len(sites) == 1
+        and bool(sites[0].get("can_generate"))
+        and not other_metals
+    )
     prepare_step_ready = (
-        review_valid
+        len(sites) == 1
+        and review_valid
         and selected_site is not None
         and bool(selected_site["can_generate"])
         and not other_metals
@@ -1540,6 +1784,36 @@ def get_status(project_dir: str) -> dict[str, Any]:
         "prepared_receptor_valid": prepared_valid,
         "parameter_file": parameter_view,
         "parameter_file_valid": parameter_valid,
+        "atom_type_coverage": {
+            "valid": (
+                atom_type_error is None
+                and not missing_parameter_atom_types
+                and parameter_valid
+            ),
+            "receptor_atom_types": (
+                actual_atom_types["receptor"]
+                if isinstance(actual_atom_types, dict)
+                else []
+            ),
+            "ligand_atom_types": (
+                actual_atom_types["ligand"]
+                if isinstance(actual_atom_types, dict)
+                else []
+            ),
+            "required_atom_types": required_atom_types,
+            "parameter_atom_types": parameter_atom_types,
+            "missing_parameter_atom_types": missing_parameter_atom_types,
+            "invalid_reason": (
+                str(
+                    ((atom_type_error or {}).get("error") or {}).get("message")
+                    or ""
+                )
+                if atom_type_error
+                else parameter_reason
+                if missing_parameter_atom_types
+                else ""
+            ),
+        },
         "required_confirmations": list(REQUIRED_CONFIRMATIONS),
         "step_readiness": {
             "review": review_step_ready,
@@ -1600,6 +1874,16 @@ def save_review(project_dir: str, review_json: str | dict[str, Any]) -> dict[str
             "AD4ZN_ZN_NOT_FOUND",
             "未检测到锌",
             "当前受体 PDBQT 中没有可选择的 Zn/ZN 位点。",
+        )
+    if len(sites) != 1:
+        return _error(
+            "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
+            "受体包含多个 Zn",
+            (
+                "AD4Zn beta 首版要求受体中恰好包含一个 Zn；"
+                f"当前检测到 {len(sites)} 个，选择其中一个也不能继续。"
+            ),
+            suggestion="请改用仅包含一个目标 Zn 位点且经过独立科学审查的受体。",
         )
     if other_metals:
         return _error(
@@ -1708,6 +1992,21 @@ def _render_prepared_receptor(
     selected_site: dict[str, Any],
 ) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
     parsed = receptor["parsed"]
+    input_zinc = [
+        item
+        for item in parsed["ordinary_atoms"]
+        if _metal_symbol(item) == "Zn"
+    ]
+    if len(input_zinc) != 1:
+        return None, None, _error(
+            "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
+            "受体 Zn 数量不符合首版边界",
+            (
+                "生成 TZ 受体前必须再次确认输入中恰好包含一个 Zn；"
+                f"当前检测到 {len(input_zinc)} 个。"
+            ),
+            suggestion="请刷新状态，并改用只含一个目标 Zn 位点的受体。",
+        )
     selected_line_number = int(selected_site["zn"]["line_number"])
     serials = [
         int(item.get("serial") or 0)
@@ -1793,7 +2092,7 @@ def _render_prepared_receptor(
     output_tz = [
         item for item in verification["atoms"] if _type_key(item) == "TZ"
     ]
-    if len(output_tz) != 1 or any(
+    if len(output_zinc) != 1 or len(output_tz) != 1 or len(charge_changes) != 1 or any(
         item.get("charge") is None
         or not math.isclose(float(item["charge"]), 0.0, abs_tol=1e-9)
         or _type_key(item) != "ZN"
@@ -1802,7 +2101,7 @@ def _render_prepared_receptor(
         return None, None, _error(
             "AD4ZN_OUTPUT_VERIFICATION_FAILED",
             "派生受体校验失败",
-            "派生受体未满足“全部 Zn 为 ZN/0.000 且恰好一个 TZ”的约束。",
+            "派生受体未满足“恰好一个 ZN/0.000、一个 TZ 和一次电荷变更”的约束。",
         )
     written_tz = output_tz[0]
     selected_identity = selected_site["zn"]
@@ -1871,6 +2170,16 @@ def prepare_receptor(
             "AD4ZN_NON_ZN_METAL_UNSUPPORTED",
             "检测到非锌金属",
             "当前 AD4Zn beta 不允许含非 Zn 金属的受体进入准备流程。",
+        )
+    sites = status.get("sites")
+    if isinstance(sites, list) and len(sites) > 1:
+        return _error(
+            "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
+            "受体 Zn 数量不符合首版边界",
+            (
+                "AD4Zn beta 首版只允许总 Zn 数恰好为 1 的受体；"
+                f"当前检测到 {len(sites)} 个。"
+            ),
         )
     if not status.get("review_valid"):
         return _error(
@@ -2015,9 +2324,10 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
 
     coefficient_values: dict[str, float] = {}
     atom_types: set[str] = set()
-    atom_parameter_values: dict[str, list[tuple[float, ...]]] = {}
+    atom_parameter_values: dict[str, tuple[float, ...]] = {}
     malformed_coefficients: list[str] = []
     malformed_atom_parameters: list[str] = []
+    conflicting_atom_parameters: list[str] = []
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
         stripped = raw_line.split("#", 1)[0].strip()
         if not stripped:
@@ -2026,7 +2336,7 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
         key = parts[0].casefold()
         if key in _EXPECTED_FE_CASEFOLD:
             canonical = _EXPECTED_FE_CASEFOLD[key]
-            if len(parts) < 2:
+            if len(parts) != 2:
                 malformed_coefficients.append(f"{canonical}@L{line_number}")
                 continue
             value = _float_or_none(parts[1])
@@ -2037,27 +2347,36 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
                 malformed_coefficients.append(f"{canonical}@L{line_number}(重复)")
                 continue
             coefficient_values[canonical] = value
-        if key == "atom_par" and len(parts) >= 2:
-            atom_type = parts[1].upper()
-            atom_types.add(atom_type)
-            if atom_type in EXPECTED_AD4ZN_ATOM_PARAMETERS:
-                if len(parts) < 12:
-                    malformed_atom_parameters.append(
-                        f"{parts[1]}@L{line_number}"
-                    )
-                    continue
-                values = tuple(
-                    _float_or_none(value)
-                    for value in parts[2:12]
-                )
-                if any(value is None for value in values):
-                    malformed_atom_parameters.append(
-                        f"{parts[1]}@L{line_number}"
-                    )
-                    continue
-                atom_parameter_values.setdefault(atom_type, []).append(
-                    tuple(float(value) for value in values if value is not None)
-                )
+        if key != "atom_par":
+            continue
+        if (
+            len(parts) != 12
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,3}", parts[1])
+        ):
+            label = parts[1] if len(parts) >= 2 else "?"
+            malformed_atom_parameters.append(f"{label}@L{line_number}")
+            continue
+        atom_type = parts[1].upper()
+        parsed_values = tuple(_float_or_none(value) for value in parts[2:])
+        if any(value is None for value in parsed_values):
+            malformed_atom_parameters.append(f"{parts[1]}@L{line_number}")
+            continue
+        values = tuple(
+            float(value)
+            for value in parsed_values
+            if value is not None
+        )
+        previous = atom_parameter_values.get(atom_type)
+        if previous is not None and any(
+            not math.isclose(actual, prior, rel_tol=0.0, abs_tol=1e-12)
+            for actual, prior in zip(values, previous, strict=True)
+        ):
+            conflicting_atom_parameters.append(
+                f"{parts[1]}@L{line_number}"
+            )
+            continue
+        atom_parameter_values[atom_type] = values
+        atom_types.add(atom_type)
     missing_coefficients = [
         item for item in EXPECTED_FE_COEFFICIENTS if item not in coefficient_values
     ]
@@ -2073,6 +2392,26 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
             "参数文件必须包含且仅解析出五项有效 FE_coeff 数值。",
             "；".join(details),
         )
+    if malformed_atom_parameters or conflicting_atom_parameters:
+        details = []
+        if malformed_atom_parameters:
+            details.append(
+                "格式无效：" + ", ".join(malformed_atom_parameters)
+            )
+        if conflicting_atom_parameters:
+            details.append(
+                "同名类型参数冲突："
+                + ", ".join(conflicting_atom_parameters)
+            )
+        return _error(
+            "AD4ZN_PARAMETER_ATOM_TABLE_INVALID",
+            "AD4Zn 原子参数表无效",
+            (
+                "每条有效 atom_par 指令都必须包含一个合法类型和恰好十个"
+                "有限数值；同一类型的大小写别名必须参数一致。"
+            ),
+            "；".join(details),
+        )
     missing_atom_types = sorted({"ZN", "TZ"} - atom_types)
     if missing_atom_types:
         return _error(
@@ -2084,14 +2423,15 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
     profile_mismatches = [
         atom_type
         for atom_type, expected in EXPECTED_AD4ZN_ATOM_PARAMETERS.items()
-        if not atom_parameter_values.get(atom_type)
+        if atom_parameter_values.get(atom_type) is None
+        or len(atom_parameter_values[atom_type]) != len(expected)
         or any(
-            len(values) != len(expected)
-            or any(
-                not math.isclose(actual, target, rel_tol=0.0, abs_tol=1e-9)
-                for actual, target in zip(values, expected, strict=True)
+            not math.isclose(actual, target, rel_tol=0.0, abs_tol=1e-9)
+            for actual, target in zip(
+                atom_parameter_values[atom_type],
+                expected,
+                strict=True,
             )
-            for values in atom_parameter_values.get(atom_type, [])
         )
     ]
     coefficient_mismatches = [
@@ -2111,10 +2451,8 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
             or "either version 2" in text.casefold()
         )
     )
-    if malformed_atom_parameters or profile_mismatches or coefficient_mismatches:
+    if profile_mismatches or coefficient_mismatches:
         details = []
-        if malformed_atom_parameters:
-            details.append("格式无效：" + ", ".join(malformed_atom_parameters))
         if profile_mismatches:
             details.append("原子参数不匹配：" + ", ".join(profile_mismatches))
         if coefficient_mismatches:
@@ -2134,22 +2472,32 @@ def validate_parameter_file(path: str | Path) -> dict[str, Any]:
             suggestion="请从文档列出的固定上游参考地址重新取得完整文件。",
         )
     payload_sha256 = _sha256_bytes(payload)
+    canonical_sha256 = _line_ending_canonical_sha256(payload)
+    atom_type_table_sha256 = _canonical_json_sha256(
+        {
+            atom_type: list(atom_parameter_values[atom_type])
+            for atom_type in sorted(atom_parameter_values)
+        }
+    )
     return {
         "ok": True,
         "path": str(resolved),
         "size_bytes": len(payload),
         "sha256": payload_sha256,
+        "canonical_sha256": canonical_sha256,
         "license_source": "user_provided_gpl_asset",
         "license_id": SUPPORTED_PARAMETER_LICENSE_ID,
         "license_notice_detected": license_notice_detected,
         "supported_profile_id": SUPPORTED_PARAMETER_PROFILE_ID,
         "upstream_reference": SUPPORTED_PARAMETER_UPSTREAM_REFERENCE,
         "reference_sha256": SUPPORTED_PARAMETER_REFERENCE_SHA256,
+        "reference_hash_basis": SUPPORTED_PARAMETER_REFERENCE_HASH_BASIS,
         "matches_reference_sha256": (
-            payload_sha256 == SUPPORTED_PARAMETER_REFERENCE_SHA256
+            canonical_sha256 == SUPPORTED_PARAMETER_REFERENCE_SHA256
         ),
         "coefficients": coefficient_values,
         "atom_types": sorted(atom_types),
+        "atom_type_table_sha256": atom_type_table_sha256,
         "error": None,
     }
 
@@ -2158,6 +2506,20 @@ def record_parameter_file(project_dir: str, path: str | Path) -> dict[str, Any]:
     validation = validate_parameter_file(path)
     if not validation.get("ok"):
         return validation
+    if validation.get("matches_reference_sha256") is not True:
+        return _error(
+            "AD4ZN_PARAMETER_REFERENCE_MISMATCH",
+            "AD4Zn.dat 不是固定的受支持版本",
+            (
+                "该文件的 canonical LF SHA256 与 AutoDock Vina v1.2.7 "
+                "固定上游 AD4Zn.dat 不一致，不能记录或用于运行。"
+            ),
+            (
+                f"actual={validation.get('canonical_sha256')}; "
+                f"expected={validation.get('reference_sha256')}"
+            ),
+            "请从界面列出的固定上游参考重新取得完整 AD4Zn.dat。",
+        )
     source = Path(str(validation["path"]))
     try:
         payload = source.read_bytes()
@@ -2179,6 +2541,37 @@ def record_parameter_file(project_dir: str, path: str | Path) -> dict[str, Any]:
     if load_error:
         return load_error
     assert project is not None and root is not None
+    receptor: dict[str, Any] | None = None
+    if str(project.receptor.file or "").strip():
+        receptor, receptor_error = _load_receptor(project, root)
+        if receptor_error or receptor is None:
+            return receptor_error
+    actual_atom_types, atom_type_error = _actual_project_atom_types(
+        project,
+        root,
+        receptor,
+    )
+    if atom_type_error or actual_atom_types is None:
+        return atom_type_error
+    missing_atom_types = sorted(
+        set(actual_atom_types["required"])
+        - {
+            str(item).strip().upper()
+            for item in validation.get("atom_types", [])
+            if str(item).strip()
+        }
+    )
+    if missing_atom_types:
+        return _error(
+            "AD4ZN_PARAMETER_ATOM_TYPES_UNCOVERED",
+            "AD4Zn.dat 未覆盖实际原子类型",
+            (
+                "固定参数表没有定义当前受体/配体 PDBQT 中的全部实际原子类型，"
+                "不能记录或进入 maps 运行。"
+            ),
+            ", ".join(missing_atom_types),
+            "请检查 PDBQT 原子类型；不要用未参数化类型继续 AD4Zn 对接。",
+        )
     relative_path = PARAMETER_RELATIVE_PATH
     target, target_error = _safe_output_path(root, relative_path)
     if target_error or target is None:
@@ -2201,15 +2594,18 @@ def record_parameter_file(project_dir: str, path: str | Path) -> dict[str, Any]:
         "source_path": str(source),
         "size_bytes": len(payload),
         "sha256": _sha256_bytes(payload),
+        "canonical_sha256": validation["canonical_sha256"],
         "license_source": "user_provided_gpl_asset",
         "license_id": validation["license_id"],
         "license_notice_detected": validation["license_notice_detected"],
         "supported_profile_id": validation["supported_profile_id"],
         "upstream_reference": validation["upstream_reference"],
         "reference_sha256": validation["reference_sha256"],
+        "reference_hash_basis": validation["reference_hash_basis"],
         "matches_reference_sha256": validation["matches_reference_sha256"],
         "coefficients": copy.deepcopy(validation["coefficients"]),
         "atom_types": copy.deepcopy(validation["atom_types"]),
+        "atom_type_table_sha256": validation["atom_type_table_sha256"],
         "recorded_at": _now_iso(),
     }
     _store_state(project, state)

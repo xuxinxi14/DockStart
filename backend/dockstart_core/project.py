@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import copy
+import errno
 import hashlib
 import io
 import json
@@ -26,6 +27,10 @@ from typing import Any, Iterator
 
 from adapters import vina_adapter
 from dockstart_core import __version__
+from dockstart_core.flexible_movement import (
+    analyze_flexible_movement,
+    canonical_flexible_movement_json,
+)
 from dockstart_core.persistence import atomic_write_text as _atomic_write_text
 from dockstart_core.pose_comparison import compare_local_only_poses
 from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
@@ -69,7 +74,20 @@ HYDRATED_PROTOCOL_ID = "hydrated_ad4_experimental"
 HYDRATED_RETAINED_OUTPUT_NAME = "hydrated_retained.pdbqt"
 HYDRATED_WATER_FREE_OUTPUT_NAME = "ligand_water_free.pdbqt"
 HYDRATED_WATERS_MANIFEST_NAME = "waters_manifest.json"
+VINA_OUTPUT_NORMALIZATION_SCHEMA_VERSION = 1
+VINA_OUTPUT_NORMALIZATION_METHOD = "torsdof_endmdl_nul_padding_v1"
 MULTIPLE_LIGAND_PROTOCOL_ID = "simultaneous_multi_ligand"
+FLEXIBLE_RECEPTOR_PROTOCOL_ID = "flexible_single"
+FLEXIBLE_MOVEMENT_SCHEMA_ID = "dockstart.flexible_movement.v1"
+FLEXIBLE_MOVEMENT_METHOD = (
+    "same_receptor_frame_heavy_atom_displacement_no_alignment"
+)
+FLEXIBLE_MOVEMENT_FILENAME = "flexible_movement.json"
+FLEXIBLE_MOVEMENT_MAX_BYTES = 64 * 1024 * 1024
+MACROCYCLE_CONTRACT_SCHEMA_VERSION = 2
+MACROCYCLE_ANALYSIS_VERSION = "2.0"
+MACROCYCLE_MEEKO_API_PROFILE = "meeko_0_7_explicit_ring_break_topology_v2"
+MACROCYCLE_HYDROGEN_POLICY = "rdkit_add_hs_preserve_source_indices_v1"
 AD4ZN_GPF_REQUIRED_LINES = (
     "dielectric -0.1465",
     "nbp_r_eps 0.25 23.2135 12 6 NA TZ",
@@ -327,6 +345,34 @@ def _project_lock_path(project_dir: str | Path) -> Path:
     return project_root / ".project.lock"
 
 
+def _acquire_windows_byte_lock(handle: Any) -> None:
+    """Block until the one-byte Windows lock is available.
+
+    ``msvcrt.LK_LOCK`` only retries a contended lock a finite number of times
+    before raising ``EDEADLK``.  Long scientific jobs can legitimately hold a
+    project-local lock longer than that retry window, so use the non-blocking
+    primitive in an explicit loop to match POSIX ``flock(LOCK_EX)`` semantics.
+    Unexpected filesystem or descriptor errors are never swallowed.
+    """
+
+    import msvcrt
+
+    retryable = {
+        errno.EACCES,
+        errno.EAGAIN,
+        errno.EDEADLK,
+    }
+    while True:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in retryable:
+                raise
+            time.sleep(0.05)
+
+
 @contextmanager
 def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
     """Hold an advisory one-byte lock across processes.
@@ -348,7 +394,7 @@ def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
         if sys.platform == "win32":
             import msvcrt
 
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            _acquire_windows_byte_lock(handle)
             try:
                 yield
             finally:
@@ -2765,6 +2811,7 @@ def _ad4zn_prepared_receptor_issue(path: Path) -> str:
     zinc_count = 0
     tz_count = 0
     nonzero_zinc_charges: list[str] = []
+    nonzero_tz_charges: list[str] = []
     try:
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8", errors="strict").splitlines(),
@@ -2778,6 +2825,17 @@ def _ad4zn_prepared_receptor_issue(path: Path) -> str:
             atom_type = fields[-1].upper()
             if atom_type == "TZ":
                 tz_count += 1
+                try:
+                    charge = float(fields[-2])
+                except (IndexError, ValueError):
+                    nonzero_tz_charges.append(
+                        f"line {line_number}: charge unreadable"
+                    )
+                    continue
+                if not math.isfinite(charge) or abs(charge) > 1e-6:
+                    nonzero_tz_charges.append(
+                        f"line {line_number}: {charge}"
+                    )
                 continue
             if atom_type != "ZN":
                 continue
@@ -2789,19 +2847,447 @@ def _ad4zn_prepared_receptor_issue(path: Path) -> str:
                     f"line {line_number}: charge unreadable"
                 )
                 continue
-            if abs(charge) > 1e-6:
+            if not math.isfinite(charge) or abs(charge) > 1e-6:
                 nonzero_zinc_charges.append(f"line {line_number}: {charge}")
     except (OSError, UnicodeError) as exc:
         return f"TZ 受体无法读取：{exc}"
-    if zinc_count <= 0:
-        return "TZ 受体没有 ZN 原子类型。"
-    if tz_count <= 0:
-        return "TZ 受体没有 TZ 伪原子；AD4Zn 不允许回退为普通 AutoDock4。"
+    if zinc_count != 1:
+        return f"TZ 受体必须恰好包含一个 ZN；当前为 {zinc_count}。"
+    if tz_count != 1:
+        return (
+            "TZ 受体必须恰好包含一个 TZ；"
+            f"当前为 {tz_count}，AD4Zn 不允许回退为普通 AutoDock4。"
+        )
     if nonzero_zinc_charges:
         return "TZ 受体中的 Zn 电荷不是 0.000：" + ", ".join(
             nonzero_zinc_charges
         )
+    if nonzero_tz_charges:
+        return "TZ 受体中的 TZ 电荷不是 0.000：" + ", ".join(
+            nonzero_tz_charges
+        )
     return ""
+
+
+def _ad4zn_parameter_reference_issue(path: Path) -> str:
+    """Require the frozen parameter asset to be the pinned official profile."""
+
+    try:
+        from dockstart_core.ad4zn import validate_parameter_file  # noqa: PLC0415
+
+        validation = validate_parameter_file(path)
+    except Exception as exc:  # noqa: BLE001 - converted to an audit issue.
+        return f"无法复核冻结的 AD4Zn.dat：{exc}"
+    if not validation.get("ok"):
+        error = (
+            validation.get("error")
+            if isinstance(validation.get("error"), dict)
+            else {}
+        )
+        return str(
+            error.get("message")
+            or error.get("title")
+            or "冻结的 AD4Zn.dat 未通过官方参数身份校验。"
+        )
+    if (
+        validation.get("matches_reference_sha256") is not True
+        or str(validation.get("canonical_sha256") or "").lower()
+        != str(validation.get("reference_sha256") or "").lower()
+    ):
+        return (
+            "冻结的 AD4Zn.dat canonical LF SHA256 "
+            "与固定的 AutoDock Vina v1.2.7 上游参考不一致。"
+        )
+    return ""
+
+
+def _ad4zn_frozen_box_coverage(
+    receptor_path: Path,
+    frozen_manifest: Any,
+) -> tuple[dict[str, Any] | None, str]:
+    """Recompute the frozen ZN/TZ requested-Box and effective-grid contract."""
+
+    if not isinstance(frozen_manifest, dict):
+        return None, "AD4Zn maps manifest 不是 JSON 对象。"
+    grid = (
+        frozen_manifest.get("grid")
+        if isinstance(frozen_manifest.get("grid"), dict)
+        else {}
+    )
+    requested_box = (
+        grid.get("requested_box")
+        if isinstance(grid.get("requested_box"), dict)
+        else {}
+    )
+    requested_center = (
+        requested_box.get("center")
+        if isinstance(requested_box.get("center"), dict)
+        else {}
+    )
+    requested_size = (
+        requested_box.get("size")
+        if isinstance(requested_box.get("size"), dict)
+        else {}
+    )
+    grid_center = (
+        grid.get("center")
+        if isinstance(grid.get("center"), dict)
+        else {}
+    )
+    grid_points = (
+        grid.get("grid_points")
+        if isinstance(grid.get("grid_points"), dict)
+        else {}
+    )
+    actual_size = (
+        grid.get("actual_size")
+        if isinstance(grid.get("actual_size"), dict)
+        else {}
+    )
+    ad4zn = (
+        frozen_manifest.get("ad4zn")
+        if isinstance(frozen_manifest.get("ad4zn"), dict)
+        else {}
+    )
+    stored_coverage = (
+        ad4zn.get("box_coverage")
+        if isinstance(ad4zn.get("box_coverage"), dict)
+        else None
+    )
+    stored_coverage_sha256 = str(
+        ad4zn.get("box_coverage_sha256") or ""
+    ).lower()
+    if stored_coverage is None or not SHA256_PATTERN.fullmatch(
+        stored_coverage_sha256
+    ):
+        return (
+            None,
+            "AD4Zn maps manifest 缺少现代 ZN/TZ Box 覆盖记录；"
+            "旧 maps 必须重新生成后才能运行。",
+        )
+    try:
+        from dockstart_core.autogrid import (  # noqa: PLC0415
+            GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            compute_ad4zn_box_coverage,
+        )
+    except Exception as exc:  # noqa: BLE001 - converted to an audit issue.
+        return None, f"无法加载 AD4Zn Box 覆盖校验器：{exc}"
+    try:
+        box = {
+            **{
+                f"center_{axis}": float(requested_center[axis])
+                for axis in ("x", "y", "z")
+            },
+            **{
+                f"size_{axis}": float(requested_size[axis])
+                for axis in ("x", "y", "z")
+            },
+        }
+        points = [int(grid_points[axis]) for axis in ("x", "y", "z")]
+        spacing = float(grid["spacing"])
+        expected_actual_size = {
+            axis: points[index] * spacing
+            for index, axis in enumerate(("x", "y", "z"))
+        }
+        for axis in ("x", "y", "z"):
+            if not math.isclose(
+                float(grid_center[axis]),
+                box[f"center_{axis}"],
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                return None, "AD4Zn 请求 Box 中心与实际网格中心不一致。"
+            if not math.isclose(
+                float(actual_size[axis]),
+                expected_actual_size[axis],
+                rel_tol=0.0,
+                # AutoGrid manifests intentionally serialize actual_size at
+                # six decimal places.  Use the same tolerance as active-map
+                # validation so a frozen run neither rejects a valid manifest
+                # nor silently applies a looser geometry contract.
+                abs_tol=GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            ):
+                return None, "AD4Zn 实际网格尺寸与 npts × spacing 不一致。"
+    except (KeyError, TypeError, ValueError) as exc:
+        return None, f"AD4Zn maps manifest 的 Box/网格几何无效：{exc}"
+
+    try:
+        recomputed = compute_ad4zn_box_coverage(
+            receptor_path,
+            box,
+            points,
+            spacing,
+        )
+    except Exception as exc:  # noqa: BLE001 - converted to an audit issue.
+        return None, f"无法重算冻结的 ZN/TZ Box 覆盖：{exc}"
+    if not recomputed.get("ok"):
+        error = (
+            recomputed.get("error")
+            if isinstance(recomputed.get("error"), dict)
+            else {}
+        )
+        return None, str(
+            error.get("message")
+            or "冻结的 ZN/TZ 坐标或 Box/网格覆盖无效。"
+        )
+    coverage = recomputed.get("box_coverage")
+    coverage_sha256 = str(
+        recomputed.get("box_coverage_sha256") or ""
+    ).lower()
+    if (
+        not isinstance(coverage, dict)
+        or coverage != stored_coverage
+        or coverage_sha256 != stored_coverage_sha256
+    ):
+        return None, "AD4Zn ZN/TZ Box 覆盖记录与冻结输入重算结果不一致。"
+    if (
+        coverage.get("all_zn_tz_inside_requested_box") is not True
+        or coverage.get("all_zn_tz_inside_effective_grid") is not True
+    ):
+        return None, "ZN 与 TZ 未同时位于请求 Box 和实际 AutoGrid 网格内。"
+    return copy.deepcopy(coverage), ""
+
+
+def _hydrated_frozen_grid_coverage(
+    frozen_manifest: Any,
+    expected_box: Any = None,
+    expected_grid: Any = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Recompute a frozen hydrated requested-Box/effective-grid contract."""
+
+    if not isinstance(frozen_manifest, dict):
+        return None, "水合 maps manifest 不是 JSON 对象。"
+    manifest_box = (
+        frozen_manifest.get("box")
+        if isinstance(frozen_manifest.get("box"), dict)
+        else {}
+    )
+    grid = (
+        frozen_manifest.get("grid")
+        if isinstance(frozen_manifest.get("grid"), dict)
+        else {}
+    )
+    stored_coverage = (
+        frozen_manifest.get("grid_coverage")
+        if isinstance(frozen_manifest.get("grid_coverage"), dict)
+        else None
+    )
+    stored_sha256 = str(
+        frozen_manifest.get("grid_coverage_sha256") or ""
+    ).lower()
+    if (
+        not manifest_box
+        or stored_coverage is None
+        or not SHA256_PATTERN.fullmatch(stored_sha256)
+    ):
+        return (
+            None,
+            "水合 maps manifest 缺少现代请求 Box/实际网格覆盖记录；"
+            "旧 maps 必须重新生成后才能运行。",
+        )
+    try:
+        from dockstart_core.autogrid import (  # noqa: PLC0415
+            GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            compute_requested_box_grid_coverage,
+        )
+    except Exception as exc:  # noqa: BLE001 - converted to an audit issue.
+        return None, f"无法加载水合 Box/网格覆盖校验器：{exc}"
+
+    axes = ("x", "y", "z")
+
+    def normalize_box(value: Any) -> dict[str, dict[str, float]]:
+        if not isinstance(value, dict):
+            raise TypeError("Box 记录必须是 JSON 对象。")
+        normalized: dict[str, dict[str, float]] = {
+            "center": {},
+            "size": {},
+        }
+        for kind in ("center", "size"):
+            nested = (
+                value.get(kind)
+                if isinstance(value.get(kind), dict)
+                else {}
+            )
+            for axis in axes:
+                raw = (
+                    nested.get(axis)
+                    if axis in nested
+                    else value.get(f"{kind}_{axis}")
+                )
+                normalized[kind][axis] = float(raw)
+        return normalized
+
+    def same_number(left: Any, right: Any) -> bool:
+        return math.isclose(
+            float(left),
+            float(right),
+            rel_tol=0.0,
+            abs_tol=GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+        )
+
+    try:
+        frozen_box = normalize_box(manifest_box)
+        required_box = (
+            normalize_box(expected_box)
+            if expected_box is not None
+            else frozen_box
+        )
+        if any(
+            not same_number(
+                frozen_box[kind][axis],
+                required_box[kind][axis],
+            )
+            for kind in ("center", "size")
+            for axis in axes
+        ):
+            return None, "水合 maps 的请求 Box 与冻结运行 Box 不一致。"
+
+        requested_box = normalize_box(
+            grid.get("requested_box")
+            if isinstance(grid.get("requested_box"), dict)
+            else {}
+        )
+        grid_center = (
+            grid.get("center")
+            if isinstance(grid.get("center"), dict)
+            else {}
+        )
+        grid_points = (
+            grid.get("grid_points")
+            if isinstance(grid.get("grid_points"), dict)
+            else {}
+        )
+        actual_size = (
+            grid.get("actual_size")
+            if isinstance(grid.get("actual_size"), dict)
+            else {}
+        )
+        if any(
+            not same_number(
+                requested_box[kind][axis],
+                required_box[kind][axis],
+            )
+            for kind in ("center", "size")
+            for axis in axes
+        ):
+            return (
+                None,
+                "水合 maps 的 grid.requested_box 与冻结运行 Box 不一致。",
+            )
+        if any(
+            not same_number(
+                grid_center[axis],
+                required_box["center"][axis],
+            )
+            for axis in axes
+        ):
+            return None, "水合 maps 的实际网格中心与请求 Box 中心不一致。"
+        points = [grid_points[axis] for axis in axes]
+        spacing = grid["spacing"]
+
+        if expected_grid is not None:
+            if not isinstance(expected_grid, dict):
+                return None, "冻结运行的水合网格记录格式无效。"
+            expected_requested_box = normalize_box(
+                expected_grid.get("requested_box")
+                if isinstance(expected_grid.get("requested_box"), dict)
+                else {}
+            )
+            expected_center = (
+                expected_grid.get("center")
+                if isinstance(expected_grid.get("center"), dict)
+                else {}
+            )
+            expected_points = (
+                expected_grid.get("grid_points")
+                if isinstance(expected_grid.get("grid_points"), dict)
+                else {}
+            )
+            expected_actual_size = (
+                expected_grid.get("actual_size")
+                if isinstance(expected_grid.get("actual_size"), dict)
+                else {}
+            )
+            if (
+                not same_number(spacing, expected_grid["spacing"])
+                or any(
+                    int(grid_points[axis])
+                    != int(expected_points[axis])
+                    for axis in axes
+                )
+                or any(
+                    not same_number(
+                        requested_box[kind][axis],
+                        expected_requested_box[kind][axis],
+                    )
+                    for kind in ("center", "size")
+                    for axis in axes
+                )
+                or any(
+                    not same_number(
+                        grid_center[axis],
+                        expected_center[axis],
+                    )
+                    for axis in axes
+                )
+                or any(
+                    not same_number(
+                        actual_size[axis],
+                        expected_actual_size[axis],
+                    )
+                    for axis in axes
+                )
+            ):
+                return (
+                    None,
+                    "水合 maps 的 grid 与冻结运行网格快照不一致。",
+                )
+    except (KeyError, TypeError, ValueError) as exc:
+        return None, f"水合 maps manifest 的 Box/网格几何无效：{exc}"
+
+    try:
+        recomputed = compute_requested_box_grid_coverage(
+            required_box,
+            points,
+            spacing,
+        )
+    except Exception as exc:  # noqa: BLE001 - converted to an audit issue.
+        return None, f"无法重算冻结的水合 Box/网格覆盖：{exc}"
+    if not recomputed.get("ok"):
+        error = (
+            recomputed.get("error")
+            if isinstance(recomputed.get("error"), dict)
+            else {}
+        )
+        return None, str(
+            error.get("message")
+            or "冻结的水合 Box/网格覆盖无效。"
+        )
+    coverage = recomputed.get("coverage")
+    coverage_sha256 = str(
+        recomputed.get("coverage_sha256") or ""
+    ).lower()
+    if (
+        not isinstance(coverage, dict)
+        or coverage != stored_coverage
+        or coverage_sha256 != stored_sha256
+    ):
+        return None, "水合 Box/网格覆盖记录与冻结几何重算结果不一致。"
+    if coverage.get("covers_requested_box") is not True:
+        return None, "实际 AutoGrid 网格没有完整覆盖请求 Box。"
+    try:
+        effective_size = coverage["effective_grid_size_angstrom"]
+        if any(
+            not same_number(
+                actual_size[axis],
+                effective_size[axis],
+            )
+            for axis in axes
+        ):
+            return None, "水合实际网格尺寸与 npts × spacing 不一致。"
+    except (KeyError, TypeError, ValueError) as exc:
+        return None, f"水合实际网格尺寸记录无效：{exc}"
+    return copy.deepcopy(coverage), ""
 
 
 def _ad4zn_gpf_missing_lines(path: Path) -> list[str]:
@@ -2848,6 +3334,456 @@ def _hash_snapshot(path: Path, relative_path: str = "") -> dict[str, Any]:
         "size_bytes": size_bytes,
         "sha256": sha256,
         "hash_error": hash_error,
+    }
+
+
+def _vina_raw_output_relative_path(output_file: str) -> str:
+    output_path = Path(output_file)
+    return output_path.with_name(
+        f"{output_path.stem}.vina_raw{output_path.suffix}",
+    ).as_posix()
+
+
+def _unexpected_pdbqt_control_bytes(payload: bytes) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for value in payload:
+        if value == 0 or (value < 32 and value not in {9, 10, 13}) or value == 127:
+            counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _unexpected_pdbqt_control_codepoints(text: str) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for character in text:
+        value = ord(character)
+        if value == 0 or (value < 32 and value not in {9, 10, 13}) or (
+            127 <= value <= 159
+        ):
+            counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _recognized_vina_nul_padding_blocks(
+    payload: bytes,
+    *,
+    allow_multiple_ligand_member_boundary: bool = False,
+    allow_flexible_residue_boundary: bool = False,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Classify NUL runs without treating arbitrary binary data as PDBQT.
+
+    AutoDock Vina 1.2.7 on Windows has been observed to emit a contiguous NUL
+    run after a model's ``TORSDOF`` line when its ligand input uses CRLF line
+    endings.  Standard single-ligand output only accepts that placement before
+    ``ENDMDL``.  The simultaneous multi-ligand caller may additionally accept
+    the same boundary before the next member's optional ``REMARK`` records and
+    ``ROOT``.  A flexible-receptor run may accept the boundary before the
+    first syntactically valid ``BEGIN_RES`` record.  Arbitrary NUL bytes remain
+    fail-closed.
+    """
+
+    recognized: list[tuple[int, int]] = []
+    rejected: list[tuple[int, int]] = []
+    for match in re.finditer(rb"\x00+", payload):
+        prefix = payload[: match.start()]
+        suffix = payload[match.end() :]
+        follows_torsdof = re.search(
+            rb"(?:^|[\r\n])TORSDOF[ \t]+\d+[ \t]*(?:\r\n|\n|\r)$",
+            prefix,
+        )
+        precedes_endmdl = re.match(
+            rb"(?:(?:\r\n|\n|\r))?ENDMDL[ \t]*(?:\r\n|\n|\r|$)",
+            suffix,
+        )
+        precedes_next_member = (
+            re.match(
+                rb"(?:(?:\r\n|\n|\r))?"
+                rb"(?:REMARK[^\r\n]*(?:\r\n|\n|\r))*"
+                rb"ROOT[ \t]*(?:\r\n|\n|\r)",
+                suffix,
+            )
+            if allow_multiple_ligand_member_boundary
+            else None
+        )
+        precedes_flexible_residue = (
+            re.match(
+                rb"(?:(?:\r\n|\n|\r))?"
+                rb"BEGIN_RES[ \t]+"
+                rb"[A-Za-z0-9][A-Za-z0-9_+\-]{0,7}[ \t]+"
+                rb"(?:(?:[A-Za-z0-9_.\-]{1,8})[ \t]+)?"
+                rb"-?\d+[A-Za-z0-9]?[ \t]*"
+                rb"(?:\r\n|\n|\r)",
+                suffix,
+            )
+            if allow_flexible_residue_boundary
+            else None
+        )
+        target = (
+            recognized
+            if follows_torsdof
+            and (
+                precedes_endmdl
+                or precedes_next_member
+                or precedes_flexible_residue
+            )
+            else rejected
+        )
+        target.append((match.start(), match.end()))
+    return recognized, rejected
+
+
+def _write_bytes_atomically(path: Path, payload: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _normalize_vina_pdbqt_output(
+    output_path: Path,
+    output_file: str,
+    *,
+    allow_multiple_ligand_member_boundary: bool = False,
+    allow_flexible_residue_boundary: bool = False,
+) -> dict[str, Any]:
+    """Preserve Vina's bytes and publish a text-safe PDBQT when possible."""
+
+    output_relative = Path(output_file).as_posix()
+    normalization_method = (
+        "torsdof_flexible_residue_or_endmdl_nul_padding_v3"
+        if allow_flexible_residue_boundary
+        else "torsdof_member_or_endmdl_nul_padding_v2"
+        if allow_multiple_ligand_member_boundary
+        else VINA_OUTPUT_NORMALIZATION_METHOD
+    )
+    try:
+        source = output_path.read_bytes()
+    except OSError as exc:
+        error = {
+            "code": "VINA_OUTPUT_READ_ERROR",
+            "message": "无法读取 AutoDock Vina 生成的 PDBQT 输出。",
+            "raw_error": str(exc),
+            "suggestion": "请保留本次 run，并检查输出文件权限后重新准备新 run。",
+        }
+        return {
+            "ok": False,
+            "record": {
+                "schema_version": VINA_OUTPUT_NORMALIZATION_SCHEMA_VERSION,
+                "status": "failed",
+                "method": normalization_method,
+                "source_file": output_relative,
+                "normalized_file": output_relative,
+                "changed": False,
+                "error": copy.deepcopy(error),
+            },
+            "artifacts": {},
+            "warning": "",
+            "error": error,
+        }
+
+    source_sha256 = hashlib.sha256(source).hexdigest()
+    source_text = ""
+    utf8_error = ""
+    try:
+        source_text = source.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        utf8_error = str(exc)
+    control_counts = _unexpected_pdbqt_control_bytes(source)
+    control_codepoints = (
+        _unexpected_pdbqt_control_codepoints(source_text)
+        if not utf8_error
+        else {}
+    )
+    nul_count = control_counts.get(0, 0)
+    recognized, rejected = _recognized_vina_nul_padding_blocks(
+        source,
+        allow_multiple_ligand_member_boundary=(
+            allow_multiple_ligand_member_boundary
+        ),
+        allow_flexible_residue_boundary=(
+            allow_flexible_residue_boundary
+        ),
+    )
+    unexpected_counts = dict(control_counts)
+    unexpected_codepoints = dict(control_codepoints)
+    if recognized and not rejected:
+        unexpected_counts.pop(0, None)
+        unexpected_codepoints.pop(0, None)
+
+    base_record: dict[str, Any] = {
+        "schema_version": VINA_OUTPUT_NORMALIZATION_SCHEMA_VERSION,
+        "status": "not_required",
+        "method": normalization_method,
+        "source_file": output_relative,
+        "raw_output_file": "",
+        "normalized_file": output_relative,
+        "changed": False,
+        "source_size_bytes": len(source),
+        "source_sha256": source_sha256,
+        "normalized_size_bytes": len(source),
+        "normalized_sha256": source_sha256,
+        "utf8_valid": not utf8_error,
+        "utf8_error": utf8_error,
+        "nul_bytes_detected": nul_count,
+        "nul_bytes_removed": 0,
+        "recognized_padding_blocks": 0,
+        "recognized_padding_lengths": [],
+        "unexpected_control_bytes": [
+            {"byte": value, "hex": f"0x{value:02x}", "count": count}
+            for value, count in sorted(unexpected_counts.items())
+        ],
+        "unexpected_control_codepoints": [
+            {"codepoint": value, "unicode": f"U+{value:04X}", "count": count}
+            for value, count in sorted(unexpected_codepoints.items())
+        ],
+        "scientific_content_policy": (
+            (
+                "仅允许移除每个配体 TORSDOF 与下一成员 REMARK/ROOT "
+                "或 ENDMDL 之间的连续 NUL 填充；"
+                if allow_multiple_ligand_member_boundary
+                else (
+                    "仅允许移除配体 TORSDOF 与首个合法 BEGIN_RES "
+                    "或 ENDMDL 之间的连续 NUL 填充；"
+                    if allow_flexible_residue_boundary
+                    else "仅允许移除 TORSDOF 与紧随其后的 ENDMDL 之间的连续 NUL 填充；"
+                )
+            )
+            + "不改写坐标、原子、构象、评分备注或行尾。"
+        ),
+    }
+    if not control_counts and not unexpected_codepoints and not utf8_error:
+        return {
+            "ok": True,
+            "record": base_record,
+            "artifacts": {},
+            "warning": "",
+            "error": None,
+        }
+
+    raw_relative = _vina_raw_output_relative_path(output_relative)
+    raw_path = output_path.with_name(Path(raw_relative).name)
+    base_record["source_file"] = raw_relative
+    base_record["raw_output_file"] = raw_relative
+    raw_created = False
+    try:
+        with raw_path.open("xb") as handle:
+            raw_created = True
+            handle.write(source)
+            handle.flush()
+            os.fsync(handle.fileno())
+        raw_snapshot = _hash_snapshot(raw_path, raw_relative)
+        if (
+            raw_snapshot.get("sha256") != source_sha256
+            or raw_snapshot.get("size_bytes") != len(source)
+        ):
+            raise OSError("原始 Vina 输出副本与执行后读取的字节不一致。")
+    except OSError as exc:
+        if raw_created:
+            try:
+                raw_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        error = {
+            "code": "VINA_OUTPUT_RAW_ARCHIVE_ERROR",
+            "message": "无法保留 AutoDock Vina 的原始 PDBQT 输出，已拒绝标准化。",
+            "raw_error": str(exc),
+            "suggestion": "请保留当前 out.pdbqt，排除目录占用或权限问题后重新准备新 run。",
+        }
+        base_record.update(
+            {
+                "status": "failed",
+                "source_file": output_relative,
+                "raw_output_file": "",
+                "normalized_file": "",
+                "normalized_size_bytes": 0,
+                "normalized_sha256": "",
+                "error": copy.deepcopy(error),
+            }
+        )
+        return {
+            "ok": False,
+            "record": base_record,
+            "artifacts": {},
+            "warning": "",
+            "error": error,
+        }
+
+    artifacts = {"out_vina_raw": raw_snapshot}
+    if (
+        unexpected_counts
+        or unexpected_codepoints
+        or rejected
+        or nul_count == 0
+        or utf8_error
+    ):
+        rejected_nul_count = sum(end - start for start, end in rejected)
+        error = {
+            "code": (
+                "VINA_OUTPUT_TEXT_ENCODING_INVALID"
+                if utf8_error
+                else "VINA_OUTPUT_BINARY_CONTROL_CHARACTER"
+            ),
+            "message": (
+                "Vina 输出不是有效的 UTF-8 文本，结果已拒绝。"
+                if utf8_error
+                else "Vina 输出包含无法安全解释的二进制控制字符，结果已拒绝。"
+            ),
+            "raw_error": (
+                f"control_bytes={base_record['unexpected_control_bytes']}; "
+                f"control_codepoints={base_record['unexpected_control_codepoints']}; "
+                f"rejected_nul_bytes={rejected_nul_count}; "
+                f"utf8_error={utf8_error}"
+            ),
+            "suggestion": (
+                "原始输出已保留为 *.vina_raw.pdbqt。请检查 Vina 版本、输入文件和磁盘状态，"
+                "不要把该文件作为标准 PDBQT 继续分析。"
+            ),
+        }
+        base_record.update(
+            {
+                "status": "failed",
+                "normalized_file": "",
+                "normalized_size_bytes": 0,
+                "normalized_sha256": "",
+                "recognized_padding_blocks": len(recognized),
+                "recognized_padding_lengths": [
+                    end - start for start, end in recognized
+                ],
+                "error": copy.deepcopy(error),
+            }
+        )
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError as exc:
+            error["raw_error"] = (
+                f"{error['raw_error']}; polluted_output_remove_error={exc}"
+            )
+            base_record["error"] = copy.deepcopy(error)
+        return {
+            "ok": False,
+            "record": base_record,
+            "artifacts": artifacts,
+            "warning": "",
+            "error": error,
+        }
+
+    normalized_parts: list[bytes] = []
+    cursor = 0
+    for start, end in recognized:
+        normalized_parts.append(source[cursor:start])
+        cursor = end
+    normalized_parts.append(source[cursor:])
+    normalized = b"".join(normalized_parts)
+    try:
+        normalized.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        error = {
+            "code": "VINA_OUTPUT_TEXT_ENCODING_INVALID",
+            "message": "移除已识别 NUL 填充后，Vina 输出仍不是有效的 UTF-8 文本。",
+            "raw_error": str(exc),
+            "suggestion": (
+                "原始输出已保留为 *.vina_raw.pdbqt。请检查 Vina 版本和输入编码后重新准备新 run。"
+            ),
+        }
+        base_record.update(
+            {
+                "status": "failed",
+                "normalized_file": "",
+                "normalized_size_bytes": 0,
+                "normalized_sha256": "",
+                "error": copy.deepcopy(error),
+            }
+        )
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {
+            "ok": False,
+            "record": base_record,
+            "artifacts": artifacts,
+            "warning": "",
+            "error": error,
+        }
+    normalized_sha256 = hashlib.sha256(normalized).hexdigest()
+    try:
+        _write_bytes_atomically(output_path, normalized)
+        published = output_path.read_bytes()
+        if (
+            len(published) != len(normalized)
+            or hashlib.sha256(published).hexdigest() != normalized_sha256
+        ):
+            raise OSError("标准化 PDBQT 写入后校验失败。")
+    except OSError as exc:
+        error = {
+            "code": "VINA_OUTPUT_NORMALIZATION_WRITE_ERROR",
+            "message": "原始 Vina 输出已保留，但无法发布标准化 PDBQT。",
+            "raw_error": str(exc),
+            "suggestion": (
+                "请保留 *.vina_raw.pdbqt 作为执行证据，排除目录占用或权限问题后重新准备新 run。"
+            ),
+        }
+        base_record.update(
+            {
+                "status": "failed",
+                "normalized_file": "",
+                "normalized_size_bytes": 0,
+                "normalized_sha256": "",
+                "error": copy.deepcopy(error),
+            }
+        )
+        try:
+            output_path.unlink(missing_ok=True)
+        except OSError as remove_exc:
+            error["raw_error"] = (
+                f"{error['raw_error']}; unpublished_output_remove_error={remove_exc}"
+            )
+            base_record["error"] = copy.deepcopy(error)
+        return {
+            "ok": False,
+            "record": base_record,
+            "artifacts": artifacts,
+            "warning": "",
+            "error": error,
+        }
+
+    removed = sum(end - start for start, end in recognized)
+    warning = (
+        f"检测到并移除了 {removed} 个位于 TORSDOF 结构边界的 NUL 填充字节；"
+        f"Vina 原始输出已保留在 {raw_relative}。"
+    )
+    base_record.update(
+        {
+            "status": "normalized",
+            "changed": True,
+            "normalized_size_bytes": len(normalized),
+            "normalized_sha256": normalized_sha256,
+            "nul_bytes_removed": removed,
+            "recognized_padding_blocks": len(recognized),
+            "recognized_padding_lengths": [
+                end - start for start, end in recognized
+            ],
+        }
+    )
+    return {
+        "ok": True,
+        "record": base_record,
+        "artifacts": artifacts,
+        "warning": warning,
+        "error": None,
     }
 
 
@@ -3988,11 +4924,681 @@ def _active_receptor_inputs(project_path: Path, project: DockStartProject) -> di
         "selected_residues": copy.deepcopy(config.get("selected_residues") or []),
         "preparation_id": str(config.get("preparation_id") or ""),
         "source_raw_file": str(config.get("source_raw_file") or ""),
+        "source_format": str(config.get("source_format") or "pdb"),
+        "source_sha256": str(config.get("source_sha256") or ""),
+        "resolved_altlocs": copy.deepcopy(config.get("resolved_altlocs") or {}),
+        "receptor_controls": copy.deepcopy(
+            config.get("receptor_controls") or {}
+        ),
+        "receptor_controls_sha256": str(
+            config.get("receptor_controls_sha256") or ""
+        ),
+        "receptor_controls_fingerprint": copy.deepcopy(
+            config.get("receptor_controls_fingerprint") or {}
+        ),
+        "atom_partition": copy.deepcopy(config.get("atom_partition") or {}),
+        "identity": copy.deepcopy(config.get("identity") or {}),
         "sha256": copy.deepcopy(config.get("sha256") or {}),
     }
 
 
-def _matching_ligand_preparation(project_path: Path, project: DockStartProject) -> dict[str, Any]:
+def _normalized_macrocycle_bonds(value: Any) -> tuple[list[list[int]], str]:
+    """Return canonical zero-based atom pairs without accepting bools or duplicates."""
+
+    if not isinstance(value, list):
+        return [], "断环键不是数组。"
+    normalized: list[list[int]] = []
+    for pair in value:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            return [], "断环键必须由两个原子索引组成。"
+        left, right = pair
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, int)
+            or not isinstance(right, int)
+            or left < 0
+            or right < 0
+            or left == right
+        ):
+            return [], "断环键包含无效原子索引。"
+        normalized.append([min(left, right), max(left, right)])
+    if normalized != sorted(normalized) or len({tuple(pair) for pair in normalized}) != len(
+        normalized
+    ):
+        return [], "断环键没有按规范顺序记录或包含重复项。"
+    return normalized, ""
+
+
+def _macrocycle_canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _macrocycle_relative_path(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if path.is_absolute():
+        return ""
+    return path.as_posix()
+
+
+def _macrocycle_snapshot_size(snapshot: dict[str, Any]) -> int:
+    value = snapshot.get("size")
+    if value is None:
+        value = snapshot.get("size_bytes")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _load_macrocycle_json_record(
+    path: Path,
+    *,
+    maximum_bytes: int = 8 * 1024 * 1024,
+) -> tuple[dict[str, Any] | None, str]:
+    try:
+        size = path.stat().st_size
+        if size <= 0 or size > maximum_bytes:
+            return None, f"JSON 记录大小无效（{size} bytes）。"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return None, f"JSON 记录无法读取或解析：{exc}"
+    if not isinstance(payload, dict):
+        return None, "JSON 记录顶层不是对象。"
+    return payload, ""
+
+
+def _macrocycle_bond_summaries(
+    contract: dict[str, Any],
+    exact_bonds: list[list[int]],
+) -> tuple[list[dict[str, Any]], str]:
+    selected = contract.get("selected_bonds")
+    if not isinstance(selected, list):
+        return [], "大环合同缺少可读的已选断环键。"
+    if not exact_bonds and selected:
+        return [], "刚性大环合同不应包含已选断环键。"
+    if len(selected) != len(exact_bonds):
+        return [], "大环合同中的断环键编号与精确原子对数量不一致。"
+
+    summaries: list[dict[str, Any]] = []
+    for expected_pair, item in zip(exact_bonds, selected, strict=True):
+        if not isinstance(item, dict):
+            return [], "大环合同中的断环键说明格式无效。"
+        zero_based, error = _normalized_macrocycle_bonds(
+            [item.get("atom_indices_zero_based")]
+        )
+        if error or zero_based != [expected_pair]:
+            return [], "断环键说明与合同中的精确原子对不一致。"
+        one_based = item.get("atom_numbers_one_based")
+        if (
+            not isinstance(one_based, list)
+            or len(one_based) != 2
+            or one_based != [expected_pair[0] + 1, expected_pair[1] + 1]
+        ):
+            return [], "断环键的一基编号与零基原子索引不一致。"
+        labels = item.get("atom_labels")
+        if (
+            not isinstance(labels, list)
+            or len(labels) != 2
+            or not all(str(label or "").strip() for label in labels)
+        ):
+            return [], "断环键缺少可读的原子标签。"
+        clean_labels = [str(label).strip() for label in labels]
+        summaries.append(
+            {
+                "atom_numbers_one_based": list(one_based),
+                "atom_labels": clean_labels,
+                "display": (
+                    f"{clean_labels[0]}（原子 {one_based[0]}）"
+                    f"—{clean_labels[1]}（原子 {one_based[1]}）"
+                ),
+            }
+        )
+    return summaries, ""
+
+
+def _formal_macrocycle_preparation_match(
+    project_path: Path,
+    metadata: dict[str, Any],
+    *,
+    metadata_file: str,
+    metadata_path: Path,
+    ligand_file: str,
+    ligand_path: Path,
+    ligand_sha256: str,
+) -> dict[str, Any]:
+    """Require the complete review/contract/worker chain before formal attribution."""
+
+    issues: list[str] = []
+
+    def issue(message: str) -> None:
+        if message and message not in issues:
+            issues.append(message)
+
+    if str(metadata.get("status") or "") != "finished":
+        issue("准备 metadata 状态不是 finished。")
+    if metadata.get("published") is not True or metadata.get("output_non_empty") is not True:
+        issue("准备记录没有确认发布非空的 ligand.pdbqt。")
+
+    protocol_evidence = (
+        metadata.get("protocol_evidence")
+        if isinstance(metadata.get("protocol_evidence"), dict)
+        else {}
+    )
+    if protocol_evidence.get("ok") is not True:
+        issue("协议证据没有通过准备阶段校验。")
+    if str(protocol_evidence.get("mode") or "") != "reviewed":
+        issue("协议证据模式不是 reviewed。")
+    evidence_issues = protocol_evidence.get("issues")
+    if not isinstance(evidence_issues, list) or evidence_issues:
+        issue("协议证据仍包含问题，或缺少明确的空问题清单。")
+
+    contract = (
+        metadata.get("macrocycle_contract")
+        if isinstance(metadata.get("macrocycle_contract"), dict)
+        else {}
+    )
+    if contract.get("protocol_id") != "meeko_macrocycle":
+        issue("大环合同缺少正确的 protocol_id。")
+    if (
+        isinstance(contract.get("schema_version"), bool)
+        or contract.get("schema_version")
+        != MACROCYCLE_CONTRACT_SCHEMA_VERSION
+        or contract.get("analysis_version")
+        != MACROCYCLE_ANALYSIS_VERSION
+        or contract.get("meeko_api_profile")
+        != MACROCYCLE_MEEKO_API_PROFILE
+        or contract.get("hydrogen_policy")
+        != MACROCYCLE_HYDROGEN_POLICY
+    ):
+        issue("大环合同不是当前正式协议版本。")
+
+    contract_file = _macrocycle_relative_path(
+        metadata.get("macrocycle_contract_file")
+    )
+    evidence_contract_file = _macrocycle_relative_path(
+        protocol_evidence.get("contract_file")
+    )
+    if not contract_file:
+        issue("大环合同路径缺失或不是项目内相对路径。")
+    elif evidence_contract_file != contract_file:
+        issue("metadata 与协议证据记录的大环合同路径不一致。")
+
+    contract_sha256 = str(
+        metadata.get("macrocycle_contract_sha256") or ""
+    ).lower()
+    recorded_contract_sha256 = str(
+        protocol_evidence.get("contract_sha256") or ""
+    ).lower()
+    if not SHA256_PATTERN.fullmatch(contract_sha256):
+        issue("大环合同 SHA256 缺失或格式无效。")
+    elif recorded_contract_sha256 != contract_sha256:
+        issue("metadata 与协议证据记录的大环合同 SHA256 不一致。")
+
+    contract_path: Path | None = None
+    if contract_file:
+        contract_path, contract_path_error = _project_relative_existing_file(
+            project_path,
+            contract_file,
+            "MACROCYCLE_CONTRACT",
+            "大环准备合同",
+        )
+        if contract_path_error or contract_path is None:
+            issue("没有找到可核验的大环准备合同。")
+    if contract_path is not None:
+        persisted_contract, contract_read_error = _load_macrocycle_json_record(
+            contract_path
+        )
+        if contract_read_error:
+            issue(f"大环合同无效：{contract_read_error}")
+        elif persisted_contract != contract:
+            issue("metadata 中的大环合同与合同文件内容不一致。")
+        actual_contract_sha256 = _sha256_file(contract_path)
+        if actual_contract_sha256 != contract_sha256:
+            issue("大环合同文件 SHA256 与准备记录不一致。")
+        contract_snapshot = (
+            protocol_evidence.get("contract_snapshot")
+            if isinstance(protocol_evidence.get("contract_snapshot"), dict)
+            else {}
+        )
+        if (
+            _macrocycle_relative_path(
+                contract_snapshot.get("path")
+                or contract_snapshot.get("relative_path")
+            )
+            != contract_file
+            or str(contract_snapshot.get("sha256") or "").lower()
+            != actual_contract_sha256
+            or _macrocycle_snapshot_size(contract_snapshot)
+            != contract_path.stat().st_size
+        ):
+            issue("协议证据中的合同文件快照与磁盘文件不一致。")
+
+    evidence_file = _macrocycle_relative_path(
+        metadata.get("macrocycle_evidence_file")
+    )
+    recorded_evidence_file = _macrocycle_relative_path(
+        protocol_evidence.get("evidence_file")
+    )
+    if not evidence_file:
+        issue("大环 worker 证据路径缺失或不是项目内相对路径。")
+    elif recorded_evidence_file != evidence_file:
+        issue("metadata 与协议证据记录的 worker 证据路径不一致。")
+
+    evidence_path: Path | None = None
+    worker_evidence: dict[str, Any] = {}
+    evidence_sha256 = ""
+    if evidence_file:
+        evidence_path, evidence_path_error = _project_relative_existing_file(
+            project_path,
+            evidence_file,
+            "MACROCYCLE_EVIDENCE",
+            "大环 worker 证据",
+        )
+        if evidence_path_error or evidence_path is None:
+            issue("没有找到可核验的大环 worker 证据。")
+    if evidence_path is not None:
+        persisted_evidence, evidence_read_error = _load_macrocycle_json_record(
+            evidence_path
+        )
+        if evidence_read_error:
+            issue(f"大环 worker 证据无效：{evidence_read_error}")
+        else:
+            worker_evidence = persisted_evidence or {}
+            if worker_evidence != protocol_evidence.get("evidence"):
+                issue("metadata 中的 worker 证据与证据文件内容不一致。")
+        evidence_sha256 = _sha256_file(evidence_path)
+        evidence_snapshot = (
+            protocol_evidence.get("evidence_snapshot")
+            if isinstance(protocol_evidence.get("evidence_snapshot"), dict)
+            else {}
+        )
+        if (
+            _macrocycle_relative_path(
+                evidence_snapshot.get("path")
+                or evidence_snapshot.get("relative_path")
+            )
+            != evidence_file
+            or str(evidence_snapshot.get("sha256") or "").lower()
+            != evidence_sha256
+            or _macrocycle_snapshot_size(evidence_snapshot)
+            != evidence_path.stat().st_size
+        ):
+            issue("worker 证据文件与准备阶段记录的 SHA256/大小不一致。")
+
+    runtime_input = (
+        contract.get("runtime_input")
+        if isinstance(contract.get("runtime_input"), dict)
+        else {}
+    )
+    frozen_input_file = _macrocycle_relative_path(
+        metadata.get("macrocycle_input_file")
+    )
+    runtime_input_file = _macrocycle_relative_path(
+        runtime_input.get("relative_path")
+    )
+    if not frozen_input_file or runtime_input_file != frozen_input_file:
+        issue("大环合同没有绑定当前准备记录的冻结输入。")
+    frozen_input_sha256 = str(runtime_input.get("sha256") or "").lower()
+    try:
+        frozen_input_size = int(runtime_input.get("size_bytes"))
+    except (TypeError, ValueError):
+        frozen_input_size = -1
+    frozen_input_path: Path | None = None
+    if frozen_input_file:
+        frozen_input_path, frozen_input_error = _project_relative_existing_file(
+            project_path,
+            frozen_input_file,
+            "MACROCYCLE_FROZEN_INPUT",
+            "大环冻结输入",
+        )
+        if frozen_input_error or frozen_input_path is None:
+            issue("没有找到大环准备使用的冻结输入。")
+    if frozen_input_path is not None:
+        actual_frozen_sha256 = _sha256_file(frozen_input_path)
+        if (
+            not SHA256_PATTERN.fullmatch(frozen_input_sha256)
+            or actual_frozen_sha256 != frozen_input_sha256
+            or frozen_input_path.stat().st_size != frozen_input_size
+        ):
+            issue("大环冻结输入的 SHA256 或大小与合同不一致。")
+        input_snapshot = (
+            protocol_evidence.get("input_snapshot")
+            if isinstance(protocol_evidence.get("input_snapshot"), dict)
+            else {}
+        )
+        if (
+            _macrocycle_relative_path(
+                input_snapshot.get("path")
+                or input_snapshot.get("relative_path")
+            )
+            != frozen_input_file
+            or str(input_snapshot.get("sha256") or "").lower()
+            != actual_frozen_sha256
+            or _macrocycle_snapshot_size(input_snapshot)
+            != frozen_input_path.stat().st_size
+        ):
+            issue("协议证据中的冻结输入快照与磁盘文件不一致。")
+
+    review_input = (
+        contract.get("review_input")
+        if isinstance(contract.get("review_input"), dict)
+        else {}
+    )
+    review_input_file = _macrocycle_relative_path(
+        review_input.get("relative_path")
+    )
+    if (
+        not review_input_file
+        or str(review_input.get("sha256") or "").lower() != frozen_input_sha256
+        or _macrocycle_snapshot_size(review_input) != frozen_input_size
+    ):
+        issue("审查输入与准备阶段冻结输入的 SHA256/大小不一致。")
+    else:
+        review_input_path, review_input_error = _project_relative_existing_file(
+            project_path,
+            review_input_file,
+            "MACROCYCLE_REVIEW_INPUT",
+            "大环审查输入快照",
+        )
+        if review_input_error or review_input_path is None:
+            issue("没有找到大环审查输入快照。")
+        elif (
+            _sha256_file(review_input_path) != frozen_input_sha256
+            or review_input_path.stat().st_size != frozen_input_size
+        ):
+            issue("大环审查输入快照已变化。")
+
+    output = metadata.get("output") if isinstance(metadata.get("output"), dict) else {}
+    expected_output_path = _macrocycle_relative_path(output.get("path"))
+    recorded_output_sha256 = str(output.get("sha256") or "").lower()
+    try:
+        recorded_output_size = int(output.get("size"))
+    except (TypeError, ValueError):
+        recorded_output_size = -1
+    if expected_output_path != Path(ligand_file).as_posix():
+        issue("准备记录中的发布输出路径不是当前 ligand.pdbqt。")
+    if (
+        recorded_output_sha256 != ligand_sha256
+        or recorded_output_size != ligand_path.stat().st_size
+    ):
+        issue("发布输出的 SHA256 或大小与当前 ligand.pdbqt 不一致。")
+
+    candidate_output = (
+        protocol_evidence.get("candidate_output")
+        if isinstance(protocol_evidence.get("candidate_output"), dict)
+        else {}
+    )
+    if (
+        str(candidate_output.get("sha256") or "").lower() != ligand_sha256
+        or _macrocycle_snapshot_size(candidate_output) != ligand_path.stat().st_size
+    ):
+        issue("准备阶段候选输出快照与当前 ligand.pdbqt 不一致。")
+
+    if worker_evidence.get("ok") is not True:
+        issue("大环 worker 没有报告成功。")
+    worker_output_sha256 = str(worker_evidence.get("output_sha256") or "").lower()
+    try:
+        worker_output_size = int(worker_evidence.get("output_size_bytes"))
+    except (TypeError, ValueError):
+        worker_output_size = -1
+    if (
+        worker_output_sha256 != ligand_sha256
+        or worker_output_size != ligand_path.stat().st_size
+    ):
+        issue("worker 证据中的输出 SHA256 或大小与当前 ligand.pdbqt 不一致。")
+
+    review_id = str(contract.get("review_id") or "")
+    confirmation_sha256 = str(contract.get("confirmation_sha256") or "").lower()
+    candidate_id = str(contract.get("candidate_id") or "")
+    selection_mode = str(contract.get("selection_mode") or "")
+    atom_table_sha256 = str(contract.get("atom_table_sha256") or "").lower()
+    bond_topology_sha256 = str(
+        contract.get("bond_topology_sha256") or ""
+    ).lower()
+    bond_topology = contract.get("bond_topology")
+    atom_indexing = contract.get("atom_indexing")
+    tool_versions = (
+        contract.get("tool_versions")
+        if isinstance(contract.get("tool_versions"), dict)
+        else {}
+    )
+    if not review_id:
+        issue("大环合同缺少 review_id。")
+    if not SHA256_PATTERN.fullmatch(confirmation_sha256):
+        issue("大环合同缺少有效的 confirmation_sha256。")
+    if not SHA256_PATTERN.fullmatch(atom_table_sha256):
+        issue("大环合同缺少有效的原子表 SHA256。")
+    try:
+        topology_matches = (
+            isinstance(bond_topology, list)
+            and _macrocycle_canonical_json_sha256(bond_topology)
+            == bond_topology_sha256
+        )
+    except (TypeError, ValueError):
+        topology_matches = False
+    if (
+        not SHA256_PATTERN.fullmatch(bond_topology_sha256)
+        or not topology_matches
+    ):
+        issue("大环合同中的键拓扑或 SHA256 无效。")
+    if not isinstance(atom_indexing, dict):
+        issue("大环合同缺少显式氢与原始原子索引映射。")
+
+    for key, expected_value in (
+        ("review_id", review_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("candidate_id", candidate_id),
+        ("selection_mode", selection_mode),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+        ("hydrogen_policy", MACROCYCLE_HYDROGEN_POLICY),
+    ):
+        if worker_evidence.get(key) != expected_value:
+            issue(f"worker 证据中的 {key} 与大环合同不一致。")
+    if worker_evidence.get("atom_indexing") != atom_indexing:
+        issue("worker 的显式氢/原始原子索引映射与大环合同不一致。")
+    for key in ("rdkit", "meeko"):
+        expected_version = str(tool_versions.get(key) or "")
+        if (
+            not expected_version
+            or str(worker_evidence.get(f"{key}_version") or "")
+            != expected_version
+            or str(metadata.get(f"{key}_version") or "")
+            != expected_version
+        ):
+            issue(f"准备 metadata、worker 与合同中的 {key} 版本不一致。")
+
+    requested = metadata.get("options") if isinstance(metadata.get("options"), dict) else {}
+    requested_macrocycle = (
+        requested.get("macrocycle")
+        if isinstance(requested.get("macrocycle"), dict)
+        else {}
+    )
+    if (
+        requested_macrocycle.get("mode") != "reviewed"
+        or requested_macrocycle.get("review_id") != review_id
+        or str(requested_macrocycle.get("confirmation_sha256") or "").lower()
+        != confirmation_sha256
+    ):
+        issue("准备请求绑定的审查/确认标识与大环合同不一致。")
+
+    expected_evidence = (
+        metadata.get("macrocycle_expected_output_evidence")
+        if isinstance(metadata.get("macrocycle_expected_output_evidence"), dict)
+        else {}
+    )
+    for key, expected_value in (
+        ("selection_mode", selection_mode),
+        ("candidate_id", candidate_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+    ):
+        if expected_evidence.get(key) != expected_value:
+            issue(f"准备计划中的 {key} 与大环合同不一致。")
+
+    contract_bonds, contract_bonds_error = _normalized_macrocycle_bonds(
+        contract.get("exact_bonds")
+    )
+    expected_bonds, expected_bonds_error = _normalized_macrocycle_bonds(
+        expected_evidence.get("exact_bonds")
+    )
+    worker_expected_bonds, worker_expected_error = _normalized_macrocycle_bonds(
+        worker_evidence.get("expected_bonds")
+    )
+    worker_actual_bonds, worker_actual_error = _normalized_macrocycle_bonds(
+        worker_evidence.get("actual_bonds")
+    )
+    if any(
+        (
+            contract_bonds_error,
+            expected_bonds_error,
+            worker_expected_error,
+            worker_actual_error,
+        )
+    ):
+        issue("合同、准备计划或 worker 的断环键证据格式无效。")
+    elif not (
+        contract_bonds
+        == expected_bonds
+        == worker_expected_bonds
+        == worker_actual_bonds
+    ):
+        issue("合同、准备计划、worker 预期与实际断环键不一致。")
+
+    if selection_mode == "candidate":
+        if not candidate_id or not contract_bonds:
+            issue("候选断环模式缺少 candidate_id 或精确断环键。")
+    elif selection_mode == "rigid":
+        if candidate_id or contract_bonds:
+            issue("刚性大环模式不应包含 candidate_id 或断环键。")
+    else:
+        issue("大环选择模式不是 candidate 或 rigid。")
+
+    bond_summaries, bond_summary_error = _macrocycle_bond_summaries(
+        contract,
+        contract_bonds,
+    )
+    if bond_summary_error:
+        issue(bond_summary_error)
+
+    try:
+        worker_glue_count = int(worker_evidence.get("glue_pseudo_atom_count"))
+    except (TypeError, ValueError):
+        worker_glue_count = -1
+    recorded_inspection = (
+        protocol_evidence.get("inspection")
+        if isinstance(protocol_evidence.get("inspection"), dict)
+        else {}
+    )
+    recorded_glue_atoms = recorded_inspection.get("glue_pseudo_atoms")
+    recorded_glue_count = (
+        len(recorded_glue_atoms) if isinstance(recorded_glue_atoms, list) else -1
+    )
+    actual_glue_count = -1
+    actual_embedded_topology = False
+    try:
+        from dockstart_core.advanced_protocols import (  # noqa: PLC0415
+            inspect_meeko_ligand_pdbqt,
+        )
+
+        actual_inspection = inspect_meeko_ligand_pdbqt(ligand_path)
+        actual_glue_count = len(actual_inspection.get("glue_pseudo_atoms") or [])
+        actual_embedded_topology = (
+            actual_inspection.get("embedded_topology") is True
+        )
+    except Exception as exc:  # noqa: BLE001 - convert to an attribution issue.
+        _ = exc
+        issue("当前 ligand.pdbqt 无法复核 G* 证据。")
+    expected_glue_count = 2 * len(contract_bonds)
+    if not (
+        worker_glue_count
+        == recorded_glue_count
+        == actual_glue_count
+        == expected_glue_count
+    ):
+        issue("G* 胶合伪原子数量与正式断环键证据不一致。")
+    if recorded_inspection.get("embedded_topology") is not True or not actual_embedded_topology:
+        issue("当前 ligand.pdbqt 缺少可复核的 Meeko 拓扑映射。")
+
+    if issues:
+        return {
+            "matched": False,
+            "integrity": "rejected",
+            "reason": "正式大环准备记录未通过完整性校验：" + "；".join(issues),
+            "integrity_issues": issues,
+        }
+
+    meeko_version = str(
+        worker_evidence.get("meeko_version")
+        or metadata.get("meeko_version")
+        or tool_versions.get("meeko")
+        or ""
+    )
+    rdkit_version = str(
+        worker_evidence.get("rdkit_version")
+        or metadata.get("rdkit_version")
+        or tool_versions.get("rdkit")
+        or ""
+    )
+    return {
+        "matched": True,
+        "integrity": "formal_reviewed",
+        "evidence_level": "formal",
+        "formal_reviewed": True,
+        "metadata_file": Path(metadata_file).as_posix(),
+        "metadata_sha256": _sha256_file(metadata_path),
+        "ligand_sha256": ligand_sha256,
+        "prep_id": str(metadata.get("prep_id") or ""),
+        "method": str(metadata.get("method") or "meeko_macrocycle"),
+        "protocol": "meeko_macrocycle",
+        "protocol_mode": "reviewed",
+        "options": copy.deepcopy(metadata.get("options") or {}),
+        "protocol_evidence": {"ok": True, "mode": "reviewed", "issues": []},
+        "meeko_version": meeko_version,
+        "rdkit_version": rdkit_version,
+        "python_source": str(metadata.get("python_source") or "unknown"),
+        "macrocycle_summary": {
+            "status": "正式审查",
+            "selection_mode": selection_mode,
+            "review_id": review_id,
+            "candidate_id": candidate_id,
+            "break_bonds": bond_summaries,
+            "exact_bonds_zero_based": contract_bonds,
+            "glue_pseudo_atom_count": actual_glue_count,
+            "embedded_topology": True,
+            "hydrogen_policy": MACROCYCLE_HYDROGEN_POLICY,
+            "bond_topology_sha256": bond_topology_sha256,
+            "contract_sha256": contract_sha256,
+            "evidence_sha256": evidence_sha256,
+            "frozen_input_sha256": frozen_input_sha256,
+            "frozen_input_size_bytes": frozen_input_size,
+            "records": {
+                "contract_file": contract_file,
+                "evidence_file": evidence_file,
+                "frozen_input_file": frozen_input_file,
+            },
+            "meeko_version": meeko_version,
+            "rdkit_version": rdkit_version,
+        },
+    }
+
+
+def _matching_ligand_preparation(
+    project_path: Path,
+    project: DockStartProject,
+) -> dict[str, Any]:
     """Attribute the active ligand only when preparation evidence matches its bytes."""
 
     metadata_file = str(project.preparation.ligand.metadata_file or "")
@@ -4017,25 +5623,98 @@ def _matching_ligand_preparation(project_path: Path, project: DockStartProject) 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {"matched": False, "reason": "配体准备 metadata.json 无法解析。"}
+    if not isinstance(metadata, dict):
+        return {"matched": False, "reason": "配体准备 metadata.json 顶层不是对象。"}
     output = metadata.get("output") if isinstance(metadata.get("output"), dict) else {}
     expected = str(output.get("sha256") or "")
     actual = _sha256_file(ligand_path)
     if not re.fullmatch(r"[0-9a-fA-F]{64}", expected) or expected.lower() != actual.lower():
         return {"matched": False, "reason": "当前 ligand.pdbqt 与准备记录 SHA256 不一致。"}
-    return {
+
+    protocol = str(metadata.get("protocol") or "standard")
+    protocol_mode = str(metadata.get("protocol_mode") or "").strip().lower()
+    if protocol == "meeko_macrocycle" and protocol_mode == "reviewed":
+        return _formal_macrocycle_preparation_match(
+            project_path,
+            metadata,
+            metadata_file=metadata_file,
+            metadata_path=metadata_path,
+            ligand_file=ligand_file,
+            ligand_path=ligand_path,
+            ligand_sha256=actual,
+        )
+
+    result = {
         "matched": True,
         "metadata_file": Path(metadata_file).as_posix(),
         "metadata_sha256": _sha256_file(metadata_path),
         "ligand_sha256": actual,
         "prep_id": str(metadata.get("prep_id") or ""),
         "method": str(metadata.get("method") or "external_manual"),
-        "protocol": str(metadata.get("protocol") or "standard"),
+        "protocol": protocol,
         "options": copy.deepcopy(metadata.get("options") or {}),
         "protocol_evidence": copy.deepcopy(metadata.get("protocol_evidence") or {}),
         "meeko_version": str(metadata.get("meeko_version") or ""),
         "rdkit_version": str(metadata.get("rdkit_version") or ""),
         "python_source": str(metadata.get("python_source") or "unknown"),
     }
+    if protocol == "meeko_macrocycle":
+        legacy_evidence = (
+            metadata.get("protocol_evidence")
+            if isinstance(metadata.get("protocol_evidence"), dict)
+            else {}
+        )
+        inspection = (
+            legacy_evidence.get("inspection")
+            if isinstance(legacy_evidence.get("inspection"), dict)
+            else {}
+        )
+        glue_atoms = inspection.get("glue_pseudo_atoms")
+        macrocycle_options = (
+            (metadata.get("options") or {}).get("macrocycle")
+            if isinstance(metadata.get("options"), dict)
+            and isinstance((metadata.get("options") or {}).get("macrocycle"), dict)
+            else {}
+        )
+        result.update(
+            {
+                "integrity": "legacy_partial",
+                "evidence_level": "partial",
+                "formal_reviewed": False,
+                "protocol_mode": "legacy",
+                "protocol_evidence": {
+                    "ok": legacy_evidence.get("ok") is True,
+                    "mode": "legacy",
+                    "embedded_topology": inspection.get("embedded_topology")
+                    is True,
+                },
+                "macrocycle_summary": {
+                    "status": "旧版兼容（部分证据）",
+                    "selection_mode": str(
+                        macrocycle_options.get("mode") or "legacy"
+                    ),
+                    "review_id": "",
+                    "candidate_id": "",
+                    "break_bonds": [],
+                    "exact_bonds_zero_based": [],
+                    "glue_pseudo_atom_count": (
+                        len(glue_atoms) if isinstance(glue_atoms, list) else None
+                    ),
+                    "embedded_topology": inspection.get("embedded_topology")
+                    is True,
+                    "contract_sha256": "",
+                    "evidence_sha256": "",
+                    "frozen_input_sha256": "",
+                    "meeko_version": str(metadata.get("meeko_version") or ""),
+                    "rdkit_version": str(metadata.get("rdkit_version") or ""),
+                    "limitation": (
+                        "旧版 auto/rigid 记录没有人工确认合同和精确断环键证据，"
+                        "不能视为正式大环审查。"
+                    ),
+                },
+            }
+        )
+    return result
 
 
 def _build_vina_command(
@@ -4984,6 +6663,16 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
             if prerequisites.get("flex_file")
             else ""
         )
+        flexible_protocol_snapshot_file = (
+            Path(
+                "runs",
+                run_id,
+                "inputs",
+                "flexible_receptor_protocol.json",
+            ).as_posix()
+            if flex_snapshot_file
+            else ""
+        )
         scoring_protocol = str(prerequisites.get("scoring_protocol") or "vina")
         protocol_id = str(
             prerequisites.get("protocol_id")
@@ -5226,6 +6915,95 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
         shutil.copyfile(ligand_path, ligand_snapshot_path)
         if flex_snapshot_path is not None:
             shutil.copyfile(project_root / str(prerequisites["flex_file"]), flex_snapshot_path)
+        flexible_protocol_snapshot = None
+        if flexible_protocol_snapshot_file:
+            active_flexible_protocol = (
+                prerequisites.get("docking_protocol")
+                if isinstance(prerequisites.get("docking_protocol"), dict)
+                else {}
+            )
+            flexible_protocol_payload = {
+                "schema_version": 2,
+                "protocol_id": FLEXIBLE_RECEPTOR_PROTOCOL_ID,
+                "mode": "flexible",
+                "preparation_id": str(
+                    active_flexible_protocol.get("preparation_id") or ""
+                ),
+                "source_raw_file": str(
+                    active_flexible_protocol.get("source_raw_file") or ""
+                ),
+                "source_format": str(
+                    active_flexible_protocol.get("source_format") or ""
+                ),
+                "source_sha256": str(
+                    active_flexible_protocol.get("source_sha256") or ""
+                ),
+                "selected_residues": copy.deepcopy(
+                    active_flexible_protocol.get("selected_residues") or []
+                ),
+                "resolved_altlocs": copy.deepcopy(
+                    active_flexible_protocol.get("resolved_altlocs") or {}
+                ),
+                "receptor_controls": copy.deepcopy(
+                    active_flexible_protocol.get("receptor_controls") or {}
+                ),
+                "receptor_controls_sha256": str(
+                    active_flexible_protocol.get(
+                        "receptor_controls_sha256"
+                    )
+                    or ""
+                ),
+                "receptor_controls_fingerprint": copy.deepcopy(
+                    active_flexible_protocol.get(
+                        "receptor_controls_fingerprint"
+                    )
+                    or {}
+                ),
+                "atom_partition": copy.deepcopy(
+                    active_flexible_protocol.get("atom_partition") or {}
+                ),
+                "identity": copy.deepcopy(
+                    active_flexible_protocol.get("identity") or {}
+                ),
+                "prepared_output_sha256": copy.deepcopy(
+                    active_flexible_protocol.get("sha256") or {}
+                ),
+                **(
+                    {
+                        "analysis_contracts": {
+                            "flexible_movement": {
+                                "schema_id": FLEXIBLE_MOVEMENT_SCHEMA_ID,
+                                "method": FLEXIBLE_MOVEMENT_METHOD,
+                                "artifact_file": (
+                                    _flexible_movement_relative_path(
+                                        run_id
+                                    )
+                                ),
+                                "required_after_analysis": True,
+                                "exclude_flexible_ca_root": True,
+                            },
+                        },
+                    }
+                    if run_mode == "dock"
+                    else {}
+                ),
+            }
+            flexible_protocol_snapshot_path = (
+                project_root / flexible_protocol_snapshot_file
+            )
+            _atomic_write_text(
+                flexible_protocol_snapshot_path,
+                json.dumps(
+                    flexible_protocol_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
+            flexible_protocol_snapshot = _hash_snapshot(
+                flexible_protocol_snapshot_path,
+                flexible_protocol_snapshot_file,
+            )
         _atomic_write_text(
             config_snapshot_path,
             _build_run_snapshot_config(
@@ -5318,6 +7096,15 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                     "ligand": ligand_snapshot,
                     **({"flex": flex_snapshot} if flex_snapshot is not None else {}),
                 },
+                **(
+                    {
+                        "flexible_receptor_protocol": (
+                            flexible_protocol_snapshot
+                        )
+                    }
+                    if flexible_protocol_snapshot is not None
+                    else {}
+                ),
                 "config": {
                     "source_relative_path": Path(config_file).as_posix(),
                     "relative_path": config_snapshot_file,
@@ -5362,6 +7149,18 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                 **({"flex": flex_snapshot["sha256"]} if flex_snapshot is not None else {}),
                 **(
                     {
+                        "flexible_receptor_protocol": str(
+                            (
+                                flexible_protocol_snapshot or {}
+                            ).get("sha256")
+                            or ""
+                        )
+                    }
+                    if flexible_protocol_snapshot is not None
+                    else {}
+                ),
+                **(
+                    {
                         "maps_manifest": str((maps_manifest_snapshot or {}).get("sha256") or ""),
                         "maps": {
                             str(item.get("name") or ""): str(item.get("sha256") or "")
@@ -5395,7 +7194,7 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                     else "vina_maps"
                     if uses_vina_maps
                     else (
-                        "flexible_single"
+                        FLEXIBLE_RECEPTOR_PROTOCOL_ID
                         if str((prerequisites.get("docking_protocol") or {}).get("mode") or "").strip().lower()
                         == "flexible"
                         else "rigid_single"
@@ -5405,6 +7204,25 @@ def prepare_vina_run(project_dir: str) -> dict[str, Any]:
                 "grid_source": grid_source,
                 **({"stability": "beta"} if is_ad4zn else {}),
             },
+            **(
+                {
+                    "analysis_contracts": {
+                        "flexible_movement": {
+                            "schema_id": FLEXIBLE_MOVEMENT_SCHEMA_ID,
+                            "method": FLEXIBLE_MOVEMENT_METHOD,
+                            "artifact_file": Path(
+                                "runs",
+                                run_id,
+                                FLEXIBLE_MOVEMENT_FILENAME,
+                            ).as_posix(),
+                            "required_after_analysis": True,
+                            "exclude_flexible_ca_root": True,
+                        },
+                    },
+                }
+                if flex_snapshot is not None and run_mode == "dock"
+                else {}
+            ),
             "scoring_protocol": scoring_protocol,
             "scoring_function": "ad4" if scoring_protocol == "ad4_maps" else project.vina.scoring,
             "grid_source": grid_source,
@@ -6161,8 +7979,11 @@ def parse_vina_log_text(log_text: str) -> list[dict[str, Any]] | dict[str, Any]:
                 {
                     "mode": int(mode_text),
                     "affinity_kcal_mol": float(affinity_text),
+                    "affinity_text": affinity_text,
                     "rmsd_lb": float(rmsd_lb_text),
+                    "rmsd_lb_text": rmsd_lb_text,
                     "rmsd_ub": float(rmsd_ub_text),
+                    "rmsd_ub_text": rmsd_ub_text,
                 },
             )
             continue
@@ -6672,6 +8493,149 @@ def _read_file_snapshot_no_follow(path: Path) -> bytes:
         os.close(descriptor)
 
 
+RUN_EXECUTION_ARTIFACT_KEYS = (
+    "log",
+    "stdout",
+    "stderr",
+    "out_vina_raw",
+    "vina_binary_executed",
+    "vina_binary_observed_after_execution",
+)
+RUN_SCORE_ARTIFACT_KEYS = (
+    "scores",
+    "project_scores",
+    "flexible_movement",
+)
+RUN_REPORT_ARTIFACT_KEYS = ("report", "project_report")
+
+
+def _recorded_artifact_contract_present(
+    metadata: dict[str, Any],
+    keys: tuple[str, ...],
+) -> bool:
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    flat_hashes = (
+        metadata.get("artifact_sha256")
+        if isinstance(metadata.get("artifact_sha256"), dict)
+        else {}
+    )
+    return any(key in artifacts or key in flat_hashes for key in keys)
+
+
+def _read_verified_recorded_artifact(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+    *,
+    artifact_key: str,
+    expected_relative: str,
+    recorded_relative: str,
+    contract_keys: tuple[str, ...],
+    error_stem: str,
+    display_name: str,
+) -> tuple[bytes | None, dict[str, Any] | None]:
+    """Read a modern run artifact from one immutable, hash-verified snapshot.
+
+    Historical runs that predate the relevant artifact contract remain
+    readable. Once any peer record from the same contract exists, however,
+    the requested record is mandatory so deleting one entry cannot silently
+    downgrade a partially modern run to an unchecked read.
+    """
+
+    if not _recorded_artifact_contract_present(metadata, contract_keys):
+        return None, None
+
+    expected_relative = Path(expected_relative).as_posix()
+    recorded_relative = Path(recorded_relative).as_posix()
+    if recorded_relative != expected_relative:
+        return None, _error(
+            f"{error_stem}_PATH_MISMATCH",
+            f"{display_name} 不是本次 run 的固定证据路径，已拒绝读取。",
+            raw_error=(
+                f"expected={expected_relative}; actual={recorded_relative}"
+            ),
+            suggestion="请保留该 run 供审计，并从未修改的运行记录重新生成结果。",
+        )
+
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    artifact = (
+        artifacts.get(artifact_key)
+        if isinstance(artifacts.get(artifact_key), dict)
+        else {}
+    )
+    expected_sha256 = str(artifact.get("sha256") or "").lower()
+    expected_size = artifact.get("size_bytes")
+    artifact_relative = Path(
+        str(artifact.get("relative_path") or ""),
+    ).as_posix()
+    if (
+        SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+        or artifact_relative != expected_relative
+    ):
+        return None, _error(
+            f"{error_stem}_HASH_MISSING",
+            f"metadata 中缺少可信且路径一致的 {display_name} SHA256 与文件大小。",
+            raw_error=(
+                f"relative_path={artifact_relative}; "
+                f"sha256={expected_sha256}; size_bytes={expected_size!r}"
+            ),
+            suggestion="请保留该 run 供审计，并重新执行或重新解析新的运行记录。",
+        )
+
+    path, path_error = _project_relative_path_for_run(
+        project_path,
+        expected_relative,
+        error_stem,
+        display_name,
+    )
+    if path_error:
+        return None, path_error
+    assert path is not None
+
+    try:
+        snapshot = _read_file_snapshot_no_follow(path)
+    except FileNotFoundError:
+        return None, _error(
+            f"{error_stem}_NOT_FOUND",
+            f"没有找到完成时记录的 {display_name}。",
+            raw_error=str(path),
+            suggestion="请保留该 run 供审计，并重新执行新的运行记录。",
+        )
+    except OSError as exc:
+        return None, _error(
+            f"{error_stem}_READ_ERROR",
+            f"读取 {display_name} 完整性信息时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认文件可读，且没有被符号链接或其他程序替换。",
+        )
+
+    actual_sha256 = hashlib.sha256(snapshot).hexdigest().lower()
+    actual_size = len(snapshot)
+    if actual_sha256 != expected_sha256 or actual_size != expected_size:
+        return None, _error(
+            f"{error_stem}_HASH_MISMATCH",
+            f"{display_name} 与完成时记录的 SHA256 或文件大小不一致，已拒绝读取。",
+            raw_error=(
+                f"expected sha256={expected_sha256}, size={expected_size}; "
+                f"actual sha256={actual_sha256}, size={actual_size}; "
+                f"path={path}"
+            ),
+            suggestion="请保留该 run 供审计，并重新执行或重新解析新的运行记录。",
+        )
+    return snapshot, None
+
+
 def _read_multiple_ligand_result_artifact_snapshot(
     project_path: Path,
     run_id: str,
@@ -6919,6 +8883,876 @@ def _cross_check_multiple_ligand_scores(
     return None
 
 
+def _flexible_movement_relative_path(run_id: str) -> str:
+    return Path("runs", run_id, FLEXIBLE_MOVEMENT_FILENAME).as_posix()
+
+
+def _is_flexible_movement_run(metadata: dict[str, Any]) -> bool:
+    docking_protocol = (
+        metadata.get("docking_protocol")
+        if isinstance(metadata.get("docking_protocol"), dict)
+        else {}
+    )
+    return (
+        _metadata_run_mode(metadata) == "dock"
+        and (
+            bool(_flexible_movement_contract(metadata))
+            or str(docking_protocol.get("mode") or "").strip().lower()
+            == "flexible"
+        )
+    )
+
+
+def _flexible_movement_contract(metadata: dict[str, Any]) -> dict[str, Any]:
+    contracts = (
+        metadata.get("analysis_contracts")
+        if isinstance(metadata.get("analysis_contracts"), dict)
+        else {}
+    )
+    contract = contracts.get("flexible_movement")
+    return copy.deepcopy(contract) if isinstance(contract, dict) else {}
+
+
+def _frozen_flexible_movement_contract(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    snapshots = (
+        metadata.get("snapshots")
+        if isinstance(metadata.get("snapshots"), dict)
+        else {}
+    )
+    protocol_snapshot = (
+        snapshots.get("flexible_receptor_protocol")
+        if isinstance(
+            snapshots.get("flexible_receptor_protocol"),
+            dict,
+        )
+        else {}
+    )
+    recorded_file = str(protocol_snapshot.get("relative_path") or "")
+    if not recorded_file:
+        return {}, None
+    expected_file = Path(
+        "runs",
+        run_id,
+        "inputs",
+        "flexible_receptor_protocol.json",
+    ).as_posix()
+    protocol_path, path_error = _fixed_run_file(
+        project_path,
+        expected_relative_path=expected_file,
+        recorded_relative_path=recorded_file,
+        error_stem="FLEX_MOVEMENT_PROTOCOL_SNAPSHOT",
+        display_name="冻结柔性受体协议",
+    )
+    if path_error:
+        return {}, path_error
+    assert protocol_path is not None
+    try:
+        raw = protocol_path.read_bytes()
+        if not raw or len(raw) > 4 * 1024 * 1024:
+            raise ValueError(f"size_bytes={len(raw)}")
+        payload = json.loads(raw.decode("utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return {}, _error(
+            "FLEX_MOVEMENT_PROTOCOL_SNAPSHOT_INVALID",
+            "冻结柔性受体协议不是有效的严格 UTF-8 JSON。",
+            raw_error=str(exc),
+        )
+    if not isinstance(payload, dict):
+        return {}, _error(
+            "FLEX_MOVEMENT_PROTOCOL_SNAPSHOT_INVALID",
+            "冻结柔性受体协议顶层必须是 JSON 对象。",
+        )
+    input_sha256 = (
+        metadata.get("input_sha256")
+        if isinstance(metadata.get("input_sha256"), dict)
+        else {}
+    )
+    expected_sha256 = str(
+        input_sha256.get("flexible_receptor_protocol") or ""
+    ).lower()
+    snapshot_sha256 = str(protocol_snapshot.get("sha256") or "").lower()
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if (
+        not SHA256_PATTERN.fullmatch(expected_sha256)
+        or snapshot_sha256 != expected_sha256
+        or actual_sha256 != expected_sha256
+    ):
+        return {}, _error(
+            "FLEX_MOVEMENT_PROTOCOL_SNAPSHOT_HASH_MISMATCH",
+            "冻结柔性受体协议与运行时 SHA256 证据不一致。",
+            raw_error=(
+                f"input_sha256={expected_sha256 or '<empty>'}; "
+                f"snapshot_sha256={snapshot_sha256 or '<empty>'}; "
+                f"actual_sha256={actual_sha256}"
+            ),
+            suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+        )
+    if payload.get("schema_version") != 2:
+        return {}, None
+    contracts = (
+        payload.get("analysis_contracts")
+        if isinstance(payload.get("analysis_contracts"), dict)
+        else {}
+    )
+    contract = contracts.get("flexible_movement")
+    if not isinstance(contract, dict):
+        return {}, _error(
+            "FLEX_MOVEMENT_FROZEN_CONTRACT_MISSING",
+            "新版冻结柔性受体协议缺少运动分析合同。",
+        )
+    top_level_contract = _flexible_movement_contract(metadata)
+    if top_level_contract != contract:
+        return {}, _error(
+            "FLEX_MOVEMENT_CONTRACT_MISMATCH",
+            "metadata 中的运动分析合同与冻结柔性受体协议不一致。",
+            raw_error=(
+                f"metadata={top_level_contract}; frozen={contract}"
+            ),
+            suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+        )
+    return copy.deepcopy(contract), None
+
+
+def _fixed_run_file(
+    project_path: Path,
+    *,
+    expected_relative_path: str,
+    recorded_relative_path: str,
+    error_stem: str,
+    display_name: str,
+) -> tuple[Path | None, dict[str, Any] | None]:
+    expected = Path(expected_relative_path).as_posix()
+    recorded = (
+        Path(recorded_relative_path).as_posix()
+        if recorded_relative_path
+        else ""
+    )
+    if recorded != expected:
+        return None, _error(
+            f"{error_stem}_PATH_INVALID",
+            f"{display_name}没有绑定到本次 run 的固定路径，已拒绝读取。",
+            raw_error=f"expected={expected}; recorded={recorded or '<empty>'}",
+            suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+        )
+    candidate = project_path / Path(expected)
+    if candidate.is_symlink():
+        return None, _error(
+            f"{error_stem}_PATH_UNSAFE",
+            f"{display_name}不能是符号链接。",
+            raw_error=str(candidate),
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        expected_absolute = candidate.absolute()
+        resolved.relative_to(project_path)
+    except (OSError, ValueError) as exc:
+        return None, _error(
+            f"{error_stem}_NOT_FOUND",
+            f"没有找到本次 run 的{display_name}。",
+            raw_error=f"{candidate}: {exc}",
+            suggestion="请恢复冻结文件；无法恢复时重新准备、执行新的柔性对接。",
+        )
+    if resolved != expected_absolute or not resolved.is_file():
+        return None, _error(
+            f"{error_stem}_PATH_UNSAFE",
+            f"{display_name}被重解析到固定路径之外或不是普通文件。",
+            raw_error=f"expected={expected_absolute}; resolved={resolved}",
+        )
+    return resolved, None
+
+
+def _metadata_output_sha256(metadata: dict[str, Any]) -> str:
+    normalization = (
+        metadata.get("output_normalization")
+        if isinstance(metadata.get("output_normalization"), dict)
+        else {}
+    )
+    normalized_sha256 = str(
+        normalization.get("normalized_sha256") or ""
+    ).lower()
+    if SHA256_PATTERN.fullmatch(normalized_sha256):
+        return normalized_sha256
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    output_artifact = (
+        artifacts.get("out")
+        if isinstance(artifacts.get("out"), dict)
+        else {}
+    )
+    artifact_sha256 = str(output_artifact.get("sha256") or "").lower()
+    if SHA256_PATTERN.fullmatch(artifact_sha256):
+        return artifact_sha256
+    output_sha256 = (
+        metadata.get("output_sha256")
+        if isinstance(metadata.get("output_sha256"), dict)
+        else {}
+    )
+    legacy_sha256 = str(output_sha256.get("out") or "").lower()
+    return legacy_sha256 if SHA256_PATTERN.fullmatch(legacy_sha256) else ""
+
+
+def _flexible_movement_source_paths(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Path] | None, dict[str, Any] | None]:
+    expected_ligand = Path(
+        "runs",
+        run_id,
+        "inputs",
+        "ligand.pdbqt",
+    ).as_posix()
+    expected_flex = Path(
+        "runs",
+        run_id,
+        "inputs",
+        "flex.pdbqt",
+    ).as_posix()
+    expected_output = Path("runs", run_id, "out.pdbqt").as_posix()
+    paths: dict[str, Path] = {}
+    for role, expected, recorded, stem, label in (
+        (
+            "ligand_input",
+            expected_ligand,
+            _run_input_snapshot_file(metadata, "ligand", ""),
+            "FLEX_MOVEMENT_LIGAND_INPUT",
+            "冻结配体 PDBQT",
+        ),
+        (
+            "flex_input",
+            expected_flex,
+            _run_input_snapshot_file(metadata, "flex", ""),
+            "FLEX_MOVEMENT_FLEX_INPUT",
+            "冻结柔性侧链 PDBQT",
+        ),
+        (
+            "vina_output",
+            expected_output,
+            str(metadata.get("output_file") or ""),
+            "FLEX_MOVEMENT_OUTPUT",
+            "Vina 柔性对接输出 PDBQT",
+        ),
+    ):
+        path, error = _fixed_run_file(
+            project_path,
+            expected_relative_path=expected,
+            recorded_relative_path=recorded,
+            error_stem=stem,
+            display_name=label,
+        )
+        if error:
+            return None, error
+        assert path is not None
+        paths[role] = path
+    return paths, None
+
+
+def _validate_flexible_movement_source_hashes(
+    metadata: dict[str, Any],
+    movement: dict[str, Any],
+    paths: dict[str, Path],
+    *,
+    require_recorded_hashes: bool,
+) -> dict[str, Any] | None:
+    input_sha256 = (
+        metadata.get("input_sha256")
+        if isinstance(metadata.get("input_sha256"), dict)
+        else {}
+    )
+    snapshots = (
+        metadata.get("snapshots")
+        if isinstance(metadata.get("snapshots"), dict)
+        else {}
+    )
+    inputs = (
+        snapshots.get("inputs")
+        if isinstance(snapshots.get("inputs"), dict)
+        else {}
+    )
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    expected = {
+        "ligand_input": str(input_sha256.get("ligand") or "").lower(),
+        "flex_input": str(input_sha256.get("flex") or "").lower(),
+        "vina_output": _metadata_output_sha256(metadata),
+    }
+    records = {
+        "ligand_input": (
+            inputs.get("ligand")
+            if isinstance(inputs.get("ligand"), dict)
+            else {}
+        ),
+        "flex_input": (
+            inputs.get("flex")
+            if isinstance(inputs.get("flex"), dict)
+            else {}
+        ),
+        "vina_output": (
+            artifacts.get("out")
+            if isinstance(artifacts.get("out"), dict)
+            else {}
+        ),
+    }
+    evidence = (
+        movement.get("source_evidence")
+        if isinstance(movement.get("source_evidence"), dict)
+        else {}
+    )
+    for role, label in (
+        ("ligand_input", "冻结配体"),
+        ("flex_input", "冻结柔性侧链"),
+        ("vina_output", "Vina 输出"),
+    ):
+        recorded_sha256 = expected[role]
+        observed_sha256 = _sha256_file(paths[role]).lower()
+        item = (
+            evidence.get(role)
+            if isinstance(evidence.get(role), dict)
+            else {}
+        )
+        evidence_sha256 = str(item.get("sha256") or "").lower()
+        record = records[role]
+        record_sha256 = str(record.get("sha256") or "").lower()
+        try:
+            evidence_size = int(item.get("size_bytes"))
+        except (TypeError, ValueError):
+            evidence_size = -1
+        try:
+            record_size = int(record.get("size_bytes"))
+        except (TypeError, ValueError):
+            record_size = -1
+        if (
+            require_recorded_hashes
+            and (
+                not SHA256_PATTERN.fullmatch(recorded_sha256)
+                or record_sha256 != recorded_sha256
+                or record_size != paths[role].stat().st_size
+            )
+        ):
+            return _error(
+                "FLEX_MOVEMENT_SOURCE_HASH_MISSING",
+                f"run metadata 缺少可信的{label} SHA256 / 大小记录，无法发布运动分析。",
+                raw_error=(
+                    f"role={role}; input_or_output_sha256="
+                    f"{recorded_sha256 or '<empty>'}; "
+                    f"artifact_sha256={record_sha256 or '<empty>'}; "
+                    f"artifact_size={record_size}; "
+                    f"actual_size={paths[role].stat().st_size}"
+                ),
+                suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+            )
+        if (
+            SHA256_PATTERN.fullmatch(recorded_sha256)
+            and observed_sha256 != recorded_sha256
+        ):
+            return _error(
+                "FLEX_MOVEMENT_SOURCE_HASH_MISMATCH",
+                f"{label}与运行时冻结证据不一致，已拒绝运动分析。",
+                raw_error=(
+                    f"role={role}; expected={recorded_sha256}; "
+                    f"actual={observed_sha256}"
+                ),
+                suggestion="请勿覆盖已完成 run 的输入或输出；重新准备并执行新的 run。",
+            )
+        if (
+            evidence_sha256 != observed_sha256
+            or evidence_size != paths[role].stat().st_size
+        ):
+            return _error(
+                "FLEX_MOVEMENT_SOURCE_EVIDENCE_MISMATCH",
+                f"运动分析记录中的{label}字节证据与文件不一致。",
+                raw_error=(
+                    f"role={role}; evidence_sha256={evidence_sha256}; "
+                    f"actual_sha256={observed_sha256}; "
+                    f"evidence_size={evidence_size}; "
+                    f"actual_size={paths[role].stat().st_size}"
+                ),
+            )
+    return None
+
+
+def _validate_flexible_static_run_snapshots(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+    *,
+    require_recorded_hashes: bool,
+) -> dict[str, Any] | None:
+    snapshots = (
+        metadata.get("snapshots")
+        if isinstance(metadata.get("snapshots"), dict)
+        else {}
+    )
+    inputs = (
+        snapshots.get("inputs")
+        if isinstance(snapshots.get("inputs"), dict)
+        else {}
+    )
+    config_record = (
+        snapshots.get("config")
+        if isinstance(snapshots.get("config"), dict)
+        else {}
+    )
+    input_sha256 = (
+        metadata.get("input_sha256")
+        if isinstance(metadata.get("input_sha256"), dict)
+        else {}
+    )
+    for key, expected_file, record, expected_hash, label in (
+        (
+            "receptor",
+            Path(
+                "runs",
+                run_id,
+                "inputs",
+                "receptor.pdbqt",
+            ).as_posix(),
+            (
+                inputs.get("receptor")
+                if isinstance(inputs.get("receptor"), dict)
+                else {}
+            ),
+            str(input_sha256.get("receptor") or "").lower(),
+            "冻结刚性受体",
+        ),
+        (
+            "config",
+            Path(
+                "runs",
+                run_id,
+                "config_snapshot.txt",
+            ).as_posix(),
+            config_record,
+            str(input_sha256.get("config") or "").lower(),
+            "冻结 Vina 配置",
+        ),
+    ):
+        recorded_file = str(
+            record.get("relative_path")
+            or record.get("snapshot_file")
+            or ""
+        )
+        path, path_error = _fixed_run_file(
+            project_path,
+            expected_relative_path=expected_file,
+            recorded_relative_path=recorded_file,
+            error_stem=f"FLEX_MOVEMENT_{key.upper()}_SNAPSHOT",
+            display_name=label,
+        )
+        if path_error:
+            return path_error
+        assert path is not None
+        record_sha256 = str(record.get("sha256") or "").lower()
+        actual_sha256 = _sha256_file(path).lower()
+        try:
+            record_size = int(record.get("size_bytes"))
+        except (TypeError, ValueError):
+            record_size = -1
+        if (
+            require_recorded_hashes
+            and (
+                not SHA256_PATTERN.fullmatch(expected_hash)
+                or record_sha256 != expected_hash
+                or record_size != path.stat().st_size
+            )
+        ):
+            return _error(
+                "FLEX_MOVEMENT_STATIC_SNAPSHOT_RECORD_INVALID",
+                f"{label}的路径、SHA256 或大小记录不完整。",
+                raw_error=(
+                    f"key={key}; input_sha256={expected_hash}; "
+                    f"snapshot_sha256={record_sha256}; "
+                    f"snapshot_size={record_size}; "
+                    f"actual_size={path.stat().st_size}"
+                ),
+            )
+        if (
+            SHA256_PATTERN.fullmatch(expected_hash)
+            and actual_sha256 != expected_hash
+        ):
+            return _error(
+                "FLEX_MOVEMENT_STATIC_SNAPSHOT_HASH_MISMATCH",
+                f"{label}在运行后与冻结 SHA256 不一致。",
+                raw_error=(
+                    f"key={key}; expected={expected_hash}; "
+                    f"actual={actual_sha256}"
+                ),
+                suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+            )
+    return None
+
+
+def _compute_flexible_movement_for_run(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+    scores: list[dict[str, Any]],
+    *,
+    require_recorded_hashes: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    top_level_contract = _flexible_movement_contract(metadata)
+    frozen_contract, frozen_contract_error = (
+        _frozen_flexible_movement_contract(
+            project_path,
+            run_id,
+            metadata,
+        )
+    )
+    if frozen_contract_error:
+        return None, frozen_contract_error
+    if top_level_contract and not frozen_contract:
+        return None, _error(
+            "FLEX_MOVEMENT_CONTRACT_NOT_FROZEN",
+            "运动分析合同只存在于可变 metadata，未冻结进柔性受体协议快照。",
+            suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+        )
+    contract = frozen_contract or top_level_contract
+    if contract:
+        expected_contract = {
+            "schema_id": FLEXIBLE_MOVEMENT_SCHEMA_ID,
+            "method": FLEXIBLE_MOVEMENT_METHOD,
+            "artifact_file": _flexible_movement_relative_path(run_id),
+            "required_after_analysis": True,
+            "exclude_flexible_ca_root": True,
+        }
+        if any(
+            contract.get(key) != value
+            for key, value in expected_contract.items()
+        ):
+            return None, _error(
+                "FLEX_MOVEMENT_CONTRACT_INVALID",
+                "run metadata 中的柔性运动分析合同无效。",
+                raw_error=(
+                    f"expected={expected_contract}; recorded={contract}"
+                ),
+                suggestion="请保留该 run 供审计，并重新准备、执行新的柔性对接。",
+            )
+        require_recorded_hashes = True
+    static_snapshot_error = _validate_flexible_static_run_snapshots(
+        project_path,
+        run_id,
+        metadata,
+        require_recorded_hashes=require_recorded_hashes,
+    )
+    if static_snapshot_error:
+        return None, static_snapshot_error
+    paths, path_error = _flexible_movement_source_paths(
+        project_path,
+        run_id,
+        metadata,
+    )
+    if path_error:
+        return None, path_error
+    assert paths is not None
+    movement = analyze_flexible_movement(
+        paths["ligand_input"],
+        paths["flex_input"],
+        paths["vina_output"],
+        exclude_flexible_ca=True,
+    )
+    if not movement.get("ok"):
+        return None, movement
+    if (
+        movement.get("schema_id") != FLEXIBLE_MOVEMENT_SCHEMA_ID
+        or movement.get("method") != FLEXIBLE_MOVEMENT_METHOD
+        or movement.get("alignment_applied") is not False
+    ):
+        return None, _error(
+            "FLEX_MOVEMENT_SCHEMA_INVALID",
+            "柔性运动分析器返回了未知 schema、方法或对齐语义。",
+            raw_error=(
+                f"schema_id={movement.get('schema_id')}; "
+                f"method={movement.get('method')}; "
+                f"alignment_applied={movement.get('alignment_applied')}"
+            ),
+        )
+    source_error = _validate_flexible_movement_source_hashes(
+        metadata,
+        movement,
+        paths,
+        require_recorded_hashes=require_recorded_hashes,
+    )
+    if source_error:
+        return None, source_error
+    movement_modes = [
+        int(item.get("mode"))
+        for item in movement.get("modes", [])
+        if isinstance(item, dict) and isinstance(item.get("mode"), int)
+    ]
+    score_modes = [
+        int(item.get("mode"))
+        for item in scores
+        if isinstance(item, dict) and isinstance(item.get("mode"), int)
+    ]
+    if movement_modes != score_modes:
+        return None, _error(
+            "FLEX_MOVEMENT_SCORE_MODE_MISMATCH",
+            "柔性运动分析的构象编号与 scores.csv / Vina 日志不一致。",
+            raw_error=(
+                f"movement_modes={movement_modes}; score_modes={score_modes}"
+            ),
+            suggestion="请保留该 run 供审计，并重新执行新的柔性对接。",
+        )
+    return movement, None
+
+
+def _movement_artifact_required(metadata: dict[str, Any]) -> bool:
+    contract = _flexible_movement_contract(metadata)
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    return bool(
+        contract.get("required_after_analysis") is True
+        or metadata.get("flexible_movement_file")
+        or isinstance(metadata.get("flexible_movement"), dict)
+        or isinstance(artifacts.get("flexible_movement"), dict)
+    )
+
+
+def _load_flexible_movement_artifact(
+    project_path: Path,
+    run_id: str,
+    metadata: dict[str, Any],
+    scores: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not _is_flexible_movement_run(metadata):
+        return {
+            "ok": True,
+            "applicable": False,
+            "available": False,
+            "legacy_partial": False,
+            "flexible_movement": None,
+            "flexible_movement_file": "",
+            "warning": "",
+            "error": None,
+        }
+
+    expected_file = _flexible_movement_relative_path(run_id)
+    frozen_contract, frozen_contract_error = (
+        _frozen_flexible_movement_contract(
+            project_path,
+            run_id,
+            metadata,
+        )
+    )
+    if frozen_contract_error:
+        return frozen_contract_error
+    required = bool(frozen_contract) or _movement_artifact_required(metadata)
+    recorded_file = str(metadata.get("flexible_movement_file") or "")
+    if not recorded_file:
+        if required:
+            return _error(
+                "FLEX_MOVEMENT_ARTIFACT_MISSING",
+                "本次柔性对接要求运动分析证据，但 metadata 未记录 flexible_movement.json。",
+                suggestion="请重新点击“解析结果”；若冻结文件已损坏，请重新执行新的 run。",
+            )
+        return {
+            "ok": True,
+            "applicable": True,
+            "available": False,
+            "legacy_partial": True,
+            "flexible_movement": None,
+            "flexible_movement_file": "",
+            "warning": (
+                "该柔性对接来自旧版运行记录，未保存配体与柔性侧链的分离运动分析；"
+                "评分仍可读取，但几何证据不完整。"
+            ),
+            "error": None,
+        }
+
+    movement_path, path_error = _fixed_run_file(
+        project_path,
+        expected_relative_path=expected_file,
+        recorded_relative_path=recorded_file,
+        error_stem="FLEX_MOVEMENT_ARTIFACT",
+        display_name=FLEXIBLE_MOVEMENT_FILENAME,
+    )
+    if path_error:
+        return path_error
+    assert movement_path is not None
+    try:
+        size_bytes = movement_path.stat().st_size
+        if size_bytes <= 0 or size_bytes > FLEXIBLE_MOVEMENT_MAX_BYTES:
+            raise ValueError(
+                f"size_bytes={size_bytes}; max={FLEXIBLE_MOVEMENT_MAX_BYTES}"
+            )
+        raw = movement_path.read_bytes()
+        text = raw.decode("utf-8", errors="strict")
+        stored = json.loads(text)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_INVALID",
+            "flexible_movement.json 为空、过大或不是有效的严格 UTF-8 JSON。",
+            raw_error=str(exc),
+            suggestion="请重新点击“解析结果”；若问题仍存在，请重新执行新的 run。",
+        )
+    if not isinstance(stored, dict):
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_INVALID",
+            "flexible_movement.json 顶层必须是 JSON 对象。",
+        )
+
+    artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    artifact = (
+        artifacts.get("flexible_movement")
+        if isinstance(artifacts.get("flexible_movement"), dict)
+        else {}
+    )
+    expected_sha256 = str(artifact.get("sha256") or "").lower()
+    expected_size = artifact.get("size_bytes")
+    artifact_sha256 = (
+        metadata.get("artifact_sha256")
+        if isinstance(metadata.get("artifact_sha256"), dict)
+        else {}
+    )
+    indexed_sha256 = str(
+        artifact_sha256.get("flexible_movement") or ""
+    ).lower()
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if (
+        not SHA256_PATTERN.fullmatch(expected_sha256)
+        or indexed_sha256 != expected_sha256
+        or expected_size != len(raw)
+        or actual_sha256 != expected_sha256
+    ):
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_HASH_MISMATCH",
+            "flexible_movement.json 与 metadata 中冻结的 SHA256 / 大小不一致。",
+            raw_error=(
+                f"expected_sha256={expected_sha256 or '<empty>'}; "
+                f"indexed_sha256={indexed_sha256 or '<empty>'}; "
+                f"actual_sha256={actual_sha256}; "
+                f"expected_size={expected_size}; actual_size={len(raw)}"
+            ),
+            suggestion="请保留该 run 供审计；不要手工修改已发布的分析证据。",
+        )
+    try:
+        canonical = canonical_flexible_movement_json(stored)
+    except (TypeError, ValueError) as exc:
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_INVALID",
+            "flexible_movement.json 含有不能规范化的数值或结构。",
+            raw_error=str(exc),
+        )
+    if canonical != text:
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_NOT_CANONICAL",
+            "flexible_movement.json 不是 DockStart 发布的规范 JSON 字节表示。",
+            suggestion="请重新点击“解析结果”，不要手工重排或改写该证据文件。",
+        )
+
+    recomputed, compute_error = _compute_flexible_movement_for_run(
+        project_path,
+        run_id,
+        metadata,
+        scores,
+        require_recorded_hashes=bool(_flexible_movement_contract(metadata)),
+    )
+    if compute_error:
+        return compute_error
+    assert recomputed is not None
+    if canonical_flexible_movement_json(recomputed) != canonical:
+        return _error(
+            "FLEX_MOVEMENT_ARTIFACT_RECOMPUTE_MISMATCH",
+            "flexible_movement.json 与冻结输入和输出重新计算的结果不一致。",
+            suggestion="请保留该 run 供审计，并重新执行新的柔性对接。",
+        )
+
+    summary = (
+        metadata.get("flexible_movement")
+        if isinstance(metadata.get("flexible_movement"), dict)
+        else {}
+    )
+    expected_summary = {
+        "schema_id": stored.get("schema_id"),
+        "method": stored.get("method"),
+        "mode_count": stored.get("mode_count"),
+        "alignment_applied": stored.get("alignment_applied"),
+        "exclude_flexible_ca_root": stored.get(
+            "exclude_flexible_ca_root"
+        ),
+    }
+    if any(
+        summary.get(key) != value
+        for key, value in expected_summary.items()
+    ):
+        return _error(
+            "FLEX_MOVEMENT_METADATA_MISMATCH",
+            "metadata 中的柔性运动摘要与 flexible_movement.json 不一致。",
+            raw_error=(
+                f"metadata={summary}; artifact_summary={expected_summary}"
+            ),
+        )
+    return {
+        "ok": True,
+        "applicable": True,
+        "available": True,
+        "legacy_partial": False,
+        "flexible_movement": stored,
+        "flexible_movement_file": expected_file,
+        "warning": "",
+        "error": None,
+    }
+
+
+def load_flexible_movement(project_dir: str, run_id: str) -> dict[str, Any]:
+    metadata, error = _read_run_metadata(project_dir, run_id)
+    if error:
+        return error
+    assert metadata is not None
+    if not _is_flexible_movement_run(metadata):
+        return _error(
+            "FLEX_MOVEMENT_NOT_APPLICABLE",
+            "该 run 不是有限柔性侧链对接，不能读取柔性运动分析。",
+        )
+    scores_payload = load_scores_csv(project_dir, run_id)
+    if not scores_payload.get("ok"):
+        return scores_payload
+    return {
+        "ok": True,
+        "project_dir": str(Path(project_dir).expanduser().resolve()),
+        "project": scores_payload.get("project"),
+        "run_id": run_id,
+        "metadata": scores_payload.get("metadata"),
+        "flexible_movement": scores_payload.get("flexible_movement"),
+        "flexible_movement_file": scores_payload.get(
+            "flexible_movement_file",
+            "",
+        ),
+        "available": scores_payload.get(
+            "flexible_movement_available",
+            False,
+        ),
+        "legacy_partial": scores_payload.get(
+            "flexible_movement_legacy_partial",
+            False,
+        ),
+        "warning": scores_payload.get("flexible_movement_warning", ""),
+        "message": (
+            "柔性运动分析已读取。"
+            if scores_payload.get("flexible_movement_available")
+            else "旧版柔性 run 没有保存运动分析，当前仅能读取评分。"
+        ),
+        "error": None,
+    }
+
+
 def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
     metadata, error = _read_run_metadata(project_dir, run_id)
     if error:
@@ -6952,6 +9786,29 @@ def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
         if artifact_error:
             return artifact_error
         assert scores_snapshot is not None
+    elif _recorded_artifact_contract_present(
+        metadata,
+        RUN_SCORE_ARTIFACT_KEYS,
+    ):
+        expected_scores_file = Path(
+            "runs",
+            run_id,
+            "scores.csv",
+        ).as_posix()
+        scores_snapshot, artifact_error = _read_verified_recorded_artifact(
+            project_path,
+            run_id,
+            metadata,
+            artifact_key="scores",
+            expected_relative=expected_scores_file,
+            recorded_relative=scores_file,
+            contract_keys=RUN_SCORE_ARTIFACT_KEYS,
+            error_stem="SCORES_CSV_ARTIFACT",
+            display_name="scores.csv",
+        )
+        if artifact_error:
+            return artifact_error
+        assert scores_snapshot is not None
     else:
         if not scores_path.exists():
             return _error(
@@ -6976,7 +9833,7 @@ def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
             )
 
     try:
-        if is_multiple_ligand:
+        if scores_snapshot is not None:
             assert scores_snapshot is not None
             handle = io.StringIO(
                 scores_snapshot.decode("utf-8"),
@@ -7046,6 +9903,15 @@ def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
         if score_mismatch:
             return score_mismatch
 
+    flexible_movement = _load_flexible_movement_artifact(
+        project_path,
+        run_id,
+        metadata,
+        scores,
+    )
+    if not flexible_movement.get("ok"):
+        return flexible_movement
+
     loaded = load_project(project_dir)
     project = loaded.get("project") if loaded.get("ok") else None
     return {
@@ -7059,6 +9925,20 @@ def load_scores_csv(project_dir: str, run_id: str) -> dict[str, Any]:
         "project_scores_file": str(metadata.get("project_scores_file") or _project_scores_file(metadata)),
         "best_affinity": metadata.get("best_affinity", scores[0]["affinity_kcal_mol"]),
         "analyzed_at": metadata.get("analyzed_at", ""),
+        "flexible_movement": flexible_movement.get("flexible_movement"),
+        "flexible_movement_file": flexible_movement.get(
+            "flexible_movement_file",
+            "",
+        ),
+        "flexible_movement_available": flexible_movement.get(
+            "available",
+            False,
+        ),
+        "flexible_movement_legacy_partial": flexible_movement.get(
+            "legacy_partial",
+            False,
+        ),
+        "flexible_movement_warning": flexible_movement.get("warning", ""),
         "message": (
             "多配体共同对接联合评分表已读取。"
             if _metadata_protocol_id(metadata) == MULTIPLE_LIGAND_PROTOCOL_ID
@@ -7761,10 +10641,141 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
     if _metadata_run_mode(metadata) != "dock":
         return _analyze_vina_evaluation(project_dir, run_id, metadata)
 
-    parsed_scores = parse_vina_log_file(project_dir, run_id)
+    project_path = Path(project_dir).expanduser().resolve()
+    expected_log_file = Path("runs", run_id, "log.txt").as_posix()
+    if _recorded_artifact_contract_present(
+        metadata,
+        RUN_EXECUTION_ARTIFACT_KEYS,
+    ):
+        log_snapshot, log_integrity_error = (
+            _read_verified_recorded_artifact(
+                project_path,
+                run_id,
+                metadata,
+                artifact_key="log",
+                expected_relative=expected_log_file,
+                recorded_relative=str(
+                    metadata.get("log_file") or expected_log_file
+                ),
+                contract_keys=RUN_EXECUTION_ARTIFACT_KEYS,
+                error_stem="RUN_LOG_ARTIFACT",
+                display_name="log.txt",
+            )
+        )
+        if log_integrity_error:
+            return log_integrity_error
+        assert log_snapshot is not None
+        try:
+            parsed_scores = parse_vina_log_text(
+                log_snapshot.decode("utf-8"),
+            )
+        except UnicodeDecodeError as exc:
+            return _error(
+                "VINA_LOG_READ_ERROR",
+                "读取 log.txt 时发生编码错误。",
+                raw_error=str(exc),
+                suggestion="请保留该 run 供审计，并重新执行新的运行记录。",
+            )
+    else:
+        parsed_scores = parse_vina_log_file(project_dir, run_id)
     if _is_error_payload(parsed_scores):
         return parsed_scores
     assert isinstance(parsed_scores, list)
+
+    hydrated_result_scores: list[dict[str, Any]] | None = None
+    if _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID:
+        # Import at runtime to avoid the project/hydrated_run module cycle.
+        from dockstart_core.hydrated_run import load_hydrated_results
+
+        hydrated_results = load_hydrated_results(project_dir, run_id)
+        if not hydrated_results.get("ok"):
+            return hydrated_results
+        hydrated_result_scores = [
+            copy.deepcopy(item)
+            for item in hydrated_results.get("scores", [])
+            if isinstance(item, dict)
+        ]
+        if not hydrated_result_scores:
+            return _error(
+                "HYDRATED_RESULT_SCORES_EMPTY",
+                "水合对接结果没有可与实际 PDBQT 构象绑定的评分记录。",
+                suggestion="请保留该 run 供审计，并重新执行新的水合对接。",
+            )
+
+    movement: dict[str, Any] | None = None
+    movement_file = ""
+    movement_text = ""
+    movement_sha256 = ""
+    movement_path: Path | None = None
+    movement_snapshot: dict[str, Any] | None = None
+    if _is_flexible_movement_run(metadata):
+        movement, movement_error = _compute_flexible_movement_for_run(
+            project_path,
+            run_id,
+            metadata,
+            parsed_scores,
+            require_recorded_hashes=bool(
+                _flexible_movement_contract(metadata)
+            ),
+        )
+        if movement_error:
+            return movement_error
+        assert movement is not None
+        movement_file = _flexible_movement_relative_path(run_id)
+        movement_text = canonical_flexible_movement_json(movement)
+        movement_bytes = movement_text.encode("utf-8")
+        if len(movement_bytes) > FLEXIBLE_MOVEMENT_MAX_BYTES:
+            return _error(
+                "FLEX_MOVEMENT_ARTIFACT_TOO_LARGE",
+                "柔性运动分析超过 64 MB 安全上限，未发布结果。",
+                raw_error=(
+                    f"size_bytes={len(movement_bytes)}; "
+                    f"max={FLEXIBLE_MOVEMENT_MAX_BYTES}"
+                ),
+                suggestion="请减少 num_modes 或柔性残基数量后创建新的 run。",
+            )
+        movement_sha256 = hashlib.sha256(movement_bytes).hexdigest()
+        existing_artifacts = (
+            metadata.get("artifacts")
+            if isinstance(metadata.get("artifacts"), dict)
+            else {}
+        )
+        existing_movement_artifact = (
+            existing_artifacts.get("flexible_movement")
+            if isinstance(
+                existing_artifacts.get("flexible_movement"),
+                dict,
+            )
+            else {}
+        )
+        existing_movement_sha256 = str(
+            existing_movement_artifact.get("sha256") or ""
+        ).lower()
+        if (
+            SHA256_PATTERN.fullmatch(existing_movement_sha256)
+            and existing_movement_sha256 != movement_sha256
+        ):
+            return _error(
+                "FLEX_MOVEMENT_REANALYSIS_CHANGED",
+                "相同冻结输入与输出的柔性运动重算字节发生变化，已拒绝覆盖历史证据。",
+                raw_error=(
+                    f"recorded={existing_movement_sha256}; "
+                    f"recomputed={movement_sha256}"
+                ),
+                suggestion="请保留该 run 供审计；算法升级应创建新的 run 或新 schema。",
+            )
+        movement_path, movement_path_issue = _safe_fixed_run_artifact(
+            project_path,
+            run_id,
+            FLEXIBLE_MOVEMENT_FILENAME,
+        )
+        if movement_path_issue:
+            return _error(
+                "FLEX_MOVEMENT_ARTIFACT_PATH_UNSAFE",
+                "无法在本次 run 的固定路径发布 flexible_movement.json。",
+                raw_error=movement_path_issue,
+            )
+        assert movement_path is not None
 
     exported = export_scores_csv(project_dir, run_id, parsed_scores)
     if not exported.get("ok"):
@@ -7772,14 +10783,61 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
 
     analyzed_at = _now_iso()
     best_affinity = parsed_scores[0]["affinity_kcal_mol"]
-    project_path = Path(project_dir).expanduser().resolve()
+    if movement is not None:
+        assert movement_path is not None
+        try:
+            _atomic_write_text(movement_path, movement_text)
+        except OSError as exc:
+            return _error(
+                "FLEX_MOVEMENT_ARTIFACT_WRITE_ERROR",
+                "写入 flexible_movement.json 时发生错误。",
+                raw_error=str(exc),
+                suggestion="请确认 run 目录可写后重新解析结果。",
+            )
+        movement_snapshot = _hash_snapshot(
+            movement_path,
+            movement_file,
+        )
+        if (
+            movement_snapshot.get("sha256") != movement_sha256
+            or movement_snapshot.get("size_bytes")
+            != len(movement_bytes)
+        ):
+            return _error(
+                "FLEX_MOVEMENT_ARTIFACT_WRITE_VERIFY_ERROR",
+                "flexible_movement.json 写入后的字节校验失败。",
+                raw_error=str(movement_snapshot),
+            )
     scores_artifacts = {
         "scores": _hash_snapshot(project_path / exported["scores_file"], exported["scores_file"]),
         "project_scores": _hash_snapshot(
             project_path / exported["project_scores_file"],
             exported["project_scores_file"],
         ),
+        **(
+            {"flexible_movement": movement_snapshot}
+            if movement_snapshot is not None
+            else {}
+        ),
     }
+    for artifact_key, artifact in scores_artifacts.items():
+        if (
+            artifact.get("exists") is not True
+            or isinstance(artifact.get("size_bytes"), bool)
+            or not isinstance(artifact.get("size_bytes"), int)
+            or int(artifact.get("size_bytes") or 0) <= 0
+            or SHA256_PATTERN.fullmatch(
+                str(artifact.get("sha256") or "").lower()
+            )
+            is None
+        ):
+            return _error(
+                "SCORES_ARTIFACT_WRITE_VERIFY_ERROR",
+                "评分或柔性运动结果写入后未通过文件完整性校验。",
+                raw_error=f"{artifact_key}={artifact}",
+                suggestion="请确认项目目录可写后重新解析该 run。",
+            )
+
     def merge_analysis(current: dict[str, Any]) -> dict[str, Any]:
         current.update(
             {
@@ -7787,6 +10845,24 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
                 "scores_file": exported["scores_file"],
                 "project_scores_file": exported["project_scores_file"],
                 "analyzed_at": analyzed_at,
+                **(
+                    {
+                        "flexible_movement_file": movement_file,
+                        "flexible_movement": {
+                            "schema_id": movement.get("schema_id"),
+                            "method": movement.get("method"),
+                            "mode_count": movement.get("mode_count"),
+                            "alignment_applied": movement.get(
+                                "alignment_applied"
+                            ),
+                            "exclude_flexible_ca_root": movement.get(
+                                "exclude_flexible_ca_root"
+                            ),
+                        },
+                    }
+                    if movement is not None
+                    else {}
+                ),
             },
         )
         _with_artifact_hashes(current, scores_artifacts)
@@ -7804,6 +10880,16 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
             "best_affinity": best_affinity,
             "scores_file": exported["scores_file"],
             "analyzed_at": analyzed_at,
+            **(
+                {
+                    "flexible_movement_file": movement_file,
+                    "flexible_movement_mode_count": movement.get(
+                        "mode_count"
+                    ),
+                }
+                if movement is not None
+                else {}
+            ),
         },
     )
     if not project_update.get("ok"):
@@ -7816,11 +10902,17 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "metadata": metadata,
         "metadata_file": _metadata_relative_path(run_id),
-        "scores": parsed_scores,
+        "scores": (
+            hydrated_result_scores
+            if hydrated_result_scores is not None
+            else parsed_scores
+        ),
         "scores_file": exported["scores_file"],
         "project_scores_file": exported["project_scores_file"],
         "best_affinity": best_affinity,
         "analyzed_at": analyzed_at,
+        "flexible_movement": movement,
+        "flexible_movement_file": movement_file,
         "message": (
             "AutoDock4 结果已解析；该评分与 Vina/Vinardo 不可直接比较。"
             if _metadata_scoring_protocol(metadata) == "ad4_maps"
@@ -7914,6 +11006,19 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
             suggestion="请确认该 run 来自当前 DockStart 项目，或重新准备运行记录。",
         )
 
+    ad4zn_integrity: dict[str, Any] | None = None
+    if (
+        _metadata_scoring_protocol(metadata) == "ad4_maps"
+        and _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
+    ):
+        ad4zn_integrity = _validate_ad4_maps_post_run_integrity(
+            project_dir,
+            run_id,
+            metadata,
+        )
+        if not ad4zn_integrity.get("ok"):
+            return ad4zn_integrity
+
     receptor_file = _run_input_snapshot_file(metadata, "receptor", project.receptor.file)
     ligand_file = _run_input_snapshot_file(metadata, "ligand", project.ligand.file)
     flex_file = _run_input_snapshot_file(metadata, "flex", "")
@@ -7952,6 +11057,23 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         "scores": scores_payload["scores"],
         "scores_file": scores_payload["scores_file"],
         "project_scores_file": scores_payload.get("project_scores_file", _project_scores_file(metadata)),
+        "flexible_movement": scores_payload.get("flexible_movement"),
+        "flexible_movement_file": scores_payload.get(
+            "flexible_movement_file",
+            "",
+        ),
+        "flexible_movement_available": scores_payload.get(
+            "flexible_movement_available",
+            False,
+        ),
+        "flexible_movement_legacy_partial": scores_payload.get(
+            "flexible_movement_legacy_partial",
+            False,
+        ),
+        "flexible_movement_warning": scores_payload.get(
+            "flexible_movement_warning",
+            "",
+        ),
         "receptor_file": receptor_file,
         "receptor_path": str(receptor_path) if receptor_path else "",
         "ligand_file": ligand_file,
@@ -7961,6 +11083,15 @@ def _load_report_context(project_dir: str, run_id: str) -> dict[str, Any]:
         "config_path": str(config_path) if config_path else "",
         "box_snapshot": _run_snapshot_mapping(metadata, "box") or asdict(project.box),
         "vina_snapshot": _run_snapshot_mapping(metadata, "vina") or asdict(project.vina),
+        "ad4zn_box_coverage": (
+            copy.deepcopy(ad4zn_integrity.get("ad4zn_box_coverage"))
+            if isinstance(ad4zn_integrity, dict)
+            and isinstance(
+                ad4zn_integrity.get("ad4zn_box_coverage"),
+                dict,
+            )
+            else None
+        ),
         "error": None,
     }
 
@@ -7977,6 +11108,11 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
     project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
     run_mode = _metadata_run_mode(metadata)
     mode_label = "当前姿势评分" if run_mode == "score_only" else "当前姿势局部优化"
+    output_normalization = (
+        metadata.get("output_normalization")
+        if isinstance(metadata.get("output_normalization"), dict)
+        else {}
+    )
     command = _command_for_report(metadata)
     command_record: Any = (
         copy.deepcopy(metadata.get("execution_plan"))
@@ -8071,6 +11207,16 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             if run_mode == "local_only"
             else []
         ),
+        *(
+            [
+                [
+                    "Vina 原始输出（字节证据）",
+                    output_normalization.get("raw_output_file"),
+                ]
+            ]
+            if output_normalization.get("raw_output_file")
+            else []
+        ),
         ["配置快照", metadata.get("config_snapshot")],
         *(
             [["输入评分日志", (evaluation.get("comparison") or {}).get("baseline_log_file")]]
@@ -8107,6 +11253,28 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         ),
         ["ligand SHA256", input_sha256.get("ligand")],
         ["config SHA256", input_sha256.get("config")],
+        *(
+            [
+                [
+                    "Vina 输出标准化",
+                    (
+                        f"{output_normalization.get('status') or '未记录'}；"
+                        f"方法={output_normalization.get('method') or '未记录'}；"
+                        f"移除 NUL={output_normalization.get('nul_bytes_removed') or 0}"
+                    ),
+                ],
+                [
+                    "Vina 原始输出 SHA256",
+                    output_normalization.get("source_sha256"),
+                ],
+                [
+                    "标准 PDBQT SHA256",
+                    output_normalization.get("normalized_sha256"),
+                ],
+            ]
+            if output_normalization
+            else []
+        ),
         [
             "姿势坐标系确认",
             (
@@ -8406,10 +11574,31 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         if isinstance(metadata.get("ad4zn"), dict)
         else {}
     )
+    ad4zn_box_coverage = (
+        context.get("ad4zn_box_coverage")
+        if isinstance(context.get("ad4zn_box_coverage"), dict)
+        else {}
+    )
     vina_maps = metadata.get("vina_maps") if isinstance(metadata.get("vina_maps"), dict) else {}
     command = _command_for_report(metadata)
     command_text = json.dumps(command, ensure_ascii=False, indent=2)
     vina_path = command[0] if command else str(metadata.get("vina_path") or "")
+    output_normalization = (
+        metadata.get("output_normalization")
+        if isinstance(metadata.get("output_normalization"), dict)
+        else {}
+    )
+    raw_vina_output_file = str(
+        output_normalization.get("raw_output_file") or ""
+    )
+    flexible_movement = (
+        context.get("flexible_movement")
+        if isinstance(context.get("flexible_movement"), dict)
+        else None
+    )
+    flexible_movement_file = str(
+        context.get("flexible_movement_file") or ""
+    )
 
     input_rows = [
         ["receptor 文件", context["receptor_file"]],
@@ -8418,6 +11607,16 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["vina_config.txt", context["config_file"]],
         ["log.txt", str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())],
         ["out.pdbqt", str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())],
+        *(
+            [["柔性运动分析", flexible_movement_file]]
+            if flexible_movement_file
+            else []
+        ),
+        *(
+            [["Vina 原始输出（字节证据）", raw_vina_output_file]]
+            if raw_vina_output_file
+            else []
+        ),
         ["stdout.txt", str(metadata.get("stdout_file") or Path("runs", run_id, "stdout.txt").as_posix())],
         ["stderr.txt", str(metadata.get("stderr_file") or Path("runs", run_id, "stderr.txt").as_posix())],
         *(
@@ -8503,6 +11702,16 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         for score in scores
     ]
     input_sha256 = metadata.get("input_sha256") if isinstance(metadata.get("input_sha256"), dict) else {}
+    result_artifacts = (
+        metadata.get("artifacts")
+        if isinstance(metadata.get("artifacts"), dict)
+        else {}
+    )
+    flexible_movement_artifact = (
+        result_artifacts.get("flexible_movement")
+        if isinstance(result_artifacts.get("flexible_movement"), dict)
+        else {}
+    )
     vina_tool = metadata.get("vina_tool") if isinstance(metadata.get("vina_tool"), dict) else {}
     system = metadata.get("system") if isinstance(metadata.get("system"), dict) else {}
     app = metadata.get("app") if isinstance(metadata.get("app"), dict) else {}
@@ -8511,13 +11720,109 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         if isinstance(input_sha256.get("ad4zn"), dict)
         else {}
     )
+    ligand_preparation = (
+        metadata.get("ligand_preparation")
+        if isinstance(metadata.get("ligand_preparation"), dict)
+        else {}
+    )
+    macrocycle_summary = (
+        ligand_preparation.get("macrocycle_summary")
+        if isinstance(ligand_preparation.get("macrocycle_summary"), dict)
+        else {}
+    )
+    is_macrocycle_preparation = (
+        ligand_preparation.get("matched") is True
+        and ligand_preparation.get("protocol") == "meeko_macrocycle"
+    )
+    docking_protocol = (
+        metadata.get("docking_protocol")
+        if isinstance(metadata.get("docking_protocol"), dict)
+        else {}
+    )
+    flexible_identity = (
+        docking_protocol.get("identity")
+        if isinstance(docking_protocol.get("identity"), dict)
+        else {}
+    )
     reproducibility_rows = [
         ["DockStart version", metadata.get("app_version") or app.get("version")],
         ["Vina binary SHA256", metadata.get("vina_sha256") or vina_tool.get("sha256")],
         ["receptor SHA256", input_sha256.get("receptor")],
         ["ligand SHA256", input_sha256.get("ligand")],
         *([["flex SHA256", input_sha256.get("flex")]] if input_sha256.get("flex") else []),
+        *(
+            [
+                [
+                    "柔性运动分析 SHA256",
+                    flexible_movement_artifact.get("sha256"),
+                ],
+                [
+                    "柔性运动分析方法",
+                    flexible_movement.get("method")
+                    if flexible_movement
+                    else "旧版未记录",
+                ],
+            ]
+            if docking_protocol.get("mode") == "flexible"
+            else []
+        ),
+        *(
+            [
+                ["柔性受体原始结构 SHA256", docking_protocol.get("source_sha256")],
+                [
+                    "rigid/flex 原子划分 SHA256",
+                    (
+                        docking_protocol.get("atom_partition")
+                        if isinstance(docking_protocol.get("atom_partition"), dict)
+                        else {}
+                    ).get("partition_sha256"),
+                ],
+            ]
+            if docking_protocol.get("mode") == "flexible"
+            else []
+        ),
+        *(
+            [
+                [
+                    "mmCIF 身份合同 SHA256",
+                    flexible_identity.get("identity_contract_sha256"),
+                ],
+                [
+                    "柔性残基选择合同 SHA256",
+                    flexible_identity.get("selection_sha256"),
+                ],
+                ["Gemmi 桥接 PDB SHA256", flexible_identity.get("bridge_sha256")],
+                [
+                    "Gemmi 桥接验证 SHA256",
+                    flexible_identity.get("bridge_verification_sha256"),
+                ],
+            ]
+            if flexible_identity
+            else []
+        ),
         ["config SHA256", input_sha256.get("config")],
+        *(
+            [
+                [
+                    "Vina 输出标准化",
+                    (
+                        f"{output_normalization.get('status') or '未记录'}；"
+                        f"方法={output_normalization.get('method') or '未记录'}；"
+                        f"移除 NUL={output_normalization.get('nul_bytes_removed') or 0}"
+                    ),
+                ],
+                [
+                    "Vina 原始输出 SHA256",
+                    output_normalization.get("source_sha256"),
+                ],
+                [
+                    "标准 PDBQT SHA256",
+                    output_normalization.get("normalized_sha256"),
+                ],
+            ]
+            if output_normalization
+            else []
+        ),
         *(
             [["maps manifest SHA256", input_sha256.get("maps_manifest")]]
             if is_ad4_maps or is_vina_maps
@@ -8533,10 +11838,85 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             if is_ad4zn
             else []
         ),
+        *(
+            [
+                ["大环合同 SHA256", macrocycle_summary.get("contract_sha256") or "旧版未记录"],
+                ["大环 worker 证据 SHA256", macrocycle_summary.get("evidence_sha256") or "旧版未记录"],
+                ["大环冻结输入 SHA256", macrocycle_summary.get("frozen_input_sha256") or "旧版未记录"],
+                ["大环键拓扑 SHA256", macrocycle_summary.get("bond_topology_sha256") or "旧版未记录"],
+            ]
+            if is_macrocycle_preparation
+            else []
+        ),
         ["system fingerprint", system.get("fingerprint")],
     ]
-    docking_protocol = metadata.get("docking_protocol") if isinstance(metadata.get("docking_protocol"), dict) else {}
-    ligand_preparation = metadata.get("ligand_preparation") if isinstance(metadata.get("ligand_preparation"), dict) else {}
+    flexible_residue_details: list[str] = []
+    for raw_residue in docking_protocol.get("selected_residues", []):
+        if not isinstance(raw_residue, dict):
+            flexible_residue_details.append(str(raw_residue))
+            continue
+        selector = str(raw_residue.get("selector") or "")
+        author = (
+            raw_residue.get("author")
+            if isinstance(raw_residue.get("author"), dict)
+            else {}
+        )
+        label_identity = (
+            raw_residue.get("label")
+            if isinstance(raw_residue.get("label"), dict)
+            else {}
+        )
+        selected_altloc = str(raw_residue.get("selected_altloc") or "")
+        insertion_code = str(
+            author.get("insertion_code")
+            or raw_residue.get("insertion_code")
+            or ""
+        )
+        alternate = (
+            raw_residue.get("alternate_locations")
+            if isinstance(raw_residue.get("alternate_locations"), dict)
+            else {}
+        )
+        occupancy = (
+            alternate.get("occupancy")
+            if isinstance(alternate.get("occupancy"), dict)
+            else {}
+        )
+        occupancy_fact = (
+            occupancy.get(selected_altloc or "shared")
+            if isinstance(occupancy.get(selected_altloc or "shared"), dict)
+            else {}
+        )
+        if author and label_identity:
+            detail = (
+                f"auth {selector} {author.get('component_id') or ''} → "
+                f"label {label_identity.get('chain_id') or '?'}:"
+                f"{label_identity.get('sequence_id') or '?'} "
+                f"{label_identity.get('component_id') or ''}；"
+                f"插入码={insertion_code or '无'}"
+            ).strip()
+            if selected_altloc:
+                detail += (
+                    f"；altloc={selected_altloc}；occupancy="
+                    f"{occupancy_fact.get('minimum', '?')}–"
+                    f"{occupancy_fact.get('maximum', '?')}"
+                )
+            else:
+                detail += (
+                    "；altloc=无；occupancy="
+                    f"{occupancy_fact.get('minimum', '?')}–"
+                    f"{occupancy_fact.get('maximum', '?')}"
+                )
+            flexible_residue_details.append(detail)
+        else:
+            flexible_residue_details.append(
+                f"{selector or raw_residue}；"
+                f"插入码={insertion_code or '无'}；"
+                f"altloc={selected_altloc or '无'}；occupancy="
+                f"{occupancy_fact.get('minimum', '?')}–"
+                f"{occupancy_fact.get('maximum', '?')}"
+            )
+
     protocol_rows = [
         [
             "评分协议",
@@ -8551,17 +11931,102 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["评分函数", "ad4" if is_ad4_maps else vina_snapshot.get("scoring") or "vina"],
         ["受体模式", "有限柔性侧链" if docking_protocol.get("mode") == "flexible" else "刚性受体"],
         [
+            "本次允许运动的对象",
+            (
+                "配体的平移、转动与可旋转键，以及已选受体侧链；"
+                "受体主链和未选受体原子保持刚性"
+                if docking_protocol.get("mode") == "flexible"
+                else "配体的平移、转动与可旋转键；受体全部原子保持刚性"
+            ),
+        ],
+        [
             "柔性残基",
-            ", ".join(
-                str(item.get("selector") or item) if isinstance(item, dict) else str(item)
-                for item in docking_protocol.get("selected_residues", [])
-            ) or "不适用",
+            "；".join(flexible_residue_details) or "不适用",
         ],
         ["柔性准备记录", docking_protocol.get("preparation_id") or "不适用"],
+        *(
+            [
+                [
+                    "mmCIF 模型",
+                    (
+                        flexible_identity.get("model")
+                        if isinstance(flexible_identity.get("model"), dict)
+                        else {}
+                    ).get("id")
+                    or "未记录",
+                ],
+                [
+                    "残基编号体系",
+                    "点选/Meeko 使用 auth_asym_id + auth_seq_id + 插入码；"
+                    "报告同时冻结 label_asym_id + label_seq_id",
+                ],
+            ]
+            if flexible_identity
+            else []
+        ),
         ["配体准备协议", ligand_preparation.get("protocol") if ligand_preparation.get("matched") else "外部或未匹配"],
         ["配体准备记录", ligand_preparation.get("prep_id") or "不适用"],
         ["Meeko 版本", ligand_preparation.get("meeko_version") or "未记录"],
+        ["RDKit 版本", ligand_preparation.get("rdkit_version") or "未记录"],
     ]
+    if is_macrocycle_preparation:
+        break_bond_labels = ", ".join(
+            str(item.get("display") or "")
+            for item in macrocycle_summary.get("break_bonds", [])
+            if isinstance(item, dict) and item.get("display")
+        )
+        formal_reviewed = ligand_preparation.get("formal_reviewed") is True
+        selection_mode = str(macrocycle_summary.get("selection_mode") or "")
+        protocol_rows.extend(
+            [
+                [
+                    "大环证据等级",
+                    "正式审查（完整证据）"
+                    if formal_reviewed
+                    else "旧版兼容（部分证据，非正式审查）",
+                ],
+                [
+                    "大环选择模式",
+                    "人工确认断环候选"
+                    if selection_mode == "candidate"
+                    else "刚性大环"
+                    if selection_mode == "rigid"
+                    else f"旧版 {selection_mode or '未记录'}",
+                ],
+                [
+                    "大环 review ID",
+                    macrocycle_summary.get("review_id") or "旧版未记录",
+                ],
+                [
+                    "断环候选 ID",
+                    macrocycle_summary.get("candidate_id")
+                    or (
+                        "不适用（刚性大环）"
+                        if selection_mode == "rigid"
+                        else "旧版未记录"
+                    ),
+                ],
+                [
+                    "确认断环键（一基编号）",
+                    break_bond_labels
+                    or (
+                        "不打开环键"
+                        if selection_mode == "rigid"
+                        else "旧版未冻结精确断环键"
+                    ),
+                ],
+                [
+                    "G* 胶合伪原子",
+                    macrocycle_summary.get("glue_pseudo_atom_count")
+                    if macrocycle_summary.get("glue_pseudo_atom_count") is not None
+                    else "旧版未可靠记录",
+                ],
+                [
+                    "显式氢策略",
+                    macrocycle_summary.get("hydrogen_policy") or "旧版未记录",
+                ],
+            ]
+        )
     if is_ad4_maps:
         grid = ad4_maps.get("grid") if isinstance(ad4_maps.get("grid"), dict) else {}
         grid_points = grid.get("grid_points") if isinstance(grid.get("grid_points"), dict) else {}
@@ -8604,6 +12069,21 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                 if isinstance(selected_site.get("tz_candidate"), dict)
                 else {}
             )
+            coverage_markers = (
+                ad4zn_box_coverage.get("markers")
+                if isinstance(ad4zn_box_coverage.get("markers"), dict)
+                else {}
+            )
+            coverage_zn = (
+                coverage_markers.get("ZN")
+                if isinstance(coverage_markers.get("ZN"), dict)
+                else {}
+            )
+            coverage_tz = (
+                coverage_markers.get("TZ")
+                if isinstance(coverage_markers.get("TZ"), dict)
+                else {}
+            )
             coordination_atoms = (
                 selected_site.get("coordination_atoms")
                 if isinstance(
@@ -8622,8 +12102,19 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                 )
                 else []
             )
+            zn_coordinates = (
+                coverage_zn.get("coordinate_angstrom")
+                or selected_site.get("zn_coordinate")
+                or (
+                    selected_site.get("zn").get("coordinate")
+                    if isinstance(selected_site.get("zn"), dict)
+                    else None
+                )
+                or "未记录"
+            )
             tz_coordinates = (
-                selected_site.get("tz_coordinates")
+                coverage_tz.get("coordinate_angstrom")
+                or selected_site.get("tz_coordinates")
                 or selected_site.get("tz")
                 or tz_candidate.get("coordinate")
                 or prepared_receptor.get("tz_coordinates")
@@ -8641,10 +12132,60 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                     ],
                     ["受体配位点数量", len(coordination_atoms) or "未记录"],
                     [
+                        "ZN 坐标",
+                        json.dumps(zn_coordinates, ensure_ascii=False)
+                        if isinstance(zn_coordinates, (dict, list))
+                        else zn_coordinates,
+                    ],
+                    [
                         "TZ 坐标",
                         json.dumps(tz_coordinates, ensure_ascii=False)
                         if isinstance(tz_coordinates, (dict, list))
                         else tz_coordinates,
+                    ],
+                    [
+                        "请求 Box 边界",
+                        json.dumps(
+                            ad4zn_box_coverage.get(
+                                "requested_box_bounds_angstrom"
+                            )
+                            or "未记录",
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    ],
+                    [
+                        "实际 AutoGrid 网格边界",
+                        json.dumps(
+                            ad4zn_box_coverage.get(
+                                "effective_grid_bounds_angstrom"
+                            )
+                            or "未记录",
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    ],
+                    [
+                        "ZN/TZ 位于请求 Box",
+                        (
+                            "通过"
+                            if ad4zn_box_coverage.get(
+                                "all_zn_tz_inside_requested_box"
+                            )
+                            is True
+                            else "未通过"
+                        ),
+                    ],
+                    [
+                        "ZN/TZ 位于实际网格",
+                        (
+                            "通过"
+                            if ad4zn_box_coverage.get(
+                                "all_zn_tz_inside_effective_grid"
+                            )
+                            is True
+                            else "未通过"
+                        ),
                     ],
                     [
                         "TZ 受体",
@@ -8674,7 +12215,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                             "是"
                             if parameter_file.get("matches_reference_sha256")
                             is True
-                            else "否（关键参数已校验）"
+                            else "否或未记录"
                         ),
                     ],
                     [
@@ -8786,6 +12327,144 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ["最大 RMSD l.b.", max(rmsd_lb_values) if rmsd_lb_values else None, "Å"],
         ["最大 RMSD u.b.", max(rmsd_ub_values) if rmsd_ub_values else None, "Å"],
     ]
+    flexible_movement_text = ""
+    if docking_protocol.get("mode") == "flexible":
+        if flexible_movement is not None:
+            ligand_movement_rows: list[list[Any]] = []
+            sidechain_movement_rows: list[list[Any]] = []
+            for mode_item in flexible_movement.get("modes", []):
+                if not isinstance(mode_item, dict):
+                    continue
+                mode_number = mode_item.get("mode")
+                ligand_movement = (
+                    mode_item.get("ligand")
+                    if isinstance(mode_item.get("ligand"), dict)
+                    else {}
+                )
+                ligand_movement_rows.append(
+                    [
+                        mode_number,
+                        ligand_movement.get("heavy_atom_count"),
+                        ligand_movement.get(
+                            "heavy_atom_rmsd_no_alignment_angstrom"
+                        ),
+                        ligand_movement.get(
+                            "mean_heavy_atom_displacement_angstrom"
+                        ),
+                        ligand_movement.get(
+                            "max_heavy_atom_displacement_angstrom"
+                        ),
+                        ligand_movement.get(
+                            "centroid_displacement_angstrom"
+                        ),
+                    ]
+                )
+                for residue_item in mode_item.get(
+                    "flexible_residues",
+                    [],
+                ):
+                    if not isinstance(residue_item, dict):
+                        continue
+                    residue = (
+                        residue_item.get("residue")
+                        if isinstance(residue_item.get("residue"), dict)
+                        else {}
+                    )
+                    movement_item = (
+                        residue_item.get("movement")
+                        if isinstance(
+                            residue_item.get("movement"),
+                            dict,
+                        )
+                        else {}
+                    )
+                    residue_label = " ".join(
+                        value
+                        for value in (
+                            str(residue.get("residue_name") or ""),
+                            str(residue.get("canonical_id") or ""),
+                        )
+                        if value
+                    )
+                    sidechain_movement_rows.append(
+                        [
+                            mode_number,
+                            residue_label,
+                            movement_item.get("heavy_atom_count"),
+                            movement_item.get(
+                                "heavy_atom_rmsd_no_alignment_angstrom"
+                            ),
+                            movement_item.get(
+                                "mean_heavy_atom_displacement_angstrom"
+                            ),
+                            movement_item.get(
+                                "max_heavy_atom_displacement_angstrom"
+                            ),
+                            movement_item.get(
+                                "centroid_displacement_angstrom"
+                            ),
+                        ]
+                    )
+            flexible_movement_text = "\n".join(
+                [
+                    "### 配体运动（与冻结输入分别比较）",
+                    "",
+                    _markdown_table(
+                        [
+                            "Mode",
+                            "重原子数",
+                            "直接 RMSD (Å)",
+                            "平均位移 (Å)",
+                            "最大位移 (Å)",
+                            "质心位移 (Å)",
+                        ],
+                        ligand_movement_rows,
+                    ),
+                    "",
+                    "### 柔性侧链运动（与各自冻结输入分别比较）",
+                    "",
+                    _markdown_table(
+                        [
+                            "Mode",
+                            "柔性残基",
+                            "侧链重原子数",
+                            "直接 RMSD (Å)",
+                            "平均位移 (Å)",
+                            "最大位移 (Å)",
+                            "质心位移 (Å)",
+                        ],
+                        sidechain_movement_rows,
+                    ),
+                    "",
+                    (
+                        "上述两组指标在同一受体坐标系中直接比较，没有做刚体对齐；"
+                        "配体指标包含整体平移、旋转和内部构象变化，柔性残基指标单独计算，"
+                        "并排除 H/HD/HS、非物理伪原子和 CA 根原子。"
+                    ),
+                    (
+                        "这些“直接 RMSD / 位移”不是 Vina 表格中相对 Mode 1 的 "
+                        "RMSD l.b./u.b.，也不是相对共晶配体的恢复 RMSD。"
+                    ),
+                    (
+                        "运动大小与 docking score 只描述本次输入和协议下的计算结果，"
+                        "不能单独证明真实结合、构象合理性或药效。"
+                    ),
+                ]
+            )
+        else:
+            flexible_movement_text = "\n".join(
+                [
+                    "### 配体与柔性侧链运动",
+                    "",
+                    str(
+                        context.get("flexible_movement_warning")
+                        or (
+                            "该旧版柔性 run 未保存配体与柔性侧链的分离运动分析，"
+                            "本报告只能保留评分和运行证据。"
+                        )
+                    ),
+                ]
+            )
 
     structure_review = build_structure_review(
         project_dir,
@@ -8843,6 +12522,30 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                 "- 本次使用 Vina/Vinardo 预计算 maps；运行命令未传入 --receptor，最终优化和评分只使用网格，不使用显式受体原子。"
             ]
             if is_vina_maps
+            else []
+        ),
+        *(
+            [
+                (
+                    "- 本次配体使用经过人工确认、合同与 worker 证据交叉校验的"
+                    " Meeko 大环准备；确认的断环键和 G* 数量只说明本次 PDBQT"
+                    " 的闭环约束实现，不证明所选构象、质子化、电荷或结合模式正确。"
+                ),
+                (
+                    "- 对接后的 PDBQT 不是原始闭环化学拓扑；用于 SDF 或后续分析前，"
+                    "仍须使用受支持的 Meeko 拓扑重建流程并人工检查闭环与立体化学。"
+                ),
+            ]
+            if is_macrocycle_preparation
+            and ligand_preparation.get("formal_reviewed") is True
+            else [
+                (
+                    "- 本次配体沿用旧版大环 auto/rigid 准备记录；该记录只有部分证据，"
+                    "没有正式人工确认合同和精确断环键，不得视为正式大环审查，"
+                    "也不得仅凭 G* 伪原子反推原始断环键。"
+                )
+            ]
+            if is_macrocycle_preparation
             else []
         ),
     ]
@@ -8913,6 +12616,11 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "",
             _markdown_table(["指标", "值", "说明"], pose_dispersion_rows),
             "",
+            *(
+                [flexible_movement_text, ""]
+                if flexible_movement_text
+                else []
+            ),
             "## 10. 输入结构事实",
             "",
             _markdown_table(["项目", "记录值", "依据"], structure_fact_rows),
@@ -8967,6 +12675,8 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         "scores": scores,
         "scores_file": context["scores_file"],
         "project_scores_file": context["project_scores_file"],
+        "flexible_movement": flexible_movement,
+        "flexible_movement_file": flexible_movement_file,
         "report_text": report_text,
         "message": "Markdown 报告内容已生成。",
         "error": None,
@@ -8974,17 +12684,33 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
 
 
 def _report_file_statuses(project_dir: str, run_id: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    project_path = Path(project_dir).expanduser()
+    project_path = Path(project_dir).expanduser().resolve()
     run_mode = _metadata_run_mode(metadata)
-    analysis_file = (
-        str(metadata.get("scores_file") or Path("runs", run_id, "scores.csv").as_posix())
+    expected_analysis_file = (
+        Path("runs", run_id, "scores.csv").as_posix()
         if run_mode == "dock"
-        else str(metadata.get("evaluation_file") or _evaluation_relative_path(run_id))
+        else _evaluation_relative_path(run_id)
+    )
+    analysis_file = (
+        str(metadata.get("scores_file") or expected_analysis_file)
+        if run_mode == "dock"
+        else str(metadata.get("evaluation_file") or expected_analysis_file)
     )
     report_name = _run_report_filename(metadata)
-    report_file = str(metadata.get("report_file") or Path("runs", run_id, report_name).as_posix())
-    project_report_file = str(metadata.get("project_report_file") or _project_report_file(metadata))
-    return [
+    expected_report_file = Path(
+        "runs",
+        run_id,
+        report_name,
+    ).as_posix()
+    expected_project_report_file = _project_report_file(metadata)
+    report_file = str(
+        metadata.get("report_file") or expected_report_file
+    )
+    project_report_file = str(
+        metadata.get("project_report_file")
+        or expected_project_report_file
+    )
+    statuses = [
         _file_status(
             project_path,
             analysis_file,
@@ -8994,6 +12720,83 @@ def _report_file_statuses(project_dir: str, run_id: str, metadata: dict[str, Any
         _file_status(project_path, report_file, "run_report", f"runs/{run_id}/{report_name}"),
         _file_status(project_path, project_report_file, "project_report", Path(project_report_file).name),
     ]
+    if (
+        _is_flexible_movement_run(metadata)
+        and _movement_artifact_required(metadata)
+    ):
+        statuses.insert(
+            1,
+            _file_status(
+                project_path,
+                _flexible_movement_relative_path(run_id),
+                "flexible_movement",
+                FLEXIBLE_MOVEMENT_FILENAME,
+            ),
+        )
+
+    integrity_specs = {
+        "scores": (
+            "scores",
+            expected_analysis_file,
+            RUN_SCORE_ARTIFACT_KEYS,
+            "SCORES_CSV_ARTIFACT",
+        ),
+        "evaluation": (
+            "evaluation",
+            expected_analysis_file,
+            ("evaluation",),
+            "VINA_EVALUATION_ARTIFACT",
+        ),
+        "flexible_movement": (
+            "flexible_movement",
+            _flexible_movement_relative_path(run_id),
+            ("flexible_movement",),
+            "FLEX_MOVEMENT_ARTIFACT",
+        ),
+        "run_report": (
+            "report",
+            expected_report_file,
+            RUN_REPORT_ARTIFACT_KEYS,
+            "RUN_REPORT_ARTIFACT",
+        ),
+        "project_report": (
+            "project_report",
+            expected_project_report_file,
+            RUN_REPORT_ARTIFACT_KEYS,
+            "PROJECT_REPORT_ARTIFACT",
+        ),
+    }
+    for status in statuses:
+        spec = integrity_specs.get(str(status.get("key") or ""))
+        if spec is None or status.get("status") != "ok":
+            continue
+        artifact_key, expected_relative, contract_keys, error_stem = spec
+        snapshot, integrity_error = _read_verified_recorded_artifact(
+            project_path,
+            run_id,
+            metadata,
+            artifact_key=artifact_key,
+            expected_relative=expected_relative,
+            recorded_relative=str(status.get("path") or ""),
+            contract_keys=contract_keys,
+            error_stem=error_stem,
+            display_name=str(status.get("name") or artifact_key),
+        )
+        if integrity_error:
+            status["status"] = "integrity_error"
+            status["message"] = str(
+                integrity_error["error"].get("message") or ""
+            )
+            status["raw_error"] = str(
+                integrity_error["error"].get("raw_error") or ""
+            )
+            status["integrity"] = "failed"
+        elif snapshot is not None:
+            status["integrity"] = "verified"
+            status["sha256"] = hashlib.sha256(snapshot).hexdigest()
+        else:
+            status["integrity"] = "legacy_unverified"
+    return statuses
 
 
 def get_report_status(project_dir: str, run_id: str) -> dict[str, Any]:
@@ -9009,10 +12812,22 @@ def get_report_status(project_dir: str, run_id: str) -> dict[str, Any]:
     files = _report_file_statuses(project_dir, run_id, metadata)
     run_mode = _metadata_run_mode(metadata)
     analysis_status = next((item for item in files if item["key"] in {"scores", "evaluation"}), None)
+    movement_status = next(
+        (
+            item
+            for item in files
+            if item["key"] == "flexible_movement"
+        ),
+        None,
+    )
     report_files = [item for item in files if item["key"] in {"run_report", "project_report"}]
     reports_ready = all(item["status"] == "ok" for item in report_files)
     can_export = str(metadata.get("status") or "") == "finished" and bool(
         analysis_status and analysis_status["status"] == "ok"
+        and (
+            movement_status is None
+            or movement_status["status"] == "ok"
+        )
     )
     report_name = _run_report_filename(metadata)
 
@@ -9079,6 +12894,23 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         "report": _hash_snapshot(run_report_path, run_report_file),
         "project_report": _hash_snapshot(project_report_path, project_report_file),
     }
+    for artifact_key, artifact in report_artifacts.items():
+        if (
+            artifact.get("exists") is not True
+            or isinstance(artifact.get("size_bytes"), bool)
+            or not isinstance(artifact.get("size_bytes"), int)
+            or int(artifact.get("size_bytes") or 0) <= 0
+            or SHA256_PATTERN.fullmatch(
+                str(artifact.get("sha256") or "").lower()
+            )
+            is None
+        ):
+            return _error(
+                "MARKDOWN_REPORT_WRITE_VERIFY_ERROR",
+                "Markdown 报告写入后未通过文件完整性校验。",
+                raw_error=f"{artifact_key}={artifact}",
+                suggestion="请确认项目目录可写后重新导出报告。",
+            )
 
     def merge_report(current: dict[str, Any]) -> dict[str, Any]:
         current.update(
@@ -9320,6 +13152,12 @@ def _validate_execute_prerequisites(
         )
     if str(protocol.get("mode") or "rigid") == "flexible":
         fixed_relative_paths["flex"] = Path("runs", run_id, "inputs", "flex.pdbqt").as_posix()
+        fixed_relative_paths["flexible_protocol"] = Path(
+            "runs",
+            run_id,
+            "inputs",
+            "flexible_receptor_protocol.json",
+        ).as_posix()
     try:
         run_dir = _safe_run_directory(project_path, run_id)
     except Exception as exc:  # noqa: BLE001 - reject symlinked/reparsed run roots.
@@ -9367,7 +13205,12 @@ def _validate_execute_prerequisites(
             run_dir / "inputs" / "hydrated"
             if key == "hydrated_ligand_manifest"
             else run_dir / "inputs"
-            if key in {"receptor", "ligand", "flex"}
+            if key in {
+                "receptor",
+                "ligand",
+                "flex",
+                "flexible_protocol",
+            }
             else run_dir
         )
         if resolved.parent != expected_parent or resolved != lexical_path.absolute():
@@ -9382,6 +13225,7 @@ def _validate_execute_prerequisites(
     required_inputs = ["receptor", "ligand", "config"]
     if "flex" in fixed_paths:
         required_inputs.append("flex")
+        required_inputs.append("flexible_protocol")
     if is_hydrated:
         required_inputs.append("hydrated_ligand_manifest")
     for key in required_inputs:
@@ -9422,6 +13266,17 @@ def _validate_execute_prerequisites(
             if isinstance(inputs.get("flex"), dict)
             else ""
         )
+        flexible_protocol_snapshot = (
+            snapshots.get("flexible_receptor_protocol")
+            if isinstance(
+                snapshots.get("flexible_receptor_protocol"),
+                dict,
+            )
+            else {}
+        )
+        expected_hashes["flexible_protocol"] = str(
+            flexible_protocol_snapshot.get("sha256") or ""
+        )
     for key, expected in expected_hashes.items():
         if not re.fullmatch(r"[0-9a-fA-F]{64}", expected):
             return _error(
@@ -9437,6 +13292,102 @@ def _validate_execute_prerequisites(
                 raw_error=f"expected={expected}; actual={actual}; path={fixed_paths[key]}",
                 suggestion="请重新准备 run，或恢复未被修改的快照。",
             )
+
+    if "flexible_protocol" in fixed_paths:
+        try:
+            frozen_flexible_protocol = json.loads(
+                fixed_paths["flexible_protocol"].read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return _error(
+                "RUN_FLEXIBLE_PROTOCOL_SNAPSHOT_INVALID",
+                "柔性受体协议快照不是可验证的 JSON 对象。",
+                raw_error=str(exc),
+                suggestion="请保留该 run 用于审计，并重新准备新的 run。",
+            )
+        if not isinstance(frozen_flexible_protocol, dict):
+            return _error(
+                "RUN_FLEXIBLE_PROTOCOL_SNAPSHOT_INVALID",
+                "柔性受体协议快照不是 JSON 对象。",
+                suggestion="请重新准备新的 run。",
+            )
+        flexible_protocol_schema = frozen_flexible_protocol.get(
+            "schema_version"
+        )
+        if flexible_protocol_schema not in {1, 2}:
+            return _error(
+                "RUN_FLEXIBLE_PROTOCOL_SNAPSHOT_INVALID",
+                "柔性受体协议快照使用了未知 schema_version。",
+                raw_error=str(flexible_protocol_schema),
+                suggestion="请保留该 run 用于审计，并重新准备新的 run。",
+            )
+        expected_flexible_protocol = {
+            "schema_version": flexible_protocol_schema,
+            "protocol_id": FLEXIBLE_RECEPTOR_PROTOCOL_ID,
+            "mode": "flexible",
+            "preparation_id": str(protocol.get("preparation_id") or ""),
+            "source_raw_file": str(protocol.get("source_raw_file") or ""),
+            "source_format": str(protocol.get("source_format") or ""),
+            "source_sha256": str(protocol.get("source_sha256") or ""),
+            "selected_residues": copy.deepcopy(
+                protocol.get("selected_residues") or []
+            ),
+            "resolved_altlocs": copy.deepcopy(
+                protocol.get("resolved_altlocs") or {}
+            ),
+            "receptor_controls": copy.deepcopy(
+                protocol.get("receptor_controls") or {}
+            ),
+            "receptor_controls_sha256": str(
+                protocol.get("receptor_controls_sha256") or ""
+            ),
+            "receptor_controls_fingerprint": copy.deepcopy(
+                protocol.get("receptor_controls_fingerprint") or {}
+            ),
+            "atom_partition": copy.deepcopy(
+                protocol.get("atom_partition") or {}
+            ),
+            "identity": copy.deepcopy(protocol.get("identity") or {}),
+            "prepared_output_sha256": copy.deepcopy(
+                protocol.get("sha256") or {}
+            ),
+            **(
+                {
+                    "analysis_contracts": {
+                        "flexible_movement": {
+                            "schema_id": FLEXIBLE_MOVEMENT_SCHEMA_ID,
+                            "method": FLEXIBLE_MOVEMENT_METHOD,
+                            "artifact_file": (
+                                _flexible_movement_relative_path(run_id)
+                            ),
+                            "required_after_analysis": True,
+                            "exclude_flexible_ca_root": True,
+                        },
+                    },
+                }
+                if flexible_protocol_schema == 2
+                and run_mode == "dock"
+                else {}
+            ),
+        }
+        if frozen_flexible_protocol != expected_flexible_protocol:
+            return _error(
+                "RUN_FLEXIBLE_PROTOCOL_SNAPSHOT_MISMATCH",
+                "柔性受体协议快照与 metadata 冻结记录不一致。",
+                suggestion="请保留该 run 用于审计，并重新准备新的 run。",
+            )
+        if flexible_protocol_schema == 2 and run_mode == "dock":
+            expected_analysis_contract = expected_flexible_protocol[
+                "analysis_contracts"
+            ]
+            if metadata.get("analysis_contracts") != (
+                expected_analysis_contract
+            ):
+                return _error(
+                    "RUN_FLEXIBLE_ANALYSIS_CONTRACT_MISMATCH",
+                    "metadata 中的运动分析合同与冻结柔性受体协议不一致。",
+                    suggestion="请保留该 run 用于审计，并重新准备新的 run。",
+                )
 
     pose_attestation_error = _validate_frozen_pose_input_attestation(
         protocol,
@@ -9729,6 +13680,7 @@ def _validate_execute_prerequisites(
                     suggestion="请保留该 run 作为审计记录，并重新准备新的 run。",
                 )
             if is_hydrated:
+                from dockstart_core import autogrid as autogrid_core  # noqa: PLC0415
                 from dockstart_core import hydrated_maps as hydrated_map_core  # noqa: PLC0415
 
                 frozen_ligand_manifest = (
@@ -9833,30 +13785,42 @@ def _validate_execute_prerequisites(
                     if isinstance(frozen_water.get("sources"), dict)
                     else {}
                 )
-                hydrated_types = {
-                    str(item)
-                    for item in (
-                        frozen_maps.get("ligand_atom_types")
-                        if isinstance(
-                            frozen_maps.get("ligand_atom_types"),
-                            list,
-                        )
-                        else []
+                raw_hydrated_types = frozen_maps.get(
+                    "ligand_atom_types"
+                )
+                raw_autogrid_types = frozen_maps.get(
+                    "autogrid_ligand_atom_types"
+                )
+                hydrated_type_list = autogrid_core.canonical_atom_types(
+                    raw_hydrated_types
+                )
+                autogrid_type_list = autogrid_core.canonical_atom_types(
+                    raw_autogrid_types
+                )
+                atom_type_lists_valid = (
+                    isinstance(raw_hydrated_types, list)
+                    and isinstance(raw_autogrid_types, list)
+                    and all(
+                        isinstance(item, str) and bool(item.strip())
+                        for item in raw_hydrated_types
                     )
-                }
-                autogrid_types = {
-                    str(item)
-                    for item in (
-                        frozen_maps.get("autogrid_ligand_atom_types")
-                        if isinstance(
-                            frozen_maps.get(
-                                "autogrid_ligand_atom_types",
-                            ),
-                            list,
-                        )
-                        else []
+                    and all(
+                        isinstance(item, str) and bool(item.strip())
+                        for item in raw_autogrid_types
                     )
-                }
+                    and len(hydrated_type_list)
+                    == len(raw_hydrated_types)
+                    and len(autogrid_type_list)
+                    == len(raw_autogrid_types)
+                    and set(hydrated_type_list).issubset(
+                        autogrid_core.STANDARD_NON_METAL_TYPES | {"W"}
+                    )
+                    and set(autogrid_type_list).issubset(
+                        autogrid_core.STANDARD_NON_METAL_TYPES
+                    )
+                )
+                hydrated_types = set(hydrated_type_list)
+                autogrid_types = set(autogrid_type_list)
                 water_name = f"{prefix_name}.W.map"
                 oa_name = f"{prefix_name}.OA.map"
                 hd_name = f"{prefix_name}.HD.map"
@@ -9892,7 +13856,8 @@ def _validate_execute_prerequisites(
                     ),
                 }
                 if (
-                    "W" not in hydrated_types
+                    not atom_type_lists_valid
+                    or "W" not in hydrated_types
                     or "W" in autogrid_types
                     or not {"OA", "HD"}.issubset(autogrid_types)
                     or not (hydrated_types - {"W"}).issubset(
@@ -9957,6 +13922,63 @@ def _validate_execute_prerequisites(
                             "准备新的 run。"
                         ),
                     )
+                hydrated_coverage, hydrated_coverage_issue = (
+                    _hydrated_frozen_grid_coverage(
+                        frozen_manifest,
+                        expected_box=metadata.get("box_snapshot"),
+                        expected_grid=maps_metadata.get("grid"),
+                    )
+                )
+                if (
+                    hydrated_coverage_issue
+                    or hydrated_coverage is None
+                ):
+                    return _error(
+                        "RUN_HYDRATED_GRID_COVERAGE_INVALID",
+                        "冻结的水合 maps 未通过请求 Box/实际网格覆盖复核，拒绝执行。",
+                        raw_error=(
+                            hydrated_coverage_issue
+                            or "缺少可复核的覆盖记录。"
+                        ),
+                        suggestion=(
+                            "请保留该 run 作为审计记录，重新生成水合 maps "
+                            "并准备新的 run。"
+                        ),
+                    )
+                frozen_coverage_sha256 = str(
+                    frozen_manifest.get("grid_coverage_sha256") or ""
+                ).lower()
+                for coverage_record in (
+                    maps_snapshot,
+                    maps_metadata,
+                    hydrated_metadata,
+                ):
+                    recorded_coverage = (
+                        coverage_record.get("grid_coverage")
+                        if isinstance(
+                            coverage_record.get("grid_coverage"),
+                            dict,
+                        )
+                        else None
+                    )
+                    recorded_sha256 = str(
+                        coverage_record.get(
+                            "grid_coverage_sha256"
+                        )
+                        or ""
+                    ).lower()
+                    if (
+                        recorded_coverage != hydrated_coverage
+                        or recorded_sha256 != frozen_coverage_sha256
+                    ):
+                        return _error(
+                            "RUN_HYDRATED_GRID_COVERAGE_INVALID",
+                            "冻结运行记录与水合 maps manifest 的覆盖证据不一致，拒绝执行。",
+                            suggestion=(
+                                "请保留该 run 作为审计记录，重新生成水合 "
+                                "maps 并准备新的 run。"
+                            ),
+                        )
             if is_ad4zn:
                 ad4zn_snapshot = (
                     snapshots.get("ad4zn")
@@ -10058,6 +14080,15 @@ def _validate_execute_prerequisites(
                 prepared_issue = _ad4zn_prepared_receptor_issue(
                     fixed_paths["receptor"]
                 )
+                parameter_issue = _ad4zn_parameter_reference_issue(
+                    resolved_evidence["parameter_file"]
+                )
+                _box_coverage, box_coverage_issue = (
+                    _ad4zn_frozen_box_coverage(
+                        fixed_paths["receptor"],
+                        frozen_manifest,
+                    )
+                )
                 missing_gpf_lines = _ad4zn_gpf_missing_lines(
                     resolved_evidence["gpf"]
                 )
@@ -10081,10 +14112,18 @@ def _validate_execute_prerequisites(
                     or frozen_log_summary.get("successful_completion")
                     is not True
                     or prepared_issue
+                    or parameter_issue
+                    or box_coverage_issue
                     or missing_gpf_lines
                 ):
                     details = [
                         *([prepared_issue] if prepared_issue else []),
+                        *([parameter_issue] if parameter_issue else []),
+                        *(
+                            [box_coverage_issue]
+                            if box_coverage_issue
+                            else []
+                        ),
                         *(
                             [
                                 "GPF 缺少：" + ", ".join(missing_gpf_lines)
@@ -10095,7 +14134,7 @@ def _validate_execute_prerequisites(
                     ]
                     return _error(
                         "RUN_AD4ZN_PROTOCOL_BINDING_MISMATCH",
-                        "AD4Zn maps、TZ 受体、参数文件、GPF、AutoGrid 版本或人工复核记录不一致，拒绝执行。",
+                        "AD4Zn maps、ZN/TZ Box 覆盖、官方参数文件、GPF、AutoGrid 版本或人工复核记录不一致，拒绝执行。",
                         raw_error="；".join(details),
                         suggestion="请保留该 run 作为审计记录，并从 AD4Zn 复核步骤重新准备。",
                     )
@@ -10475,6 +14514,8 @@ def _validate_ad4_maps_post_run_integrity(
         }
     is_ad4zn = _metadata_protocol_id(metadata) == AD4ZN_PROTOCOL_ID
     is_hydrated = _metadata_protocol_id(metadata) == HYDRATED_PROTOCOL_ID
+    verified_ad4zn_box_coverage: dict[str, Any] | None = None
+    verified_hydrated_grid_coverage: dict[str, Any] | None = None
     code_prefix = (
         "RUN_AD4ZN_POST"
         if is_ad4zn
@@ -10850,6 +14891,62 @@ def _validate_ad4_maps_post_run_integrity(
                 "运行结束后冻结的水合 maps 缺少 W affinity map，结果已拒绝。",
                 raw_error=", ".join(sorted(frozen_hashes)),
             )
+        hydrated_maps_metadata = (
+            metadata.get("ad4_maps")
+            if isinstance(metadata.get("ad4_maps"), dict)
+            else {}
+        )
+        (
+            verified_hydrated_grid_coverage,
+            hydrated_coverage_issue,
+        ) = _hydrated_frozen_grid_coverage(
+            frozen_manifest,
+            expected_box=metadata.get("box_snapshot"),
+            expected_grid=hydrated_maps_metadata.get("grid"),
+        )
+        frozen_coverage_sha256 = str(
+            frozen_manifest.get("grid_coverage_sha256") or ""
+        ).lower()
+        if (
+            hydrated_coverage_issue
+            or verified_hydrated_grid_coverage is None
+        ):
+            return _error(
+                f"{code_prefix}_GRID_COVERAGE_INVALID",
+                "运行结束后冻结的水合请求 Box/实际网格覆盖证据不一致，结果已拒绝。",
+                raw_error=(
+                    hydrated_coverage_issue
+                    or "metadata 与冻结 maps manifest 的覆盖记录不一致。"
+                ),
+                suggestion="请重新生成水合 maps 并准备新的 run。",
+            )
+        for coverage_record in (
+            maps_record,
+            hydrated_maps_metadata,
+            hydrated_metadata,
+        ):
+            recorded_coverage = (
+                coverage_record.get("grid_coverage")
+                if isinstance(
+                    coverage_record.get("grid_coverage"),
+                    dict,
+                )
+                else None
+            )
+            recorded_coverage_sha256 = str(
+                coverage_record.get("grid_coverage_sha256") or ""
+            ).lower()
+            if (
+                recorded_coverage
+                != verified_hydrated_grid_coverage
+                or recorded_coverage_sha256
+                != frozen_coverage_sha256
+            ):
+                return _error(
+                    f"{code_prefix}_GRID_COVERAGE_INVALID",
+                    "运行结束后 metadata 与冻结水合 maps manifest 的覆盖证据不一致，结果已拒绝。",
+                    suggestion="请重新生成水合 maps 并准备新的 run。",
+                )
 
     if is_ad4zn:
         frozen_parameter = (
@@ -10903,6 +15000,14 @@ def _validate_ad4_maps_post_run_integrity(
                 raw_error=str(exc),
             )
         prepared_issue = _ad4zn_prepared_receptor_issue(prepared_path)
+        parameter_issue = _ad4zn_parameter_reference_issue(parameter_path)
+        (
+            verified_ad4zn_box_coverage,
+            box_coverage_issue,
+        ) = _ad4zn_frozen_box_coverage(
+            prepared_path,
+            frozen_manifest,
+        )
         missing_gpf_lines = _ad4zn_gpf_missing_lines(gpf_path)
         if (
             str(frozen_ad4zn.get("protocol_id") or "")
@@ -10921,10 +15026,14 @@ def _validate_ad4_maps_post_run_integrity(
             )
             or frozen_log_summary.get("successful_completion") is not True
             or prepared_issue
+            or parameter_issue
+            or box_coverage_issue
             or missing_gpf_lines
         ):
             details = [
                 *([prepared_issue] if prepared_issue else []),
+                *([parameter_issue] if parameter_issue else []),
+                *([box_coverage_issue] if box_coverage_issue else []),
                 *(
                     ["GPF 缺少：" + ", ".join(missing_gpf_lines)]
                     if missing_gpf_lines
@@ -10933,7 +15042,7 @@ def _validate_ad4_maps_post_run_integrity(
             ]
             return _error(
                 f"{code_prefix}_PROTOCOL_BINDING_MISMATCH",
-                "运行结束后 AD4Zn 的 TZ 受体、参数文件、GPF、AutoGrid 证据或人工复核记录不一致，结果已拒绝。",
+                "运行结束后 AD4Zn 的 ZN/TZ Box 覆盖、官方参数文件、GPF、AutoGrid 证据或人工复核记录不一致，结果已拒绝。",
                 raw_error="；".join(details),
             )
     return {
@@ -10941,6 +15050,24 @@ def _validate_ad4_maps_post_run_integrity(
         "status": "verified",
         "checked_at": _now_iso(),
         "verified": verified,
+        **(
+            {
+                "ad4zn_box_coverage": copy.deepcopy(
+                    verified_ad4zn_box_coverage
+                )
+            }
+            if verified_ad4zn_box_coverage is not None
+            else {}
+        ),
+        **(
+            {
+                "hydrated_grid_coverage": copy.deepcopy(
+                    verified_hydrated_grid_coverage
+                )
+            }
+            if verified_hydrated_grid_coverage is not None
+            else {}
+        ),
         "error": None,
     }
 
@@ -11022,6 +15149,33 @@ def get_run_files_status(project_dir: str, run_id: str) -> dict[str, Any]:
     if output_file:
         output_name = "optimized.pdbqt" if run_mode == "local_only" else "out.pdbqt"
         files.append(_file_status(project_path, output_file, "out", output_name))
+        output_normalization = (
+            metadata.get("output_normalization")
+            if isinstance(metadata.get("output_normalization"), dict)
+            else {}
+        )
+        raw_output_file = _vina_raw_output_relative_path(output_file)
+        if (
+            str(output_normalization.get("raw_output_file") or "")
+            == raw_output_file
+        ):
+            files.append(
+                _file_status(
+                    project_path,
+                    raw_output_file,
+                    "out_vina_raw",
+                    Path(raw_output_file).name,
+                )
+            )
+    if _is_flexible_movement_run(metadata):
+        files.append(
+            _file_status(
+                project_path,
+                _flexible_movement_relative_path(run_id),
+                "flexible_movement",
+                FLEXIBLE_MOVEMENT_FILENAME,
+            )
+        )
     if run_mode != "dock":
         files.append(
             _file_status(
@@ -11746,6 +15900,26 @@ def _recover_run_metadata(project_root: Path, run_id: str) -> tuple[dict[str, An
                 else {}
             ),
         }
+        output_normalization = (
+            metadata.get("output_normalization")
+            if isinstance(metadata.get("output_normalization"), dict)
+            else {}
+        )
+        normalized_output_file = _run_output_file(run_id, run_mode)
+        expected_raw_output_file = (
+            _vina_raw_output_relative_path(normalized_output_file)
+            if normalized_output_file
+            else ""
+        )
+        if (
+            expected_raw_output_file
+            and str(output_normalization.get("raw_output_file") or "")
+            == expected_raw_output_file
+        ):
+            artifact_paths["out_vina_raw"] = (
+                Path(expected_raw_output_file).name,
+                expected_raw_output_file,
+            )
         snapshots: dict[str, dict[str, Any]] = {}
         for key, (filename, relative) in artifact_paths.items():
             existing = existing_artifacts.get(key) if isinstance(existing_artifacts.get(key), dict) else {}
@@ -12894,10 +17068,43 @@ def _execute_local_only_with_baseline(
         stage_finished_at = _now_iso()
         log_ok = spec["log_path"].is_file() and spec["log_path"].stat().st_size > 0
         output_path = spec.get("output_path")
-        output_ok = bool(
-            output_path is None
-            or (output_path.is_file() and output_path.stat().st_size > 0)
+        output_exists = bool(
+            output_path is not None
+            and output_path.is_file()
+            and output_path.stat().st_size > 0
         )
+        output_normalization: dict[str, Any] | None = None
+        output_normalization_error: dict[str, Any] | None = None
+        output_normalization_warning = ""
+        output_normalization_artifacts: dict[str, dict[str, Any]] = {}
+        if output_exists and output_path is not None:
+            normalized_output = _normalize_vina_pdbqt_output(
+                output_path,
+                str(spec["output_file"]),
+                allow_flexible_residue_boundary=(
+                    _is_flexible_movement_run(metadata)
+                ),
+            )
+            output_normalization = copy.deepcopy(
+                normalized_output.get("record") or {}
+            )
+            output_normalization_error = (
+                copy.deepcopy(normalized_output.get("error"))
+                if isinstance(normalized_output.get("error"), dict)
+                else None
+            )
+            output_normalization_warning = str(
+                normalized_output.get("warning") or ""
+            )
+            output_normalization_artifacts = copy.deepcopy(
+                normalized_output.get("artifacts") or {}
+            )
+            output_exists = bool(
+                normalized_output.get("ok")
+                and output_path.is_file()
+                and output_path.stat().st_size > 0
+            )
+        output_ok = bool(output_path is None or output_exists)
         parsed: dict[str, Any] | None = None
         parse_error = ""
         if log_ok:
@@ -12941,6 +17148,12 @@ def _execute_local_only_with_baseline(
             error_message = (
                 "Vina 可执行文件在两阶段比较期间发生变化，已拒绝发布比较结果。"
             )
+        elif output_normalization_error is not None:
+            phase_status = "failed"
+            error_message = str(
+                output_normalization_error.get("message")
+                or "Vina 输出 PDBQT 未通过文本完整性检查。"
+            )
         elif parse_error:
             phase_status = "failed"
             error_message = parse_error
@@ -12972,6 +17185,7 @@ def _execute_local_only_with_baseline(
                 if output_path is not None
                 else {}
             ),
+            **output_normalization_artifacts,
         }
 
         def record_stage(current: dict[str, Any]) -> dict[str, Any]:
@@ -13005,9 +17219,31 @@ def _execute_local_only_with_baseline(
                     "end_sha256": end_hash,
                     "match": vina_integrity_ok,
                 },
+                **(
+                    {
+                        "output_normalization": copy.deepcopy(
+                            output_normalization
+                        )
+                    }
+                    if output_normalization is not None
+                    else {}
+                ),
                 **({"error_message": error_message} if error_message else {}),
             }
             current["execution_phases"] = phases
+            if output_normalization is not None:
+                current["output_normalization"] = copy.deepcopy(
+                    output_normalization
+                )
+            if output_normalization_warning:
+                warnings = (
+                    list(current.get("warnings") or [])
+                    if isinstance(current.get("warnings"), list)
+                    else []
+                )
+                if output_normalization_warning not in warnings:
+                    warnings.append(output_normalization_warning)
+                current["warnings"] = warnings
             if current.get("status") == "running":
                 current.update(
                     {
@@ -13046,6 +17282,7 @@ def _execute_local_only_with_baseline(
             "ok": succeeded,
             "cancelled": cancelled,
             "error_message": error_message,
+            "structured_error": copy.deepcopy(output_normalization_error),
             "run_result": run_result,
             "parsed": parsed if isinstance(parsed, dict) and parsed.get("ok") else None,
             "metadata": recorded,
@@ -13296,6 +17533,13 @@ def _execute_local_only_with_baseline(
             "message": "project.json run 摘要同步失败。",
         }
     elif final_status in {"failed", "interrupted"}:
+        structured_error = (
+            local_result.get("structured_error")
+            if isinstance(local_result.get("structured_error"), dict)
+            else baseline_result.get("structured_error")
+            if isinstance(baseline_result.get("structured_error"), dict)
+            else None
+        )
         stderr_path = (
             Path(str(prerequisites["stderr_path"]))
             if local_run_result is not None
@@ -13303,20 +17547,26 @@ def _execute_local_only_with_baseline(
         )
         payload["error"] = {
             "code": (
-                "VINA_RUN_FAILED"
+                str(structured_error.get("code") or "")
+                if structured_error
+                else "VINA_RUN_FAILED"
                 if final_status == "failed"
                 else "VINA_RUN_INTERRUPTED"
             ),
             "message": message,
             "raw_error": (
-                str(local_run_result.error)
+                str(structured_error.get("raw_error") or "")
+                if structured_error
+                else str(local_run_result.error)
                 if local_run_result is not None and local_run_result.error
                 else str(baseline_run_result.error)
                 if baseline_run_result is not None and baseline_run_result.error
                 else _tail_text(stderr_path)
             ),
             "suggestion": (
-                "请查看 baseline_* 与 local_only 的 stderr/log 文件后重新准备运行。"
+                str(structured_error.get("suggestion") or "")
+                if structured_error
+                else "请查看 baseline_* 与 local_only 的 stderr/log 文件后重新准备运行。"
             ),
         }
     return payload
@@ -13598,7 +17848,43 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
 
     vina_finished_at = _now_iso()
     output_required = output_path is not None
-    output_ok = not output_required or (output_path.is_file() and output_path.stat().st_size > 0)
+    output_exists = bool(
+        output_path is not None
+        and output_path.is_file()
+        and output_path.stat().st_size > 0
+    )
+    output_normalization: dict[str, Any] | None = None
+    output_normalization_error: dict[str, Any] | None = None
+    output_normalization_warning = ""
+    output_normalization_artifacts: dict[str, dict[str, Any]] = {}
+    if output_exists and output_path is not None:
+        normalized_output = _normalize_vina_pdbqt_output(
+            output_path,
+            output_file,
+            allow_flexible_residue_boundary=(
+                _is_flexible_movement_run(metadata)
+            ),
+        )
+        output_normalization = copy.deepcopy(
+            normalized_output.get("record") or {}
+        )
+        output_normalization_error = (
+            copy.deepcopy(normalized_output.get("error"))
+            if isinstance(normalized_output.get("error"), dict)
+            else None
+        )
+        output_normalization_warning = str(
+            normalized_output.get("warning") or ""
+        )
+        output_normalization_artifacts = copy.deepcopy(
+            normalized_output.get("artifacts") or {}
+        )
+        output_exists = bool(
+            normalized_output.get("ok")
+            and output_path.is_file()
+            and output_path.stat().st_size > 0
+        )
+    output_ok = not output_required or output_exists
     log_ok = log_path.is_file() and log_path.stat().st_size > 0
     evaluation_parse_error = ""
     if run_mode != "dock" and log_ok:
@@ -13901,6 +18187,7 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         "stdout": _hash_snapshot(stdout_path, stdout_file),
         "stderr": _hash_snapshot(stderr_path, stderr_file),
         **({"out": _hash_snapshot(output_path, output_file)} if output_path is not None else {}),
+        **output_normalization_artifacts,
         **hydrated_artifacts,
     }
 
@@ -13908,6 +18195,19 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
         current["input_snapshot_integrity"] = copy.deepcopy(
             post_run_input_integrity
         )
+        if output_normalization is not None:
+            current["output_normalization"] = copy.deepcopy(
+                output_normalization
+            )
+        if output_normalization_warning:
+            warnings = (
+                list(current.get("warnings") or [])
+                if isinstance(current.get("warnings"), list)
+                else []
+            )
+            if output_normalization_warning not in warnings:
+                warnings.append(output_normalization_warning)
+            current["warnings"] = warnings
         if is_hydrated:
             current["hydrated_postprocess"] = copy.deepcopy(
                 hydrated_postprocess_record
@@ -13963,6 +18263,14 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             message = "用户已取消运行。"
             error_message = ""
             percent = int((current.get("progress") or {}).get("percent") or 0)
+        elif output_normalization_error is not None:
+            final_status = "failed"
+            message = str(
+                output_normalization_error.get("message")
+                or "Vina 输出 PDBQT 未通过文本完整性检查。"
+            )
+            error_message = message
+            percent = 100
         elif (
             run_result.exit_code == 0
             and output_ok
@@ -14135,10 +18443,12 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "code": (
                 str(integrity_error.get("code") or "")
                 if integrity_error
-                else str(hydrated_postprocess_error.get("code") or "")
-                if hydrated_postprocess_error
                 else "RUN_VINA_BINARY_CHANGED"
                 if binary_integrity_failed
+                else str(hydrated_postprocess_error.get("code") or "")
+                if hydrated_postprocess_error
+                else str(output_normalization_error.get("code") or "")
+                if output_normalization_error
                 else "VINA_RUN_FAILED"
                 if final_status == "failed"
                 else "VINA_RUN_INTERRUPTED"
@@ -14147,26 +18457,34 @@ def execute_prepared_vina_run(project_dir: str, run_id: str) -> dict[str, Any]:
             "raw_error": (
                 str(integrity_error.get("raw_error") or "")
                 if integrity_error
-                else str(
-                    hydrated_postprocess_error.get("raw_error") or ""
-                )
-                if hydrated_postprocess_error
                 else (
                     f"start={binary_integrity.get('start_sha256') or ''}; "
                     f"end={binary_integrity.get('end_sha256') or ''}"
                 )
                 if binary_integrity_failed
+                else str(
+                    hydrated_postprocess_error.get("raw_error") or ""
+                )
+                if hydrated_postprocess_error
+                else str(
+                    output_normalization_error.get("raw_error") or ""
+                )
+                if output_normalization_error
                 else run_result.error or _tail_text(stderr_path)
             ),
             "suggestion": (
                 str(integrity_error.get("suggestion") or "")
                 if integrity_error
+                else "请恢复执行前的 Vina binary，并重新生成 maps、准备新 run。"
+                if binary_integrity_failed
                 else str(
                     hydrated_postprocess_error.get("suggestion") or ""
                 )
                 if hydrated_postprocess_error
-                else "请恢复执行前的 Vina binary，并重新生成 maps、准备新 run。"
-                if binary_integrity_failed
+                else str(
+                    output_normalization_error.get("suggestion") or ""
+                )
+                if output_normalization_error
                 else "请查看 stderr.txt、stdout.txt 和 log.txt 后重新准备运行。"
             ),
         }

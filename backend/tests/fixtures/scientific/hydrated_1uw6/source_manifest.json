@@ -1,9 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "hydrated_1uw6_external",
   "distribution": "metadata_only",
   "contains_upstream_structure_files": false,
-  "purpose": "AutoDock Vina 1UW6 hydrated-ligand, W-map, AD4 docking, and retained-water postprocessing acceptance",
+  "contains_parameter_files": false,
+  "contains_maps_or_outputs": false,
+  "contains_executables": false,
+  "purpose": "DockStart public project API gate for 1UW6 hydrated-ligand preparation, GPF, external AutoGrid, base/W maps, Vina output normalization, top-3 same-frame crystal-pose recovery, retained-water postprocessing, scores, and Markdown report",
   "upstream": {
     "project": "AutoDock Vina",
     "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
@@ -14,87 +17,187 @@
     "solution_path": "example/hydrated_docking/solution",
     "license": "Apache-2.0",
     "checkout_profile": {
-      "platform": "windows",
-      "working_tree_line_endings": "CRLF",
-      "git_setting": "core.autocrlf=true"
+      "known_reference_platform": "windows",
+      "known_reference_line_endings": "CRLF",
+      "portable_identity_algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+      "accepted_worktree_line_endings": [
+        "LF",
+        "CRLF"
+      ]
     }
   },
   "required_files": {
+    "crystal_reference_ligand": {
+      "path": "example/hydrated_docking/data/1uw6_ligand.sdf",
+      "git_blob_sha1": "16fa76ce32db813334007f0f994e903a560e8c24",
+      "size_bytes": 1917,
+      "sha256": "c2010b6fd17e472601fb36fa1437a713ffbf351f9b84f103a12146e11209e2d9",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 1844,
+        "sha256": "f9f9e492c8be271198ed27824c6e21aaa539c00b06612b204d3a275058fff862"
+      }
+    },
     "hydrated_ligand_input": {
       "path": "example/hydrated_docking/solution/1uw6_ligandH.sdf",
+      "git_blob_sha1": "35303d4209a6e68cb7082d44e3c97a00f14f1542",
       "size_bytes": 3312,
-      "sha256": "6eb5375c4b3b01ec997b6417d130fdebaaf567c7bf006871dd39b77017a316dd"
+      "sha256": "6eb5375c4b3b01ec997b6417d130fdebaaf567c7bf006871dd39b77017a316dd",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 3205,
+        "sha256": "ff2126c208addc7b4e767d2950ec9d97299ea655ef1c6fb69cb702d1f471685d"
+      }
     },
     "official_hydrated_ligand": {
       "path": "example/hydrated_docking/solution/1uw6_ligand.pdbqt",
+      "git_blob_sha1": "6f74fbc8107dae6deccb4260a36344592a98011a",
       "size_bytes": 1448,
-      "sha256": "30d2171d0774d7d7cfc315c00a5176be3dc81a77addcbb98da019e3ecb65c667"
+      "sha256": "30d2171d0774d7d7cfc315c00a5176be3dc81a77addcbb98da019e3ecb65c667",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 1423,
+        "sha256": "d4f80a938e3348c537d98770d7b65ec20908025275c55b24c61448e97565d5ac"
+      }
     },
     "receptor": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.pdbqt",
+      "git_blob_sha1": "9dd617ab9f25d67cc6b875d4f44e24a6cfd2c92b",
       "size_bytes": 329589,
-      "sha256": "ba4814e8ef709e8b63fe8d09ee57d06a2963c89b6ae6c4bfd58259beb9c0d418"
+      "sha256": "ba4814e8ef709e8b63fe8d09ee57d06a2963c89b6ae6c4bfd58259beb9c0d418",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 325520,
+        "sha256": "9b76ee48f4630d6ac70053f9c06876aee9772c8b2e67be715eb52cd5dad07208"
+      }
     },
     "gpf": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.gpf",
+      "git_blob_sha1": "ae42169dfab3283b31c0239ab0645057b941d0da",
       "size_bytes": 816,
-      "sha256": "124e060d60b07cf4e97ee08add31a4cdbc4c000693760e5bec69fa6530fa73f1"
+      "sha256": "124e060d60b07cf4e97ee08add31a4cdbc4c000693760e5bec69fa6530fa73f1",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 787,
+        "sha256": "bdc9ef93c9238977bd393d5c3dcf2d225801a18e29e8201cef05754a10bc189a"
+      }
     },
     "map_A": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.A.map",
+      "git_blob_sha1": "26db4f0a3b1cd20f7f02078e65cdc915229b8e56",
       "size_bytes": 628327,
-      "sha256": "58bf67065674d263e58a9792b4db96aa8d29094ba31de627d554c68790dda9c6"
+      "sha256": "58bf67065674d263e58a9792b4db96aa8d29094ba31de627d554c68790dda9c6",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 559400,
+        "sha256": "3f5aec43a82d3069b350f86276ce79d54720eed31159e09849f020b81f1692b8"
+      }
     },
     "map_C": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.C.map",
+      "git_blob_sha1": "dca8eb5ae30683bbb630e6c6afd0cc8b6c94ecd4",
       "size_bytes": 628554,
-      "sha256": "1d4b515acea20ef20db1ca270fc7a16e59a4d1a1058e244946e38e0f69f882e8"
+      "sha256": "1d4b515acea20ef20db1ca270fc7a16e59a4d1a1058e244946e38e0f69f882e8",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 559627,
+        "sha256": "e87cae7806385e233971947195828f16303a43ed897e046e409ca7a9c8ed2419"
+      }
     },
     "map_HD": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.HD.map",
+      "git_blob_sha1": "8788fbd389b9d087754929bc27317a2338ff60a1",
       "size_bytes": 559838,
-      "sha256": "c691f2c2d0a5cabf54b12029ae1c18e4a299b984825eff5a2f34cba1b17e8d1e"
+      "sha256": "c691f2c2d0a5cabf54b12029ae1c18e4a299b984825eff5a2f34cba1b17e8d1e",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 490911,
+        "sha256": "47670b896283cb6176c79b4fad25863032302d655f802274ed65e2e095dd82eb"
+      }
     },
     "map_N": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.N.map",
+      "git_blob_sha1": "88fa21905f81d0ebfdded3748703b36c969345ea",
       "size_bytes": 612438,
-      "sha256": "edb3c1e3e9cfd34d84b6c2dbffe383756b91d33e11ae74c809c93f39d98dbed8"
+      "sha256": "edb3c1e3e9cfd34d84b6c2dbffe383756b91d33e11ae74c809c93f39d98dbed8",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 543511,
+        "sha256": "87f317d8640677255384b9531d37cc40d9ae915942493165f410de0217ae89e3"
+      }
     },
     "map_NA": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.NA.map",
+      "git_blob_sha1": "453e6e75f392ec1bc1880d1f85ea72d04ba0d4e9",
       "size_bytes": 612956,
-      "sha256": "1eba7bbe62607c03da1eece99bfdf2251077f742a9ba1f5fb98aaff8158fb42c"
+      "sha256": "1eba7bbe62607c03da1eece99bfdf2251077f742a9ba1f5fb98aaff8158fb42c",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 544029,
+        "sha256": "5d8c42dcbd1c9eac18a574171c5ea35f706cb786ae0be5c878c4f4d98e0c2563"
+      }
     },
     "map_OA": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.OA.map",
+      "git_blob_sha1": "98529f692604513f2120d9b2ff05b23f108a9b7a",
       "size_bytes": 606273,
-      "sha256": "d73d109fb66f46834b301990faf2b96d0ad49c1718af29a23c8447b234838f17"
+      "sha256": "d73d109fb66f46834b301990faf2b96d0ad49c1718af29a23c8447b234838f17",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 537346,
+        "sha256": "abef33d7ef7b28d18c61faac50a8422d8d21c0ef083951f847a47701aa5fcc6f"
+      }
     },
     "map_W": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.W.map",
+      "git_blob_sha1": "901f24e3a8863e950e41d08478a34b781f64ea04",
       "size_bytes": 620467,
-      "sha256": "9f87090a86da2f33d364ed3ab6f946ed234145e55feb3222690d7d95886e9be8"
+      "sha256": "9f87090a86da2f33d364ed3ab6f946ed234145e55feb3222690d7d95886e9be8",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 551540,
+        "sha256": "8f875bb5f74eff214d7a47cd5d51896d2b931d318d67c920fea89e2948242d20"
+      }
     },
     "map_d": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.d.map",
+      "git_blob_sha1": "1e0069f33916b3044a121b544c5d44cd2bf27194",
       "size_bytes": 482625,
-      "sha256": "7b23859d9233823e5bbaf41b63458ba03b74a793cc1ea22e60cf7d790508143d"
+      "sha256": "7b23859d9233823e5bbaf41b63458ba03b74a793cc1ea22e60cf7d790508143d",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 413698,
+        "sha256": "5516479adaa4d54f5f6612fc1e8f0100ac4dda9a76ea1a59d8d8742348fa6c65"
+      }
     },
     "map_e": {
       "path": "example/hydrated_docking/solution/1uw6_receptor.e.map",
+      "git_blob_sha1": "a96102450445980f82b55f35148b88fd68d463b1",
       "size_bytes": 543826,
-      "sha256": "137f956d518dd046a9efd00c138b6942e27aac3f66814354d812c22f8e3bf6e7"
+      "sha256": "137f956d518dd046a9efd00c138b6942e27aac3f66814354d812c22f8e3bf6e7",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 474899,
+        "sha256": "45c28eaaea0674f576598f0a1be09b518e72262ae0c4df1496a288c598057461"
+      }
     },
     "official_raw_output": {
       "path": "example/hydrated_docking/solution/1uw6_ligand_ad4_out.pdbqt",
+      "git_blob_sha1": "8ffd2e2cfb26b30c949ff5f2668c546588e25ed9",
       "size_bytes": 15417,
-      "sha256": "07bd8c280a0dd0be4b149f59fa1e629673db1b946754c880952c1e1cdcfa9651"
+      "sha256": "07bd8c280a0dd0be4b149f59fa1e629673db1b946754c880952c1e1cdcfa9651",
+      "portable_text_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_sha256",
+        "size_bytes": 15120,
+        "sha256": "b40907482d4a428cef55fde8259f1201ef877549d5fd47db1e30ee07156c0448"
+      }
     }
   },
   "expected": {
     "meeko": {
       "validated_version": "0.7.1",
       "hydrated_ligand_sha256": "30d2171d0774d7d7cfc315c00a5176be3dc81a77addcbb98da019e3ecb65c667",
+      "portable_lf_sha256": "d4f80a938e3348c537d98770d7b65ec20908025275c55b24c61448e97565d5ac",
       "water_atom_count": 2
     },
     "water_map": {
@@ -104,6 +207,7 @@
       "hydrogen_weight": 1.0,
       "entropy": -0.2,
       "sha256": "9f87090a86da2f33d364ed3ab6f946ed234145e55feb3222690d7d95886e9be8",
+      "portable_lf_sha256": "8f875bb5f74eff214d7a47cd5d51896d2b931d318d67c920fea89e2948242d20",
       "value_count": 68921
     },
     "vina": {
@@ -111,13 +215,137 @@
       "scoring": "ad4",
       "exhaustiveness": 32,
       "num_modes": 9,
-      "minimum_output_modes": 1,
+      "accepted_output_mode_counts": [
+        8,
+        9
+      ],
+      "minimum_output_modes": 8,
+      "maximum_output_modes": 9,
       "energy_range": 3,
       "cpu": 1,
       "seed": 1952347903,
       "best_affinity": -8.261,
       "affinity_tolerance": 0.05,
       "water_atoms_per_raw_pose": 2
+    },
+    "pose_recovery": {
+      "reference_file_key": "crystal_reference_ligand",
+      "reference_format": "SDF V2000",
+      "reference_atom_count": 12,
+      "reference_elements": [
+        "N",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C",
+        "N",
+        "C",
+        "C",
+        "C",
+        "C",
+        "C"
+      ],
+      "reference_bonds_one_based": [
+        [1, 2, 2],
+        [1, 6, 1],
+        [2, 3, 1],
+        [3, 4, 2],
+        [3, 8, 1],
+        [4, 5, 1],
+        [5, 6, 2],
+        [7, 8, 1],
+        [7, 11, 1],
+        [7, 12, 1],
+        [8, 9, 1],
+        [9, 10, 1],
+        [10, 11, 1]
+      ],
+      "reference_coordinate_fingerprint": {
+        "algorithm": "ordered_sdf_coordinates_fixed_4_decimal_csv_sha256",
+        "sha256": "bc13c24450da63a03c3d8a04aa83a7defd999da3dd372da6ee663858e3923c81"
+      },
+      "pdbqt_smiles": "C[N@@H+]1CCC[C@H]1c1cccnc1",
+      "pdbqt_smiles_idx_pairs_one_based": [
+        6,
+        1,
+        2,
+        2,
+        3,
+        3,
+        1,
+        4,
+        5,
+        5,
+        4,
+        6,
+        7,
+        7,
+        12,
+        8,
+        8,
+        9,
+        11,
+        10,
+        9,
+        11,
+        10,
+        12
+      ],
+      "smiles_to_reference_sdf_atom_zero_based": [
+        11,
+        6,
+        10,
+        9,
+        8,
+        7,
+        2,
+        3,
+        4,
+        5,
+        0,
+        1
+      ],
+      "rmsd_semantics": "same_receptor_coordinate_frame_no_alignment_heavy_atoms_explicit_mapping",
+      "alignment_applied": false,
+      "heavy_atoms_only": true,
+      "top_n_modes": 3,
+      "maximum_rmsd_angstrom": 2.0
+    },
+    "project_api": {
+      "box": {
+        "center_x": 83.64,
+        "center_y": 69.684,
+        "center_z": -10.124,
+        "size_x": 15.0,
+        "size_y": 15.0,
+        "size_z": 15.0
+      },
+      "grid": {
+        "spacing": 0.375,
+        "grid_points": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      },
+      "gpf_required_lines": [
+        "npts 40 40 40",
+        "spacing 0.375",
+        "gridcenter 83.64 69.684 -10.124",
+        "ligand_types A C HD N NA OA"
+      ],
+      "report_required_phrases": [
+        "# DockStart 实验性水合 AD4 对接报告",
+        "处理后评分未计算",
+        "不用于虚拟筛选",
+        "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+      ],
+      "output_normalization": {
+        "method": "torsdof_endmdl_nul_padding_v1",
+        "raw_bytes_must_be_preserved_when_normalized": true,
+        "normalized_output_must_be_utf8_and_control_free": true
+      }
     },
     "postprocess": {
       "clean_room": {

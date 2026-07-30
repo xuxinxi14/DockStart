@@ -12,6 +12,7 @@ import StatusBadge from "../components/StatusBadge";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, PreparationStatusResponse, ProjectFileRef, ProjectResponse } from "../types";
 import { writeDockingWorkspaceMode } from "../utils/dockingMode";
+import { normalizeLigandImportPreview } from "../utils/screeningLigandImport";
 
 type ImportPdbqtPageProps = {
   project: DockStartProject;
@@ -34,6 +35,15 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
 
 function fileText(fileRef: ProjectFileRef): string {
   return fileRef.file || "未导入";
+}
+
+function projectStagedFilePath(projectDir: string, stagedFile: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(stagedFile)) return stagedFile;
+  return `${projectDir.replace(/[\\/]+$/, "")}\\${stagedFile.replace(/^[\\/]+/, "").replace(/\//g, "\\")}`;
+}
+
+function noReadyLigandMessage(): string {
+  return "导入结果中没有可用配体。重复、准备失败或需要正式大环审查的记录不会进入任务；请检查导入结果后重新选择。";
 }
 
 export default function ImportPdbqtPage({
@@ -118,23 +128,44 @@ export default function ImportPdbqtPage({
     setMessage("");
     setRawError("");
     try {
-      const ligandPath = ligandPaths[0] ?? "";
+      let readyLigandCount = 0;
+      let sourcePath = receptorPath;
+      if (role === "ligand") {
+        const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
+          projectDir: project.project_dir,
+          files: ligandPaths,
+        })) as {
+          ok?: boolean;
+          error?: { message?: string; raw_error?: string };
+          [key: string]: unknown;
+        };
+        if (!stageResponse.ok) {
+          throw new Error(stageResponse.error?.raw_error || stageResponse.error?.message || "配体快照导入失败。");
+        }
+        const preview = normalizeLigandImportPreview(stageResponse);
+        const firstReady = preview.candidates.find(
+          (candidate) => candidate.status === "ready" && candidate.stagedFile,
+        );
+        readyLigandCount = preview.counts.ready;
+        if (readyLigandCount === 0 || !firstReady?.stagedFile) {
+          throw new Error(noReadyLigandMessage());
+        }
+        sourcePath = projectStagedFilePath(project.project_dir, firstReady.stagedFile);
+      }
       const rawPayload = await invoke<string>(role === "receptor" ? "import_receptor_pdbqt" : "import_ligand_pdbqt", {
         projectDir: project.project_dir,
-        sourcePath: role === "receptor" ? receptorPath : ligandPath,
+        sourcePath,
       });
       const response = parseProjectResponse(rawPayload);
       applyProjectResponse(response, role === "receptor" ? "受体 PDBQT 已导入。" : "配体 PDBQT 已导入。");
-      if (response.ok && role === "ligand" && ligandPaths.length > 1) {
-        const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
-          projectDir: project.project_dir,
-          files: ligandPaths,
-        })) as { ok?: boolean; staged?: unknown[]; error?: { message?: string; raw_error?: string } };
-        if (!staged.ok) throw new Error(staged.error?.raw_error || staged.error?.message || "批量配体快照导入失败。");
-        writeDockingWorkspaceMode(project.project_dir, "batch");
-        setMessage(`已导入 ${staged.staged?.length ?? ligandPaths.length} 个配体，并自动切换为串行批量筛选；首个配体用于搜索范围预览。也可在运行工作台明确选择多配体共同对接（实验性）。`);
-      } else if (response.ok && role === "ligand") {
-        writeDockingWorkspaceMode(project.project_dir, "single");
+      if (response.ok && role === "ligand") {
+        if (readyLigandCount >= 2) {
+          writeDockingWorkspaceMode(project.project_dir, "batch");
+          setMessage(`已导入 ${readyLigandCount} 个可用配体，并自动切换为串行批量筛选；首个可用配体用于搜索范围预览。`);
+        } else {
+          writeDockingWorkspaceMode(project.project_dir, "single");
+          setMessage("已导入 1 个可用配体，并保持单配体任务。");
+        }
       }
       if (response.ok) await refreshPreparedStatus();
     } catch (error) {
@@ -184,7 +215,11 @@ export default function ImportPdbqtPage({
         ) : (
           <div className="multi-ligand-file-picker">
             <ActionButton onClick={() => void chooseLigands()}>选择一个或多个 PDBQT</ActionButton>
-            <span>{ligandPaths.length ? `已选择 ${ligandPaths.length} 个文件` : "选择 1 个进入单配体任务，选择多个默认进入串行批量筛选"}</span>
+            <span>
+              {ligandPaths.length
+                ? `已选择 ${ligandPaths.length} 个文件；导入后按可用配体数量决定单配体或批量筛选`
+                : "可选择一个或多个文件；只有实际可用配体不少于 2 个时才进入批量筛选"}
+            </span>
             {ligandPaths.length ? <code title={ligandPaths.join("\n")}>{ligandPaths.map((path) => path.split(/[\\/]/).pop()).join("、")}</code> : null}
           </div>
         )}

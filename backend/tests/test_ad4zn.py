@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import json
+import hashlib
 import itertools
+import json
 import math
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from dockstart_core import ad4zn as ad4zn_module  # noqa: E402
 from dockstart_core.ad4zn import (  # noqa: E402
     REQUIRED_CONFIRMATIONS,
     _tz_direction_from_coordination_plane,
@@ -24,6 +27,7 @@ from dockstart_core.ad4zn import (  # noqa: E402
 )
 from dockstart_core.project import (  # noqa: E402
     create_project,
+    import_ligand_pdbqt,
     import_receptor_pdbqt,
     load_project,
 )
@@ -194,6 +198,12 @@ def _valid_parameter_text() -> str:
             "FE_coeff_estat 0.1406",
             "FE_coeff_desolv 0.1322",
             "FE_coeff_tors 0.2983",
+            "atom_par C 4.00 0.150 33.5103 -0.00143 0.0 0.0 0 -1 -1 0",
+            "atom_par N 3.50 0.160 22.4493 -0.00162 0.0 0.0 0 -1 -1 1",
+            "atom_par NA 3.50 0.160 22.4493 -0.00162 1.9 5.0 4 -1 -1 1",
+            "atom_par OA 3.20 0.200 17.1573 -0.00251 1.9 5.0 5 -1 -1 2",
+            "atom_par SA 4.00 0.200 33.5103 -0.00214 2.5 1.0 5 -1 -1 6",
+            "atom_par Z 4.00 0.150 33.5103 -0.00143 0.0 0.0 0 -1 -1 0",
             "atom_par ZN 1.48 0.550 1.7000 -0.00110 0.0 0.0 0 -1 -1 4",
             "atom_par TZ 1.00 0.000 0.0000 0.00000 0.0 0.0 0 -1 -1 0",
             "",
@@ -202,6 +212,18 @@ def _valid_parameter_text() -> str:
 
 
 class AD4ZnTests(unittest.TestCase):
+    def setUp(self) -> None:
+        reference_sha256 = hashlib.sha256(
+            _valid_parameter_text().encode("utf-8")
+        ).hexdigest()
+        patcher = patch.object(
+            ad4zn_module,
+            "SUPPORTED_PARAMETER_REFERENCE_SHA256",
+            reference_sha256,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _create_project(self, root: str, receptor_lines: list[str]) -> Path:
         response = create_project("ad4zn_project", root)
         self.assertTrue(response["ok"], response)
@@ -527,7 +549,7 @@ class AD4ZnTests(unittest.TestCase):
             self.assertFalse(rejected["ok"])
             self.assertEqual(
                 rejected["error"]["code"],
-                "AD4ZN_TZ_GEOMETRY_UNSUPPORTED",
+                "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
             )
 
     def test_official_1s63_site_reproduces_reference_tz_coordinate(self) -> None:
@@ -623,32 +645,29 @@ class AD4ZnTests(unittest.TestCase):
             self.assertEqual(len(inferred["members"]), 2)
             self.assertTrue(site["can_generate"])
 
-    def test_multiple_zinc_requires_explicit_selection(self) -> None:
+    def test_multiple_zinc_is_rejected_even_with_explicit_selection(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             lines = _three_coordinate_site()
             lines.extend(_three_coordinate_site(serial_offset=20, x_offset=20.0))
             project_dir = self._create_project(root, lines)
             status = get_status(str(project_dir))
             self.assertEqual(len(status["sites"]), 2)
+            self.assertFalse(status["step_readiness"]["review"])
+            self.assertFalse(status["step_readiness"]["prepare"])
             self.assertTrue(
                 any(
-                    item["code"] == "AD4ZN_MULTIPLE_ZN_UNSELECTED"
+                    item["code"] == "AD4ZN_MULTIPLE_ZN_UNSUPPORTED"
                     for item in status["issues"]
                 )
             )
-            missing_selection = save_review(
+            rejected = save_review(
                 str(project_dir),
-                {"confirmations": {key: True for key in REQUIRED_CONFIRMATIONS}},
+                self._review_payload(status, index=1),
             )
-            self.assertFalse(missing_selection["ok"])
+            self.assertFalse(rejected["ok"])
             self.assertEqual(
-                missing_selection["error"]["code"],
-                "AD4ZN_SITE_SELECTION_REQUIRED",
-            )
-            reviewed = self._save_valid_review(project_dir, index=1)
-            self.assertEqual(
-                reviewed["selected_site_id"],
-                status["sites"][1]["site_id"],
+                rejected["error"]["code"],
+                "AD4ZN_MULTIPLE_ZN_UNSUPPORTED",
             )
 
     def test_all_seven_confirmations_must_be_literal_true(self) -> None:
@@ -682,17 +701,9 @@ class AD4ZnTests(unittest.TestCase):
                 )
             )
 
-    def test_prepare_writes_independent_receptor_normalizes_all_zinc_and_one_tz(self) -> None:
+    def test_prepare_writes_exactly_one_zinc_one_tz_and_one_charge_change(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             lines = _three_coordinate_site(zinc_charge=1.5)
-            lines.extend(
-                _three_coordinate_site(
-                    serial_offset=20,
-                    x_offset=20.0,
-                    zinc_charge=2.0,
-                    zinc_type="ZN",
-                )
-            )
             # Two stale pseudoatoms must be removed before one selected TZ is inserted.
             lines.extend(
                 [
@@ -714,8 +725,8 @@ class AD4ZnTests(unittest.TestCase):
                         "TZ",
                         "ZN",
                         "A",
-                        520,
-                        19,
+                        500,
+                        -2,
                         -1,
                         -1,
                         0.5,
@@ -731,7 +742,7 @@ class AD4ZnTests(unittest.TestCase):
             prepared = response["prepared_receptor"]
             self.assertTrue(prepared["valid"], prepared)
             self.assertEqual(prepared["removed_existing_tz_count"], 2)
-            self.assertEqual(len(prepared["all_zn_charge_changes"]), 2)
+            self.assertEqual(len(prepared["all_zn_charge_changes"]), 1)
             output = project_dir / prepared["relative_path"]
             self.assertTrue(output.is_file())
             output_lines = output.read_text(encoding="utf-8").splitlines()
@@ -743,7 +754,7 @@ class AD4ZnTests(unittest.TestCase):
             tz_lines = [line for line in atom_lines if line[77:79].strip() == "TZ"]
             zn_lines = [line for line in atom_lines if line[77:79].strip() == "ZN"]
             self.assertEqual(len(tz_lines), 1)
-            self.assertEqual(len(zn_lines), 2)
+            self.assertEqual(len(zn_lines), 1)
             self.assertTrue(all(float(line[68:76]) == 0.0 for line in zn_lines))
             self.assertEqual(float(tz_lines[0][68:76]), 0.0)
             self.assertEqual(tz_lines[0][12:16], "  TZ")
@@ -801,7 +812,7 @@ class AD4ZnTests(unittest.TestCase):
                 1,
             )
 
-    def test_parameter_validation_accepts_required_fields_without_returning_content(self) -> None:
+    def test_parameter_validation_accepts_pinned_fixture_without_returning_content(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             source = Path(root) / "AD4Zn.dat"
             source.write_text(_valid_parameter_text(), encoding="utf-8")
@@ -820,8 +831,201 @@ class AD4ZnTests(unittest.TestCase):
             )
             self.assertEqual(response["license_id"], "GPL-2.0-or-later")
             self.assertTrue(response["license_notice_detected"])
-            self.assertFalse(response["matches_reference_sha256"])
+            self.assertEqual(len(response["canonical_sha256"]), 64)
+            self.assertEqual(
+                response["reference_hash_basis"],
+                "line_endings_lf_v1",
+            )
+            self.assertTrue(response["matches_reference_sha256"])
+            self.assertEqual(len(response["atom_type_table_sha256"]), 64)
             self.assertNotIn("content", response)
+
+    def test_parameter_reference_identity_accepts_lf_and_crlf_only(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            lf_payload = _valid_parameter_text().encode("utf-8")
+            crlf_payload = lf_payload.replace(b"\n", b"\r\n")
+            reference_sha256 = hashlib.sha256(lf_payload).hexdigest()
+            lf_source = Path(root) / "AD4Zn-lf.dat"
+            crlf_source = Path(root) / "AD4Zn-crlf.dat"
+            tampered_source = Path(root) / "AD4Zn-tampered.dat"
+            lf_source.write_bytes(lf_payload)
+            crlf_source.write_bytes(crlf_payload)
+            tampered_source.write_bytes(crlf_payload + b"# changed\r\n")
+
+            with patch.object(
+                ad4zn_module,
+                "SUPPORTED_PARAMETER_REFERENCE_SHA256",
+                reference_sha256,
+            ):
+                lf_response = validate_parameter_file(lf_source)
+                crlf_response = validate_parameter_file(crlf_source)
+                tampered_response = validate_parameter_file(tampered_source)
+
+            self.assertTrue(lf_response["ok"], lf_response)
+            self.assertTrue(crlf_response["ok"], crlf_response)
+            self.assertNotEqual(lf_response["sha256"], crlf_response["sha256"])
+            self.assertEqual(
+                lf_response["canonical_sha256"],
+                crlf_response["canonical_sha256"],
+            )
+            self.assertEqual(
+                crlf_response["canonical_sha256"],
+                reference_sha256,
+            )
+            self.assertTrue(lf_response["matches_reference_sha256"])
+            self.assertTrue(crlf_response["matches_reference_sha256"])
+            self.assertTrue(tampered_response["ok"], tampered_response)
+            self.assertFalse(tampered_response["matches_reference_sha256"])
+
+    def test_semantic_match_with_nonreference_bytes_is_not_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir = self._create_project(root, _three_coordinate_site())
+            source = Path(root) / "AD4Zn-semantic-only.dat"
+            source.write_text(
+                _valid_parameter_text() + "# semantically harmless change\n",
+                encoding="utf-8",
+            )
+
+            rejected = record_parameter_file(str(project_dir), source)
+
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertEqual(
+                rejected["error"]["code"],
+                "AD4ZN_PARAMETER_REFERENCE_MISMATCH",
+            )
+            self.assertFalse(
+                (project_dir / "ad4zn" / "parameters" / "AD4Zn.dat").exists()
+            )
+            project = load_project(str(project_dir))
+            self.assertTrue(project["ok"], project)
+            self.assertNotIn("parameter_file", project["project"].get("ad4zn", {}))
+
+    def test_malformed_non_zinc_atom_parameter_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "AD4Zn-malformed-carbon.dat"
+            source.write_text(
+                _valid_parameter_text().replace(
+                    "atom_par C 4.00 0.150 33.5103 -0.00143 0.0 0.0 0 -1 -1 0",
+                    "atom_par C 4.00 broken",
+                ),
+                encoding="utf-8",
+            )
+
+            rejected = validate_parameter_file(source)
+
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertEqual(
+                rejected["error"]["code"],
+                "AD4ZN_PARAMETER_ATOM_TABLE_INVALID",
+            )
+
+    def test_parameter_record_blocks_uncovered_actual_atom_type(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir = self._create_project(
+                root,
+                _three_coordinate_site()
+                + [
+                    _atom_line(
+                        90,
+                        "X1",
+                        "LIG",
+                        "A",
+                        900,
+                        30,
+                        30,
+                        30,
+                        0.0,
+                        "XX",
+                    )
+                ],
+            )
+            source = Path(root) / "AD4Zn.dat"
+            source.write_text(_valid_parameter_text(), encoding="utf-8")
+
+            rejected = record_parameter_file(str(project_dir), source)
+
+            self.assertFalse(rejected["ok"], rejected)
+            self.assertEqual(
+                rejected["error"]["code"],
+                "AD4ZN_PARAMETER_ATOM_TYPES_UNCOVERED",
+            )
+            self.assertIn("XX", rejected["error"]["raw_error"])
+            self.assertFalse(
+                (project_dir / "ad4zn" / "parameters" / "AD4Zn.dat").exists()
+            )
+
+    def test_ligand_type_change_invalidates_parameter_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir = self._create_project(root, _three_coordinate_site())
+            self._record_valid_parameter(project_dir, root)
+            ligand = Path(root) / "ligand_unknown.pdbqt"
+            ligand.write_text(
+                "ROOT\n"
+                + _atom_line(
+                    1,
+                    "X1",
+                    "LIG",
+                    "A",
+                    1,
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    "XX",
+                )
+                + "ENDROOT\nTORSDOF 0\n",
+                encoding="utf-8",
+            )
+            imported = import_ligand_pdbqt(str(project_dir), str(ligand))
+            self.assertTrue(imported["ok"], imported)
+
+            status = get_status(str(project_dir))
+
+            self.assertFalse(status["parameter_file_valid"], status)
+            self.assertFalse(status["preparation_ready"], status)
+            self.assertEqual(
+                status["atom_type_coverage"]["missing_parameter_atom_types"],
+                ["XX"],
+            )
+
+    def test_legacy_crlf_reference_flag_remains_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir = self._create_project(root, _three_coordinate_site())
+            source = Path(root) / "AD4Zn-crlf.dat"
+            lf_payload = _valid_parameter_text().encode("utf-8")
+            source.write_bytes(lf_payload.replace(b"\n", b"\r\n"))
+            recorded = record_parameter_file(str(project_dir), source)
+            self.assertTrue(recorded["parameter_file_valid"], recorded)
+            self.assertTrue(
+                recorded["parameter_file"]["matches_reference_sha256"]
+            )
+
+            project_path = project_dir / "project.json"
+            project_data = json.loads(project_path.read_text(encoding="utf-8"))
+            parameter_record = project_data["ad4zn"]["parameter_file"]
+            parameter_record.pop("canonical_sha256")
+            parameter_record.pop("reference_hash_basis")
+            parameter_record.pop("atom_type_table_sha256")
+            reference_sha256 = hashlib.sha256(lf_payload).hexdigest()
+            parameter_record["reference_sha256"] = reference_sha256
+            parameter_record["matches_reference_sha256"] = False
+            project_path.write_text(
+                json.dumps(project_data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                ad4zn_module,
+                "SUPPORTED_PARAMETER_REFERENCE_SHA256",
+                reference_sha256,
+            ):
+                status = get_status(str(project_dir))
+
+            self.assertTrue(status["ok"], status)
+            self.assertTrue(status["parameter_file_valid"], status)
+            self.assertFalse(
+                status["parameter_file"]["matches_reference_sha256"]
+            )
 
     def test_bad_parameter_files_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:

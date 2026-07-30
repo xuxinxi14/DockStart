@@ -1,0 +1,31 @@
+data_dockstart_flexible_identity
+#
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+_atom_site.auth_seq_id
+_atom_site.auth_comp_id
+_atom_site.auth_asym_id
+_atom_site.auth_atom_id
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N . GLY AA 1 1 ? 10.000 11.000 12.000 1.00 20.00 10 GLY A N 1
+ATOM 2 C CA . GLY AA 1 1 ? 11.000 11.500 12.500 1.00 20.00 10 GLY A CA 1
+ATOM 3 N N . SER AA 1 2 A 12.000 12.000 13.000 1.00 21.00 10 SER A N 1
+ATOM 4 C CA . SER AA 1 2 A 13.000 12.500 13.500 1.00 21.00 10 SER A CA 1
+ATOM 5 O OG A SER AA 1 2 A 14.000 13.000 14.000 0.60 22.00 10 SER A OG 1
+ATOM 6 O OG B SER AA 1 2 A 14.200 13.200 14.200 0.40 23.00 10 SER A OG 1
+HETATM 7 O O . HOH W 2 . ? 20.000 20.000 20.000 1.00 30.00 501 HOH A O 1
+#

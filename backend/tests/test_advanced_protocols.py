@@ -26,7 +26,9 @@ from dockstart_core.advanced_protocols import (  # noqa: E402
     extract_meeko_bad_residues,
     inspect_meeko_ligand_pdbqt,
     main,
+    normalize_meeko_receptor_controls,
     parse_flexible_residue,
+    validate_meeko_receptor_atom_partition,
     validate_flexible_residues,
     validate_macrocycle_options,
 )
@@ -65,6 +67,133 @@ def _receptor_pdb() -> str:
             _pdb_atom(6, "C1", "LIG", "B", 1, record="HETATM"),
             _pdb_atom(7, "CA", "GLY", "A", 44, insertion_code="B"),
         ]
+    )
+
+
+def _complex_receptor_pdb() -> str:
+    return "".join(
+        [
+            _pdb_atom(1, "CA", "GLY", "A", 27, altloc="A"),
+            _pdb_atom(2, "CA", "GLY", "A", 27, altloc="B", x=1.2),
+            _pdb_atom(3, "SG", "CYS", "A", 191, element="S"),
+            _pdb_atom(4, "CA", "TRP", "A", 192, altloc="A"),
+            _pdb_atom(5, "CA", "TRP", "A", 192, altloc="B", x=1.2),
+            _pdb_atom(6, "SG", "CYS", "A", 220, element="S"),
+            _pdb_atom(7, "CA", "TRP", "A", 221, insertion_code="A"),
+            _pdb_atom(8, "C1", "BEN", "A", 250, record="HETATM"),
+        ]
+    )
+
+
+def _complex_receptor_controls() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "alternate_locations": {
+            "A:27": "A",
+            "A:192": "B",
+        },
+        "template_assignments": {
+            "A:191": "CYX",
+            "A:220": "CYX",
+        },
+        "deleted_residues": [
+            {
+                "selector": "A:250",
+                "expected_component_id": "BEN",
+                "reason": "co_crystal_ligand",
+            }
+        ],
+    }
+
+
+def _write_flex_partition_triplet(basename: Path) -> None:
+    rigid = _pdb_atom(1, "N", "ALA", "A", 42, element="N")
+    flex = _pdb_atom(2, "CA", "ALA", "A", 42)
+    receptor_json = {
+        "monomers": {
+            "A:42": {
+                "molsetup": {
+                    "atoms": [
+                        {
+                            "index": 0,
+                            "pdbinfo": ["N", "ALA", 42, "", "A"],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                        {
+                            "index": 1,
+                            "pdbinfo": ["CA", "ALA", 42, "", "A"],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                    ]
+                },
+                "is_flexres_atom": [False, True],
+            }
+        }
+    }
+    Path(str(basename) + "_rigid.pdbqt").write_text(rigid, encoding="utf-8")
+    Path(str(basename) + "_flex.pdbqt").write_text(flex, encoding="utf-8")
+    Path(str(basename) + ".json").write_text(
+        json.dumps(receptor_json) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_insertion_code_partition_triplet(
+    basename: Path,
+    *,
+    flex_text: str | None = None,
+) -> None:
+    rigid = _pdb_atom(1, "N", "ALA", "A", 42, element="N")
+    flex_atom_without_fixed_column_icode = _pdb_atom(
+        2,
+        "CA",
+        "TRP",
+        "A",
+        221,
+    )
+    if flex_text is None:
+        flex_text = (
+            "BEGIN_RES TRP A 221A\n"
+            f"{flex_atom_without_fixed_column_icode}"
+            "END_RES TRP A 221A\n"
+        )
+    receptor_json = {
+        "monomers": {
+            "A:42": {
+                "molsetup": {
+                    "atoms": [
+                        {
+                            "index": 0,
+                            "pdbinfo": ["N", "ALA", 42, "", "A"],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                    ]
+                },
+                "is_flexres_atom": [False],
+            },
+            "A:221A": {
+                "molsetup": {
+                    "atoms": [
+                        {
+                            "index": 0,
+                            "pdbinfo": ["CA", "TRP", 221, "A", "A"],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                    ]
+                },
+                "is_flexres_atom": [True],
+            },
+        }
+    }
+    Path(str(basename) + "_rigid.pdbqt").write_text(rigid, encoding="utf-8")
+    Path(str(basename) + "_flex.pdbqt").write_text(flex_text, encoding="utf-8")
+    Path(str(basename) + ".json").write_text(
+        json.dumps(receptor_json) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -210,6 +339,40 @@ class FlexibleProtocolPlanTests(unittest.TestCase):
         self.assertTrue(result["outputs"]["flex_pdbqt"].endswith("_flex.pdbqt"))
         self.assertTrue(result["outputs"]["receptor_json"].endswith(".json"))
         self.assertNotIn("--allow_bad_res", result["argv"])
+        self.assertNotIn("--read_with_prody", result["argv"])
+        self.assertFalse(result["requires_prody"])
+
+    def test_direct_mmcif_plan_is_blocked_until_project_bridge_is_verified(self) -> None:
+        mmcif_text = """data_test
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.auth_comp_id
+_atom_site.auth_asym_id
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_ins_code
+ATOM 1 CA . ALA A 42 ?
+#
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cif = root / "receptor.cif"
+            cif.write_text(mmcif_text, encoding="utf-8")
+
+            with self.assertRaises(ProtocolValidationError) as raised:
+                build_meeko_receptor_flex_plan(
+                    sys.executable,
+                    cif,
+                    root / "receptor_flexible",
+                    ["A:42"],
+                )
+
+        self.assertEqual(
+            raised.exception.code,
+            "FLEX_MMCIF_VERIFIED_BRIDGE_REQUIRED",
+        )
 
     def test_allow_bad_res_requires_and_records_explicit_acknowledgement(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -247,6 +410,246 @@ class FlexibleProtocolPlanTests(unittest.TestCase):
             arguments = build_vina_flex_arguments(flex)
 
         self.assertEqual(arguments, ["--flex", str(flex)])
+
+
+class StructuredReceptorControlTests(unittest.TestCase):
+    def test_builds_only_reviewed_meeko_controls_and_freezes_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "complex.pdb"
+            receptor.write_text(_complex_receptor_pdb(), encoding="utf-8")
+            plan = build_meeko_receptor_flex_plan(
+                sys.executable,
+                receptor,
+                root / "prepared",
+                ["A:192", "A:221:A"],
+                receptor_controls=_complex_receptor_controls(),
+            )
+
+        argv = plan["argv"]
+        self.assertNotIn("--allow_bad_res", argv)
+        self.assertEqual(
+            set(argv[argv.index("--wanted_altloc") + 1].split(",")),
+            {"A:27=A", "A:192=B"},
+        )
+        self.assertEqual(
+            set(argv[argv.index("--set_template") + 1].split(",")),
+            {"A:191=CYX", "A:220=CYX"},
+        )
+        self.assertEqual(
+            argv[argv.index("--delete_residues") + 1],
+            "A:250",
+        )
+        self.assertEqual(plan["receptor_controls_mode"], "structured_contract")
+        self.assertFalse(plan["receptor_controls"]["allow_bad_res"])
+        self.assertRegex(plan["receptor_controls_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            plan["receptor_controls_fingerprint"]["sha256"],
+            plan["receptor_controls_sha256"],
+        )
+
+    def test_fingerprint_is_stable_across_input_order_and_selector_spelling(self) -> None:
+        first = _complex_receptor_controls()
+        second = {
+            "deleted_residues": [
+                {
+                    "reason": "CO_CRYSTAL_LIGAND",
+                    "expected_component_id": "ben",
+                    "selector": "A:250",
+                }
+            ],
+            "template_assignments": {
+                "A:220": "cyx",
+                "A:191": "CYX",
+            },
+            "alternate_locations": {
+                "A:192": "b",
+                "A:27": "a",
+            },
+            "schema_version": 1,
+        }
+        normalized_first = normalize_meeko_receptor_controls(first)
+        normalized_second = normalize_meeko_receptor_controls(second)
+
+        self.assertEqual(normalized_first, normalized_second)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "complex.pdb"
+            receptor.write_text(_complex_receptor_pdb(), encoding="utf-8")
+            first_plan = build_meeko_receptor_flex_plan(
+                sys.executable,
+                receptor,
+                root / "first",
+                ["A:192", "A:221:A"],
+                receptor_controls=first,
+            )
+            second_plan = build_meeko_receptor_flex_plan(
+                sys.executable,
+                receptor,
+                root / "second",
+                ["A:192", "A:221A"],
+                receptor_controls=second,
+            )
+        self.assertEqual(
+            first_plan["receptor_controls_sha256"],
+            second_plan["receptor_controls_sha256"],
+        )
+
+    def test_rejects_free_form_unknown_fields_and_invalid_schema(self) -> None:
+        invalid_contracts = (
+            {**_complex_receptor_controls(), "argv": ["--allow_bad_res"]},
+            {**_complex_receptor_controls(), "extra_args": "--allow_bad_res"},
+            {**_complex_receptor_controls(), "schema_version": 2},
+            {**_complex_receptor_controls(), "allow_bad_res": True},
+        )
+        expected_codes = (
+            "UNKNOWN_MEEKO_RECEPTOR_CONTROL",
+            "UNKNOWN_MEEKO_RECEPTOR_CONTROL",
+            "INVALID_MEEKO_RECEPTOR_CONTROLS_SCHEMA",
+            "MEEKO_RECEPTOR_ALLOW_BAD_RES_FORBIDDEN",
+        )
+        for controls, expected_code in zip(
+            invalid_contracts,
+            expected_codes,
+            strict=True,
+        ):
+            with self.subTest(controls=controls), self.assertRaises(
+                ProtocolValidationError
+            ) as raised:
+                normalize_meeko_receptor_controls(controls)
+            self.assertEqual(raised.exception.code, expected_code)
+
+    def test_rejects_duplicate_or_illegal_normalized_selectors(self) -> None:
+        duplicate_altloc = {
+            "schema_version": 1,
+            "alternate_locations": {
+                "A:221:A": "A",
+                "A:221A": "A",
+            },
+            "template_assignments": {},
+            "deleted_residues": [],
+        }
+        duplicate_delete = {
+            "schema_version": 1,
+            "alternate_locations": {},
+            "template_assignments": {},
+            "deleted_residues": [
+                {
+                    "selector": "A:250",
+                    "expected_component_id": "BEN",
+                    "reason": "co_crystal_ligand",
+                },
+                {
+                    "selector": "A:250",
+                    "expected_component_id": "BEN",
+                    "reason": "co_crystal_ligand",
+                },
+            ],
+        }
+        illegal = {
+            "schema_version": 1,
+            "alternate_locations": {"A:27;--allow_bad_res": "A"},
+            "template_assignments": {},
+            "deleted_residues": [],
+        }
+        for controls, code in (
+            (duplicate_altloc, "DUPLICATE_MEEKO_RECEPTOR_CONTROL_SELECTOR"),
+            (duplicate_delete, "DUPLICATE_MEEKO_RECEPTOR_CONTROL_SELECTOR"),
+            (illegal, "INVALID_FLEX_RESIDUE_ID"),
+        ):
+            with self.subTest(code=code), self.assertRaises(
+                ProtocolValidationError
+            ) as raised:
+                normalize_meeko_receptor_controls(controls)
+            self.assertEqual(raised.exception.code, code)
+
+    def test_rejects_delete_conflicts_unknown_selectors_and_component_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            receptor = Path(temp_dir) / "complex.pdb"
+            receptor.write_text(_complex_receptor_pdb(), encoding="utf-8")
+
+            conflict = _complex_receptor_controls()
+            conflict["alternate_locations"] = {
+                **conflict["alternate_locations"],  # type: ignore[dict-item]
+                "A:250": "A",
+            }
+            with self.assertRaises(ProtocolValidationError) as conflict_error:
+                normalize_meeko_receptor_controls(
+                    conflict,
+                    structure_path=receptor,
+                    flexible_selections=["A:192"],
+                )
+
+            unknown = _complex_receptor_controls()
+            unknown["template_assignments"] = {"A:999": "CYX"}
+            with self.assertRaises(ProtocolValidationError) as unknown_error:
+                normalize_meeko_receptor_controls(
+                    unknown,
+                    structure_path=receptor,
+                    flexible_selections=["A:192"],
+                )
+
+            mismatch = _complex_receptor_controls()
+            mismatch["deleted_residues"] = [
+                {
+                    "selector": "A:250",
+                    "expected_component_id": "ATP",
+                    "reason": "co_crystal_ligand",
+                }
+            ]
+            with self.assertRaises(ProtocolValidationError) as mismatch_error:
+                normalize_meeko_receptor_controls(
+                    mismatch,
+                    structure_path=receptor,
+                    flexible_selections=["A:192"],
+                )
+
+        self.assertEqual(
+            conflict_error.exception.code,
+            "MEEKO_RECEPTOR_CONTROL_CONFLICT",
+        )
+        self.assertEqual(
+            unknown_error.exception.code,
+            "MEEKO_RECEPTOR_CONTROL_SELECTOR_NOT_FOUND",
+        )
+        self.assertEqual(
+            mismatch_error.exception.code,
+            "MEEKO_RECEPTOR_COMPONENT_MISMATCH",
+        )
+
+    def test_structured_controls_reject_legacy_altloc_or_bad_res_switches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "complex.pdb"
+            receptor.write_text(_complex_receptor_pdb(), encoding="utf-8")
+            with self.assertRaises(ProtocolValidationError) as altloc_conflict:
+                build_meeko_receptor_flex_plan(
+                    sys.executable,
+                    receptor,
+                    root / "altloc_conflict",
+                    ["A:192"],
+                    resolved_altlocs={"A:192": "B"},
+                    receptor_controls=_complex_receptor_controls(),
+                )
+            with self.assertRaises(ProtocolValidationError) as bad_res:
+                build_meeko_receptor_flex_plan(
+                    sys.executable,
+                    receptor,
+                    root / "bad_res",
+                    ["A:192", "A:221:A"],
+                    receptor_controls=_complex_receptor_controls(),
+                    allow_bad_res=True,
+                    acknowledged_bad_residues=["A:999"],
+                )
+
+        self.assertEqual(
+            altloc_conflict.exception.code,
+            "MEEKO_RECEPTOR_ALTLOC_SOURCE_CONFLICT",
+        )
+        self.assertEqual(
+            bad_res.exception.code,
+            "MEEKO_RECEPTOR_ALLOW_BAD_RES_FORBIDDEN",
+        )
 
 
 class MacrocycleProtocolTests(unittest.TestCase):
@@ -366,15 +769,124 @@ class AdvancedProtocolExecutionTests(unittest.TestCase):
         "ENDROOT\nTORSDOF 0\n"
     )
 
+    def test_flex_partition_proves_complete_disjoint_atom_sets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            basename = Path(temp_dir) / "receptor"
+            _write_flex_partition_triplet(basename)
+
+            evidence = validate_meeko_receptor_atom_partition(
+                Path(str(basename) + "_rigid.pdbqt"),
+                Path(str(basename) + "_flex.pdbqt"),
+                Path(str(basename) + ".json"),
+            )
+
+        self.assertEqual(evidence["rigid_atom_count"], 1)
+        self.assertEqual(evidence["flex_atom_count"], 1)
+        self.assertEqual(evidence["total_atom_count"], 2)
+        self.assertEqual(evidence["overlap_atom_count"], 0)
+        self.assertRegex(evidence["partition_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_flex_partition_restores_insertion_code_from_residue_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            basename = Path(temp_dir) / "receptor"
+            _write_insertion_code_partition_triplet(basename)
+
+            evidence = validate_meeko_receptor_atom_partition(
+                Path(str(basename) + "_rigid.pdbqt"),
+                Path(str(basename) + "_flex.pdbqt"),
+                Path(str(basename) + ".json"),
+            )
+
+        self.assertEqual(evidence["rigid_atom_count"], 1)
+        self.assertEqual(evidence["flex_atom_count"], 1)
+        self.assertEqual(evidence["total_atom_count"], 2)
+
+    def test_flex_partition_rejects_nested_or_unterminated_boundaries(self) -> None:
+        atom = _pdb_atom(2, "CA", "TRP", "A", 221)
+        cases = (
+            (
+                "BEGIN_RES TRP A 221A\n"
+                "BEGIN_RES TRP A 222A\n"
+                f"{atom}"
+                "END_RES TRP A 222A\n"
+                "END_RES TRP A 221A\n",
+                "FLEX_PARTITION_BOUNDARY_NESTED",
+            ),
+            (
+                "BEGIN_RES TRP A 221A\n"
+                f"{atom}",
+                "FLEX_PARTITION_BOUNDARY_UNTERMINATED",
+            ),
+        )
+        for flex_text, expected_code in cases:
+            with self.subTest(expected_code=expected_code), tempfile.TemporaryDirectory() as temp_dir:
+                basename = Path(temp_dir) / "receptor"
+                _write_insertion_code_partition_triplet(
+                    basename,
+                    flex_text=flex_text,
+                )
+                with self.assertRaises(ProtocolValidationError) as raised:
+                    validate_meeko_receptor_atom_partition(
+                        Path(str(basename) + "_rigid.pdbqt"),
+                        Path(str(basename) + "_flex.pdbqt"),
+                        Path(str(basename) + ".json"),
+                    )
+            self.assertEqual(raised.exception.code, expected_code)
+
+    def test_flex_partition_rejects_boundary_end_or_atom_identity_conflict(self) -> None:
+        cases = (
+            (
+                "BEGIN_RES TRP A 221A\n"
+                f"{_pdb_atom(2, 'CA', 'TRP', 'A', 221)}"
+                "END_RES TRP A 221B\n",
+                "FLEX_PARTITION_BOUNDARY_MISMATCH",
+            ),
+            (
+                "BEGIN_RES TRP A 221A\n"
+                f"{_pdb_atom(2, 'CA', 'TRP', 'B', 221)}"
+                "END_RES TRP A 221A\n",
+                "FLEX_PARTITION_BOUNDARY_ATOM_CONFLICT",
+            ),
+        )
+        for flex_text, expected_code in cases:
+            with self.subTest(expected_code=expected_code), tempfile.TemporaryDirectory() as temp_dir:
+                basename = Path(temp_dir) / "receptor"
+                _write_insertion_code_partition_triplet(
+                    basename,
+                    flex_text=flex_text,
+                )
+                with self.assertRaises(ProtocolValidationError) as raised:
+                    validate_meeko_receptor_atom_partition(
+                        Path(str(basename) + "_rigid.pdbqt"),
+                        Path(str(basename) + "_flex.pdbqt"),
+                        Path(str(basename) + ".json"),
+                    )
+            self.assertEqual(raised.exception.code, expected_code)
+
+    def test_flex_partition_rejects_atom_present_in_both_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            basename = Path(temp_dir) / "receptor"
+            _write_flex_partition_triplet(basename)
+            rigid = Path(str(basename) + "_rigid.pdbqt")
+            flex = Path(str(basename) + "_flex.pdbqt")
+            flex.write_bytes(rigid.read_bytes())
+
+            with self.assertRaises(ProtocolValidationError) as raised:
+                validate_meeko_receptor_atom_partition(
+                    rigid,
+                    flex,
+                    Path(str(basename) + ".json"),
+                )
+
+        self.assertEqual(raised.exception.code, "FLEX_PARTITION_OUTPUT_OVERLAP")
+
     def test_flex_success_publishes_complete_triplet_and_records_contract(self) -> None:
         calls: list[tuple[list[str], dict[str, object]]] = []
 
         def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
             calls.append((argv, kwargs))
             basename = Path(argv[argv.index("--output_basename") + 1])
-            Path(str(basename) + "_rigid.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
-            Path(str(basename) + "_flex.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
-            Path(str(basename) + ".json").write_text('{"ok": true}', encoding="utf-8")
+            _write_flex_partition_triplet(basename)
             return SimpleNamespace(returncode=0, stdout="prepared\n", stderr="")
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -410,6 +922,65 @@ class AdvancedProtocolExecutionTests(unittest.TestCase):
         self.assertTrue(calls[0][1]["text"])
         self.assertFalse(calls[0][1]["shell"])
         self.assertTrue(calls[0][1]["cwd"])
+
+    def test_flex_execution_freezes_structured_receptor_controls(self) -> None:
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            basename = Path(argv[argv.index("--output_basename") + 1])
+            _write_flex_partition_triplet(basename)
+            return SimpleNamespace(returncode=0, stdout="prepared\n", stderr="")
+
+        controls = {
+            "schema_version": 1,
+            "alternate_locations": {"A:43": "B"},
+            "template_assignments": {"A:44:B": "CYX"},
+            "deleted_residues": [
+                {
+                    "selector": "B:1",
+                    "expected_component_id": "LIG",
+                    "reason": "co_crystal_ligand",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            receptor = root / "receptor.pdb"
+            receptor.write_text(_receptor_pdb(), encoding="utf-8")
+            output_basename = root / "receptor_flexible"
+            record_dir = root / "record"
+            result = execute_meeko_receptor_flex(
+                sys.executable,
+                receptor,
+                output_basename,
+                ["A:42"],
+                record_dir=record_dir,
+                receptor_controls=controls,
+                runner=runner,
+            )
+            saved = json.loads(
+                (record_dir / "command_result.json").read_text(encoding="utf-8")
+            )
+
+        self.assertIn("--wanted_altloc", result["requested_command"])
+        self.assertIn("--set_template", result["requested_command"])
+        self.assertIn("--delete_residues", result["requested_command"])
+        self.assertNotIn("--allow_bad_res", result["requested_command"])
+        self.assertEqual(
+            saved["receptor_controls"]["deleted_residues"][0]["selector"],
+            "B:1",
+        )
+        self.assertRegex(saved["receptor_controls_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            saved["receptor_controls_mode"],
+            "structured_contract",
+        )
+        self.assertEqual(
+            saved["scientific_review"]["receptor_controls_mode"],
+            "structured_contract",
+        )
+        self.assertEqual(
+            saved["receptor_controls_fingerprint"]["sha256"],
+            saved["receptor_controls_sha256"],
+        )
 
     def test_nonzero_exit_records_failure_without_publishing_macrocycle(self) -> None:
         def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
@@ -471,9 +1042,7 @@ class AdvancedProtocolExecutionTests(unittest.TestCase):
     def test_flex_allow_bad_res_publishes_only_when_actual_list_matches_acknowledgement(self) -> None:
         def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
             basename = Path(argv[argv.index("--output_basename") + 1])
-            Path(str(basename) + "_rigid.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
-            Path(str(basename) + "_flex.pdbqt").write_text(self.pdbqt_output, encoding="utf-8")
-            Path(str(basename) + ".json").write_text('{"ok": true}', encoding="utf-8")
+            _write_flex_partition_triplet(basename)
             return SimpleNamespace(
                 returncode=0,
                 stdout="prepared\n",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ViewerStructureResult } from "../types";
+import type { MacrocycleBond, ViewerStructureResult } from "../types";
 import {
   load3Dmol,
   structureFingerprint,
@@ -10,10 +10,17 @@ import {
 
 type StructureMiniPreviewProps = {
   projectDir: string;
-  fileKind: "receptor_prepared" | "ligand_prepared";
+  fileKind:
+    | "receptor_raw"
+    | "ligand_raw"
+    | "receptor_prepared"
+    | "ligand_prepared";
   label: string;
   refreshKey?: number;
+  highlightBonds?: MacrocycleBond[];
 };
+
+const EMPTY_HIGHLIGHT_BONDS: MacrocycleBond[] = [];
 
 function parseStructure(rawPayload: string): ViewerStructureResult {
   return JSON.parse(rawPayload) as ViewerStructureResult;
@@ -24,6 +31,7 @@ export default function StructureMiniPreview({
   fileKind,
   label,
   refreshKey = 0,
+  highlightBonds = EMPTY_HIGHLIGHT_BONDS,
 }: StructureMiniPreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
@@ -120,7 +128,7 @@ export default function StructureMiniPreview({
       if (fingerprint && modelRef.current?.fingerprint !== fingerprint) {
         if (modelRef.current) viewer.removeModel(modelRef.current.model);
         const model = viewer.addModel(structure!.content, structure!.format);
-        if (fileKind === "receptor_prepared") {
+        if (fileKind.startsWith("receptor")) {
           model.setStyle({}, {
             cartoon: { color: "#79a9cf", opacity: 0.86 },
             stick: { radius: 0.08, colorscheme: "Jmol" },
@@ -137,9 +145,83 @@ export default function StructureMiniPreview({
         viewer.removeModel(modelRef.current.model);
         modelRef.current = null;
       }
+      const activeModel = modelRef.current?.model;
+      viewer.removeAllShapes();
+      viewer.removeAllLabels();
+      if (activeModel) {
+        if (fileKind.startsWith("receptor")) {
+          activeModel.setStyle({}, {
+            cartoon: { color: "#79a9cf", opacity: 0.86 },
+            stick: { radius: 0.08, colorscheme: "Jmol" },
+          });
+        } else {
+          activeModel.setStyle({}, {
+            stick: { radius: 0.25, colorscheme: "greenCarbon" },
+            sphere: { scale: 0.22 },
+          });
+        }
+      }
+      if (activeModel && highlightBonds.length) {
+        const atomIndices = Array.from(new Set(
+          highlightBonds.flatMap((bond) => bond.atom_indices_zero_based),
+        )).filter((value) => Number.isInteger(value) && value >= 0);
+        if (atomIndices.length) {
+          activeModel.setStyle({ index: atomIndices }, {
+            stick: { radius: 0.34, color: "#f5b942" },
+            sphere: { scale: 0.34, color: "#f5b942" },
+          });
+        }
+        const shapeViewer = viewer as unknown as {
+          addCylinder?: (spec: Record<string, unknown>) => void;
+        };
+        const labeledAtoms = new Set<number>();
+        for (const bond of highlightBonds) {
+          const [left, right] = bond.endpoints;
+          const start = left?.coordinates;
+          const end = right?.coordinates;
+          if (
+            start?.length === 3
+            && end?.length === 3
+            && [...start, ...end].every((value) => Number.isFinite(value))
+          ) {
+            shapeViewer.addCylinder?.({
+              start: { x: start[0], y: start[1], z: start[2] },
+              end: { x: end[0], y: end[1], z: end[2] },
+              radius: 0.1,
+              color: "#f5b942",
+              opacity: 0.95,
+            });
+          }
+          for (const endpoint of [left, right]) {
+            if (
+              !endpoint
+              || labeledAtoms.has(endpoint.index_zero_based)
+              || endpoint.coordinates.length !== 3
+            ) continue;
+            labeledAtoms.add(endpoint.index_zero_based);
+            viewer.addLabel(
+              `#${endpoint.number_one_based} ${endpoint.name}`,
+              {
+                position: {
+                  x: endpoint.coordinates[0],
+                  y: endpoint.coordinates[1],
+                  z: endpoint.coordinates[2],
+                },
+                fontColor: "#fff6d8",
+                backgroundColor: "#6e4b11",
+                backgroundOpacity: 0.82,
+                borderColor: "#f5b942",
+                borderThickness: 1,
+                fontSize: 11,
+                inFront: true,
+              },
+            );
+          }
+        }
+      }
       viewer.render();
     });
-  }, [ensureViewer, fileKind, refreshKey, structure]);
+  }, [ensureViewer, fileKind, highlightBonds, refreshKey, structure]);
 
   useEffect(() => () => {
     const viewer = viewerRef.current as unknown as { spin?: (axis: string | boolean, speed?: number) => void } | null;

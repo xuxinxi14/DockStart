@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ad4zn_1s63_external",
+  "distribution": "metadata_only",
+  "contains_upstream_structure_files": false,
+  "contains_parameter_files": false,
+  "contains_maps_or_outputs": false,
+  "contains_executables": false,
+  "purpose": "DockStart project-level AutoDock4Zn 1S63 TZ preparation, AutoGrid 4.2.7+ map generation, Vina 1.2.7 docking, result parsing, and report acceptance",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "tag": "v1.2.7",
+    "commit": "8eb40404f4f45608acb3b01427587ac049f27c1f",
+    "example_path": "example/docking_with_zinc_metalloproteins",
+    "solution_path": "example/docking_with_zinc_metalloproteins/solution",
+    "license": "Apache-2.0"
+  },
+  "external_tools": {
+    "autogrid": {
+      "minimum_version": "4.2.7",
+      "validated_version": "4.2.7.x.2019-09-11",
+      "distribution": "user_supplied_external",
+      "bundled_by_dockstart": false,
+      "license_boundary": "ADFR Suite external installation; DockStart does not redistribute AutoGrid4"
+    },
+    "vina": {
+      "required_version": "1.2.7",
+      "distribution": "user_supplied_external",
+      "bundled_by_fixture": false,
+      "license": "Apache-2.0"
+    },
+    "parameter_file": {
+      "path": "data/AD4Zn.dat",
+      "distribution": "user_supplied_external",
+      "bundled_by_dockstart": false,
+      "license": "GPL-2.0-or-later",
+      "warning": "Do not use the 23-byte example/data/AD4Zn.dat symbolic-link placeholder"
+    }
+  },
+  "required_files": {
+    "receptor_input": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein.pdbqt",
+      "git_blob_sha1": "693d36d8f66998e4288ad2dc64b5138593439ac6",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 578456,
+      "canonical_sha256": "8fb7b432e8b84d6488b1139408f7dd9a81d529960e737a7e6df1e728e2c07ad8",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 578456,
+          "sha256": "8fb7b432e8b84d6488b1139408f7dd9a81d529960e737a7e6df1e728e2c07ad8"
+        },
+        "crlf": {
+          "size_bytes": 585688,
+          "sha256": "7dcad2567ee7e1c1f9036b373e277720c66bf6c75b5246cb108bb54dc47df5e1"
+        }
+      }
+    },
+    "official_tz_receptor": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.pdbqt",
+      "git_blob_sha1": "acc56c5699d2f46e1a5b21a5704f66c16de6d770",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 578508,
+      "canonical_sha256": "68af8bd4af58ee1e0ee16377a9fa54958c98a3912421165c8e05d22475b3168e",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 578508,
+          "sha256": "68af8bd4af58ee1e0ee16377a9fa54958c98a3912421165c8e05d22475b3168e"
+        },
+        "crlf": {
+          "size_bytes": 585740,
+          "sha256": "cd27bd255d1f9d0b0522a8af4cc55847825e4ae44b586158554738d7593d24f0"
+        }
+      }
+    },
+    "ligand_input": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/1s63_ligand.pdbqt",
+      "git_blob_sha1": "d856acc44aee5de6287dfc44bd1a68575ee51950",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 2713,
+      "canonical_sha256": "04fb28c75bc5a8b32fd7f985ef8ac9a9b4581a40141f4f5b1b3951c2051fb7dc",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 2713,
+          "sha256": "04fb28c75bc5a8b32fd7f985ef8ac9a9b4581a40141f4f5b1b3951c2051fb7dc"
+        },
+        "crlf": {
+          "size_bytes": 2760,
+          "sha256": "1d338f67f2c52c5f24a92de9fd9d173e78dc6970834a79a57be998ec00e2dc3d"
+        }
+      }
+    },
+    "parameter_file": {
+      "path": "data/AD4Zn.dat",
+      "git_blob_sha1": "923a0beb314ae9464e8694ab3614a77ffcce8855",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 7564,
+      "canonical_sha256": "12b45d377f081c9f3dc25fba2d4585bb01b8367023f309769e441b8457fb1c00",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 7564,
+          "sha256": "12b45d377f081c9f3dc25fba2d4585bb01b8367023f309769e441b8457fb1c00"
+        },
+        "crlf": {
+          "size_bytes": 7685,
+          "sha256": "a64ec402050855362d75327ffaef092c9387976460f9195a9bbbf66a1a72c8dd"
+        }
+      }
+    },
+    "official_output": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/1s63_ligand_ad4_out.pdbqt",
+      "git_blob_sha1": "db6dbffd88821e030b0085dd95d2e63086042f5f",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 26010,
+      "canonical_sha256": "d670a5c10a0e0f5892f2074549d776195409e1de5bafb304484cb800302b49d4",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 26010,
+          "sha256": "d670a5c10a0e0f5892f2074549d776195409e1de5bafb304484cb800302b49d4"
+        },
+        "crlf": {
+          "size_bytes": 26496,
+          "sha256": "fc1a294da4876840e19f9344a749947028c0a845e58f4e3260ba8b1d874f1b72"
+        }
+      }
+    },
+    "official_map_A": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.A.map",
+      "git_blob_sha1": "184d20e143b180786a3377fceaa861567b3a39e7",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 501630,
+      "canonical_sha256": "cf2b7d50b1afa4f744c9fbe666ccc3f4c6c7f2461c966a65576321e97a85fdac",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 501630,
+          "sha256": "cf2b7d50b1afa4f744c9fbe666ccc3f4c6c7f2461c966a65576321e97a85fdac"
+        },
+        "crlf": {
+          "size_bytes": 566457,
+          "sha256": "72ee045045e922221b970e7a27651ea566340ccf645008f14e7780769302ef43"
+        }
+      }
+    },
+    "official_map_C": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.C.map",
+      "git_blob_sha1": "4d42856fb3e80e99d46bc089f6a314d18bfe4c8e",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 501946,
+      "canonical_sha256": "f042387ee59ca817f4815e0809673d32570e06de9ec3c12a18c41ae29534e81e",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 501946,
+          "sha256": "f042387ee59ca817f4815e0809673d32570e06de9ec3c12a18c41ae29534e81e"
+        },
+        "crlf": {
+          "size_bytes": 566773,
+          "sha256": "74b5b13f4d76da03662a196d96f52a2cddf1af7c3cdab612116e9882988d9e0f"
+        }
+      }
+    },
+    "official_map_Cl": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.Cl.map",
+      "git_blob_sha1": "6353097d7d8f6ddc3936f1f3e75dac3ae7625288",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 508586,
+      "canonical_sha256": "22ad42f6c5b42da5b1b9c525af0b95eb82e18664c8def78a46235de23eb7f7a1",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 508586,
+          "sha256": "22ad42f6c5b42da5b1b9c525af0b95eb82e18664c8def78a46235de23eb7f7a1"
+        },
+        "crlf": {
+          "size_bytes": 573413,
+          "sha256": "db2cad53a0ba150420722800f2abdba9562f90fb8188d56e3001cbb9609b8a68"
+        }
+      }
+    },
+    "official_map_HD": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.HD.map",
+      "git_blob_sha1": "3639e126482c2b815869c5628f58097624fa189d",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 450734,
+      "canonical_sha256": "505aca2fb8d1f17f97165b09b98fe3e785967c90343454fdb67321e7dcff16ec",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 450734,
+          "sha256": "505aca2fb8d1f17f97165b09b98fe3e785967c90343454fdb67321e7dcff16ec"
+        },
+        "crlf": {
+          "size_bytes": 515561,
+          "sha256": "f7574b37a06c3872f7ff5806f7f1c186be4d6fd4c9766a82002537347c2b5d0b"
+        }
+      }
+    },
+    "official_map_N": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.N.map",
+      "git_blob_sha1": "fa873deb29c3067ce81f07146a036a67dff9a31c",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 492009,
+      "canonical_sha256": "4733d945861bd41f9ced29439e1c9f4aeb27dd3f59544474de4f053119c48d94",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 492009,
+          "sha256": "4733d945861bd41f9ced29439e1c9f4aeb27dd3f59544474de4f053119c48d94"
+        },
+        "crlf": {
+          "size_bytes": 556836,
+          "sha256": "43ff3a20d4f89e55ca72172685189b04e64c5271da541a3756b2e637709f159f"
+        }
+      }
+    },
+    "official_map_NA": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.NA.map",
+      "git_blob_sha1": "67b14008a465460854ce0b49ce44e741587753f2",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 492576,
+      "canonical_sha256": "d556d41ce059ce8a7ecef369a2dea5583a6562db63c31952673767b170c9bd09",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 492576,
+          "sha256": "d556d41ce059ce8a7ecef369a2dea5583a6562db63c31952673767b170c9bd09"
+        },
+        "crlf": {
+          "size_bytes": 557403,
+          "sha256": "78502f02cfbc7dc659e0f8c2273a60e5138a35eb4139a5164922fed4ad01dda4"
+        }
+      }
+    },
+    "official_map_OA": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.OA.map",
+      "git_blob_sha1": "ff993faf5d15851174e812faa65482e1196ca94d",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 488933,
+      "canonical_sha256": "26ef333e0b457f7ed1eaf5c7fa8fc0064a16cfb522ae94bdc2989a167a5cd100",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 488933,
+          "sha256": "26ef333e0b457f7ed1eaf5c7fa8fc0064a16cfb522ae94bdc2989a167a5cd100"
+        },
+        "crlf": {
+          "size_bytes": 553760,
+          "sha256": "c5d3ca96eb72ed3e20cfff7829c48fe0216e99d5340b587c995ba778e2d9e543"
+        }
+      }
+    },
+    "official_map_e": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.e.map",
+      "git_blob_sha1": "25867e114ef3ee4fd34f18bdcfc90ebbb22027a2",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 342655,
+      "canonical_sha256": "2c5961f2a6089a4d97311d907f83414d1c35abe13428283c4a137b107b0a33f8",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 342655,
+          "sha256": "2c5961f2a6089a4d97311d907f83414d1c35abe13428283c4a137b107b0a33f8"
+        },
+        "crlf": {
+          "size_bytes": 407482,
+          "sha256": "d9223d8423321e2669296457001198db131f460f495694b7c239e7af665416d5"
+        }
+      }
+    },
+    "official_map_d": {
+      "path": "example/docking_with_zinc_metalloproteins/solution/protein_tz.d.map",
+      "git_blob_sha1": "9f9e616787a6e2db037b8bc293b013f89247c6ad",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 389089,
+      "canonical_sha256": "cdd53f4f683d679eebfa49788b26f95d654f9add7306e60ea5f89e14ae78015e",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 389089,
+          "sha256": "cdd53f4f683d679eebfa49788b26f95d654f9add7306e60ea5f89e14ae78015e"
+        },
+        "crlf": {
+          "size_bytes": 453916,
+          "sha256": "d22aeadf7b8832b9598e42c3234688fac9cb0a89b38ba48da146b32e6b649874"
+        }
+      }
+    }
+  },
+  "expected": {
+    "site": {
+      "site_count": 1,
+      "selected_site_id": "ZN:7206:B:ZN:1001:L7207",
+      "coordination_number": 3,
+      "zinc_coordinate": [
+        18.142,
+        132.126,
+        5.224
+      ],
+      "tz_coordinate": [
+        19.113,
+        132.964,
+        3.689
+      ],
+      "coordinate_tolerance_angstrom": 0.0015,
+      "tz_distance_angstrom": 2.0,
+      "tz_distance_tolerance_angstrom": 0.001
+    },
+    "grid": {
+      "center": [
+        18.0,
+        134.0,
+        -1.0
+      ],
+      "grid_points": [
+        40,
+        30,
+        50
+      ],
+      "spacing": 0.375
+    },
+    "map_numeric_equivalence": {
+      "point_count_per_map": 64821,
+      "absolute_tolerance": 0.001,
+      "map_types": [
+        "A",
+        "C",
+        "Cl",
+        "HD",
+        "N",
+        "NA",
+        "OA",
+        "e",
+        "d"
+      ]
+    },
+    "vina": {
+      "validated_version": "1.2.7",
+      "scoring": "ad4",
+      "exhaustiveness": 32,
+      "num_modes": 9,
+      "minimum_output_modes": 9,
+      "energy_range": 3,
+      "cpu": 1,
+      "seed": 1984557646,
+      "official_reference_best_affinity": -13.095,
+      "accepted_best_affinity_min": -15.5,
+      "accepted_best_affinity_max": -10.5,
+      "output_normalization": {
+        "method": "torsdof_endmdl_nul_padding_v1",
+        "normalized_output_must_be_utf8_and_control_free": true,
+        "raw_evidence_required_when_changed": true,
+        "windows_vina_1_2_7_observation": {
+          "recognized_padding_blocks": 9,
+          "padding_bytes_per_block": 47,
+          "nul_bytes_detected": 423,
+          "nul_bytes_removed": 423
+        }
+      }
+    },
+    "report": {
+      "required_substrings": [
+        "AD4Zn",
+        "AutoDock4",
+        "Docking score 仅供结构结合趋势参考"
+      ]
+    }
+  }
+}

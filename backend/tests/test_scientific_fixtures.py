@@ -61,6 +61,50 @@ class ScientificFixtureIntegrityTests(unittest.TestCase):
         self.assertEqual(sdf.count("$$$$"), 1)
         self.assertIn("V2000", sdf)
 
+    def test_hydrated_1uw6_is_metadata_only_and_portably_pinned(self) -> None:
+        fixture = FIXTURE_ROOT / "hydrated_1uw6"
+        manifest = json.loads(
+            (fixture / "source_manifest.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["distribution"], "metadata_only")
+        self.assertFalse(manifest["contains_upstream_structure_files"])
+        self.assertEqual(
+            manifest["upstream"]["checkout_profile"][
+                "portable_identity_algorithm"
+            ],
+            "normalize_crlf_and_cr_to_lf_then_sha256",
+        )
+        self.assertEqual(
+            manifest["upstream"]["checkout_profile"][
+                "accepted_worktree_line_endings"
+            ],
+            ["LF", "CRLF"],
+        )
+
+        required_files = manifest["required_files"]
+        self.assertIn("official_hydrated_ligand", required_files)
+        self.assertIn("map_W", required_files)
+        for name, record in required_files.items():
+            with self.subTest(name=name):
+                identity = record["portable_text_identity"]
+                self.assertEqual(
+                    identity["algorithm"],
+                    "normalize_crlf_and_cr_to_lf_then_sha256",
+                )
+                self.assertGreater(identity["size_bytes"], 0)
+                self.assertEqual(len(identity["sha256"]), 64)
+                self.assertEqual(len(record["sha256"]), 64)
+
+        distributed_names = {
+            path.name for path in fixture.iterdir() if path.is_file()
+        }
+        self.assertEqual(
+            distributed_names,
+            {"README.md", "source_manifest.json"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -627,10 +627,64 @@ async fn get_flexible_receptor_status(project_dir: String) -> String {
 }
 
 #[tauri::command]
+async fn get_flexible_receptor_identity_context(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.flexible_receptor",
+        vec!["identity".to_string(), "--project".to_string(), project_dir],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法建立柔性残基身份审查上下文。", &error),
+    }
+}
+
+fn append_flexible_identity_args(
+    args: &mut Vec<String>,
+    resolved_altlocs: Option<HashMap<String, String>>,
+    selection_context_sha256: Option<String>,
+) -> Result<(), String> {
+    let mut choices = resolved_altlocs
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+    choices.sort_by(|left, right| left.0.cmp(&right.0));
+    for (selector, altloc) in choices {
+        let selector = selector.trim();
+        let altloc = altloc.trim();
+        if selector.is_empty()
+            || altloc.len() != 1
+            || !altloc.bytes().all(|value| value.is_ascii_alphanumeric())
+        {
+            return Err(format!("无效的柔性残基 altloc 选择：{selector}={altloc}"));
+        }
+        args.extend([
+            "--resolved-altloc".to_string(),
+            format!("{selector}={altloc}"),
+        ]);
+    }
+    if let Some(context_sha256) = selection_context_sha256 {
+        let context_sha256 = context_sha256.trim().to_ascii_lowercase();
+        if !context_sha256.is_empty() {
+            if !is_sha256_hex(&context_sha256) {
+                return Err("柔性残基选择上下文 SHA256 无效。".to_string());
+            }
+            args.extend([
+                "--expected-selection-context-sha256".to_string(),
+                context_sha256,
+            ]);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn validate_flexible_receptor(
     project_dir: String,
     residues: Vec<String>,
     max_residues: u8,
+    resolved_altlocs: Option<HashMap<String, String>>,
+    selection_context_sha256: Option<String>,
 ) -> String {
     let mut args = vec![
         "validate".to_string(),
@@ -641,6 +695,11 @@ async fn validate_flexible_receptor(
     ];
     for residue in residues {
         args.extend(["--residue".to_string(), residue]);
+    }
+    if let Err(error) =
+        append_flexible_identity_args(&mut args, resolved_altlocs, selection_context_sha256)
+    {
+        return fallback_project_error_json("柔性残基身份参数无效。", &error);
     }
     match run_backend_module_async("dockstart_core.flexible_receptor", args).await {
         Ok(payload) => payload,
@@ -664,6 +723,107 @@ async fn set_receptor_docking_mode(project_dir: String, mode: String) -> String 
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法切换受体刚性/柔性模式。", &error),
+    }
+}
+
+const MACROCYCLE_BACKEND_MODULE: &str = "dockstart_core.macrocycle";
+
+fn macrocycle_status_args(project_dir: String) -> Vec<String> {
+    vec!["status".to_string(), "--project".to_string(), project_dir]
+}
+
+fn macrocycle_review_args(project_dir: String, options_json: Option<String>) -> Vec<String> {
+    let mut args = vec!["review".to_string(), "--project".to_string(), project_dir];
+    if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
+        args.extend(["--options-json".to_string(), options]);
+    }
+    args
+}
+
+fn macrocycle_confirm_args(
+    project_dir: String,
+    review_id: String,
+    candidate_id: Option<String>,
+    rigid: bool,
+) -> Result<Vec<String>, String> {
+    let candidate_id = candidate_id.filter(|value| !value.trim().is_empty());
+    let mut args = vec![
+        "confirm".to_string(),
+        "--project".to_string(),
+        project_dir,
+        "--review-id".to_string(),
+        review_id,
+    ];
+    match (candidate_id, rigid) {
+        (Some(candidate_id), false) => {
+            args.extend(["--candidate-id".to_string(), candidate_id]);
+        }
+        (None, true) => {
+            args.push("--rigid".to_string());
+        }
+        (Some(_), true) => {
+            return Err("候选断环与刚性模式不能同时确认。".to_string());
+        }
+        (None, false) => {
+            return Err("必须选择一个候选断环，或明确确认刚性模式。".to_string());
+        }
+    }
+    Ok(args)
+}
+
+fn macrocycle_reset_args(project_dir: String) -> Vec<String> {
+    vec!["reset".to_string(), "--project".to_string(), project_dir]
+}
+
+#[tauri::command]
+async fn get_macrocycle_status(project_dir: String) -> String {
+    match run_backend_json_module_async(
+        MACROCYCLE_BACKEND_MODULE,
+        macrocycle_status_args(project_dir),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取大环配体审查状态。", &error),
+    }
+}
+
+#[tauri::command]
+async fn review_ligand_macrocycle(project_dir: String, options_json: Option<String>) -> String {
+    let args = macrocycle_review_args(project_dir.clone(), options_json);
+    match run_preparation_json_module_async(project_dir, MACROCYCLE_BACKEND_MODULE, args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法分析大环配体断环候选。", &error),
+    }
+}
+
+#[tauri::command]
+async fn confirm_ligand_macrocycle(
+    project_dir: String,
+    review_id: String,
+    candidate_id: Option<String>,
+    rigid: bool,
+) -> String {
+    let args = match macrocycle_confirm_args(project_dir, review_id, candidate_id, rigid) {
+        Ok(args) => args,
+        Err(error) => return fallback_project_error_json("无法确认大环配体处理方式。", &error),
+    };
+    match run_backend_json_module_async(MACROCYCLE_BACKEND_MODULE, args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法确认大环配体处理方式。", &error),
+    }
+}
+
+#[tauri::command]
+async fn reset_ligand_macrocycle_confirmation(project_dir: String) -> String {
+    match run_backend_json_module_async(
+        MACROCYCLE_BACKEND_MODULE,
+        macrocycle_reset_args(project_dir),
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法重置大环配体确认记录。", &error),
     }
 }
 
@@ -721,17 +881,20 @@ async fn load_ligand_preparation_log(project_dir: String) -> String {
 }
 
 #[tauri::command]
-async fn prepare_receptor_pdbqt(project_dir: String, overwrite: bool) -> String {
-    match run_backend_module_async(
-        "dockstart_core.preparation",
-        vec![
-            "prepare-receptor".to_string(),
-            project_dir,
-            overwrite.to_string(),
-        ],
-    )
-    .await
-    {
+async fn prepare_receptor_pdbqt(
+    project_dir: String,
+    overwrite: bool,
+    options_json: Option<String>,
+) -> String {
+    let mut args = vec![
+        "prepare-receptor".to_string(),
+        project_dir,
+        overwrite.to_string(),
+    ];
+    if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
+        args.push(options);
+    }
+    match run_backend_module_async("dockstart_core.preparation", args).await {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法自动准备 receptor PDBQT。", &error),
     }
@@ -1791,6 +1954,8 @@ async fn create_screening(
     project_dir: String,
     receptor_file: String,
     ligand_files: Vec<String>,
+    ligand_candidate_ids: Option<Vec<String>>,
+    expected_staging_revision_sha256: Option<String>,
     box_json: String,
     vina_json: String,
     max_retries: u32,
@@ -1815,9 +1980,78 @@ async fn create_screening(
         args.push("--ligand".to_string());
         args.push(ligand);
     }
+    for candidate_id in ligand_candidate_ids.unwrap_or_default() {
+        if !is_safe_screening_candidate_id(&candidate_id) {
+            return screening_argument_error_json(
+                "SCREENING_CANDIDATE_ID_INVALID",
+                "批量配体候选编号无效。",
+                &candidate_id,
+                "请刷新导入预览后重新选择配体。",
+            );
+        }
+        args.push("--candidate-id".to_string());
+        args.push(candidate_id);
+    }
+    if let Some(revision) = expected_staging_revision_sha256 {
+        if !revision.is_empty() {
+            if !is_sha256_hex(&revision) {
+                return screening_argument_error_json(
+                    "SCREENING_STAGING_REVISION_INVALID",
+                    "批量配体导入 revision 无效。",
+                    &revision,
+                    "请刷新导入预览后重试。",
+                );
+            }
+            args.push("--staging-revision".to_string());
+            args.push(revision);
+        }
+    }
     match run_backend_module_async("dockstart_core.screening", args).await {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法创建批量筛选任务。", &error),
+    }
+}
+
+#[tauri::command]
+async fn retry_screening_preparation(
+    project_dir: String,
+    candidate_ids: Vec<String>,
+    expected_staging_revision_sha256: String,
+) -> String {
+    if candidate_ids.is_empty()
+        || candidate_ids
+            .iter()
+            .any(|candidate_id| !is_safe_screening_candidate_id(candidate_id))
+    {
+        return screening_argument_error_json(
+            "SCREENING_CANDIDATE_ID_INVALID",
+            "请选择至少一条有效的失败记录。",
+            &candidate_ids.join(", "),
+            "请刷新导入预览后重新选择可重试记录。",
+        );
+    }
+    if !is_sha256_hex(&expected_staging_revision_sha256) {
+        return screening_argument_error_json(
+            "SCREENING_STAGING_REVISION_INVALID",
+            "批量配体导入 revision 无效。",
+            &expected_staging_revision_sha256,
+            "请刷新导入预览后重试。",
+        );
+    }
+    let mut args = vec![
+        "retry-preparation".to_string(),
+        "--project".to_string(),
+        project_dir,
+        "--staging-revision".to_string(),
+        expected_staging_revision_sha256,
+    ];
+    for candidate_id in candidate_ids {
+        args.push("--candidate-id".to_string());
+        args.push(candidate_id);
+    }
+    match run_backend_module_async("dockstart_core.screening", args).await {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法重试批量配体准备。", &error),
     }
 }
 
@@ -1980,6 +2214,23 @@ async fn export_screening_report(project_dir: String) -> String {
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法生成批量筛选实验记录。", &error),
+    }
+}
+
+#[tauri::command]
+async fn generate_screening_result_sdf(project_dir: String) -> String {
+    match run_backend_module_async(
+        "dockstart_core.screening",
+        vec![
+            "result-sdf".to_string(),
+            "--project".to_string(),
+            project_dir,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法生成批量结果 SDF。", &error),
     }
 }
 
@@ -2346,6 +2597,24 @@ fn is_safe_screening_item_id(item_id: &str) -> bool {
         return false;
     };
     sequence.len() >= 4 && sequence.bytes().all(|value| value.is_ascii_digit())
+}
+
+fn is_safe_screening_candidate_id(candidate_id: &str) -> bool {
+    let Some(value) = candidate_id.strip_prefix("ligand_") else {
+        return false;
+    };
+    let parts = value.split('_').collect::<Vec<_>>();
+    (parts.len() == 2 || parts.len() == 3)
+        && parts[0].len() == 12
+        && parts[0].bytes().all(|value| value.is_ascii_hexdigit())
+        && parts[1].len() == 4
+        && parts[1].bytes().all(|value| value.is_ascii_digit())
+        && (parts.len() == 2
+            || (parts[2].len() == 2 && parts[2].bytes().all(|value| value.is_ascii_digit())))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn is_safe_screening_archive_id(archive_id: &str) -> bool {
@@ -3088,16 +3357,6 @@ fn start_preparation_task(
     } else {
         "prepare-ligand"
     };
-    if normalized_target == "receptor"
-        && options_json
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-    {
-        return fallback_project_error_json(
-            "受体准备不接受配体大环选项。",
-            "optionsJson is only valid for ligand preparation",
-        );
-    }
     let task_key = preparation_task_key_with_options(
         &project_dir,
         &normalized_target,
@@ -3109,10 +3368,8 @@ fn start_preparation_task(
         project_dir.clone(),
         overwrite.to_string(),
     ];
-    if normalized_target == "ligand" {
-        if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
-            args.push(options);
-        }
+    if let Some(options) = options_json.filter(|value| !value.trim().is_empty()) {
+        args.push(options);
     }
     start_background_job(
         app,
@@ -3159,6 +3416,8 @@ fn start_flexible_receptor_task(
     max_residues: u8,
     allow_bad_res: Option<bool>,
     acknowledged_bad_residues: Option<Vec<String>>,
+    resolved_altlocs: Option<HashMap<String, String>>,
+    selection_context_sha256: Option<String>,
 ) -> String {
     if residues.is_empty() {
         return fallback_project_error_json(
@@ -3183,11 +3442,20 @@ fn start_flexible_receptor_task(
         .collect::<Vec<_>>();
     acknowledged.sort();
     acknowledged.dedup();
+    let mut identity_args = Vec::new();
+    if let Err(error) = append_flexible_identity_args(
+        &mut identity_args,
+        resolved_altlocs,
+        selection_context_sha256,
+    ) {
+        return fallback_project_error_json("柔性残基身份参数无效。", &error);
+    }
     let mut hasher = DefaultHasher::new();
     normalized.hash(&mut hasher);
     max_residues.hash(&mut hasher);
     allow_bad_res.hash(&mut hasher);
     acknowledged.hash(&mut hasher);
+    identity_args.hash(&mut hasher);
     let mut args = vec![
         "prepare".to_string(),
         "--project".to_string(),
@@ -3198,6 +3466,7 @@ fn start_flexible_receptor_task(
     for residue in &normalized {
         args.extend(["--residue".to_string(), residue.clone()]);
     }
+    args.extend(identity_args);
     if allow_bad_res {
         args.push("--allow-bad-res".to_string());
         for residue in &acknowledged {
@@ -4194,6 +4463,26 @@ async fn run_backend_json_module_async(
         .map_err(|error| error.to_string())?
 }
 
+async fn run_preparation_json_module_async(
+    project_dir: String,
+    module: &'static str,
+    args: Vec<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let python = cached_preparation_tools(&project_dir)
+            .ok()
+            .and_then(|tools| preparation_python_path(&tools));
+        match python {
+            Some(python) if Path::new(&python).is_file() => {
+                run_backend_json_module_with_python(module, args, &python)
+            }
+            _ => run_backend_json_module(module, args),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 async fn run_screening_archive_export_async(args: Vec<String>) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || run_screening_archive_export(args))
         .await
@@ -4218,6 +4507,32 @@ fn run_backend_json_module(module: &str, args: Vec<String>) -> Result<String, St
     let invalidation = backend_command_invalidation(module, &args);
     invalidate_backend_cache(invalidation);
     let result = run_backend_json_module_uncached(module, args);
+    invalidate_backend_cache(invalidation);
+    result
+}
+
+fn preparation_python_path(tools: &serde_json::Value) -> Option<String> {
+    let python = tools.get("python")?;
+    if python.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+        return None;
+    }
+    let path = python
+        .get("path")
+        .and_then(serde_json::Value::as_str)?
+        .trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+fn run_backend_json_module_with_python(
+    module: &str,
+    args: Vec<String>,
+    python: &str,
+) -> Result<String, String> {
+    let invalidation = backend_command_invalidation(module, &args);
+    invalidate_backend_cache(invalidation);
+    let result = find_backend_dir()
+        .ok_or_else(|| "未找到 DockStart 本地服务文件。请重新安装或恢复完整应用目录。".to_string())
+        .and_then(|backend_dir| run_python_json_module(&backend_dir, python, module, &args));
     invalidate_backend_cache(invalidation);
     result
 }
@@ -4703,6 +5018,9 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
         {
             CacheInvalidation::Project
         }
+        "dockstart_core.macrocycle" if matches!(command, "review" | "confirm" | "reset") => {
+            CacheInvalidation::Project
+        }
         "dockstart_core.viewer" if command == "update-box-visualization" => {
             CacheInvalidation::Project
         }
@@ -4947,8 +5265,13 @@ fn main() {
             validate_preparation_prerequisites,
             get_preparation_tool_status,
             get_flexible_receptor_status,
+            get_flexible_receptor_identity_context,
             validate_flexible_receptor,
             set_receptor_docking_mode,
+            get_macrocycle_status,
+            review_ligand_macrocycle,
+            confirm_ligand_macrocycle,
+            reset_ligand_macrocycle_confirmation,
             get_result_export_status,
             start_preparation_task,
             start_flexible_receptor_task,
@@ -5027,6 +5350,7 @@ fn main() {
             update_box_from_visualization,
             stage_screening_inputs,
             create_screening,
+            retry_screening_preparation,
             get_screening_status,
             list_screening_archives,
             get_screening_archive,
@@ -5036,6 +5360,7 @@ fn main() {
             resume_screening,
             archive_screening,
             export_screening_report,
+            generate_screening_result_sdf,
             start_screening_task
         ])
         .run(tauri::generate_context!())
@@ -5109,6 +5434,32 @@ mod tests {
     }
 
     #[test]
+    fn macrocycle_review_uses_the_resolved_preparation_python() {
+        let configured = serde_json::json!({
+            "python": {
+                "status": "ok",
+                "path": r"C:\tools\meeko\python.exe",
+                "source": "configured"
+            },
+            "rdkit": {"status": "ok"},
+            "meeko": {"status": "ok"},
+        });
+        let missing = serde_json::json!({
+            "python": {
+                "status": "missing",
+                "path": r"C:\tools\missing\python.exe"
+            }
+        });
+
+        assert_eq!(
+            preparation_python_path(&configured).as_deref(),
+            Some(r"C:\tools\meeko\python.exe")
+        );
+        assert_eq!(preparation_python_path(&missing), None);
+        assert_eq!(preparation_python_path(&serde_json::Value::Null), None);
+    }
+
+    #[test]
     fn structure_fetch_task_key_tracks_the_selected_candidate() {
         let project = "project-key";
         let first = structure_fetch_task_key(project, "receptor", &["1IEP", "pdb", "false"]);
@@ -5172,6 +5523,81 @@ mod tests {
         assert_ne!(standard, overwrite);
         assert_ne!(standard, macrocycle);
         assert_eq!(macrocycle, same_macrocycle);
+    }
+
+    #[test]
+    fn macrocycle_commands_match_the_backend_cli_contract() {
+        let project = r"C:\project with space".to_string();
+        let options = r#"{"max_breaks":2,"allow_atom_type_a":true}"#.to_string();
+
+        assert_eq!(MACROCYCLE_BACKEND_MODULE, "dockstart_core.macrocycle");
+        assert_eq!(
+            macrocycle_status_args(project.clone()),
+            vec!["status", "--project", r"C:\project with space"]
+        );
+        assert_eq!(
+            macrocycle_review_args(project.clone(), Some(options.clone())),
+            vec![
+                "review",
+                "--project",
+                r"C:\project with space",
+                "--options-json",
+                options.as_str(),
+            ]
+        );
+        assert_eq!(
+            macrocycle_review_args(project.clone(), Some("  ".to_string())),
+            vec!["review", "--project", r"C:\project with space"]
+        );
+        assert_eq!(
+            macrocycle_confirm_args(
+                project.clone(),
+                "macro_review_001".to_string(),
+                Some("candidate_003".to_string()),
+                false,
+            )
+            .unwrap(),
+            vec![
+                "confirm",
+                "--project",
+                r"C:\project with space",
+                "--review-id",
+                "macro_review_001",
+                "--candidate-id",
+                "candidate_003",
+            ]
+        );
+        assert_eq!(
+            macrocycle_confirm_args(project.clone(), "macro_review_001".to_string(), None, true,)
+                .unwrap(),
+            vec![
+                "confirm",
+                "--project",
+                r"C:\project with space",
+                "--review-id",
+                "macro_review_001",
+                "--rigid",
+            ]
+        );
+        assert_eq!(
+            macrocycle_reset_args(project),
+            vec!["reset", "--project", r"C:\project with space"]
+        );
+    }
+
+    #[test]
+    fn macrocycle_confirmation_requires_exactly_one_selection_mode() {
+        assert!(
+            macrocycle_confirm_args("project".to_string(), "review".to_string(), None, false,)
+                .is_err()
+        );
+        assert!(macrocycle_confirm_args(
+            "project".to_string(),
+            "review".to_string(),
+            Some("candidate".to_string()),
+            true,
+        )
+        .is_err());
     }
 
     #[test]
@@ -5517,6 +5943,20 @@ mod tests {
 
     #[test]
     fn screening_archive_argument_validation_is_strict() {
+        assert!(is_safe_screening_candidate_id("ligand_012345abcdef_0001"));
+        assert!(is_safe_screening_candidate_id(
+            "ligand_012345abcdef_0001_02"
+        ));
+        assert!(!is_safe_screening_candidate_id(
+            "ligand_012345abcdef_0001_extra"
+        ));
+        assert!(!is_safe_screening_candidate_id(
+            "../ligand_012345abcdef_0001"
+        ));
+        assert!(is_sha256_hex(&"a".repeat(64)));
+        assert!(!is_sha256_hex(&"g".repeat(64)));
+        assert!(!is_sha256_hex(&"a".repeat(63)));
+
         for valid in [
             "screening_001_20260728123456",
             "screening_1000_20260728123456",
@@ -5571,6 +6011,45 @@ mod tests {
             "screening_001_20260728123456".to_string(),
             "../screening_002_20260728123556".to_string(),
         ]));
+    }
+
+    #[test]
+    fn flexible_identity_arguments_are_sorted_and_hash_bound() {
+        let mut args = vec!["prepare".to_string()];
+        let choices = HashMap::from([
+            ("B:2".to_string(), "A".to_string()),
+            ("A:10:A".to_string(), "B".to_string()),
+        ]);
+
+        append_flexible_identity_args(&mut args, Some(choices), Some("A".repeat(64))).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "prepare",
+                "--resolved-altloc",
+                "A:10:A=B",
+                "--resolved-altloc",
+                "B:2=A",
+                "--expected-selection-context-sha256",
+                &"a".repeat(64),
+            ]
+        );
+    }
+
+    #[test]
+    fn flexible_identity_arguments_reject_invalid_altloc_or_hash() {
+        let mut args = Vec::new();
+        assert!(append_flexible_identity_args(
+            &mut args,
+            Some(HashMap::from([("A:10".to_string(), "AB".to_string())])),
+            None,
+        )
+        .is_err());
+        assert!(
+            append_flexible_identity_args(&mut args, None, Some("not-a-sha256".to_string()),)
+                .is_err()
+        );
     }
 
     #[test]
@@ -5742,6 +6221,30 @@ mod tests {
             ),
             CacheInvalidation::Both
         );
+        assert_eq!(
+            backend_command_invalidation(
+                "dockstart_core.macrocycle",
+                &[
+                    "status".to_string(),
+                    "--project".to_string(),
+                    "project".to_string(),
+                ],
+            ),
+            CacheInvalidation::None
+        );
+        for command in ["review", "confirm", "reset"] {
+            assert_eq!(
+                backend_command_invalidation(
+                    "dockstart_core.macrocycle",
+                    &[
+                        command.to_string(),
+                        "--project".to_string(),
+                        "project".to_string(),
+                    ],
+                ),
+                CacheInvalidation::Project
+            );
+        }
         assert_eq!(
             backend_command_invalidation(
                 "dockstart_core.screening",

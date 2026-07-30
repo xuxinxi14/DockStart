@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -85,6 +86,62 @@ def _tool_status(
     }
 
 
+def _pdb_atom(
+    serial: int,
+    atom_name: str,
+    residue_name: str,
+    chain: str,
+    residue_number: int,
+    *,
+    record_type: str = "ATOM",
+    altloc: str = "",
+    x: float = 1.0,
+) -> str:
+    return (
+        f"{record_type:<6}{serial:5d} {atom_name:^4}{altloc:1}{residue_name:>3} {chain:1}"
+        f"{residue_number:4d}{' ':1}   {x:8.3f}{2.0:8.3f}{3.0:8.3f}"
+        f"  1.00 20.00          {'C':>2}\n"
+    )
+
+
+def _receptor_with_altloc() -> str:
+    return "".join(
+        (
+            _pdb_atom(1, "N", "ALA", "A", 42),
+            _pdb_atom(2, "CB", "THR", "A", 43, altloc="A"),
+            _pdb_atom(3, "CB", "THR", "A", 43, altloc="B", x=1.2),
+            _pdb_atom(
+                4,
+                "C1",
+                "LIG",
+                "B",
+                301,
+                record_type="HETATM",
+                x=4.0,
+            ),
+        )
+    )
+
+
+def _reviewed_receptor_options() -> dict[str, object]:
+    return {
+        "protocol": "meeko_receptor_controls",
+        "receptor_controls": {
+            "schema_version": 1,
+            "allow_bad_res": False,
+            "alternate_locations": {"A:43": "B"},
+            "template_assignments": {},
+            "deleted_residues": [
+                {
+                    "selector": "B:301",
+                    "expected_component_id": "LIG",
+                    "reason": "co_crystal_ligand",
+                }
+            ],
+        },
+    }
+
+
 class ReceptorPreparationTests(unittest.TestCase):
     def _create_project(self, temp_dir: str) -> Path:
         created = create_project("receptor_prep", temp_dir)
@@ -111,6 +168,95 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertIn("--read_pdb", result["command"])
         self.assertNotIn("-i", result["command"])
+
+    def test_build_receptor_command_uses_reviewed_altloc_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.pdb",
+                content=_receptor_with_altloc(),
+            )
+            with patch(
+                "dockstart_core.preparation.get_preparation_tool_status",
+                return_value=_tool_status(),
+            ):
+                result = build_receptor_preparation_command_or_script(
+                    str(project_dir),
+                    options=_reviewed_receptor_options(),
+                )
+
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("--allow_bad_res", result["command"])
+        self.assertNotIn("--default_altloc", result["command"])
+        self.assertEqual(
+            result["command"][result["command"].index("--wanted_altloc") + 1],
+            "A:43=B",
+        )
+        self.assertEqual(
+            result["command"][result["command"].index("--delete_residues") + 1],
+            "B:301",
+        )
+        self.assertEqual(result["protocol"], "meeko_receptor_controls")
+        self.assertEqual(result["protocol_mode"], "reviewed")
+        self.assertFalse(result["receptor_controls"]["allow_bad_res"])
+        self.assertEqual(
+            result["receptor_controls"]["deleted_residues"],
+            [
+                {
+                    "selector": "B:301",
+                    "expected_component_id": "LIG",
+                    "reason": "co_crystal_ligand",
+                }
+            ],
+        )
+        self.assertRegex(result["receptor_controls_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_receptor_controls_reject_free_argv_bad_res_and_cif(self) -> None:
+        invalid_options = (
+            {
+                **_reviewed_receptor_options(),
+                "argv": ["--default_altloc", "A"],
+            },
+            {
+                "protocol": "meeko_receptor_controls",
+                "receptor_controls": {
+                    **dict(_reviewed_receptor_options()["receptor_controls"]),
+                    "allow_bad_res": True,
+                },
+            },
+        )
+        expected_codes = (
+            "RECEPTOR_PREPARATION_OPTIONS_UNKNOWN",
+            "MEEKO_RECEPTOR_ALLOW_BAD_RES_FORBIDDEN",
+        )
+        for options, expected_code in zip(
+            invalid_options,
+            expected_codes,
+            strict=True,
+        ):
+            with self.subTest(expected_code=expected_code):
+                result = prepare_receptor_pdbqt("unused", options=options)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["error"]["code"], expected_code)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.cif",
+                content="data_test\n",
+            )
+            with patch(
+                "dockstart_core.preparation.get_preparation_tool_status",
+                return_value=_tool_status(),
+            ):
+                result = build_receptor_preparation_command_or_script(
+                    str(project_dir),
+                    options=_reviewed_receptor_options(),
+                )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "RECEPTOR_CONTROLS_PDB_REQUIRED")
 
     def test_build_receptor_command_uses_gemmi_helper_without_prody_for_cif_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -321,10 +467,107 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertIn("mock receptor stdout", log_result["stdout"])
         self.assertIn('"status": "finished"', log_result["log"])
 
+    def test_reviewed_receptor_controls_are_frozen_in_metadata(self) -> None:
+        captured_command: list[str] = []
+
+        def fake_run(
+            command: list[str],
+            cwd: str | Path,
+            timeout: int = 300,
+        ) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            captured_command.extend(command)
+            output_stem = Path(command[command.index("-o") + 1])
+            output_stem.with_suffix(".pdbqt").write_text(
+                "REMARK reviewed receptor pdbqt\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="reviewed", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.pdb",
+                content=_receptor_with_altloc(),
+            )
+            with (
+                patch(
+                    "dockstart_core.preparation.get_preparation_tool_status",
+                    return_value=_tool_status(),
+                ),
+                patch(
+                    "adapters.meeko_adapter.run_preparation_command",
+                    side_effect=fake_run,
+                ),
+            ):
+                result = prepare_receptor_pdbqt(
+                    str(project_dir),
+                    options=_reviewed_receptor_options(),
+                )
+            metadata = json.loads(
+                (project_dir / result["metadata_file"]).read_text(encoding="utf-8")
+            )
+            project = json.loads(
+                (project_dir / "project.json").read_text(encoding="utf-8")
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            captured_command[captured_command.index("--wanted_altloc") + 1],
+            "A:43=B",
+        )
+        self.assertEqual(
+            captured_command[captured_command.index("--delete_residues") + 1],
+            "B:301",
+        )
+        self.assertEqual(metadata["method"], "meeko_receptor_controls")
+        self.assertEqual(metadata["protocol"], "meeko_receptor_controls")
+        self.assertEqual(
+            metadata["receptor_controls"]["alternate_locations"],
+            {"A:43": "B"},
+        )
+        self.assertEqual(
+            metadata["receptor_controls"]["deleted_residues"],
+            [
+                {
+                    "selector": "B:301",
+                    "expected_component_id": "LIG",
+                    "reason": "co_crystal_ligand",
+                }
+            ],
+        )
+        self.assertRegex(metadata["receptor_controls_sha256"], r"^[0-9a-f]{64}$")
+        expected_controls_sha256 = hashlib.sha256(
+            json.dumps(
+                metadata["receptor_controls"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(
+            metadata["receptor_controls_sha256"],
+            expected_controls_sha256,
+        )
+        self.assertEqual(
+            metadata["options"]["receptor_controls"],
+            metadata["receptor_controls"],
+        )
+        self.assertEqual(
+            project["preparation"]["receptor"]["method"],
+            "meeko_receptor_controls",
+        )
+
     def test_prepare_receptor_pdbqt_mock_failure_writes_structured_error(self) -> None:
         def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
             _ = cwd, timeout
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="mock receptor failure")
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stdout="mock receptor scientific diagnostic",
+                stderr="mock receptor runtime warning",
+            )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
@@ -339,6 +582,14 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(updated["preparation"]["receptor"]["status"], "failed")
         self.assertEqual(updated["preparation"]["receptor"]["error"]["code"], "RECEPTOR_PREPARATION_FAILED")
+        self.assertIn(
+            "[stdout]\nmock receptor scientific diagnostic",
+            updated["preparation"]["receptor"]["error"]["raw_error"],
+        )
+        self.assertIn(
+            "[stderr]\nmock receptor runtime warning",
+            updated["preparation"]["receptor"]["error"]["raw_error"],
+        )
         self.assertIsNotNone(updated["preparation"]["receptor"]["finished_at"])
 
     def test_changed_raw_content_rejects_candidate_and_preserves_previous_output(self) -> None:

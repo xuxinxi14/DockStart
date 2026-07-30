@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ad4zn_multisample_external",
+  "distribution": "metadata_only",
+  "contains_upstream_structure_files": false,
+  "contains_ligand_files": false,
+  "contains_parameter_files": false,
+  "contains_maps_or_outputs": false,
+  "contains_executables": false,
+  "network_access_allowed": false,
+  "purpose": "External metadata-only acceptance for two distinct single-Zn AD4Zn systems: RCSB 2OI0 and 1R1J",
+  "scientific_scope": {
+    "protocol_id": "ad4zn_beta",
+    "single_zinc_only": true,
+    "three_coordinate_site_only": true,
+    "rigid_receptor": true,
+    "single_ligand": true,
+    "global_docking_only": true,
+    "raw_receptor_preparation_requires_dataset_specific_deletions": true,
+    "automatic_scientific_validation_claimed": false
+  },
+  "source_files": {
+    "2oi0_pdb": {
+      "source": "RCSB PDB",
+      "source_url": "https://files.rcsb.org/download/2OI0.pdb",
+      "pdb_id": "2OI0",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 216999,
+      "canonical_sha256": "5775cfb99a0da70788a32f946f11fc7f06937e98770c4a63a387c11df1a17668",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 216999,
+          "sha256": "5775cfb99a0da70788a32f946f11fc7f06937e98770c4a63a387c11df1a17668"
+        },
+        "crlf": {
+          "size_bytes": 219678,
+          "sha256": "c3b189b2b74f7e39e1d1d0df3401ccdf74f528c98015c8484f3d8e12801326f2"
+        }
+      }
+    },
+    "2oi0_ligand_sdf": {
+      "source": "RCSB ModelServer ligand instance",
+      "source_url": "https://models.rcsb.org/v1/2oi0/ligand?auth_asym_id=A&auth_seq_id=1&encoding=sdf",
+      "pdb_id": "2OI0",
+      "component_id": "283",
+      "auth_asym_id": "A",
+      "auth_seq_id": "1",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 2577,
+      "canonical_sha256": "4f9e3d71d4491dd6d4639d180b28c653ad029ec85df219c2eb0fe7b0c0b33ffc",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 2577,
+          "sha256": "4f9e3d71d4491dd6d4639d180b28c653ad029ec85df219c2eb0fe7b0c0b33ffc"
+        },
+        "crlf": {
+          "size_bytes": 2666,
+          "sha256": "4dd19b01f1238b72a5fbc0c9c4262ba64f9063f689441553bdc3ad28ee3a40d4"
+        }
+      }
+    },
+    "1r1j_pdb": {
+      "source": "RCSB PDB",
+      "source_url": "https://files.rcsb.org/download/1R1J.pdb",
+      "pdb_id": "1R1J",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 518400,
+      "canonical_sha256": "d28ac200b8dedecbcd5a715059e193f63e30f9e613c3e1c513f35334e6a58916",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 518400,
+          "sha256": "d28ac200b8dedecbcd5a715059e193f63e30f9e613c3e1c513f35334e6a58916"
+        },
+        "crlf": {
+          "size_bytes": 524800,
+          "sha256": "b65fb63ac1e036e8c6f93664f88c173ebef647a41b5e4d1567e242c0f04817bf"
+        }
+      }
+    },
+    "1r1j_ligand_sdf": {
+      "source": "RCSB ModelServer ligand instance",
+      "source_url": "https://models.rcsb.org/v1/1r1j/ligand?auth_asym_id=A&auth_seq_id=2001&encoding=sdf",
+      "pdb_id": "1R1J",
+      "component_id": "OIR",
+      "auth_asym_id": "A",
+      "auth_seq_id": "2001",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 3315,
+      "canonical_sha256": "a188605bb22bc28098ab0f383baf417827a228a98f4d2bd0cb8e60c724f8e01e",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 3315,
+          "sha256": "a188605bb22bc28098ab0f383baf417827a228a98f4d2bd0cb8e60c724f8e01e"
+        },
+        "crlf": {
+          "size_bytes": 3420,
+          "sha256": "e82422a3ceeb22b8c2839f5e63fb2f545489a560782f38301bf0907bc74c648d"
+        }
+      }
+    },
+    "ad4zn_parameter": {
+      "source": "AutoDock Vina v1.2.7 repository data/AD4Zn.dat",
+      "source_url": "https://github.com/ccsb-scripps/AutoDock-Vina/blob/v1.2.7/data/AD4Zn.dat",
+      "license": "GPL-2.0-or-later",
+      "distribution": "caller_supplied_external",
+      "canonical_line_endings": "LF",
+      "canonical_size_bytes": 7564,
+      "canonical_sha256": "12b45d377f081c9f3dc25fba2d4585bb01b8367023f309769e441b8457fb1c00",
+      "checkout_variants": {
+        "lf": {
+          "size_bytes": 7564,
+          "sha256": "12b45d377f081c9f3dc25fba2d4585bb01b8367023f309769e441b8457fb1c00"
+        },
+        "crlf": {
+          "size_bytes": 7685,
+          "sha256": "a64ec402050855362d75327ffaef092c9387976460f9195a9bbbf66a1a72c8dd"
+        }
+      }
+    }
+  },
+  "external_tools": {
+    "python": {
+      "required_version": "3.11.15",
+      "validated_windows_x86_64_sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
+      "distribution": "caller_supplied_external"
+    },
+    "mk_prepare_receptor": {
+      "required_meeko_version": "0.7.1",
+      "required_rdkit_version": "2026.03.3",
+      "required_help_options": [
+        "--read_pdb",
+        "--write_pdbqt",
+        "--delete_residues"
+      ],
+      "validated_windows_x86_64_sha256": "aa6076a09b6251a77fa6d38d11c34b106a16682164d450a88604ed51368b089a",
+      "distribution": "caller_supplied_external"
+    },
+    "autogrid": {
+      "minimum_version": "4.2.7",
+      "validated_version": "4.2.7",
+      "validated_full_version": "4.2.7.x.2019-09-11",
+      "validated_windows_x86_64_sha256": "18fe5b8020e615a23055e8ef1a248b2bf36e75867512b37e1f2a15dfd31a123b",
+      "distribution": "caller_supplied_external",
+      "bundled_by_dockstart": false,
+      "license": "GPL-2.0-or-later"
+    },
+    "vina": {
+      "required_version": "1.2.7",
+      "required_capability": "--maps",
+      "validated_windows_x86_64_sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
+      "distribution": "caller_supplied_external",
+      "license": "Apache-2.0"
+    },
+    "binary_hash_policy": {
+      "windows": "exact validated SHA256 is mandatory",
+      "other_platforms": "version, CLI identity, supplied path, and runtime capabilities are mandatory; binary SHA256 is recorded because platform binaries differ"
+    }
+  },
+  "protocol": {
+    "scoring": "ad4",
+    "spacing": 0.375,
+    "requested_box_size_angstrom": [
+      20.0,
+      20.0,
+      20.0
+    ],
+    "effective_grid_intervals": [
+      54,
+      54,
+      54
+    ],
+    "effective_grid_size_angstrom": [
+      20.25,
+      20.25,
+      20.25
+    ],
+    "vina": {
+      "exhaustiveness": 8,
+      "num_modes": 9,
+      "minimum_output_modes": 9,
+      "energy_range": 4,
+      "cpu": 4,
+      "seed": 20260730
+    },
+    "repeatability": {
+      "run_count": 2,
+      "same_seed_output_must_be_byte_identical": true
+    },
+    "rmsd_diagnostic": {
+      "method": "same_atom_order_direct_heavy_atom_rmsd_without_alignment_or_symmetry_correction",
+      "symmetry_corrected": false,
+      "best_score_must_equal_best_rmsd": false
+    },
+    "report_required_substrings": [
+      "AutoDock4Zn beta",
+      "AD4Zn.dat",
+      "ZN/TZ 位于请求 Box",
+      "ZN/TZ 位于实际网格",
+      "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+    ]
+  },
+  "systems": {
+    "2OI0": {
+      "pdb_source_key": "2oi0_pdb",
+      "ligand_source_key": "2oi0_ligand_sdf",
+      "ligand_component": {
+        "residue_name": "283",
+        "chain": "A",
+        "residue_number": 1,
+        "heavy_atom_count": 20
+      },
+      "zinc": {
+        "chain": "A",
+        "residue_number": 2,
+        "coordinate": [
+          43.055,
+          33.16,
+          4.739
+        ]
+      },
+      "raw_water_residue_range": [
+        482,
+        622
+      ],
+      "raw_water_count": 141,
+      "receptor_deletions": {
+        "chain": "A",
+        "residue_numbers": {
+          "single": [
+            1
+          ],
+          "ranges": [
+            [
+              482,
+              622
+            ]
+          ]
+        },
+        "reason": "remove bound ligand 283 and crystallographic waters before receptor preparation"
+      },
+      "prepared_receptor": {
+        "atom_count": 2581,
+        "zinc_count": 1,
+        "water_atom_count": 0,
+        "fixed_windows_sha256": "bf0fe5b1c11e760fa9a63545606eb398131dcc921e2354d84a8ef0a8a3e4164c",
+        "fixed_windows_canonical_lf_sha256": "b0f4b8cebf65b656a633d69585bba3c92fdb5d714ccb488ce158ae455525c47c"
+      },
+      "prepared_ligand": {
+        "fixed_windows_sha256": "f0eb7a48a137e84eaa7a1cc1083eb4b0bbc260c8286ca46ebe13fc417582e07f",
+        "fixed_windows_canonical_lf_sha256": "12a6654fdb571d526de699b90efcfff0ed21391f3f8cda33c62736fa75c04abc"
+      },
+      "ad4zn_site": {
+        "site_count": 1,
+        "coordination_number": 3,
+        "coordination_members": [
+          "A:HIS:405:NE2:N",
+          "A:HIS:409:NE2:N",
+          "A:HIS:415:NE2:N"
+        ],
+        "tz_coordinate": [
+          41.315,
+          32.461,
+          4.042
+        ],
+        "coordinate_tolerance_angstrom": 0.002,
+        "tz_distance_angstrom": 2.0,
+        "tz_distance_tolerance_angstrom": 0.002,
+        "fixed_windows_tz_receptor_sha256": "b89af814156ad3be2ec73bd77dfdd6180ea2cda2735991b3a7c458463602010d"
+      },
+      "box": {
+        "center": [
+          44.4375,
+          28.5635,
+          2.461
+        ],
+        "size": [
+          20.0,
+          20.0,
+          20.0
+        ]
+      },
+      "maps": {
+        "ligand_atom_types": [
+          "A",
+          "C",
+          "HD",
+          "NA",
+          "OA",
+          "S",
+          "SA"
+        ],
+        "required_map_names": [
+          "receptor.maps.fld",
+          "receptor.A.map",
+          "receptor.C.map",
+          "receptor.HD.map",
+          "receptor.NA.map",
+          "receptor.OA.map",
+          "receptor.S.map",
+          "receptor.SA.map",
+          "receptor.e.map",
+          "receptor.d.map"
+        ]
+      },
+      "result": {
+        "accepted_best_affinity_min": -10.5,
+        "accepted_best_affinity_max": -7.5,
+        "fixed_windows_best_affinity": -8.956,
+        "fixed_windows_output_sha256": "c82d5693e38eb3a296ee001c8dd0184f1397143bf726d03a3690e0c4a64f38ec",
+        "maximum_minimum_direct_heavy_rmsd_angstrom": 3.0,
+        "fixed_windows_minimum_direct_heavy_rmsd_angstrom": 0.7967625116683129,
+        "fixed_windows_best_score_mode": 1,
+        "fixed_windows_best_rmsd_mode": 4
+      }
+    },
+    "1R1J": {
+      "pdb_source_key": "1r1j_pdb",
+      "ligand_source_key": "1r1j_ligand_sdf",
+      "ligand_component": {
+        "residue_name": "OIR",
+        "chain": "A",
+        "residue_number": 2001,
+        "heavy_atom_count": 28
+      },
+      "zinc": {
+        "chain": "A",
+        "residue_number": 1001,
+        "coordinate": [
+          31.27,
+          43.033,
+          29.617
+        ]
+      },
+      "raw_glycan_residues": {
+        "residue_name": "NAG",
+        "chain": "A",
+        "range": [
+          752,
+          754
+        ],
+        "atom_count": 42
+      },
+      "raw_water_residue_range": [
+        2002,
+        2089
+      ],
+      "raw_water_count": 88,
+      "distant_incomplete_residue": {
+        "chain": "A",
+        "residue_number": 505,
+        "minimum_distance_to_zinc_angstrom": 35.66451575445824,
+        "required_minimum_distance_angstrom": 35.0,
+        "reason": "Meeko preparation requires explicit deletion; the residue is remote from the reviewed Zn site"
+      },
+      "receptor_deletions": {
+        "chain": "A",
+        "residue_numbers": {
+          "single": [
+            505,
+            752,
+            753,
+            754,
+            2001
+          ],
+          "ranges": [
+            [
+              2002,
+              2089
+            ]
+          ]
+        },
+        "reason": "remove remote incomplete A:505, NAG 752-754, bound OIR 2001, and waters 2002-2089"
+      },
+      "prepared_receptor": {
+        "atom_count": 6865,
+        "zinc_count": 1,
+        "water_atom_count": 0,
+        "fixed_windows_sha256": "777a6b2d2112d370982d0a20b3c73a33f028f376b9d32d1e14c94b78990e5c09",
+        "fixed_windows_canonical_lf_sha256": "6c59fa147cc35c3b50c6c3f272c06008723c9b892fb68ab2f8f4daca7749f3ea"
+      },
+      "prepared_ligand": {
+        "fixed_windows_sha256": "4e438002ee5f4d33cad035347489f24148ce6a34c902103633f7c6e7cc72f577",
+        "fixed_windows_canonical_lf_sha256": "68c7b6e660da87e3cd618e87fbcb181a9ddbf87845fc7325dcfc69f6798c7daf"
+      },
+      "ad4zn_site": {
+        "site_count": 1,
+        "coordination_number": 3,
+        "coordination_members": [
+          "A:HIS:583:NE2:N",
+          "A:HIS:587:NE2:N",
+          "A:GLU:646:OE1/OE2:OA"
+        ],
+        "tz_coordinate": [
+          29.326,
+          43.188,
+          30.06
+        ],
+        "coordinate_tolerance_angstrom": 0.002,
+        "tz_distance_angstrom": 2.0,
+        "tz_distance_tolerance_angstrom": 0.002,
+        "fixed_windows_tz_receptor_sha256": "90792a231378e0305ebead9e5067ab8f61bcbbef27b0e84bada2904bc6679165"
+      },
+      "box": {
+        "center": [
+          29.2525,
+          42.8085,
+          32.938
+        ],
+        "size": [
+          20.0,
+          20.0,
+          20.0
+        ]
+      },
+      "maps": {
+        "ligand_atom_types": [
+          "A",
+          "C",
+          "HD",
+          "N",
+          "OA",
+          "SA"
+        ],
+        "required_map_names": [
+          "receptor.maps.fld",
+          "receptor.A.map",
+          "receptor.C.map",
+          "receptor.HD.map",
+          "receptor.N.map",
+          "receptor.OA.map",
+          "receptor.SA.map",
+          "receptor.e.map",
+          "receptor.d.map"
+        ]
+      },
+      "result": {
+        "accepted_best_affinity_min": -12.5,
+        "accepted_best_affinity_max": -9.0,
+        "fixed_windows_best_affinity": -11.01,
+        "fixed_windows_output_sha256": "c143026d3513e51aae24f48b2db436ba18d4337d499641e58b5867d055463631",
+        "maximum_minimum_direct_heavy_rmsd_angstrom": 3.5,
+        "fixed_windows_minimum_direct_heavy_rmsd_angstrom": 1.350417607366593,
+        "fixed_windows_best_score_mode": 1,
+        "fixed_windows_best_rmsd_mode": 2
+      }
+    }
+  },
+  "fixed_windows_toolchain_evidence": {
+    "platform": "Windows x86_64",
+    "captured_on": "2026-07-30",
+    "exact_generated_sha256_is_not_a_cross_platform_gate": true,
+    "cross_platform_gates": [
+      "source canonical LF identity",
+      "tool version and CLI identity",
+      "single Zn and three-coordinate TZ structure contract",
+      "requested Box and effective grid coverage",
+      "required maps and successful AutoGrid completion",
+      "same-seed byte repeatability within the current platform/toolchain",
+      "mode count and score window",
+      "direct same-order heavy-atom RMSD diagnostic threshold",
+      "report evidence"
+    ]
+  }
+}

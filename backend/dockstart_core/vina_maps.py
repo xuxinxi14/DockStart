@@ -16,13 +16,19 @@ import math
 import re
 import shutil
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from adapters import vina_adapter
 from dockstart_core.persistence import atomic_write_json, atomic_write_text
-from dockstart_core.project import _project_from_dict, load_project, save_project
+from dockstart_core.project import (
+    _exclusive_file_lock,
+    _project_from_dict,
+    load_project,
+    save_project,
+)
 from dockstart_core.settings import load_settings
 
 MAP_SET_ID_PATTERN = re.compile(r"^vina_(\d{3,})$")
@@ -69,12 +75,18 @@ MAX_MANIFEST_BYTES = 5 * 1024 * 1024
 MIN_SPACING = 0.1
 MAX_SPACING = 2.0
 FLOAT_TOLERANCE = 1e-6
+MAPS_OPERATION_LOCK_NAME = ".vina-maps.lock"
+MAPS_STAGING_PREFIX = ".vina-maps-staging-"
 
 
 RunCallable = Callable[
     [list[str], str | Path, str | Path, str | Path, str | Path],
     Any,
 ]
+
+
+class MapsManifestRebuildRequired(ValueError):
+    """A legacy/incomplete manifest cannot satisfy the current scientific contract."""
 
 
 def _now_iso() -> str:
@@ -202,6 +214,52 @@ def _load_project_model(
         )
 
 
+def _maps_operation_lock_path(project_dir: str | Path) -> Path:
+    root = Path(project_dir).expanduser().resolve()
+    return root / MAPS_OPERATION_LOCK_NAME
+
+
+def _run_with_maps_operation_lock(
+    project_dir: str,
+    operation: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Serialize every maps mutation/probe within one project.
+
+    ``project.json`` already has revision-based optimistic locking, but map-set
+    identifiers and compatibility-probe directories are filesystem resources.
+    They need a protocol-local lock that spans allocation, staging, validation,
+    publication, probing, and the final project revision update.
+    """
+
+    try:
+        root = Path(project_dir).expanduser().resolve(strict=True)
+    except OSError:
+        # Preserve the established project-loading error contract. There is no
+        # valid project directory in which a protocol lock could be created.
+        return operation()
+    project_json = root / "project.json"
+    if (
+        not root.is_dir()
+        or project_json.is_symlink()
+        or not project_json.is_file()
+    ):
+        return operation()
+    manager = _exclusive_file_lock(_maps_operation_lock_path(root))
+    try:
+        manager.__enter__()
+    except (OSError, RuntimeError) as exc:
+        return _operation_error(
+            "VINA_MAPS_OPERATION_LOCK_ERROR",
+            "无法安全取得 Vina/Vinardo maps 项目操作锁。",
+            str(exc),
+            "请确认项目目录可写且未被文件同步或安全软件锁定后重试。",
+        )
+    try:
+        return operation()
+    finally:
+        manager.__exit__(*sys.exc_info())
+
+
 def _next_map_set_id(root: Path) -> str:
     maps_dir = root / "maps"
     numbers: list[int] = []
@@ -230,6 +288,158 @@ def _validate_maps_directory(root: Path) -> dict[str, Any] | None:
             str(exc),
         )
     return None
+
+
+def _new_staging_map_set(
+    root: Path,
+    map_set_id: str,
+) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+    """Create a private staging tree whose leaf has the final map-set name."""
+
+    temporary = tempfile.TemporaryDirectory(
+        prefix=MAPS_STAGING_PREFIX,
+        dir=root / "maps",
+    )
+    staging_root = Path(temporary.name)
+    staging_set_dir = staging_root / map_set_id
+    return temporary, staging_set_dir
+
+
+def _publish_staged_map_set(
+    *,
+    project: Any,
+    root: Path,
+    staging_set_dir: Path,
+    map_set_id: str,
+    tool_snapshot: dict[str, Any],
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """Atomically publish one fully validated staged set, then revalidate it."""
+
+    manifest_path = staging_set_dir / "manifest.json"
+    staged_manifest, staged_inventory = _validate_local_manifest(
+        project,
+        root,
+        manifest_path,
+        tool_snapshot,
+    )
+    staged_manifest_hash = _sha256(manifest_path)
+    staged_payload_hash = str(staged_inventory["payload_sha256"])
+    final_set_dir = root / "maps" / map_set_id
+    if final_set_dir.exists() or final_set_dir.is_symlink():
+        raise FileExistsError(f"map set 已存在，拒绝覆盖：{map_set_id}")
+    staging_set_dir.replace(final_set_dir)
+    final_manifest_path = final_set_dir / "manifest.json"
+    try:
+        final_manifest, final_inventory = _validate_local_manifest(
+            project,
+            root,
+            final_manifest_path,
+            tool_snapshot,
+        )
+        if (
+            _sha256(final_manifest_path) != staged_manifest_hash
+            or final_inventory["payload_sha256"] != staged_payload_hash
+            or final_manifest != staged_manifest
+        ):
+            raise ValueError("map set 原子发布前后的内容或 manifest 发生变化。")
+    except Exception:
+        # The directory was owned by this operation and has not been exposed
+        # through project.json. Move it back under the private staging root so
+        # TemporaryDirectory can remove it without deleting an unrelated set.
+        discarded = staging_set_dir.parent / f"{map_set_id}.discarded"
+        if (
+            final_set_dir.is_dir()
+            and not final_set_dir.is_symlink()
+            and final_set_dir.resolve().parent == (root / "maps").resolve()
+            and not discarded.exists()
+        ):
+            final_set_dir.replace(discarded)
+        raise
+    return final_manifest_path, final_manifest, final_inventory
+
+
+def _rollback_uncommitted_published_set(
+    *,
+    root: Path,
+    map_set_id: str,
+    staging_parent: Path,
+) -> bool:
+    """Remove a newly published set only when project.json proves it is inactive."""
+
+    loaded = load_project(str(root))
+    if not loaded.get("ok"):
+        return False
+    payload = loaded.get("project")
+    payload = payload if isinstance(payload, dict) else {}
+    record = payload.get("vina_maps")
+    record = record if isinstance(record, dict) else {}
+    protocol = payload.get("docking_protocol")
+    protocol = protocol if isinstance(protocol, dict) else {}
+    committed = (
+        str(record.get("map_set_id") or "") == map_set_id
+        and str(record.get("active_manifest") or "")
+        == Path("maps", map_set_id, "manifest.json").as_posix()
+        and str(protocol.get("active_map_set_id") or "") == map_set_id
+        and str(protocol.get("grid_source") or "") == "precomputed_maps"
+    )
+    if committed:
+        return False
+    final_set_dir = root / "maps" / map_set_id
+    rollback_target = staging_parent / f"{map_set_id}.activation-rollback"
+    if (
+        not final_set_dir.is_dir()
+        or final_set_dir.is_symlink()
+        or final_set_dir.resolve().parent != (root / "maps").resolve()
+        or rollback_target.exists()
+    ):
+        return False
+    final_set_dir.replace(rollback_target)
+    return True
+
+
+def _activate_newly_published_set(
+    *,
+    project: Any,
+    root: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    inventory: dict[str, Any],
+    tool_snapshot: dict[str, Any],
+    staging_parent: Path,
+    runner: RunCallable | None,
+) -> dict[str, Any]:
+    result = _activate_manifest(
+        project,
+        root,
+        manifest_path,
+        manifest,
+        inventory,
+        tool_snapshot,
+        runner=runner,
+    )
+    if result.get("ok"):
+        return result
+    error = result.get("error")
+    error = error if isinstance(error, dict) else {}
+    code = str(error.get("code") or "")
+    if not code.startswith("PROJECT_"):
+        # A scientifically complete ready set remains reusable when only the
+        # ligand probe fails. Existing behavior deliberately preserves it.
+        return result
+    rolled_back = _rollback_uncommitted_published_set(
+        root=root,
+        map_set_id=str(manifest["map_set_id"]),
+        staging_parent=staging_parent,
+    )
+    next_result = copy.deepcopy(result)
+    next_result["map_set_id"] = str(manifest["map_set_id"])
+    next_result["publication_rollback"] = {
+        "attempted": True,
+        "removed_uncommitted_set": rolled_back,
+    }
+    if rolled_back:
+        next_result["manifest_file"] = ""
+    return next_result
 
 
 def _next_probe_id(set_dir: Path) -> str:
@@ -560,6 +770,51 @@ def _vina_header_float_equal(requested: Any, header_value: Any) -> bool:
     return _float_equal(serialized, header_value)
 
 
+def _grid_records_equivalent(left: Any, right: Any) -> bool:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return False
+    if (
+        left.get("force_even_voxels") is not True
+        or right.get("force_even_voxels") is not True
+        or not _float_equal(left.get("spacing"), right.get("spacing"))
+        or left.get("nelements") != right.get("nelements")
+    ):
+        return False
+    for key in ("center", "actual_size"):
+        left_values = left.get(key) if isinstance(left.get(key), dict) else {}
+        right_values = (
+            right.get(key) if isinstance(right.get(key), dict) else {}
+        )
+        if any(
+            not _float_equal(left_values.get(axis), right_values.get(axis))
+            for axis in ("x", "y", "z")
+        ):
+            return False
+    left_box = (
+        left.get("requested_box")
+        if isinstance(left.get("requested_box"), dict)
+        else {}
+    )
+    right_box = (
+        right.get("requested_box")
+        if isinstance(right.get("requested_box"), dict)
+        else {}
+    )
+    for key in ("center", "size"):
+        left_values = (
+            left_box.get(key) if isinstance(left_box.get(key), dict) else {}
+        )
+        right_values = (
+            right_box.get(key) if isinstance(right_box.get(key), dict) else {}
+        )
+        if any(
+            not _float_equal(left_values.get(axis), right_values.get(axis))
+            for axis in ("x", "y", "z")
+        ):
+            return False
+    return True
+
+
 def _inventory_from_directory(
     directory: Path,
     prefix: str,
@@ -788,6 +1043,12 @@ def _run_vina_command(
         run_impl(command, cwd, stdout_path, stderr_path, log_path),
         command,
     )
+    if result["command"] != command:
+        result["ok"] = False
+        result["error"] = (
+            "Vina adapter 返回的实际命令与 DockStart 冻结命令不一致；"
+            f"expected={command!r}; actual={result['command']!r}"
+        )
     # Test adapters and future embedded adapters may return output rather than
     # writing it.  Persist it here without overwriting files already produced
     # by the managed adapter.
@@ -896,10 +1157,43 @@ def _build_manifest(
 def _validate_manifest_structure(manifest: Any, manifest_path: Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ValueError("manifest 顶层必须是 JSON 对象。")
+    required_top_level = {
+        "schema_version",
+        "map_set_id",
+        "protocol_id",
+        "source",
+        "status",
+        "created_at",
+        "finished_at",
+        "scoring_function",
+        "receptor",
+        "ligand_at_generation",
+        "grid",
+        "vina",
+        "maps",
+        "semantics",
+        "provenance",
+        "validation",
+    }
+    missing_top_level = sorted(required_top_level - set(manifest))
+    if missing_top_level:
+        raise MapsManifestRebuildRequired(
+            "manifest 缺少当前科学合同要求的字段，不能安全补写；"
+            f"请重新生成或重新导入 maps：{missing_top_level}"
+        )
     if manifest.get("schema_version") != 1:
-        raise ValueError("manifest schema_version 必须为 1。")
+        raise MapsManifestRebuildRequired(
+            "manifest schema_version 不是当前受支持的 1；"
+            "该记录保持只读，请使用当前版本重新生成或重新导入 maps。"
+        )
     if manifest.get("protocol_id") != "vina_maps":
         raise ValueError("manifest protocol_id 必须为 vina_maps。")
+    if manifest.get("source") not in {
+        "generated",
+        "imported_manifest",
+        "imported_raw_attested",
+    }:
+        raise ValueError("manifest source 不是受支持的 maps 来源。")
     if manifest.get("status") != "ready":
         raise ValueError("manifest 尚未处于 ready 状态。")
     map_set_id = str(manifest.get("map_set_id") or "")
@@ -915,6 +1209,19 @@ def _validate_manifest_structure(manifest: Any, manifest_path: Path) -> dict[str
         if isinstance(manifest.get("semantics"), dict)
         else {}
     )
+    missing_semantics = sorted(
+        {
+            "grid_only",
+            "no_refine_equivalent",
+            "rigid_receptor_only",
+        }
+        - set(semantics)
+    )
+    if missing_semantics:
+        raise MapsManifestRebuildRequired(
+            "manifest 缺少 grid-only 科学语义字段，不能安全推断；"
+            f"请重建 maps：{missing_semantics}"
+        )
     if (
         semantics.get("grid_only") is not True
         or semantics.get("no_refine_equivalent") is not True
@@ -926,10 +1233,41 @@ def _validate_manifest_structure(manifest: Any, manifest_path: Path) -> dict[str
         if isinstance(manifest.get("receptor"), dict)
         else {}
     )
+    required_receptor = {
+        "relative_path",
+        "size_bytes",
+        "sha256",
+        "source_relative_path",
+        "source_sha256",
+    }
+    missing_receptor = sorted(required_receptor - set(receptor))
+    if missing_receptor:
+        raise MapsManifestRebuildRequired(
+            "manifest receptor 快照字段不完整，不能安全推断；"
+            f"请重建 maps：{missing_receptor}"
+        )
     receptor_hash = str(receptor.get("source_sha256") or "").lower()
     if not SHA256_PATTERN.fullmatch(receptor_hash):
         raise ValueError("manifest receptor.source_sha256 无效。")
     vina = manifest.get("vina") if isinstance(manifest.get("vina"), dict) else {}
+    required_vina = {
+        "version",
+        "path",
+        "source",
+        "sha256",
+        "size_bytes",
+        "command",
+        "exit_code",
+        "stdout_file",
+        "stderr_file",
+        "log_file",
+    }
+    missing_vina = sorted(required_vina - set(vina))
+    if missing_vina:
+        raise MapsManifestRebuildRequired(
+            "manifest Vina 工具证据字段不完整，不能安全推断；"
+            f"请重建 maps：{missing_vina}"
+        )
     vina_hash = str(vina.get("sha256") or "").lower()
     if not SHA256_PATTERN.fullmatch(vina_hash):
         raise ValueError("manifest vina.sha256 无效。")
@@ -941,6 +1279,164 @@ def _validate_manifest_structure(manifest: Any, manifest_path: Path) -> dict[str
         raise ValueError("manifest vina.size_bytes 必须为正数。")
     if not isinstance(vina.get("command"), list):
         raise ValueError("manifest vina.command 必须是参数数组。")
+    ligand = (
+        manifest.get("ligand_at_generation")
+        if isinstance(manifest.get("ligand_at_generation"), dict)
+        else {}
+    )
+    missing_ligand = sorted(
+        {
+            "relative_path",
+            "size_bytes",
+            "sha256",
+            "source_relative_path",
+            "source_sha256",
+        }
+        - set(ligand)
+    )
+    if missing_ligand:
+        raise MapsManifestRebuildRequired(
+            "manifest 配体生成快照字段不完整，不能安全推断；"
+            f"请重建 maps：{missing_ligand}"
+        )
+    grid = manifest.get("grid") if isinstance(manifest.get("grid"), dict) else {}
+    missing_grid = sorted(
+        {
+            "requested_box",
+            "center",
+            "spacing",
+            "nelements",
+            "actual_size",
+            "force_even_voxels",
+        }
+        - set(grid)
+    )
+    if missing_grid:
+        raise MapsManifestRebuildRequired(
+            "manifest 网格几何字段不完整，不能安全推断；"
+            f"请重建 maps：{missing_grid}"
+        )
+    maps = manifest.get("maps") if isinstance(manifest.get("maps"), dict) else {}
+    missing_maps = sorted(
+        {
+            "prefix",
+            "atom_types",
+            "files",
+            "map_count",
+            "total_size_bytes",
+            "payload_sha256",
+        }
+        - set(maps)
+    )
+    if missing_maps:
+        raise MapsManifestRebuildRequired(
+            "manifest map 文件清单字段不完整，不能安全推断；"
+            f"请重建 maps：{missing_maps}"
+        )
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, dict):
+        raise MapsManifestRebuildRequired(
+            "manifest provenance 必须是对象；请重建 maps。"
+        )
+    source = str(manifest.get("source") or "")
+    if source == "generated" and provenance:
+        raise ValueError("本地生成 maps 的 provenance 必须为空对象。")
+    if source == "imported_raw_attested":
+        attestation = (
+            provenance.get("attestation")
+            if isinstance(provenance.get("attestation"), dict)
+            else {}
+        )
+        required_attestation = {
+            "version",
+            "confirmed",
+            "scoring_function",
+            "receptor_sha256",
+            "vina_binary_sha256",
+            "statement",
+        }
+        if (
+            provenance.get("kind") != "raw_maps_attested"
+            or set(attestation) != required_attestation
+            or attestation.get("version") != 1
+            or attestation.get("confirmed") is not True
+            or attestation.get("statement") != RAW_ATTESTATION_STATEMENT
+            or str(attestation.get("scoring_function") or "")
+            != manifest["scoring_function"]
+            or str(attestation.get("receptor_sha256") or "").lower()
+            != receptor_hash
+            or str(attestation.get("vina_binary_sha256") or "").lower()
+            != vina_hash
+        ):
+            raise ValueError("原始 maps 的 provenance attestation 与 manifest 绑定不一致。")
+    if source == "imported_manifest":
+        source_manifest = provenance.get("source_manifest")
+        if (
+            provenance.get("kind") != "dockstart_manifest"
+            or not SHA256_PATTERN.fullmatch(
+                str(provenance.get("source_manifest_sha256") or "").lower()
+            )
+            or not MAP_SET_ID_PATTERN.fullmatch(
+                str(provenance.get("source_map_set_id") or "")
+            )
+            or not isinstance(source_manifest, dict)
+        ):
+            raise ValueError("导入的 DockStart manifest provenance 不完整。")
+        source_receptor = (
+            source_manifest.get("receptor")
+            if isinstance(source_manifest.get("receptor"), dict)
+            else {}
+        )
+        source_vina = (
+            source_manifest.get("vina")
+            if isinstance(source_manifest.get("vina"), dict)
+            else {}
+        )
+        source_maps = (
+            source_manifest.get("maps")
+            if isinstance(source_manifest.get("maps"), dict)
+            else {}
+        )
+        if (
+            str(source_manifest.get("map_set_id") or "")
+            != str(provenance.get("source_map_set_id") or "")
+            or str(source_manifest.get("scoring_function") or "") != scoring
+            or str(source_receptor.get("source_sha256") or "").lower()
+            != receptor_hash
+            or str(source_vina.get("sha256") or "").lower() != vina_hash
+            or int(source_vina.get("size_bytes") or 0) != vina_size
+            or str(source_maps.get("payload_sha256") or "").lower()
+            != str(maps.get("payload_sha256") or "").lower()
+            or not _grid_records_equivalent(
+                source_manifest.get("grid"),
+                manifest.get("grid"),
+            )
+        ):
+            raise ValueError("来源 manifest 的科学绑定与本地导入 manifest 不一致。")
+    validation = (
+        manifest.get("validation")
+        if isinstance(manifest.get("validation"), dict)
+        else {}
+    )
+    missing_validation = sorted(
+        {"complete", "issues", "validated_at"} - set(validation)
+    )
+    if missing_validation:
+        raise MapsManifestRebuildRequired(
+            "manifest validation 证据字段不完整；"
+            f"请重建 maps：{missing_validation}"
+        )
+    if (
+        validation.get("complete") is not True
+        or validation.get("issues") != []
+        or not str(validation.get("validated_at") or "").strip()
+    ):
+        raise ValueError("manifest validation 未声明完整且无问题。")
+    if (
+        not str(manifest.get("created_at") or "").strip()
+        or not str(manifest.get("finished_at") or "").strip()
+    ):
+        raise ValueError("manifest 缺少生成时间证据。")
     return manifest
 
 
@@ -1214,19 +1710,64 @@ def _run_compatibility_probe(
     stderr_path = probe_dir / "stderr.txt"
     log_path = probe_dir / "log.txt"
     started_at = _now_iso()
-    result = _run_vina_command(
-        command,
-        root,
-        stdout_path,
-        stderr_path,
-        log_path,
-        runner=runner,
-    )
-    ligand_sha = _sha256(ligand_path)
+    ligand_sha_before = _sha256(ligand_path)
+    maps_payload_before = str(inventory["payload_sha256"])
+    try:
+        result = _run_vina_command(
+            command,
+            root,
+            stdout_path,
+            stderr_path,
+            log_path,
+            runner=runner,
+        )
+    except (KeyboardInterrupt, SystemExit):
+        shutil.rmtree(probe_dir, ignore_errors=True)
+        raise
+    except Exception as exc:  # noqa: BLE001 - adapter failures are audit evidence.
+        result = {
+            "ok": False,
+            "command": command,
+            "pid": None,
+            "exit_code": None,
+            "error": f"兼容性探针调用异常：{exc}",
+            "stdout": "",
+            "stderr": str(exc),
+        }
+        if not stdout_path.exists():
+            atomic_write_text(stdout_path, "")
+        if not stderr_path.exists():
+            atomic_write_text(stderr_path, str(exc))
+        if not log_path.exists():
+            atomic_write_text(log_path, "")
+    integrity_issues: list[str] = []
+    try:
+        ligand_sha_after = _sha256(ligand_path)
+    except OSError as exc:
+        ligand_sha_after = ""
+        integrity_issues.append(f"探针结束后无法读取配体：{exc}")
+    if ligand_sha_after != ligand_sha_before:
+        integrity_issues.append("探针期间当前配体 SHA256 发生变化。")
+    try:
+        inventory_after = _inventory_from_directory(
+            set_dir,
+            str(inventory["prefix"]),
+            expected_names={str(item["name"]) for item in inventory["files"]},
+        )
+        if inventory_after["payload_sha256"] != maps_payload_before:
+            integrity_issues.append("探针期间 maps payload SHA256 发生变化。")
+    except (OSError, TypeError, ValueError) as exc:
+        integrity_issues.append(f"探针结束后 maps 完整性校验失败：{exc}")
     binary_path = Path(tool_snapshot["path"])
-    binary_after = _sha256(binary_path)
+    try:
+        binary_after = _sha256(binary_path)
+    except OSError as exc:
+        binary_after = ""
+        integrity_issues.append(f"探针结束后无法读取 Vina binary：{exc}")
     binary_stable = binary_after == tool_snapshot["sha256"]
-    ok = bool(result["ok"]) and binary_stable
+    if not binary_stable:
+        integrity_issues.append("探针期间 Vina binary SHA256 发生变化。")
+    ok = bool(result["ok"]) and not integrity_issues
     probe_relative = Path(
         "maps",
         map_set_id,
@@ -1247,7 +1788,7 @@ def _run_compatibility_probe(
         "started_at": started_at,
         "finished_at": _now_iso(),
         "ligand_file": ligand_relative,
-        "ligand_sha256": ligand_sha,
+        "ligand_sha256": ligand_sha_before,
         "vina_binary_sha256": tool_snapshot["sha256"],
         "maps_payload_sha256": inventory["payload_sha256"],
         "scoring_function": manifest["scoring_function"],
@@ -1269,12 +1810,9 @@ def _run_compatibility_probe(
             else _error_payload(
                 "VINA_MAPS_LIGAND_PROBE_FAILED",
                 "当前配体未通过预计算 maps 兼容性探测。",
-                (
-                    str(result.get("error") or "")
-                    or f"Vina exit_code={result.get('exit_code')}"
-                    if binary_stable
-                    else "探测期间 Vina binary SHA256 发生变化。"
-                ),
+                "; ".join(integrity_issues)
+                or str(result.get("error") or "")
+                or f"Vina exit_code={result.get('exit_code')}",
                 "请使用生成这些 maps 的受体、评分函数和 Vina binary，或重新生成 maps。",
             )
         ),
@@ -1293,6 +1831,8 @@ def _activate_manifest(
     *,
     runner: RunCallable | None,
 ) -> dict[str, Any]:
+    manifest_hash_before = _sha256(manifest_path)
+    maps_payload_before = str(inventory["payload_sha256"])
     probe = _run_compatibility_probe(
         project=project,
         root=root,
@@ -1311,6 +1851,42 @@ def _activate_manifest(
             manifest_file=manifest_path.relative_to(root).as_posix(),
             compatibility_probe=probe,
         )
+    try:
+        if _sha256(manifest_path) != manifest_hash_before:
+            raise ValueError("兼容性探针期间 manifest SHA256 发生变化。")
+        verified_manifest, verified_inventory = _validate_local_manifest(
+            project,
+            root,
+            manifest_path,
+            tool_snapshot,
+        )
+        if (
+            str(verified_inventory["payload_sha256"]) != maps_payload_before
+            or verified_manifest != manifest
+        ):
+            raise ValueError("兼容性探针期间 maps 或 manifest 内容发生变化。")
+    except MapsManifestRebuildRequired as exc:
+        return _operation_error(
+            "VINA_MAPS_MANIFEST_REBUILD_REQUIRED",
+            "所选 maps manifest 不满足当前科学合同，已保持只读且未激活。",
+            str(exc),
+            "请使用当前版本重新生成或重新导入 maps。",
+            map_set_id=manifest["map_set_id"],
+            manifest_file=manifest_path.relative_to(root).as_posix(),
+            compatibility_probe=probe,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        return _operation_error(
+            "VINA_MAPS_ACTIVATION_INPUT_CHANGED",
+            "兼容性探针期间 maps、manifest、受体、Box 或工具证据发生变化，未激活该 map set。",
+            str(exc),
+            "请确认没有其他程序修改项目文件后重新校验或重建 maps。",
+            map_set_id=manifest["map_set_id"],
+            manifest_file=manifest_path.relative_to(root).as_posix(),
+            compatibility_probe=probe,
+        )
+    manifest = verified_manifest
+    inventory = verified_inventory
     manifest_relative = manifest_path.relative_to(root).as_posix()
     manifest_hash = _sha256(manifest_path)
     project.preserved_data["vina_maps"] = {
@@ -1391,7 +1967,7 @@ def _status_payload(
     }
 
 
-def validate_active_maps(
+def _validate_active_maps_locked(
     project_dir: str,
     probe_ligand: bool = True,
     *,
@@ -1439,18 +2015,32 @@ def validate_active_maps(
         and bool(map_set_id)
     )
     if not manifest_relative:
+        legacy_record = bool(record)
         missing_is_error = _grid_source(project) == "precomputed_maps"
         error = (
             _error_payload(
-                "VINA_MAPS_NOT_PREPARED",
-                "当前协议要求预计算 maps，但项目没有活动 manifest。",
-                suggestion="请先生成或导入 maps，或将网格来源切换回受体。",
+                (
+                    "VINA_MAPS_RECORD_REBUILD_REQUIRED"
+                    if legacy_record
+                    else "VINA_MAPS_NOT_PREPARED"
+                ),
+                (
+                    "项目中的旧 maps 记录缺少活动 manifest 及完整性证据，"
+                    "不能自动推断或补写。"
+                    if legacy_record
+                    else "当前协议要求预计算 maps，但项目没有活动 manifest。"
+                ),
+                suggestion=(
+                    "旧记录保持只读；请使用当前版本重新生成或重新导入 maps。"
+                    if legacy_record
+                    else "请先生成或导入 maps，或将网格来源切换回受体。"
+                ),
             )
-            if missing_is_error
+            if missing_is_error or legacy_record
             else None
         )
         return _status_payload(
-            ok=not missing_is_error,
+            ok=not (missing_is_error or legacy_record),
             ready=False,
             project=project,
             root=root,
@@ -1531,6 +2121,27 @@ def validate_active_maps(
         )
         if map_set_id != str(manifest["map_set_id"]):
             raise ValueError("project.json 的 map_set_id 与 manifest 不一致。")
+    except MapsManifestRebuildRequired as exc:
+        error = _error_payload(
+            "VINA_MAPS_MANIFEST_REBUILD_REQUIRED",
+            "活动 maps manifest 不满足当前科学合同，已保持只读。",
+            str(exc),
+            "请使用当前版本重新生成或重新导入 maps；DockStart 不会猜测缺失证据。",
+        )
+        return _status_payload(
+            ok=False,
+            ready=False,
+            project=project,
+            root=root,
+            protocol_active=protocol_active,
+            grid_source=_grid_source(project),
+            map_set_id=map_set_id,
+            manifest_file=manifest_relative,
+            issues=[str(exc)],
+            tool=tool,
+            current_context=current_context,
+            error=error,
+        )
     except (OSError, TypeError, ValueError) as exc:
         error = _error_payload(
             "VINA_MAPS_VALIDATION_FAILED",
@@ -1597,6 +2208,77 @@ def validate_active_maps(
             runner=runner,
         )
         if probe.get("ok"):
+            try:
+                if _sha256(manifest_path) != expected_manifest_hash:
+                    raise ValueError(
+                        "兼容性探针期间活动 manifest SHA256 发生变化。"
+                    )
+                refreshed_manifest, refreshed_inventory = (
+                    _validate_local_manifest(
+                        project,
+                        root,
+                        manifest_path,
+                        tool_snapshot,
+                    )
+                )
+                if (
+                    refreshed_inventory["payload_sha256"]
+                    != inventory["payload_sha256"]
+                    or refreshed_manifest != manifest
+                ):
+                    raise ValueError(
+                        "兼容性探针期间活动 maps 或 manifest 发生变化。"
+                    )
+            except MapsManifestRebuildRequired as exc:
+                error = _error_payload(
+                    "VINA_MAPS_MANIFEST_REBUILD_REQUIRED",
+                    "探针期间检测到 manifest 不再满足当前科学合同，未保存探针记录。",
+                    str(exc),
+                    "请使用当前版本重新生成或重新导入 maps。",
+                )
+                return _status_payload(
+                    ok=False,
+                    ready=False,
+                    project=project,
+                    root=root,
+                    protocol_active=protocol_active,
+                    grid_source=_grid_source(project),
+                    map_set_id=map_set_id,
+                    manifest_file=manifest_relative,
+                    manifest=None,
+                    maps_prefix="",
+                    issues=[str(exc)],
+                    compatibility_probe=probe,
+                    tool=tool,
+                    current_context=current_context,
+                    error=error,
+                )
+            except (OSError, TypeError, ValueError) as exc:
+                error = _error_payload(
+                    "VINA_MAPS_PROBE_INPUT_CHANGED",
+                    "兼容性探针期间 maps、manifest、受体、Box 或工具证据发生变化，未保存探针记录。",
+                    str(exc),
+                    "请确认没有其他程序修改项目文件后重新校验或重建 maps。",
+                )
+                return _status_payload(
+                    ok=False,
+                    ready=False,
+                    project=project,
+                    root=root,
+                    protocol_active=protocol_active,
+                    grid_source=_grid_source(project),
+                    map_set_id=map_set_id,
+                    manifest_file=manifest_relative,
+                    manifest=None,
+                    maps_prefix="",
+                    issues=[str(exc)],
+                    compatibility_probe=probe,
+                    tool=tool,
+                    current_context=current_context,
+                    error=error,
+                )
+            manifest = refreshed_manifest
+            inventory = refreshed_inventory
             record["compatibility_probe"] = copy.deepcopy(probe)
             record["updated_at"] = _now_iso()
             project.preserved_data["vina_maps"] = record
@@ -1693,6 +2375,22 @@ def validate_active_maps(
         tool=tool,
         current_context=current_context,
         error=None,
+    )
+
+
+def validate_active_maps(
+    project_dir: str,
+    probe_ligand: bool = True,
+    *,
+    runner: RunCallable | None = None,
+) -> dict[str, Any]:
+    return _run_with_maps_operation_lock(
+        project_dir,
+        lambda: _validate_active_maps_locked(
+            project_dir,
+            probe_ligand,
+            runner=runner,
+        ),
     )
 
 
@@ -1805,7 +2503,7 @@ def _validated_generation_context(
     )
 
 
-def generate_maps(
+def _generate_maps_locked(
     project_dir: str,
     options: dict[str, Any] | None = None,
     *,
@@ -1848,11 +2546,12 @@ def generate_maps(
             "activate 必须是 JSON 布尔值。",
         )
     map_set_id = _next_map_set_id(root)
-    set_dir = root / "maps" / map_set_id
-    inputs_dir = set_dir / "inputs"
     manifest_relative = Path("maps", map_set_id, "manifest.json").as_posix()
-    created_at = _now_iso()
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    set_dir = root / "maps" / map_set_id
     try:
+        temporary, set_dir = _new_staging_map_set(root, map_set_id)
+        inputs_dir = set_dir / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=False)
         receptor_snapshot = inputs_dir / "receptor.pdbqt"
         ligand_snapshot = inputs_dir / "ligand.pdbqt"
@@ -1943,20 +2642,22 @@ def generate_maps(
             log_file=Path("maps", map_set_id, "log.txt").as_posix(),
         )
         _write_manifest(set_dir / "manifest.json", manifest)
-        manifest, inventory = _validate_local_manifest(
-            project,
-            root,
-            set_dir / "manifest.json",
-            tool_snapshot,
+        manifest_path, manifest, inventory = _publish_staged_map_set(
+            project=project,
+            root=root,
+            staging_set_dir=set_dir,
+            map_set_id=map_set_id,
+            tool_snapshot=tool_snapshot,
         )
         if activate:
-            return _activate_manifest(
-                project,
-                root,
-                set_dir / "manifest.json",
-                manifest,
-                inventory,
-                tool_snapshot,
+            return _activate_newly_published_set(
+                project=project,
+                root=root,
+                manifest_path=manifest_path,
+                manifest=manifest,
+                inventory=inventory,
+                tool_snapshot=tool_snapshot,
+                staging_parent=set_dir.parent,
                 runner=runner,
             )
         return {
@@ -1973,34 +2674,37 @@ def generate_maps(
             "message": "预计算 maps 已生成并校验，尚未激活。",
             "error": None,
         }
-    except Exception as exc:  # noqa: BLE001 - preserve failed audit record.
-        try:
-            if set_dir.is_dir():
-                failed_manifest = {
-                    "schema_version": 1,
-                    "map_set_id": map_set_id,
-                    "protocol_id": "vina_maps",
-                    "source": "generated",
-                    "status": "failed",
-                    "created_at": created_at,
-                    "finished_at": _now_iso(),
-                    "scoring_function": requested_scoring,
-                    "error": str(exc),
-                }
-                _write_manifest(set_dir / "manifest.json", failed_manifest)
-        except OSError:
-            pass
+    except Exception as exc:  # noqa: BLE001 - public boundary returns structured data.
         return _operation_error(
             "VINA_MAPS_GENERATION_FAILED",
-            "Vina 未生成完整且可审计的预计算 maps。",
+            "Vina 未生成完整且可审计的预计算 maps；未发布半成品。",
             str(exc),
-            f"请查看 {Path('maps', map_set_id, 'stderr.txt').as_posix()} 和 log.txt。",
+            "请检查 Vina 输出、输入快照、磁盘空间和目录权限后重试。",
             map_set_id=map_set_id,
-            manifest_file=manifest_relative,
+            manifest_file="",
         )
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
 
 
-def activate_map_set(
+def generate_maps(
+    project_dir: str,
+    options: dict[str, Any] | None = None,
+    *,
+    runner: RunCallable | None = None,
+) -> dict[str, Any]:
+    return _run_with_maps_operation_lock(
+        project_dir,
+        lambda: _generate_maps_locked(
+            project_dir,
+            options,
+            runner=runner,
+        ),
+    )
+
+
+def _activate_map_set_locked(
     project_dir: str,
     map_set_id: str,
     *,
@@ -2033,6 +2737,13 @@ def activate_map_set(
             manifest_path,
             tool_snapshot,
         )
+    except MapsManifestRebuildRequired as exc:
+        return _operation_error(
+            "VINA_MAPS_MANIFEST_REBUILD_REQUIRED",
+            "所选 maps manifest 不满足当前科学合同，已保持只读且未激活。",
+            str(exc),
+            "请使用当前版本重新生成或重新导入 maps。",
+        )
     except (OSError, TypeError, ValueError) as exc:
         return _operation_error(
             "VINA_MAPS_ACTIVATION_VALIDATION_FAILED",
@@ -2050,7 +2761,23 @@ def activate_map_set(
     )
 
 
-def set_grid_source(
+def activate_map_set(
+    project_dir: str,
+    map_set_id: str,
+    *,
+    runner: RunCallable | None = None,
+) -> dict[str, Any]:
+    return _run_with_maps_operation_lock(
+        project_dir,
+        lambda: _activate_map_set_locked(
+            project_dir,
+            map_set_id,
+            runner=runner,
+        ),
+    )
+
+
+def _set_grid_source_locked(
     project_dir: str,
     mode: str,
     map_set_id: str = "",
@@ -2077,7 +2804,7 @@ def set_grid_source(
                 "VINA_MAPS_SET_ID_REQUIRED",
                 "切换到预计算 maps 时必须指定 map_set_id。",
             )
-        return activate_map_set(project_dir, selected, runner=runner)
+        return _activate_map_set_locked(project_dir, selected, runner=runner)
     project, root, load_error = _load_project_model(project_dir)
     if load_error:
         return load_error
@@ -2119,6 +2846,24 @@ def set_grid_source(
         "message": "网格来源已切换回受体实时计算；已有 map set 未被删除。",
         "error": None,
     }
+
+
+def set_grid_source(
+    project_dir: str,
+    mode: str,
+    map_set_id: str = "",
+    *,
+    runner: RunCallable | None = None,
+) -> dict[str, Any]:
+    return _run_with_maps_operation_lock(
+        project_dir,
+        lambda: _set_grid_source_locked(
+            project_dir,
+            mode,
+            map_set_id,
+            runner=runner,
+        ),
+    )
 
 
 def _validated_attestation(
@@ -2286,6 +3031,13 @@ def _import_manifest_source(
             tool_snapshot,
             require_project_box=True,
         )
+    except MapsManifestRebuildRequired as exc:
+        return _operation_error(
+            "VINA_MAPS_IMPORT_MANIFEST_REBUILD_REQUIRED",
+            "所选来源 manifest 不满足当前科学合同，已保持只读且未导入。",
+            str(exc),
+            "请在来源项目中用当前版本重新生成 maps，再重新导入。",
+        )
     except (OSError, TypeError, ValueError) as exc:
         return _operation_error(
             "VINA_MAPS_IMPORT_MANIFEST_INVALID",
@@ -2293,9 +3045,11 @@ def _import_manifest_source(
             str(exc),
         )
     map_set_id = _next_map_set_id(root)
+    temporary: tempfile.TemporaryDirectory[str] | None = None
     set_dir = root / "maps" / map_set_id
-    inputs_dir = set_dir / "inputs"
     try:
+        temporary, set_dir = _new_staging_map_set(root, map_set_id)
+        inputs_dir = set_dir / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=False)
         shutil.copyfile(receptor_path, inputs_dir / "receptor.pdbqt")
         shutil.copyfile(ligand_path, inputs_dir / "ligand.pdbqt")
@@ -2347,20 +3101,22 @@ def _import_manifest_source(
         )
         manifest_path = set_dir / "manifest.json"
         _write_manifest(manifest_path, manifest)
-        manifest, local_inventory = _validate_local_manifest(
-            project,
-            root,
-            manifest_path,
-            tool_snapshot,
+        manifest_path, manifest, local_inventory = _publish_staged_map_set(
+            project=project,
+            root=root,
+            staging_set_dir=set_dir,
+            map_set_id=map_set_id,
+            tool_snapshot=tool_snapshot,
         )
         if activate:
-            return _activate_manifest(
-                project,
-                root,
-                manifest_path,
-                manifest,
-                local_inventory,
-                tool_snapshot,
+            return _activate_newly_published_set(
+                project=project,
+                root=root,
+                manifest_path=manifest_path,
+                manifest=manifest,
+                inventory=local_inventory,
+                tool_snapshot=tool_snapshot,
+                staging_parent=set_dir.parent,
                 runner=runner,
             )
         return {
@@ -2384,10 +3140,13 @@ def _import_manifest_source(
     except Exception as exc:  # noqa: BLE001 - return structured workflow error.
         return _operation_error(
             "VINA_MAPS_IMPORT_FAILED",
-            "复制或登记 DockStart maps 时发生错误。",
+            "复制或登记 DockStart maps 时发生错误；未发布半成品。",
             str(exc),
             map_set_id=map_set_id,
         )
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
 
 
 def _import_raw_source(
@@ -2425,9 +3184,11 @@ def _import_raw_source(
             str(exc),
         )
     map_set_id = _next_map_set_id(root)
+    temporary: tempfile.TemporaryDirectory[str] | None = None
     set_dir = root / "maps" / map_set_id
-    inputs_dir = set_dir / "inputs"
     try:
+        temporary, set_dir = _new_staging_map_set(root, map_set_id)
+        inputs_dir = set_dir / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=False)
         shutil.copyfile(receptor_path, inputs_dir / "receptor.pdbqt")
         shutil.copyfile(ligand_path, inputs_dir / "ligand.pdbqt")
@@ -2475,20 +3236,22 @@ def _import_raw_source(
         )
         manifest_path = set_dir / "manifest.json"
         _write_manifest(manifest_path, manifest)
-        manifest, local_inventory = _validate_local_manifest(
-            project,
-            root,
-            manifest_path,
-            tool_snapshot,
+        manifest_path, manifest, local_inventory = _publish_staged_map_set(
+            project=project,
+            root=root,
+            staging_set_dir=set_dir,
+            map_set_id=map_set_id,
+            tool_snapshot=tool_snapshot,
         )
         if activate:
-            return _activate_manifest(
-                project,
-                root,
-                manifest_path,
-                manifest,
-                local_inventory,
-                tool_snapshot,
+            return _activate_newly_published_set(
+                project=project,
+                root=root,
+                manifest_path=manifest_path,
+                manifest=manifest,
+                inventory=local_inventory,
+                tool_snapshot=tool_snapshot,
+                staging_parent=set_dir.parent,
                 runner=runner,
             )
         return {
@@ -2508,13 +3271,16 @@ def _import_raw_source(
     except Exception as exc:  # noqa: BLE001 - public boundary returns structured data.
         return _operation_error(
             "VINA_MAPS_IMPORT_FAILED",
-            "复制或登记原始 maps 时发生错误。",
+            "复制或登记原始 maps 时发生错误；未发布半成品。",
             str(exc),
             map_set_id=map_set_id,
         )
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
 
 
-def import_maps(
+def _import_maps_locked(
     project_dir: str,
     source_path: str,
     options: dict[str, Any] | None = None,
@@ -2574,6 +3340,24 @@ def import_maps(
         options=options,
         activate=activate,
         runner=runner,
+    )
+
+
+def import_maps(
+    project_dir: str,
+    source_path: str,
+    options: dict[str, Any] | None = None,
+    *,
+    runner: RunCallable | None = None,
+) -> dict[str, Any]:
+    return _run_with_maps_operation_lock(
+        project_dir,
+        lambda: _import_maps_locked(
+            project_dir,
+            source_path,
+            options,
+            runner=runner,
+        ),
     )
 
 

@@ -22,13 +22,20 @@ import sys
 import tempfile
 import zipfile
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from adapters import vina_adapter
+from dockstart_core.advanced_protocols import (
+    ProtocolValidationError,
+    execute_mk_export,
+    inspect_meeko_ligand_pdbqt,
+)
 from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
 from dockstart_core.preparation import get_preparation_tool_status
 from dockstart_core.project import (
+    _exclusive_file_lock,
     _parse_pdbqt_stats,
     _validate_vina_grid_resource,
     validate_vina_params,
@@ -48,11 +55,18 @@ STATE_RELATIVE_PATH = Path("screening", "screening.json")
 SCREENING_ROOT = Path("screening")
 STAGING_RELATIVE_PATH = Path("screening", "staging")
 STAGING_INDEX_RELATIVE_PATH = STAGING_RELATIVE_PATH / "index.json"
+STAGING_IMPORTS_RELATIVE_PATH = STAGING_RELATIVE_PATH / "imports"
+STAGING_MUTATION_LOCK_RELATIVE_PATH = Path(
+    "screening",
+    ".staging-mutation.lock",
+)
 ARCHIVE_RELATIVE_PATH = Path("screening", "archive")
 ACTIVE_JOB_NAMES = ("inputs", "attempts", "results")
 TERMINAL_SCREENING_STATUSES = frozenset({"completed", "completed_with_failures", "canceled"})
 ARCHIVE_ID_PATTERN = re.compile(r"^screening_\d{3,}_\d{14}(?:_\d{2})?$")
 SCREENING_ID_PATTERN = re.compile(r"^screening_\d{3,}$")
+SCREENING_IMPORT_ID_PATTERN = re.compile(r"^import_\d{6}$")
+SCREENING_RECORD_ID_PATTERN = re.compile(r"^record_[0-9a-f]{64}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_ARCHIVE_METADATA_BYTES = 32 * 1024 * 1024
 SCREENING_EXPORT_MANIFEST_NAME = "dockstart_screening_export.json"
@@ -90,6 +104,20 @@ SCREENING_VINA_DEFAULTS: dict[str, Any] = {
     "no_refine": False,
     "force_even_voxels": False,
 }
+SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION = 2
+SCREENING_LIBRARY_PREPARATION_PROFILE = (
+    "dockstart_screening_rdkit_meeko_fail_closed_v2"
+)
+SCREENING_CHEMICAL_FACTS_SCHEMA_VERSION = 1
+SCREENING_CHEMICAL_FACTS_PROFILE = (
+    "rdkit_source_formal_charge_heavy_atoms_strict_rotatable_bonds_v1"
+)
+SCREENING_HYDROGEN_POLICY = "rdkit_add_hs_preserve_source_indices_v1"
+SCREENING_RESULT_SDF_SCHEMA_VERSION = 1
+SCREENING_RESULT_TOPOLOGY_VALIDATOR_SCHEMA_VERSION = 1
+SCREENING_RESULT_SDF_TOOLCHAIN_PROFILE = (
+    "meeko_export_rdkit_heavy_graph_validation_v1"
+)
 
 
 class _ArchiveValidationError(ValueError):
@@ -155,6 +183,31 @@ def _project_root(project_dir: str | Path) -> Path:
     if not root.is_dir():
         raise ValueError("项目路径不是目录。")
     return root
+
+
+def _serialized_staging_mutation(function: Callable[..., dict[str, Any]]):
+    """Serialize staging/index mutations across GUI and CLI processes."""
+
+    @wraps(function)
+    def wrapped(
+        project_dir: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        try:
+            root = _project_root(project_dir)
+            lock_path = root / STAGING_MUTATION_LOCK_RELATIVE_PATH
+            with _exclusive_file_lock(lock_path):
+                return function(str(root), *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - public workflow boundary.
+            return _error(
+                "SCREENING_STAGING_LOCK_ERROR",
+                "批量配体 staging 协调失败。",
+                str(exc),
+                "请确认项目目录可写且没有异常的链接或重解析点后重试。",
+            )
+
+    return wrapped
 
 
 def _project_file(root: Path, value: str | Path, *, label: str) -> tuple[Path, str]:
@@ -789,6 +842,29 @@ def _verify_attempt_runtime_evidence(
             label="attempt Vina 配置",
         ),
     }
+    topology_snapshot = input_snapshots.get("source_topology")
+    if topology_snapshot is not None:
+        if not isinstance(topology_snapshot, dict):
+            raise _ScreeningIntegrityError(
+                "SCREENING_ATTEMPT_TOPOLOGY_CHANGED",
+                "attempt 原始拓扑证据无效。",
+            )
+        topology_name = str(topology_snapshot.get("snapshot_name") or "")
+        if (
+            not topology_name
+            or Path(topology_name).name != topology_name
+            or Path(topology_name).suffix.lower() not in {".sdf", ".mol"}
+        ):
+            raise _ScreeningIntegrityError(
+                "SCREENING_ATTEMPT_TOPOLOGY_CHANGED",
+                "attempt 原始拓扑快照名称无效。",
+            )
+        verified["source_topology"] = _verify_runtime_evidence_file(
+            attempt_dir / topology_name,
+            topology_snapshot,
+            code="SCREENING_ATTEMPT_TOPOLOGY_CHANGED",
+            label="attempt 原始拓扑快照",
+        )
     vina_snapshot = (
         attempt_record.get("vina_snapshot")
         if isinstance(attempt_record.get("vina_snapshot"), dict)
@@ -820,6 +896,197 @@ def _verify_attempt_runtime_evidence(
     }
 
 
+def _verified_frozen_item_topology(
+    root: Path,
+    item: dict[str, Any],
+) -> dict[str, Any] | None:
+    item_id = str(item.get("item_id") or "")
+    integrity = str(item.get("topology_integrity") or "not_available")
+    relative = str(item.get("source_topology_file") or "")
+    expected_sha256 = str(item.get("source_topology_sha256") or "").lower()
+    expected_size = item.get("source_topology_size_bytes")
+    has_v2_identity = any(
+        str(item.get(field) or "")
+        for field in (
+            "source_import_id",
+            "source_candidate_id",
+            "source_record_id",
+        )
+    )
+    if integrity == "not_available":
+        if relative or expected_sha256 or int(expected_size or 0) != 0:
+            raise ValueError(
+                f"冻结配体 {item_id} 的原始拓扑不可用状态与文件身份冲突。"
+            )
+        facts = item.get("chemical_facts")
+        if (
+            has_v2_identity
+            and (
+                not isinstance(facts, dict)
+                or facts.get("status") != "unavailable"
+            )
+        ):
+            raise ValueError(
+                f"冻结配体 {item_id} 的 PDBQT-only 化学事实状态无效。"
+            )
+        if has_v2_identity:
+            _validated_stored_preparation_evidence(
+                item,
+                require_worker=False,
+            )
+        return None
+    if integrity != "verified":
+        raise ValueError(
+            f"冻结配体 {item_id} 的原始拓扑完整性状态无效：{integrity}。"
+        )
+    if (
+        not relative
+        or "\\" in relative
+        or ":" in relative
+        or SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+    ):
+        raise ValueError(f"冻结配体 {item_id} 缺少有效的原始拓扑身份。")
+    logical = PurePosixPath(relative)
+    if (
+        logical.is_absolute()
+        or ".." in logical.parts
+        or len(logical.parts) != 4
+        or tuple(logical.parts[:3])
+        != ("screening", "inputs", "topology")
+        or Path(logical.parts[3]).stem != item_id
+        or Path(logical.parts[3]).suffix.lower() not in {".sdf", ".mol"}
+    ):
+        raise ValueError(f"冻结配体 {item_id} 的原始拓扑路径无效。")
+    cursor = root
+    for part in logical.parts:
+        cursor = cursor / part
+        if _path_is_link_or_reparse(cursor):
+            raise ValueError(
+                f"冻结配体 {item_id} 的原始拓扑路径包含链接或重解析点。"
+            )
+    topology_path = (root / Path(*logical.parts)).resolve(strict=True)
+    try:
+        topology_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"冻结配体 {item_id} 的原始拓扑越过项目目录。"
+        ) from exc
+    if (
+        not topology_path.is_file()
+        or topology_path.stat().st_size != expected_size
+        or _sha256(topology_path).lower() != expected_sha256
+    ):
+        raise ValueError(f"冻结配体 {item_id} 的原始拓扑完整性校验失败。")
+    facts = _validated_screening_chemical_facts(
+        item.get("chemical_facts"),
+        source_topology_sha256=expected_sha256,
+    )
+    evidence = _validated_stored_preparation_evidence(
+        item,
+        require_worker=True,
+    )
+    return {
+        "file": relative,
+        "sha256": expected_sha256,
+        "size_bytes": expected_size,
+        "chemical_facts": facts,
+        "preparation_evidence": evidence,
+    }
+
+
+def _verified_library_import_manifest(
+    root: Path,
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    record = (
+        inputs.get("library_import_manifest")
+        if isinstance(inputs.get("library_import_manifest"), dict)
+        else None
+    )
+    has_v2_items = any(
+        isinstance(item, dict)
+        and any(
+            str(item.get(field) or "")
+            for field in (
+                "source_import_id",
+                "source_candidate_id",
+                "source_record_id",
+            )
+        )
+        for item in state.get("items") or []
+    )
+    if record is None:
+        if has_v2_items:
+            raise ValueError("screening.json 缺少批量配体导入 manifest。")
+        return None
+    relative = str(record.get("file") or "")
+    expected_sha256 = str(record.get("sha256") or "").lower()
+    expected_size = record.get("size_bytes")
+    if (
+        relative != "screening/inputs/library_import_manifest.json"
+        or SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+    ):
+        raise ValueError("批量配体导入 manifest 身份无效。")
+    path = root / Path(*PurePosixPath(relative).parts)
+    if (
+        not path.is_file()
+        or _path_is_link_or_reparse(path)
+        or path.stat().st_size != expected_size
+        or _sha256(path).lower() != expected_sha256
+    ):
+        raise ValueError("批量配体导入 manifest 完整性校验失败。")
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(loaded, dict)
+        or loaded.get("schema_version")
+        != SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+        or not isinstance(loaded.get("items"), list)
+    ):
+        raise ValueError("批量配体导入 manifest 内容无效。")
+    by_item: dict[str, dict[str, Any]] = {}
+    for value in loaded["items"]:
+        if not isinstance(value, dict):
+            raise ValueError("批量配体导入 manifest 包含无效 item。")
+        item_id = str(value.get("item_id") or "")
+        if not item_id or item_id in by_item:
+            raise ValueError("批量配体导入 manifest 包含重复 item_id。")
+        by_item[item_id] = value
+    for item in state.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("item_id") or "")
+        manifest_item = by_item.get(item_id)
+        if manifest_item is None:
+            raise ValueError(
+                f"批量配体导入 manifest 缺少冻结配体 {item_id}。"
+            )
+        comparisons = {
+            "candidate_id": str(item.get("source_candidate_id") or ""),
+            "record_id": str(item.get("source_record_id") or ""),
+            "import_id": str(item.get("source_import_id") or ""),
+            "topology_file": str(item.get("source_topology_file") or ""),
+            "topology_sha256": str(
+                item.get("source_topology_sha256") or ""
+            ).lower(),
+        }
+        if any(
+            str(manifest_item.get(field) or "").lower()
+            != expected.lower()
+            for field, expected in comparisons.items()
+        ):
+            raise ValueError(
+                f"批量配体导入 manifest 与冻结配体 {item_id} 身份不一致。"
+            )
+    return loaded
+
+
 def _verified_frozen_ligand_entries(
     root: Path,
     state: dict[str, Any],
@@ -843,6 +1110,7 @@ def _verified_frozen_ligand_entries(
         raise ValueError("冻结受体的 SHA256 与 screening.json 不一致。")
 
     entries: list[tuple[Path, str]] = []
+    verified_topology_count = 0
     for item in state.get("items") or []:
         if not isinstance(item, dict):
             raise ValueError("screening.json 包含无效的配体记录。")
@@ -862,6 +1130,8 @@ def _verified_frozen_ligand_entries(
             )
         if _sha256(ligand_path).lower() != expected_sha256:
             raise ValueError(f"冻结配体 {item.get('item_id')} 的 SHA256 不一致。")
+        if _verified_frozen_item_topology(root, item) is not None:
+            verified_topology_count += 1
         entries.append(
             (
                 ligand_path,
@@ -870,6 +1140,28 @@ def _verified_frozen_ligand_entries(
         )
     if not entries:
         raise ValueError("screening.json 没有可运行的冻结配体。")
+    topology_summary = (
+        inputs.get("topology")
+        if isinstance(inputs.get("topology"), dict)
+        else None
+    )
+    if topology_summary is not None:
+        expected_status = (
+            "complete"
+            if verified_topology_count == len(entries)
+            else "partial"
+            if verified_topology_count
+            else "unavailable"
+        )
+        if (
+            topology_summary.get("status") != expected_status
+            or int(topology_summary.get("available_count") or 0)
+            != verified_topology_count
+            or int(topology_summary.get("total_count") or 0)
+            != len(entries)
+        ):
+            raise ValueError("screening.json 的原始拓扑覆盖摘要不一致。")
+    _verified_library_import_manifest(root, state)
     return entries
 
 
@@ -1043,10 +1335,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import platform
 import sys
 from pathlib import Path
 
-from rdkit import Chem
+import meeko
+from rdkit import Chem, rdBase
+from rdkit.Chem import rdMolDescriptors
 from meeko import MoleculePreparation
 
 try:
@@ -1056,6 +1351,17 @@ except Exception:
         from meeko import PDBQTWriter
     except Exception as exc:
         raise RuntimeError("未找到可用的 Meeko PDBQT writer。") from exc
+
+
+CHEMICAL_FACTS_PROFILE = "rdkit_source_formal_charge_heavy_atoms_strict_rotatable_bonds_v1"
+HYDROGEN_POLICY = "rdkit_add_hs_preserve_source_indices_v1"
+
+
+class MacrocycleReviewRequired(RuntimeError):
+    def __init__(self, rings, removed_bonds):
+        super().__init__("检测到大环配体，批量导入不会静默采用 Meeko 自动断环。")
+        self.rings = rings
+        self.removed_bonds = removed_bonds
 
 
 def split_sdf_records(payload: bytes) -> list[bytes]:
@@ -1082,12 +1388,120 @@ def normalize_writer_result(result):
     return str(result)
 
 
+def toolkit_snapshot():
+    return {
+        "python_version": platform.python_version(),
+        "rdkit_version": str(rdBase.rdkitVersion),
+        "meeko_version": str(getattr(meeko, "__version__", "unknown")),
+    }
+
+
+def topology_fingerprints(molecule):
+    atoms = [
+        {
+            "index": int(atom.GetIdx()),
+            "atomic_number": int(atom.GetAtomicNum()),
+            "formal_charge": int(atom.GetFormalCharge()),
+            "isotope": int(atom.GetIsotope()),
+            "chiral_tag": str(atom.GetChiralTag()),
+            "aromatic": bool(atom.GetIsAromatic()),
+        }
+        for atom in molecule.GetAtoms()
+    ]
+    bonds = sorted(
+        [
+            {
+                "begin": min(int(bond.GetBeginAtomIdx()), int(bond.GetEndAtomIdx())),
+                "end": max(int(bond.GetBeginAtomIdx()), int(bond.GetEndAtomIdx())),
+                "order": str(bond.GetBondType()),
+                "aromatic": bool(bond.GetIsAromatic()),
+                "conjugated": bool(bond.GetIsConjugated()),
+                "stereo": str(bond.GetStereo()),
+            }
+            for bond in molecule.GetBonds()
+        ],
+        key=lambda item: (item["begin"], item["end"]),
+    )
+    payload = json.dumps(
+        {"atoms": atoms, "bonds": bonds},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    ordered_sha256 = hashlib.sha256(payload).hexdigest()
+    heavy_graph = Chem.RemoveHs(Chem.Mol(molecule))
+    canonical_smiles = Chem.MolToSmiles(
+        heavy_graph,
+        canonical=True,
+        isomericSmiles=True,
+        allBondsExplicit=True,
+    )
+    if not canonical_smiles:
+        raise RuntimeError("RDKit 未能生成规范重原子图身份。")
+    return {
+        "atom_count": len(atoms),
+        "bond_count": len(bonds),
+        "ordered_sha256": ordered_sha256,
+        "canonical_graph_sha256": hashlib.sha256(
+            canonical_smiles.encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def chemical_facts(molecule, source_sha256):
+    rings = [list(map(int, ring)) for ring in Chem.GetSymmSSSR(molecule)]
+    topology = topology_fingerprints(molecule)
+    return {
+        "schema_version": 1,
+        "status": "verified",
+        "source": "frozen_raw_topology",
+        "calculation_profile": CHEMICAL_FACTS_PROFILE,
+        "source_topology_sha256": source_sha256,
+        "rdkit_version": str(rdBase.rdkitVersion),
+        "formal_charge": int(sum(atom.GetFormalCharge() for atom in molecule.GetAtoms())),
+        "heavy_atom_count": int(molecule.GetNumHeavyAtoms()),
+        "rotatable_bond_count": int(
+            rdMolDescriptors.CalcNumRotatableBonds(
+                molecule,
+                rdMolDescriptors.NumRotatableBondsOptions.Strict,
+            )
+        ),
+        "fragment_count": int(len(Chem.GetMolFrags(molecule))),
+        "max_ring_size": max((len(ring) for ring in rings), default=0),
+        "has_macrocycle": any(len(ring) >= 7 for ring in rings),
+        "canonical_topology_sha256": topology["canonical_graph_sha256"],
+        "ordered_topology_sha256": topology["ordered_sha256"],
+        "canonical_atom_count": topology["atom_count"],
+        "canonical_bond_count": topology["bond_count"],
+    }
+
+
 def prepare_one(molecule, output_path: Path) -> None:
     molecule = Chem.AddHs(molecule, addCoords=True)
     Chem.SanitizeMol(molecule)
+    perceived_rings = [
+        [int(index) + 1 for index in ring]
+        for ring in Chem.GetSymmSSSR(molecule)
+        if len(ring) >= 7
+    ]
+    if perceived_rings:
+        raise MacrocycleReviewRequired(perceived_rings, [])
     setups = MoleculePreparation().prepare(molecule)
     if not setups:
         raise RuntimeError("Meeko 未生成 ligand setup。")
+    removed_bonds = sorted(
+        {
+            tuple(sorted((int(pair[0]), int(pair[1]))))
+            for setup in setups
+            for pair in getattr(
+                getattr(setup, "ring_closure_info", None),
+                "bonds_removed",
+                [],
+            )
+        }
+    )
+    if removed_bonds:
+        raise MacrocycleReviewRequired([], removed_bonds)
     pdbqt_text = normalize_writer_result(PDBQTWriter.write_string(setups[0]))
     if not pdbqt_text.strip():
         raise RuntimeError("Meeko 写出的 PDBQT 为空。")
@@ -1119,7 +1533,10 @@ def main() -> int:
         raw_records = split_sdf_records(payload)
         if len(raw_records) > max_records:
             manifest_path.write_text(json.dumps({
-                "schema_version": 1,
+                "schema_version": 2,
+                "preparation_profile": "dockstart_screening_rdkit_meeko_fail_closed_v2",
+                "hydrogen_policy": HYDROGEN_POLICY,
+                "toolchain": toolkit_snapshot(),
                 "limit_exceeded": True,
                 "record_count": len(raw_records),
                 "records": [],
@@ -1148,7 +1565,10 @@ def main() -> int:
 
     if record_count > max_records:
         manifest_path.write_text(json.dumps({
-            "schema_version": 1,
+            "schema_version": 2,
+            "preparation_profile": "dockstart_screening_rdkit_meeko_fail_closed_v2",
+            "hydrogen_policy": HYDROGEN_POLICY,
+            "toolchain": toolkit_snapshot(),
             "limit_exceeded": True,
             "record_count": record_count,
             "records": [],
@@ -1166,6 +1586,7 @@ def main() -> int:
             "source_record_name": molecule_name(molecule, fallback),
             "source_record_sha256": hashlib.sha256(raw_record).hexdigest(),
             "source_record_size_bytes": len(raw_record),
+            "preparation_toolchain": toolkit_snapshot(),
         }
         if molecule is None:
             records.append({
@@ -1178,10 +1599,45 @@ def main() -> int:
             })
             continue
 
+        try:
+            base["chemical_facts"] = chemical_facts(
+                molecule,
+                base["source_record_sha256"],
+            )
+        except Exception as exc:
+            records.append({
+                **base,
+                "status": "invalid",
+                "error": {
+                    "code": "CHEMICAL_FACTS_FAILED",
+                    "message": "无法从冻结原始拓扑计算可审计化学事实。",
+                    "raw_error": str(exc)[:4000],
+                },
+            })
+            continue
+
         output_name = f"record_{index:06d}.pdbqt"
         output_path = output_dir / output_name
         try:
             prepare_one(molecule, output_path)
+        except MacrocycleReviewRequired as exc:
+            output_path.unlink(missing_ok=True)
+            records.append({
+                **base,
+                "status": "review_required",
+                "macrocycle": {
+                    "ring_atom_numbers_one_based": exc.rings,
+                    "meeko_proposed_bonds_zero_based": [
+                        list(pair) for pair in exc.removed_bonds
+                    ],
+                },
+                "error": {
+                    "code": "MACROCYCLE_REVIEW_REQUIRED",
+                    "message": "检测到大环配体；批量准备不会静默采用 Meeko 自动断环。",
+                    "suggestion": "请先使用单配体正式大环审查确认断环候选或刚性大环，再导入受审查的 PDBQT。",
+                },
+            })
+            continue
         except Exception as exc:
             output_path.unlink(missing_ok=True)
             records.append({
@@ -1201,7 +1657,10 @@ def main() -> int:
         })
 
     manifest_path.write_text(json.dumps({
-        "schema_version": 1,
+        "schema_version": 2,
+        "preparation_profile": "dockstart_screening_rdkit_meeko_fail_closed_v2",
+        "hydrogen_policy": HYDROGEN_POLICY,
+        "toolchain": toolkit_snapshot(),
         "limit_exceeded": False,
         "record_count": record_count,
         "records": records,
@@ -1288,6 +1747,389 @@ def _split_sdf_record_bytes(payload: bytes) -> list[bytes]:
     return records
 
 
+def _screening_record_id(
+    source_sha256: str,
+    record_index: int,
+    record_sha256: str,
+) -> str:
+    payload = (
+        f"{source_sha256.lower()}:{int(record_index)}:{record_sha256.lower()}"
+    ).encode("ascii")
+    return f"record_{hashlib.sha256(payload).hexdigest()}"
+
+
+def _next_screening_import_id(root: Path, index: dict[str, Any]) -> str:
+    highest = 0
+    imports = index.get("imports") if isinstance(index.get("imports"), dict) else {}
+    for value in imports:
+        match = re.fullmatch(r"import_(\d{6})", str(value))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    imports_root = root / STAGING_IMPORTS_RELATIVE_PATH
+    if imports_root.is_dir():
+        for path in imports_root.iterdir():
+            match = re.fullmatch(r"\.?import_(\d{6})(?:\.tmp)?", path.name)
+            if match:
+                highest = max(highest, int(match.group(1)))
+    if highest >= 999_999:
+        raise ValueError("批量配体导入记录编号已经达到上限。")
+    return f"import_{highest + 1:06d}"
+
+
+def _freeze_screening_topology_record(
+    root: Path,
+    import_id: str,
+    record_id: str,
+    source_format: str,
+    content: bytes,
+    expected_sha256: str,
+    expected_size_bytes: int,
+) -> dict[str, Any]:
+    if SCREENING_IMPORT_ID_PATTERN.fullmatch(import_id) is None:
+        raise ValueError("批量配体 import_id 无效。")
+    if SCREENING_RECORD_ID_PATTERN.fullmatch(record_id) is None:
+        raise ValueError("批量配体 record_id 无效。")
+    normalized_format = str(source_format or "").strip().lower()
+    if normalized_format not in {"sdf", "mol"}:
+        raise ValueError("原始拓扑快照只接受 SDF 或 MOL。")
+    if len(content) != int(expected_size_bytes):
+        raise ValueError("原始拓扑快照大小与 record 盘点不一致。")
+    actual_sha256 = hashlib.sha256(content).hexdigest()
+    if actual_sha256 != str(expected_sha256).lower():
+        raise ValueError("原始拓扑快照 SHA256 与 record 盘点不一致。")
+    relative = (
+        STAGING_IMPORTS_RELATIVE_PATH
+        / import_id
+        / "records"
+        / f"{record_id}.{normalized_format}"
+    )
+    destination = root / relative
+    if destination.exists():
+        if (
+            not destination.is_file()
+            or destination.is_symlink()
+            or destination.stat().st_size != len(content)
+            or _sha256(destination) != actual_sha256
+        ):
+            raise ValueError(f"原始拓扑快照目标已存在但内容不一致：{relative}")
+    else:
+        atomic_write_bytes(destination, content)
+    if (
+        destination.stat().st_size != len(content)
+        or _sha256(destination) != actual_sha256
+    ):
+        destination.unlink(missing_ok=True)
+        raise ValueError("原始拓扑快照发布后完整性校验失败。")
+    return {
+        "source_topology_file": relative.as_posix(),
+        "source_topology_sha256": actual_sha256,
+        "source_topology_size_bytes": len(content),
+        "topology_integrity": "verified",
+    }
+
+
+def _load_screening_staging_index(root: Path) -> dict[str, Any]:
+    index_path = root / STAGING_INDEX_RELATIVE_PATH
+    if not index_path.is_file():
+        return {
+            "schema_version": 1,
+            "updated_at": _now_iso(),
+            "files": {},
+            "records": {},
+            "imports": {},
+        }
+    loaded = json.loads(index_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(loaded, dict)
+        or loaded.get("schema_version") != 1
+        or not isinstance(loaded.get("files"), dict)
+    ):
+        raise ValueError("screening/staging/index.json 无效，已拒绝覆盖。")
+    loaded.setdefault("records", {})
+    loaded.setdefault("imports", {})
+    if not isinstance(loaded["records"], dict) or not isinstance(
+        loaded["imports"], dict
+    ):
+        raise ValueError("screening/staging/index.json 的导入审计字段无效。")
+    return loaded
+
+
+def _unavailable_screening_chemical_facts(
+    reason: str,
+    *,
+    source: str,
+    source_topology_sha256: str = "",
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCREENING_CHEMICAL_FACTS_SCHEMA_VERSION,
+        "status": "unavailable",
+        "source": source,
+        "reason": str(reason),
+        "source_topology_sha256": str(source_topology_sha256).lower(),
+    }
+
+
+def _validated_screening_chemical_facts(
+    value: Any,
+    *,
+    source_topology_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("批量配体记录缺少化学事实。")
+    facts = dict(value)
+    if facts.get("schema_version") != SCREENING_CHEMICAL_FACTS_SCHEMA_VERSION:
+        raise ValueError("批量配体化学事实 schema 不受支持。")
+    if facts.get("status") != "verified":
+        raise ValueError("批量配体化学事实尚未通过验证。")
+    if facts.get("source") != "frozen_raw_topology":
+        raise ValueError("批量配体化学事实不是从冻结原始拓扑计算。")
+    if facts.get("calculation_profile") != SCREENING_CHEMICAL_FACTS_PROFILE:
+        raise ValueError("批量配体化学事实计算规范不受支持。")
+    expected_topology_sha256 = str(source_topology_sha256).lower()
+    if (
+        SHA256_PATTERN.fullmatch(expected_topology_sha256) is None
+        or str(facts.get("source_topology_sha256") or "").lower()
+        != expected_topology_sha256
+    ):
+        raise ValueError("批量配体化学事实与冻结原始拓扑身份不一致。")
+    if not str(facts.get("rdkit_version") or "").strip():
+        raise ValueError("批量配体化学事实缺少 RDKit 版本。")
+
+    integer_fields = (
+        "formal_charge",
+        "heavy_atom_count",
+        "rotatable_bond_count",
+        "fragment_count",
+        "max_ring_size",
+        "canonical_atom_count",
+        "canonical_bond_count",
+    )
+    for field in integer_fields:
+        raw = facts.get(field)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise ValueError(f"批量配体化学事实 {field} 必须是整数。")
+        if field != "formal_charge" and raw < 0:
+            raise ValueError(f"批量配体化学事实 {field} 不能为负数。")
+    if facts["canonical_atom_count"] <= 0:
+        raise ValueError("批量配体化学事实的原子数必须大于 0。")
+    if facts["heavy_atom_count"] > facts["canonical_atom_count"]:
+        raise ValueError("批量配体化学事实的重原子数超过总原子数。")
+    if facts["fragment_count"] <= 0:
+        raise ValueError("批量配体化学事实的片段数必须大于 0。")
+    if facts["max_ring_size"] > facts["canonical_atom_count"]:
+        raise ValueError("批量配体化学事实的最大环尺寸超过总原子数。")
+    if facts["rotatable_bond_count"] > facts["canonical_bond_count"]:
+        raise ValueError("批量配体化学事实的可旋转键数超过总键数。")
+    if not isinstance(facts.get("has_macrocycle"), bool):
+        raise ValueError("批量配体化学事实 has_macrocycle 必须是布尔值。")
+    if bool(facts["has_macrocycle"]) != (facts["max_ring_size"] >= 7):
+        raise ValueError("批量配体化学事实的大环标记与环尺寸不一致。")
+    canonical_sha256 = str(facts.get("canonical_topology_sha256") or "").lower()
+    if SHA256_PATTERN.fullmatch(canonical_sha256) is None:
+        raise ValueError("批量配体化学事实缺少有效的规范拓扑 SHA256。")
+    facts["source_topology_sha256"] = expected_topology_sha256
+    facts["canonical_topology_sha256"] = canonical_sha256
+    return facts
+
+
+def _screening_preparation_evidence(
+    prepared: dict[str, Any],
+    *,
+    import_id: str,
+    record_id: str,
+    source_topology_sha256: str,
+    chemical_facts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    status = str(prepared.get("status") or "invalid")
+    if not source_topology_sha256:
+        return {
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "status": "not_required",
+            "source": "supplied_pdbqt",
+            "import_id": import_id,
+            "record_id": record_id,
+        }
+    raw = (
+        dict(prepared.get("_worker_evidence") or {})
+        if isinstance(prepared.get("_worker_evidence"), dict)
+        else {}
+    )
+    if raw.get("schema_version") != SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION:
+        raise ValueError("批量配体准备证据 schema 无效。")
+    if (
+        raw.get("preparation_profile")
+        != SCREENING_LIBRARY_PREPARATION_PROFILE
+    ):
+        raise ValueError("批量配体准备证据的准备规范不受支持。")
+    if raw.get("hydrogen_policy") != SCREENING_HYDROGEN_POLICY:
+        raise ValueError("批量配体准备证据的加氢策略不受支持。")
+    toolchain = raw.get("toolchain")
+    if not isinstance(toolchain, dict) or any(
+        not str(toolchain.get(field) or "").strip()
+        for field in ("python_version", "rdkit_version", "meeko_version")
+    ):
+        raise ValueError("批量配体准备证据缺少完整工具链版本。")
+    if (
+        isinstance(chemical_facts, dict)
+        and chemical_facts.get("status") == "verified"
+        and str(chemical_facts.get("rdkit_version") or "").strip()
+        != str(toolchain.get("rdkit_version") or "").strip()
+    ):
+        raise ValueError("批量配体化学事实与准备证据的 RDKit 版本不一致。")
+    for field in ("worker_script_sha256", "worker_manifest_sha256"):
+        if SHA256_PATTERN.fullmatch(str(raw.get(field) or "").lower()) is None:
+            raise ValueError(f"批量配体准备证据缺少有效的 {field}。")
+    manifest_size = raw.get("worker_manifest_size_bytes")
+    if (
+        isinstance(manifest_size, bool)
+        or not isinstance(manifest_size, int)
+        or manifest_size <= 0
+    ):
+        raise ValueError("批量配体准备证据缺少有效的 worker manifest 大小。")
+    error = prepared.get("error") if isinstance(prepared.get("error"), dict) else {}
+    return {
+        **raw,
+        "status": status,
+        "import_id": import_id,
+        "record_id": record_id,
+        "source_topology_sha256": source_topology_sha256.lower(),
+        "error_code": str(error.get("code") or ""),
+    }
+
+
+def _screening_preparation_attempt_record(
+    candidate: dict[str, Any],
+    *,
+    attempt: int,
+    preparation_status: str,
+) -> dict[str, Any]:
+    error = (
+        dict(candidate.get("error") or {})
+        if isinstance(candidate.get("error"), dict)
+        else {}
+    )
+    return {
+        "attempt": int(attempt),
+        "recorded_at": _now_iso(),
+        "status": preparation_status,
+        "source_topology_file": str(
+            candidate.get("source_topology_file") or ""
+        ),
+        "source_topology_sha256": str(
+            candidate.get("source_topology_sha256") or ""
+        ),
+        "source_topology_size_bytes": int(
+            candidate.get("source_topology_size_bytes") or 0
+        ),
+        "chemical_facts": (
+            dict(candidate.get("chemical_facts") or {})
+            if isinstance(candidate.get("chemical_facts"), dict)
+            else {}
+        ),
+        "preparation_evidence": (
+            dict(candidate.get("preparation_evidence") or {})
+            if isinstance(candidate.get("preparation_evidence"), dict)
+            else {}
+        ),
+        "output_file": str(candidate.get("file") or ""),
+        "output_sha256": str(candidate.get("sha256") or ""),
+        "output_size_bytes": int(candidate.get("size_bytes") or 0),
+        "error": error,
+    }
+
+
+def _screening_import_revision(import_preview: dict[str, Any]) -> str:
+    canonical = json.loads(json.dumps(import_preview, ensure_ascii=False))
+    canonical.pop("revision_sha256", None)
+    payload = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _write_screening_failure_manifest(
+    root: Path,
+    import_id: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    failures = [
+        dict(candidate)
+        for candidate in candidates
+        if candidate.get("status") in {"invalid", "review_required"}
+    ]
+    import_relative = STAGING_IMPORTS_RELATIVE_PATH / import_id
+    json_relative = import_relative / "preparation_failures.json"
+    csv_relative = import_relative / "preparation_failures.csv"
+    json_path = root / json_relative
+    csv_path = root / csv_relative
+    atomic_write_json(
+        json_path,
+        {
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "import_id": import_id,
+            "created_at": _now_iso(),
+            "failure_count": len(failures),
+            "records": failures,
+        },
+    )
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=(
+            "candidate_id",
+            "record_id",
+            "status",
+            "source_file",
+            "source_record_index",
+            "source_record_name",
+            "source_topology_file",
+            "source_topology_sha256",
+            "error_code",
+            "error_message",
+            "retryable",
+        ),
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for candidate in failures:
+        error = (
+            candidate.get("error")
+            if isinstance(candidate.get("error"), dict)
+            else {}
+        )
+        writer.writerow(
+            {
+                "candidate_id": candidate.get("candidate_id", ""),
+                "record_id": candidate.get("record_id", ""),
+                "status": candidate.get("status", ""),
+                "source_file": candidate.get("source_file", ""),
+                "source_record_index": candidate.get("source_record_index", ""),
+                "source_record_name": candidate.get("source_record_name", ""),
+                "source_topology_file": candidate.get("source_topology_file", ""),
+                "source_topology_sha256": candidate.get(
+                    "source_topology_sha256",
+                    "",
+                ),
+                "error_code": error.get("code", ""),
+                "error_message": error.get("message", ""),
+                "retryable": candidate.get("retryable", False),
+            }
+        )
+    atomic_write_text(csv_path, buffer.getvalue())
+    return {
+        "json_file": json_relative.as_posix(),
+        "json_sha256": _sha256(json_path),
+        "json_size_bytes": json_path.stat().st_size,
+        "csv_file": csv_relative.as_posix(),
+        "csv_sha256": _sha256(csv_path),
+        "csv_size_bytes": csv_path.stat().st_size,
+        "failure_count": len(failures),
+    }
+
+
 def _inventory_raw_screening_records(
     source: Path,
     limits: ScreeningResourceLimits,
@@ -1315,6 +2157,7 @@ def _inventory_raw_screening_records(
                 "source_record_name": title[:240] or f"{source.stem} #{index}",
                 "source_record_sha256": hashlib.sha256(record).hexdigest(),
                 "source_record_size_bytes": len(record),
+                "_source_record_bytes": record,
             }
         )
     return inventory
@@ -1328,6 +2171,7 @@ def _prepare_raw_screening_library(
     max_records: int,
     expected_sha256: str,
     expected_size_bytes: int,
+    record_dir: Path | None = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Prepare every SDF/MOL record in one isolated worker invocation."""
 
@@ -1366,6 +2210,34 @@ def _prepare_raw_screening_library(
         errors="replace",
         check=False,
     )
+    if record_dir is not None:
+        record_dir.mkdir(parents=True, exist_ok=False)
+        atomic_write_text(record_dir / "stdout.txt", completed.stdout)
+        atomic_write_text(record_dir / "stderr.txt", completed.stderr)
+        atomic_write_json(
+            record_dir / "command_result.json",
+            {
+                "schema_version": 1,
+                "created_at": _now_iso(),
+                "command": [
+                    python_path,
+                    "-I",
+                    "-B",
+                    str(script),
+                    str(source_snapshot),
+                    str(temporary_root),
+                    str(manifest_path),
+                    str(max_records),
+                ],
+                "cwd": str(root),
+                "returncode": completed.returncode,
+                "worker_script_sha256": hashlib.sha256(
+                    script_text.encode("utf-8")
+                ).hexdigest(),
+                "source_sha256": expected_sha256,
+                "source_size_bytes": expected_size_bytes,
+            },
+        )
     if completed.returncode != 0 or not manifest_path.is_file():
         detail = "\n".join(
             value
@@ -1379,14 +2251,18 @@ def _prepare_raw_screening_library(
     if manifest_path.stat().st_size > 16 * 1024 * 1024:
         temporary.cleanup()
         raise ValueError(f"{source.name} 的导入清单超过大小上限。")
+    manifest_bytes = manifest_path.read_bytes()
+    if record_dir is not None:
+        atomic_write_bytes(record_dir / "worker_manifest.json", manifest_bytes)
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
     except Exception:
         temporary.cleanup()
         raise
     if (
         not isinstance(manifest, dict)
-        or manifest.get("schema_version") != 1
+        or manifest.get("schema_version")
+        != SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
         or not isinstance(manifest.get("records"), list)
     ):
         temporary.cleanup()
@@ -1399,11 +2275,27 @@ def _prepare_raw_screening_library(
         )
 
     normalized: list[dict[str, Any]] = []
+    worker_evidence = {
+        "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+        "preparation_profile": str(manifest.get("preparation_profile") or ""),
+        "hydrogen_policy": str(manifest.get("hydrogen_policy") or ""),
+        "toolchain": (
+            dict(manifest.get("toolchain") or {})
+            if isinstance(manifest.get("toolchain"), dict)
+            else {}
+        ),
+        "worker_script_sha256": hashlib.sha256(
+            script_text.encode("utf-8")
+        ).hexdigest(),
+        "worker_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "worker_manifest_size_bytes": len(manifest_bytes),
+    }
     for value in manifest["records"]:
         if not isinstance(value, dict):
             temporary.cleanup()
             raise ValueError(f"{source.name} 的导入记录无效。")
         record = dict(value)
+        record["_worker_evidence"] = worker_evidence
         if record.get("status") == "ready":
             output_name = str(record.get("pdbqt_file") or "")
             relative = Path(output_name)
@@ -1420,13 +2312,14 @@ def _prepare_raw_screening_library(
                 temporary.cleanup()
                 raise ValueError(f"{source.name} 的导入输出不是有效 PDBQT。")
             record["_pdbqt_path"] = output_path
-        elif record.get("status") != "invalid":
+        elif record.get("status") not in {"invalid", "review_required"}:
             temporary.cleanup()
             raise ValueError(f"{source.name} 的导入记录状态无效。")
         normalized.append(record)
     return temporary, normalized
 
 
+@_serialized_staging_mutation
 def stage_screening_inputs(
     project_dir: str,
     files: list[str],
@@ -1436,12 +2329,25 @@ def stage_screening_inputs(
     """Import a ligand library into content-addressed, auditable staging."""
 
     temporary_directories: list[Any] = []
+    root: Path | None = None
+    import_id = ""
+    import_root: Path | None = None
+    import_started_at = ""
     try:
         root = _project_root(project_dir)
         limits = _validated_resource_limits(resource_limits)
         if not files:
             raise ValueError("至少需要一个待导入的配体文件。")
         originals = _expand_screening_input_files(files, limits)
+        unique_originals: list[Path] = []
+        seen_original_paths: set[str] = set()
+        for original in originals:
+            identity = str(original.resolve(strict=True)).casefold()
+            if identity in seen_original_paths:
+                continue
+            seen_original_paths.add(identity)
+            unique_originals.append(original)
+        originals = unique_originals
         raw_values = [
             value for value in originals if value.suffix.lower() in {".sdf", ".mol"}
         ]
@@ -1508,8 +2414,58 @@ def stage_screening_inputs(
                 )
             python_path = str(python_tool.get("path") or "")
 
+        index_path = root / STAGING_INDEX_RELATIVE_PATH
+        index = _load_screening_staging_index(root)
+        import_id = _next_screening_import_id(root, index)
+        import_root = root / STAGING_IMPORTS_RELATIVE_PATH / import_id
+        import_root.mkdir(parents=True, exist_ok=False)
+        import_started_at = _now_iso()
+
+        frozen_record_count = 0
+        for original in raw_values:
+            source_digest, _source_size = source_identities[original]
+            for expected in inventories[original]:
+                record_id = _screening_record_id(
+                    source_digest,
+                    int(expected["source_record_index"]),
+                    str(expected["source_record_sha256"]),
+                )
+                topology = _freeze_screening_topology_record(
+                    root,
+                    import_id,
+                    record_id,
+                    original.suffix.lstrip("."),
+                    bytes(expected["_source_record_bytes"]),
+                    str(expected["source_record_sha256"]),
+                    int(expected["source_record_size_bytes"]),
+                )
+                expected.update(topology)
+                expected["record_id"] = record_id
+                frozen_record_count += 1
+
+        atomic_write_json(
+            import_root / "import_manifest.json",
+            {
+                "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+                "import_id": import_id,
+                "status": "preparing",
+                "started_at": import_started_at,
+                "source_files": [
+                    {
+                        "file": str(original),
+                        "format": original.suffix.lower().lstrip("."),
+                        "sha256": source_identities[original][0],
+                        "size_bytes": source_identities[original][1],
+                        "record_count": len(inventories.get(original, [{}])),
+                    }
+                    for original in originals
+                ],
+                "frozen_raw_record_count": frozen_record_count,
+            },
+        )
+
         prepared_records: list[dict[str, Any]] = []
-        for original in originals:
+        for source_number, original in enumerate(originals, start=1):
             suffix = original.suffix.lower()
             source_digest, source_size = source_identities[original]
             if (
@@ -1519,6 +2475,11 @@ def stage_screening_inputs(
                 raise ValueError(f"{original.name} 在导入过程中发生变化。")
             if suffix == ".pdbqt":
                 source = _pdbqt_file(original, label="筛选输入")
+                record_id = _screening_record_id(
+                    source_digest,
+                    1,
+                    source_digest,
+                )
                 prepared_records.append(
                     {
                         "status": "ready",
@@ -1531,6 +2492,15 @@ def stage_screening_inputs(
                         "source_record_sha256": source_digest,
                         "source_record_size_bytes": source.stat().st_size,
                         "prepared_during_import": False,
+                        "record_id": record_id,
+                        "source_topology_file": "",
+                        "source_topology_sha256": "",
+                        "source_topology_size_bytes": 0,
+                        "topology_integrity": "not_available",
+                        "chemical_facts": _unavailable_screening_chemical_facts(
+                            "输入仅包含 PDBQT，无法可靠恢复原始键级和化学拓扑。",
+                            source="supplied_pdbqt",
+                        ),
                     }
                 )
                 continue
@@ -1542,14 +2512,34 @@ def stage_screening_inputs(
                 max_records=limits.max_ligands,
                 expected_sha256=source_digest,
                 expected_size_bytes=source_size,
+                record_dir=import_root / "workers" / f"source_{source_number:04d}",
             )
             temporary_directories.append(temporary)
             inventory = inventories[original]
-            by_index = {
-                int(value.get("source_record_index") or 0): value
-                for value in worker_records
-                if isinstance(value, dict)
-            }
+            by_index: dict[int, dict[str, Any]] = {}
+            worker_evidence: dict[str, Any] | None = None
+            for value in worker_records:
+                raw_index = value.get("source_record_index")
+                if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+                    raise ValueError(
+                        f"{original.name} 的准备工具返回了无效 record index。"
+                    )
+                if raw_index < 1 or raw_index > len(inventory):
+                    raise ValueError(
+                        f"{original.name} 的准备工具返回了越界 record index：{raw_index}。"
+                    )
+                if raw_index in by_index:
+                    raise ValueError(
+                        f"{original.name} 的准备工具重复返回 record index：{raw_index}。"
+                    )
+                by_index[raw_index] = value
+                if worker_evidence is None and isinstance(
+                    value.get("_worker_evidence"),
+                    dict,
+                ):
+                    worker_evidence = dict(value["_worker_evidence"])
+            if inventory and worker_evidence is None:
+                raise ValueError(f"{original.name} 的准备工具缺少审计证据。")
             for expected in inventory:
                 record_index = int(expected["source_record_index"])
                 worker = by_index.get(record_index)
@@ -1558,9 +2548,27 @@ def stage_screening_inputs(
                         "status": "invalid",
                         "error": {
                             "code": "LIGAND_RECORD_NOT_RETURNED",
-                            "message": "准备工具没有返回该分子记录。",
-                        },
+                                "message": "准备工具没有返回该分子记录。",
+                            },
+                        "_worker_evidence": worker_evidence,
                     }
+                else:
+                    returned_sha256 = str(
+                        worker.get("source_record_sha256") or ""
+                    ).lower()
+                    returned_size = worker.get("source_record_size_bytes")
+                    if (
+                        returned_sha256
+                        != str(expected["source_record_sha256"]).lower()
+                        or isinstance(returned_size, bool)
+                        or not isinstance(returned_size, int)
+                        or returned_size
+                        != int(expected["source_record_size_bytes"])
+                    ):
+                        raise ValueError(
+                            f"{original.name} 的第 {record_index} 条准备结果"
+                            "与冻结原始记录身份不一致。"
+                        )
                 prepared_records.append(
                     {
                         **worker,
@@ -1580,34 +2588,31 @@ def stage_screening_inputs(
                             "source_record_size_bytes"
                         ],
                         "prepared_during_import": True,
+                        "record_id": expected["record_id"],
+                        "source_topology_file": expected[
+                            "source_topology_file"
+                        ],
+                        "source_topology_sha256": expected[
+                            "source_topology_sha256"
+                        ],
+                        "source_topology_size_bytes": expected[
+                            "source_topology_size_bytes"
+                        ],
+                        "topology_integrity": expected["topology_integrity"],
                     }
                 )
 
-        index_path = root / STAGING_INDEX_RELATIVE_PATH
-        index: dict[str, Any] = {
-            "schema_version": 1,
-            "updated_at": _now_iso(),
-            "files": {},
-        }
-        if index_path.is_file():
-            loaded = json.loads(index_path.read_text(encoding="utf-8"))
-            if (
-                not isinstance(loaded, dict)
-                or loaded.get("schema_version") != 1
-                or not isinstance(loaded.get("files"), dict)
-            ):
-                raise ValueError("screening/staging/index.json 无效，已拒绝覆盖。")
-            index = loaded
-
         candidate_ids: set[str] = set()
-        canonical_by_digest: dict[str, str] = {}
-        staged_by_digest: dict[str, dict[str, Any]] = {}
+        canonical_by_identity: dict[tuple[str, str], str] = {}
+        staged_file_records: dict[str, dict[str, Any]] = {}
+        import_records: dict[str, dict[str, Any]] = {}
         output_bytes: dict[str, int] = {}
         candidates: list[dict[str, Any]] = []
         staged: list[dict[str, Any]] = []
         for prepared in prepared_records:
             original = prepared["original"]
             record_index = int(prepared["source_record_index"])
+            record_id = str(prepared["record_id"])
             candidate_base = (
                 f"ligand_{prepared['source_digest'][:12]}_{record_index:04d}"
             )
@@ -1617,8 +2622,58 @@ def stage_screening_inputs(
                 candidate_id = f"{candidate_base}_{collision:02d}"
                 collision += 1
             candidate_ids.add(candidate_id)
+            topology_sha256 = str(
+                prepared.get("source_topology_sha256") or ""
+            ).lower()
+            raw_status = str(prepared.get("status") or "invalid")
+            raw_error = (
+                prepared.get("error")
+                if isinstance(prepared.get("error"), dict)
+                else {}
+            )
+            raw_error_code = str(raw_error.get("code") or "")
+            if topology_sha256 and isinstance(
+                prepared.get("chemical_facts"),
+                dict,
+            ):
+                facts = _validated_screening_chemical_facts(
+                    prepared.get("chemical_facts"),
+                    source_topology_sha256=topology_sha256,
+                )
+            elif topology_sha256 and (
+                raw_status in {"ready", "review_required"}
+                or raw_error_code == "LIGAND_PREPARATION_FAILED"
+            ):
+                raise ValueError(
+                    f"{original.name} 的第 {record_index} 条记录"
+                    "缺少可审计化学事实。"
+                )
+            elif topology_sha256:
+                facts = _unavailable_screening_chemical_facts(
+                    "RDKit 未能从冻结原始记录生成完整化学事实。",
+                    source="frozen_raw_topology",
+                    source_topology_sha256=topology_sha256,
+                )
+            else:
+                facts = (
+                    dict(prepared.get("chemical_facts") or {})
+                    if isinstance(prepared.get("chemical_facts"), dict)
+                    else _unavailable_screening_chemical_facts(
+                        "输入仅包含 PDBQT，无法可靠恢复原始键级和化学拓扑。",
+                        source="supplied_pdbqt",
+                    )
+                )
+            preparation_evidence = _screening_preparation_evidence(
+                prepared,
+                import_id=import_id,
+                record_id=record_id,
+                source_topology_sha256=topology_sha256,
+                chemical_facts=facts,
+            )
             candidate: dict[str, Any] = {
                 "candidate_id": candidate_id,
+                "import_id": import_id,
+                "record_id": record_id,
                 "status": str(prepared.get("status") or "invalid"),
                 "source_file": str(original),
                 "original_name": original.name,
@@ -1632,25 +2687,83 @@ def stage_screening_inputs(
                 "prepared_during_import": bool(
                     prepared["prepared_during_import"]
                 ),
+                "source_topology_file": str(
+                    prepared.get("source_topology_file") or ""
+                ),
+                "source_topology_sha256": topology_sha256,
+                "source_topology_size_bytes": int(
+                    prepared.get("source_topology_size_bytes") or 0
+                ),
+                "topology_integrity": str(
+                    prepared.get("topology_integrity") or "not_available"
+                ),
+                "chemical_facts": facts,
+                "preparation_evidence": preparation_evidence,
+                "preparation_attempts": [],
                 "warnings": [],
             }
-            if prepared.get("status") != "ready":
+            if facts.get("has_macrocycle") is True and raw_status != "review_required":
+                raw_status = "review_required"
+                prepared["error"] = {
+                    "code": "MACROCYCLE_REVIEW_REQUIRED",
+                    "message": "检测到大环配体；批量准备不会静默采用自动断环。",
+                    "suggestion": (
+                        "请先使用单配体正式大环审查确认断环候选或刚性大环，"
+                        "再导入受审查的 PDBQT。"
+                    ),
+                }
+            if raw_status == "review_required" and facts.get(
+                "has_macrocycle"
+            ) is not True:
+                raise ValueError(
+                    f"{original.name} 的第 {record_index} 条宏环审查状态"
+                    "与化学事实不一致。"
+                )
+            if raw_status != "ready":
                 error = (
                     prepared.get("error")
                     if isinstance(prepared.get("error"), dict)
                     else {}
                 )
-                candidate["status"] = "invalid"
+                error_code = str(error.get("code") or "LIGAND_RECORD_INVALID")
+                review_required = raw_status == "review_required"
+                candidate["status"] = (
+                    "review_required" if review_required else "invalid"
+                )
+                candidate["retryable"] = (
+                    not review_required
+                    and error_code
+                    in {
+                        "LIGAND_PREPARATION_FAILED",
+                        "CHEMICAL_FACTS_FAILED",
+                        "LIGAND_RECORD_NOT_RETURNED",
+                    }
+                )
                 candidate["error"] = {
-                    "code": str(error.get("code") or "LIGAND_RECORD_INVALID"),
+                    "code": error_code,
                     "message": str(
                         error.get("message")
                         or "该分子记录无法导入。"
                     ),
                     "raw_error": str(error.get("raw_error") or ""),
-                    "suggestion": "请修复或移除该条记录后重新导入。",
+                    "suggestion": str(
+                        error.get("suggestion")
+                        or (
+                            "请先在单配体流程完成正式大环审查，再导入受审查的 PDBQT。"
+                            if review_required
+                            else "请修复该条记录，或从失败清单重试准备。"
+                        )
+                    ),
                 }
+                candidate["preparation_attempts"] = [
+                    _screening_preparation_attempt_record(
+                        candidate,
+                        attempt=1,
+                        preparation_status=candidate["status"],
+                    )
+                ]
                 candidates.append(candidate)
+                import_records[record_id] = dict(candidate)
                 continue
 
             source = prepared.get("source")
@@ -1694,12 +2807,29 @@ def stage_screening_inputs(
                 source_record_index=record_index,
                 source_record_name=str(prepared["source_record_name"]),
                 source_record_sha256=str(prepared["source_record_sha256"]),
+                source_topology_file=str(
+                    prepared.get("source_topology_file") or ""
+                ),
+                source_topology_sha256=topology_sha256,
+                source_topology_size_bytes=int(
+                    prepared.get("source_topology_size_bytes") or 0
+                ),
+                topology_integrity=str(
+                    prepared.get("topology_integrity") or "not_available"
+                ),
+                import_id=import_id,
+                candidate_id=candidate_id,
+                record_id=record_id,
+                chemical_facts=facts,
+                preparation_evidence=preparation_evidence,
             ).to_dict()
             record["staged_at"] = _now_iso()
             source_record = {
                 key: candidate[key]
                 for key in (
                     "candidate_id",
+                    "import_id",
+                    "record_id",
                     "source_file",
                     "original_name",
                     "source_format",
@@ -1708,25 +2838,43 @@ def stage_screening_inputs(
                     "source_record_sha256",
                     "source_record_size_bytes",
                     "prepared_during_import",
+                    "source_topology_file",
+                    "source_topology_sha256",
+                    "source_topology_size_bytes",
+                    "topology_integrity",
+                    "chemical_facts",
+                    "preparation_evidence",
                 )
             }
 
-            if digest in canonical_by_digest:
+            canonical_topology_sha256 = str(
+                facts.get("canonical_topology_sha256") or ""
+            ).lower()
+            dedup_identity = (digest, canonical_topology_sha256)
+            if dedup_identity in canonical_by_identity:
                 candidate.update(
                     {
                         "status": "duplicate",
                         "file": relative.as_posix(),
                         "sha256": digest,
                         "size_bytes": size_bytes,
-                        "duplicate_of": canonical_by_digest[digest],
+                        "duplicate_of": canonical_by_identity[dedup_identity],
                     }
                 )
+                candidate["preparation_attempts"] = [
+                    _screening_preparation_attempt_record(
+                        candidate,
+                        attempt=1,
+                        preparation_status="ready",
+                    )
+                ]
                 candidates.append(candidate)
-                canonical = staged_by_digest[digest]
-                canonical.setdefault("source_records", []).append(source_record)
+                import_records[record_id] = dict(candidate)
+                physical = staged_file_records[digest]
+                physical.setdefault("source_records", []).append(source_record)
                 continue
 
-            canonical_by_digest[digest] = candidate_id
+            canonical_by_identity[dedup_identity] = candidate_id
             candidate.update(
                 {
                     "status": "ready",
@@ -1735,16 +2883,30 @@ def stage_screening_inputs(
                     "size_bytes": size_bytes,
                 }
             )
+            candidate["preparation_attempts"] = [
+                _screening_preparation_attempt_record(
+                    candidate,
+                    attempt=1,
+                    preparation_status="ready",
+                )
+            ]
             candidates.append(candidate)
             record["source_records"] = [source_record]
-            staged_by_digest[digest] = record
+            if digest in staged_file_records:
+                staged_file_records[digest].setdefault(
+                    "source_records",
+                    [],
+                ).append(source_record)
+            else:
+                staged_file_records[digest] = dict(record)
             staged.append(record)
+            import_records[record_id] = dict(candidate)
 
         if sum(output_bytes.values()) > limits.max_total_input_bytes:
             raise ValueError("唯一 PDBQT 快照总大小超过批量筛选资源上限。")
 
         existing_files = index["files"]
-        for digest, record in staged_by_digest.items():
+        for digest, record in staged_file_records.items():
             previous = existing_files.get(digest)
             if isinstance(previous, dict):
                 combined: list[dict[str, Any]] = []
@@ -1766,30 +2928,85 @@ def stage_screening_inputs(
                 record["source_records"] = combined
             existing_files[digest] = record
 
+        index_records = index["records"]
+        for record_id, record in import_records.items():
+            index_records[record_id] = record
+
         counts = {
             "total": len(candidates),
             "ready": sum(item["status"] == "ready" for item in candidates),
             "duplicate": sum(
                 item["status"] == "duplicate" for item in candidates
             ),
+            "review_required": sum(
+                item["status"] == "review_required" for item in candidates
+            ),
             "invalid": sum(item["status"] == "invalid" for item in candidates),
         }
+        failure_manifest = _write_screening_failure_manifest(
+            root,
+            import_id,
+            candidates,
+        )
         import_preview = {
-            "schema_version": 1,
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "import_id": import_id,
+            "created_at": import_started_at,
             "candidates": candidates,
             "summary": {
                 **counts,
                 "source_files": len(originals),
             },
+            "resource_limits": limits.to_dict(),
+            "resource_limits_sha256": _resource_limits_sha256(limits),
+            "failure_manifest": failure_manifest,
         }
+        import_preview["revision_sha256"] = _screening_import_revision(
+            import_preview
+        )
 
         index["updated_at"] = _now_iso()
-        index["selected_files"] = [record["file"] for record in staged]
+        index["selected_files"] = list(
+            dict.fromkeys(record["file"] for record in staged)
+        )
+        index["selected_candidate_ids"] = [
+            candidate["candidate_id"]
+            for candidate in candidates
+            if candidate["status"] == "ready"
+        ]
         index["last_import"] = import_preview
+        final_manifest = {
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "import_id": import_id,
+            "status": "completed",
+            "started_at": import_started_at,
+            "finished_at": _now_iso(),
+            "revision_sha256": import_preview["revision_sha256"],
+            "summary": import_preview["summary"],
+            "candidates": candidates,
+            "failure_manifest": failure_manifest,
+        }
+        import_manifest_path = import_root / "import_manifest.json"
+        atomic_write_json(import_manifest_path, final_manifest)
+        index["imports"][import_id] = {
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "status": "completed",
+            "manifest_file": (
+                STAGING_IMPORTS_RELATIVE_PATH
+                / import_id
+                / "import_manifest.json"
+            ).as_posix(),
+            "manifest_sha256": _sha256(import_manifest_path),
+            "manifest_size_bytes": import_manifest_path.stat().st_size,
+            "revision_sha256": import_preview["revision_sha256"],
+            "summary": import_preview["summary"],
+        }
         atomic_write_json(index_path, index)
         issue_summary = []
         if counts["duplicate"]:
             issue_summary.append(f"{counts['duplicate']} 条重复")
+        if counts["review_required"]:
+            issue_summary.append(f"{counts['review_required']} 条需正式审查")
         if counts["invalid"]:
             issue_summary.append(f"{counts['invalid']} 条失败")
         suffix = f"；另有{'、'.join(issue_summary)}" if issue_summary else ""
@@ -1802,11 +3019,607 @@ def stage_screening_inputs(
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - workflow boundary returns structured errors.
+        if (
+            root is not None
+            and import_root is not None
+            and import_root.is_dir()
+            and SCREENING_IMPORT_ID_PATTERN.fullmatch(import_id) is not None
+        ):
+            try:
+                atomic_write_json(
+                    import_root / "import_manifest.json",
+                    {
+                        "schema_version": (
+                            SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+                        ),
+                        "import_id": import_id,
+                        "status": "failed",
+                        "started_at": import_started_at,
+                        "finished_at": _now_iso(),
+                        "error": {
+                            "code": "SCREENING_STAGE_ERROR",
+                            "message": str(exc),
+                        },
+                    },
+                )
+            except Exception:
+                pass
         return _error(
             "SCREENING_STAGE_ERROR",
             "导入批量筛选配体失败。",
             str(exc),
             "请检查文件格式、大小和项目目录写入权限。",
+        )
+    finally:
+        for temporary in temporary_directories:
+            temporary.cleanup()
+
+
+def _preparation_retry_execution_evidence(
+    root: Path,
+    record_dir: Path,
+    *,
+    import_id: str,
+    record_id: str,
+    source_topology_sha256: str,
+) -> dict[str, Any]:
+    files: dict[str, dict[str, Any]] = {}
+    for name in ("stdout.txt", "stderr.txt", "command_result.json"):
+        path = record_dir / name
+        if path.is_file():
+            files[name] = {
+                "file": path.relative_to(root).as_posix(),
+                "sha256": _sha256(path),
+                "size_bytes": path.stat().st_size,
+            }
+    return {
+        "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+        "status": "execution_failed",
+        "import_id": import_id,
+        "record_id": record_id,
+        "source_topology_sha256": source_topology_sha256,
+        "files": files,
+    }
+
+
+@_serialized_staging_mutation
+def retry_screening_preparation(
+    project_dir: str,
+    candidate_ids: list[str],
+    *,
+    expected_staging_revision_sha256: str,
+) -> dict[str, Any]:
+    """Retry selected failed preparations from immutable raw topology records."""
+
+    temporary_directories: list[Any] = []
+    try:
+        root = _project_root(project_dir)
+        if not candidate_ids:
+            raise ValueError("至少需要选择一条可重试的失败记录。")
+        preview, candidate_lookup = _last_screening_import_candidates(
+            root,
+            expected_revision_sha256=expected_staging_revision_sha256,
+        )
+        limits = _validated_resource_limits(
+            preview.get("resource_limits")
+            if isinstance(preview.get("resource_limits"), dict)
+            else None
+        )
+        recorded_limits_sha256 = str(
+            preview.get("resource_limits_sha256") or ""
+        ).lower()
+        if (
+            recorded_limits_sha256
+            and recorded_limits_sha256 != _resource_limits_sha256(limits)
+        ):
+            raise ValueError("当前导入记录的资源上限身份校验失败。")
+        selected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for candidate_id in candidate_ids:
+            if (
+                not isinstance(candidate_id, str)
+                or not candidate_id
+                or candidate_id in seen
+                or re.fullmatch(
+                    r"ligand_[0-9a-f]{12}_\d{4}(?:_\d{2})?",
+                    candidate_id,
+                )
+                is None
+            ):
+                raise ValueError("重试列表包含无效或重复的 candidate_id。")
+            seen.add(candidate_id)
+            candidate = candidate_lookup.get(candidate_id)
+            if candidate is None:
+                raise ValueError(f"没有找到失败记录：{candidate_id}")
+            if (
+                candidate.get("status") != "invalid"
+                or candidate.get("retryable") is not True
+            ):
+                raise ValueError(
+                    f"记录 {candidate_id} 当前不是可自动重试状态。"
+                )
+            topology = _verified_screening_topology_record(
+                root,
+                candidate,
+                label=f"失败记录 {candidate_id}",
+            )
+            if topology is None:
+                raise ValueError(
+                    f"失败记录 {candidate_id} 没有可重试的冻结原始拓扑。"
+                )
+            selected.append(candidate)
+
+        tool_status = get_preparation_tool_status(str(root))
+        tools = (
+            tool_status.get("tools")
+            if isinstance(tool_status.get("tools"), dict)
+            else {}
+        )
+        python_tool = (
+            tools.get("python")
+            if isinstance(tools.get("python"), dict)
+            else {}
+        )
+        rdkit_tool = (
+            tools.get("rdkit")
+            if isinstance(tools.get("rdkit"), dict)
+            else {}
+        )
+        meeko_tool = (
+            tools.get("meeko")
+            if isinstance(tools.get("meeko"), dict)
+            else {}
+        )
+        if not tool_status.get("ok") or any(
+            tool.get("status") != "ok"
+            for tool in (python_tool, rdkit_tool, meeko_tool)
+        ):
+            raise ValueError(
+                "重试配体准备需要可用的内置 Python、RDKit 与 Meeko。"
+            )
+        python_path = str(python_tool.get("path") or "")
+
+        index = _load_screening_staging_index(root)
+        import_id = str(preview.get("import_id") or "")
+        if SCREENING_IMPORT_ID_PATTERN.fullmatch(import_id) is None:
+            raise ValueError("当前导入记录缺少有效 import_id。")
+        import_root = root / STAGING_IMPORTS_RELATIVE_PATH / import_id
+        if not import_root.is_dir() or _path_is_link_or_reparse(import_root):
+            raise ValueError("当前导入审计目录不存在或不安全。")
+
+        updated_candidates = [
+            dict(value)
+            for value in preview["candidates"]
+            if isinstance(value, dict)
+        ]
+        position_by_id = {
+            str(value.get("candidate_id") or ""): index_value
+            for index_value, value in enumerate(updated_candidates)
+        }
+        for original_candidate in selected:
+            candidate_id = str(original_candidate["candidate_id"])
+            candidate = json.loads(
+                json.dumps(original_candidate, ensure_ascii=False)
+            )
+            attempts = [
+                dict(value)
+                for value in (
+                    candidate.get("preparation_attempts")
+                    if isinstance(candidate.get("preparation_attempts"), list)
+                    else []
+                )
+                if isinstance(value, dict)
+            ]
+            highest_attempt = max(
+                (
+                    int(value.get("attempt") or 0)
+                    for value in attempts
+                    if not isinstance(value.get("attempt"), bool)
+                ),
+                default=0,
+            )
+            candidate_retry_root = (
+                import_root / "retry_attempts" / candidate_id
+            )
+            if candidate_retry_root.is_dir():
+                for path in candidate_retry_root.iterdir():
+                    match = re.fullmatch(r"attempt_(\d{3,})", path.name)
+                    if match:
+                        highest_attempt = max(
+                            highest_attempt,
+                            int(match.group(1)),
+                        )
+            attempt_number = highest_attempt + 1
+            record_dir = (
+                candidate_retry_root / f"attempt_{attempt_number:03d}"
+            )
+            topology_path, _topology_relative, _old_facts = (
+                _verified_screening_topology_record(
+                    root,
+                    candidate,
+                    label=f"失败记录 {candidate_id}",
+                )
+                or (None, "", {})
+            )
+            assert topology_path is not None
+            expected_sha256 = str(
+                candidate.get("source_topology_sha256") or ""
+            ).lower()
+            expected_size = int(
+                candidate.get("source_topology_size_bytes") or 0
+            )
+            try:
+                temporary, worker_records = _prepare_raw_screening_library(
+                    root,
+                    topology_path,
+                    python_path,
+                    max_records=1,
+                    expected_sha256=expected_sha256,
+                    expected_size_bytes=expected_size,
+                    record_dir=record_dir,
+                )
+                temporary_directories.append(temporary)
+                if len(worker_records) != 1:
+                    raise ValueError("重试准备工具必须且只能返回一条记录。")
+                prepared = dict(worker_records[0])
+                if (
+                    int(prepared.get("source_record_index") or 0) != 1
+                    or str(
+                        prepared.get("source_record_sha256") or ""
+                    ).lower()
+                    != expected_sha256
+                    or int(prepared.get("source_record_size_bytes") or 0)
+                    != expected_size
+                ):
+                    raise ValueError("重试准备结果与冻结原始记录身份不一致。")
+            except Exception as exc:  # noqa: BLE001 - isolate one failed retry.
+                candidate["status"] = "invalid"
+                candidate["retryable"] = True
+                candidate["error"] = {
+                    "code": "LIGAND_PREPARATION_RETRY_EXECUTION_FAILED",
+                    "message": "重新运行配体准备工具失败。",
+                    "raw_error": str(exc),
+                    "suggestion": "请检查内置工具链后再次重试；冻结原始记录未被修改。",
+                }
+                candidate["preparation_evidence"] = (
+                    _preparation_retry_execution_evidence(
+                        root,
+                        record_dir,
+                        import_id=import_id,
+                        record_id=str(candidate.get("record_id") or ""),
+                        source_topology_sha256=expected_sha256,
+                    )
+                )
+                attempts.append(
+                    _screening_preparation_attempt_record(
+                        candidate,
+                        attempt=attempt_number,
+                        preparation_status="invalid",
+                    )
+                )
+                candidate["preparation_attempts"] = attempts
+                updated_candidates[position_by_id[candidate_id]] = candidate
+                continue
+
+            raw_status = str(prepared.get("status") or "invalid")
+            raw_error = (
+                prepared.get("error")
+                if isinstance(prepared.get("error"), dict)
+                else {}
+            )
+            error_code = str(raw_error.get("code") or "")
+            if isinstance(prepared.get("chemical_facts"), dict):
+                facts = _validated_screening_chemical_facts(
+                    prepared["chemical_facts"],
+                    source_topology_sha256=expected_sha256,
+                )
+            elif raw_status in {"ready", "review_required"} or error_code == (
+                "LIGAND_PREPARATION_FAILED"
+            ):
+                raise ValueError(
+                    f"失败记录 {candidate_id} 的重试结果缺少化学事实。"
+                )
+            else:
+                facts = _unavailable_screening_chemical_facts(
+                    "RDKit 未能从冻结原始记录生成完整化学事实。",
+                    source="frozen_raw_topology",
+                    source_topology_sha256=expected_sha256,
+                )
+            if facts.get("has_macrocycle") is True:
+                raw_status = "review_required"
+                raw_error = {
+                    "code": "MACROCYCLE_REVIEW_REQUIRED",
+                    "message": "检测到大环配体；自动重试不会采用静默断环。",
+                    "suggestion": (
+                        "请先使用单配体正式大环审查确认断环候选或刚性大环，"
+                        "再导入受审查的 PDBQT。"
+                    ),
+                }
+                error_code = "MACROCYCLE_REVIEW_REQUIRED"
+            preparation_evidence = _screening_preparation_evidence(
+                prepared,
+                import_id=import_id,
+                record_id=str(candidate.get("record_id") or ""),
+                source_topology_sha256=expected_sha256,
+                chemical_facts=facts,
+            )
+            candidate["chemical_facts"] = facts
+            candidate["preparation_evidence"] = preparation_evidence
+
+            if raw_status != "ready":
+                candidate["status"] = (
+                    "review_required"
+                    if raw_status == "review_required"
+                    else "invalid"
+                )
+                candidate["retryable"] = (
+                    raw_status != "review_required"
+                    and error_code
+                    in {
+                        "LIGAND_PREPARATION_FAILED",
+                        "CHEMICAL_FACTS_FAILED",
+                        "LIGAND_RECORD_NOT_RETURNED",
+                    }
+                )
+                candidate["error"] = {
+                    "code": error_code or "LIGAND_RECORD_INVALID",
+                    "message": str(
+                        raw_error.get("message")
+                        or "该分子记录仍无法准备为 PDBQT。"
+                    ),
+                    "raw_error": str(raw_error.get("raw_error") or ""),
+                    "suggestion": str(
+                        raw_error.get("suggestion")
+                        or (
+                            "请先完成正式大环审查。"
+                            if raw_status == "review_required"
+                            else "可再次重试，或检查原始结构和工具链日志。"
+                        )
+                    ),
+                }
+                candidate.pop("file", None)
+                candidate.pop("sha256", None)
+                candidate.pop("size_bytes", None)
+                candidate.pop("duplicate_of", None)
+                attempts.append(
+                    _screening_preparation_attempt_record(
+                        candidate,
+                        attempt=attempt_number,
+                        preparation_status=candidate["status"],
+                    )
+                )
+                candidate["preparation_attempts"] = attempts
+                updated_candidates[position_by_id[candidate_id]] = candidate
+                continue
+
+            source = prepared.get("_pdbqt_path")
+            if not isinstance(source, Path) or not source.is_file():
+                raise ValueError(
+                    f"失败记录 {candidate_id} 的重试 PDBQT 不存在。"
+                )
+            if not _looks_like_pdbqt(source):
+                raise ValueError(
+                    f"失败记录 {candidate_id} 的重试输出不是有效 PDBQT。"
+                )
+            size_bytes = source.stat().st_size
+            if size_bytes <= 0 or size_bytes > limits.max_ligand_bytes:
+                raise ValueError(
+                    f"失败记录 {candidate_id} 的重试 PDBQT 超过单配体资源上限。"
+                )
+            digest = _sha256(source)
+            relative = STAGING_RELATIVE_PATH / f"{digest}.pdbqt"
+            destination = root / relative
+            if destination.exists():
+                if (
+                    not destination.is_file()
+                    or destination.stat().st_size != size_bytes
+                    or _sha256(destination) != digest
+                ):
+                    raise ValueError("重试输出的 staging 目标身份冲突。")
+            else:
+                _copy_snapshot(source, destination)
+            duplicate_of = next(
+                (
+                    str(other.get("candidate_id") or "")
+                    for other in updated_candidates
+                    if str(other.get("candidate_id") or "") != candidate_id
+                    and other.get("status") in {"ready", "duplicate"}
+                    and str(other.get("sha256") or "").lower() == digest
+                    and str(
+                        (
+                            other.get("chemical_facts")
+                            if isinstance(other.get("chemical_facts"), dict)
+                            else {}
+                        ).get("canonical_topology_sha256")
+                        or ""
+                    ).lower()
+                    == str(facts.get("canonical_topology_sha256") or "").lower()
+                ),
+                "",
+            )
+            candidate.update(
+                {
+                    "status": "duplicate" if duplicate_of else "ready",
+                    "retryable": False,
+                    "file": relative.as_posix(),
+                    "sha256": digest,
+                    "size_bytes": size_bytes,
+                }
+            )
+            candidate.pop("error", None)
+            if duplicate_of:
+                candidate["duplicate_of"] = duplicate_of
+            else:
+                candidate.pop("duplicate_of", None)
+            attempts.append(
+                _screening_preparation_attempt_record(
+                    candidate,
+                    attempt=attempt_number,
+                    preparation_status="ready",
+                )
+            )
+            candidate["preparation_attempts"] = attempts
+            updated_candidates[position_by_id[candidate_id]] = candidate
+
+            staged_record = ScreeningStagedInput(
+                file=relative.as_posix(),
+                original_name=str(candidate.get("original_name") or ""),
+                sha256=digest,
+                size_bytes=size_bytes,
+                source_file=str(candidate.get("source_file") or ""),
+                source_format=str(candidate.get("source_format") or ""),
+                prepared_during_import=True,
+                source_record_index=int(
+                    candidate.get("source_record_index") or 1
+                ),
+                source_record_name=str(
+                    candidate.get("source_record_name") or ""
+                ),
+                source_record_sha256=str(
+                    candidate.get("source_record_sha256") or ""
+                ),
+                source_topology_file=str(
+                    candidate.get("source_topology_file") or ""
+                ),
+                source_topology_sha256=expected_sha256,
+                source_topology_size_bytes=expected_size,
+                topology_integrity="verified",
+                import_id=import_id,
+                candidate_id=candidate_id,
+                record_id=str(candidate.get("record_id") or ""),
+                chemical_facts=facts,
+                preparation_evidence=preparation_evidence,
+                source_records=[dict(candidate)],
+            ).to_dict()
+            staged_record["staged_at"] = _now_iso()
+            existing = index["files"].get(digest)
+            if isinstance(existing, dict):
+                sources = [
+                    dict(value)
+                    for value in (
+                        existing.get("source_records")
+                        if isinstance(existing.get("source_records"), list)
+                        else []
+                    )
+                    if isinstance(value, dict)
+                ]
+                sources.append(dict(candidate))
+                staged_record["source_records"] = sources
+            index["files"][digest] = staged_record
+
+        source_files = int(
+            (
+                preview.get("summary")
+                if isinstance(preview.get("summary"), dict)
+                else {}
+            ).get("source_files")
+            or 0
+        )
+        counts = {
+            "total": len(updated_candidates),
+            "ready": sum(
+                item.get("status") == "ready" for item in updated_candidates
+            ),
+            "duplicate": sum(
+                item.get("status") == "duplicate"
+                for item in updated_candidates
+            ),
+            "review_required": sum(
+                item.get("status") == "review_required"
+                for item in updated_candidates
+            ),
+            "invalid": sum(
+                item.get("status") == "invalid" for item in updated_candidates
+            ),
+            "source_files": source_files,
+        }
+        failure_manifest = _write_screening_failure_manifest(
+            root,
+            import_id,
+            updated_candidates,
+        )
+        updated_preview = {
+            **preview,
+            "candidates": updated_candidates,
+            "summary": counts,
+            "failure_manifest": failure_manifest,
+            "updated_at": _now_iso(),
+        }
+        updated_preview.pop("revision_sha256", None)
+        updated_preview["revision_sha256"] = _screening_import_revision(
+            updated_preview
+        )
+        index["last_import"] = updated_preview
+        index["selected_candidate_ids"] = [
+            str(item.get("candidate_id") or "")
+            for item in updated_candidates
+            if item.get("status") == "ready"
+        ]
+        index["selected_files"] = list(
+            dict.fromkeys(
+                str(item.get("file") or "")
+                for item in updated_candidates
+                if item.get("status") == "ready"
+                and str(item.get("file") or "")
+            )
+        )
+        for candidate in updated_candidates:
+            record_id = str(candidate.get("record_id") or "")
+            if SCREENING_RECORD_ID_PATTERN.fullmatch(record_id):
+                index["records"][record_id] = dict(candidate)
+        import_manifest_path = import_root / "import_manifest.json"
+        atomic_write_json(
+            import_manifest_path,
+            {
+                "schema_version": (
+                    SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+                ),
+                "import_id": import_id,
+                "status": "completed",
+                "started_at": str(preview.get("created_at") or ""),
+                "finished_at": _now_iso(),
+                "revision_sha256": updated_preview["revision_sha256"],
+                "summary": counts,
+                "candidates": updated_candidates,
+                "failure_manifest": failure_manifest,
+            },
+        )
+        index["imports"][import_id] = {
+            "schema_version": SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION,
+            "status": "completed",
+            "manifest_file": (
+                STAGING_IMPORTS_RELATIVE_PATH
+                / import_id
+                / "import_manifest.json"
+            ).as_posix(),
+            "manifest_sha256": _sha256(import_manifest_path),
+            "manifest_size_bytes": import_manifest_path.stat().st_size,
+            "revision_sha256": updated_preview["revision_sha256"],
+            "summary": counts,
+        }
+        index["updated_at"] = _now_iso()
+        atomic_write_json(root / STAGING_INDEX_RELATIVE_PATH, index)
+        return {
+            "ok": True,
+            "project_dir": str(root),
+            "import_preview": updated_preview,
+            "staged": [
+                dict(item)
+                for item in updated_candidates
+                if item.get("status") == "ready"
+            ],
+            "message": (
+                f"已重试 {len(selected)} 条配体准备记录；"
+                f"当前可入队 {counts['ready']} 条。"
+            ),
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001 - workflow boundary.
+        return _error(
+            "SCREENING_PREPARATION_RETRY_ERROR",
+            "重试批量配体准备失败。",
+            str(exc),
+            "请刷新导入预览，确认记录仍可重试且内置工具链可用。",
         )
     finally:
         for temporary in temporary_directories:
@@ -1850,11 +3663,239 @@ def _staging_records_by_file(root: Path) -> dict[str, dict[str, Any]]:
     return records
 
 
+def _verified_screening_topology_record(
+    root: Path,
+    record: dict[str, Any],
+    *,
+    label: str,
+) -> tuple[Path, str, dict[str, Any]] | None:
+    integrity = str(record.get("topology_integrity") or "not_available")
+    relative = str(record.get("source_topology_file") or "")
+    expected_sha256 = str(record.get("source_topology_sha256") or "").lower()
+    expected_size = record.get("source_topology_size_bytes")
+    if integrity == "not_available":
+        if relative or expected_sha256 or int(expected_size or 0) != 0:
+            raise ValueError(f"{label}的原始拓扑不可用状态与文件身份冲突。")
+        facts = (
+            dict(record.get("chemical_facts") or {})
+            if isinstance(record.get("chemical_facts"), dict)
+            else {}
+        )
+        if facts and facts.get("status") != "unavailable":
+            raise ValueError(f"{label}的化学事实状态与 PDBQT-only 输入冲突。")
+        return None
+    if integrity != "verified":
+        raise ValueError(f"{label}的原始拓扑完整性状态无效：{integrity}。")
+    if (
+        not relative
+        or "\\" in relative
+        or ":" in relative
+        or SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+    ):
+        raise ValueError(f"{label}缺少有效的冻结原始拓扑身份。")
+    logical = PurePosixPath(relative)
+    if (
+        logical.is_absolute()
+        or ".." in logical.parts
+        or tuple(logical.parts[:3])
+        != ("screening", "staging", "imports")
+        or len(logical.parts) != 6
+        or logical.parts[4] != "records"
+    ):
+        raise ValueError(f"{label}的冻结原始拓扑路径不在受控导入目录中。")
+    import_id = logical.parts[3]
+    record_file = logical.parts[5]
+    recorded_import_id = str(
+        record.get("import_id") or record.get("source_import_id") or ""
+    )
+    recorded_record_id = str(
+        record.get("record_id") or record.get("source_record_id") or ""
+    )
+    if (
+        SCREENING_IMPORT_ID_PATTERN.fullmatch(import_id) is None
+        or (recorded_import_id and recorded_import_id != import_id)
+        or (
+            recorded_record_id
+            and (
+                SCREENING_RECORD_ID_PATTERN.fullmatch(recorded_record_id)
+                is None
+                or Path(record_file).stem != recorded_record_id
+            )
+        )
+        or Path(record_file).suffix.lower() not in {".sdf", ".mol"}
+    ):
+        raise ValueError(f"{label}的冻结原始拓扑路径无效。")
+    cursor = root
+    for part in logical.parts:
+        cursor = cursor / part
+        if _path_is_link_or_reparse(cursor):
+            raise ValueError(f"{label}的冻结原始拓扑路径包含链接或重解析点。")
+    candidate = (root / Path(*logical.parts)).resolve(strict=True)
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label}的冻结原始拓扑越过项目目录。") from exc
+    if (
+        not candidate.is_file()
+        or candidate.is_symlink()
+        or candidate.stat().st_size != expected_size
+        or _sha256(candidate).lower() != expected_sha256
+    ):
+        raise ValueError(f"{label}的冻结原始拓扑完整性校验失败。")
+    facts = _validated_screening_chemical_facts(
+        record.get("chemical_facts"),
+        source_topology_sha256=expected_sha256,
+    )
+    return candidate, relative, facts
+
+
+def _validated_stored_preparation_evidence(
+    record: dict[str, Any],
+    *,
+    require_worker: bool,
+) -> dict[str, Any]:
+    evidence = (
+        dict(record.get("preparation_evidence") or {})
+        if isinstance(record.get("preparation_evidence"), dict)
+        else {}
+    )
+    if not require_worker:
+        if evidence.get("status") not in {"not_required", "ready"}:
+            raise ValueError("PDBQT-only 配体缺少有效的导入准备证据。")
+        return evidence
+    if (
+        evidence.get("schema_version")
+        != SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+        or evidence.get("status") != "ready"
+        or evidence.get("preparation_profile")
+        != SCREENING_LIBRARY_PREPARATION_PROFILE
+        or evidence.get("hydrogen_policy") != SCREENING_HYDROGEN_POLICY
+    ):
+        raise ValueError("冻结配体的准备证据不完整或状态不是 ready。")
+    if (
+        str(evidence.get("import_id") or "")
+        != str(
+            record.get("import_id")
+            or record.get("source_import_id")
+            or ""
+        )
+        or str(evidence.get("record_id") or "")
+        != str(
+            record.get("record_id")
+            or record.get("source_record_id")
+            or ""
+        )
+        or str(evidence.get("source_topology_sha256") or "").lower()
+        != str(record.get("source_topology_sha256") or "").lower()
+    ):
+        raise ValueError("冻结配体的准备证据与候选身份不一致。")
+    toolchain = evidence.get("toolchain")
+    if not isinstance(toolchain, dict) or any(
+        not str(toolchain.get(field) or "").strip()
+        for field in ("python_version", "rdkit_version", "meeko_version")
+    ):
+        raise ValueError("冻结配体的准备证据缺少工具链快照。")
+    facts = (
+        record.get("chemical_facts")
+        if isinstance(record.get("chemical_facts"), dict)
+        else {}
+    )
+    if (
+        facts.get("status") == "verified"
+        and str(facts.get("rdkit_version") or "").strip()
+        != str(toolchain.get("rdkit_version") or "").strip()
+    ):
+        raise ValueError("冻结配体化学事实与准备证据的 RDKit 版本不一致。")
+    for field in ("worker_script_sha256", "worker_manifest_sha256"):
+        if SHA256_PATTERN.fullmatch(str(evidence.get(field) or "").lower()) is None:
+            raise ValueError(f"冻结配体的准备证据缺少有效的 {field}。")
+    manifest_size = evidence.get("worker_manifest_size_bytes")
+    if (
+        isinstance(manifest_size, bool)
+        or not isinstance(manifest_size, int)
+        or manifest_size <= 0
+    ):
+        raise ValueError("冻结配体的准备证据缺少有效的 worker manifest 大小。")
+    return evidence
+
+
+def _last_screening_import_candidates(
+    root: Path,
+    *,
+    expected_revision_sha256: str,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    index = _load_screening_staging_index(root)
+    preview = (
+        dict(index.get("last_import") or {})
+        if isinstance(index.get("last_import"), dict)
+        else {}
+    )
+    if (
+        preview.get("schema_version")
+        != SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+        or not isinstance(preview.get("candidates"), list)
+    ):
+        raise ValueError("当前 staging 没有可按候选身份创建的 v2 导入记录。")
+    recorded_revision = str(preview.get("revision_sha256") or "").lower()
+    calculated_revision = _screening_import_revision(preview)
+    expected_revision = str(expected_revision_sha256 or "").lower()
+    if (
+        SHA256_PATTERN.fullmatch(recorded_revision) is None
+        or recorded_revision != calculated_revision
+    ):
+        raise ValueError("当前批量配体导入 revision 校验失败。")
+    if (
+        SHA256_PATTERN.fullmatch(expected_revision) is None
+        or expected_revision != recorded_revision
+    ):
+        raise ValueError("批量配体候选已经变化，请刷新导入预览后重新创建任务。")
+    candidates: dict[str, dict[str, Any]] = {}
+    for value in preview["candidates"]:
+        if not isinstance(value, dict):
+            raise ValueError("批量配体导入预览包含无效候选。")
+        candidate_id = str(value.get("candidate_id") or "")
+        if not candidate_id or candidate_id in candidates:
+            raise ValueError("批量配体导入预览包含缺失或重复的 candidate_id。")
+        candidates[candidate_id] = dict(value)
+    return preview, candidates
+
+
+def _legacy_staging_record_is_unambiguous(record: dict[str, Any]) -> bool:
+    source_records = (
+        record.get("source_records")
+        if isinstance(record.get("source_records"), list)
+        else []
+    )
+    canonical_topologies: set[str] = set()
+    has_verified_topology = False
+    for source_record in source_records:
+        if not isinstance(source_record, dict):
+            continue
+        if source_record.get("topology_integrity") == "verified":
+            has_verified_topology = True
+            facts = (
+                source_record.get("chemical_facts")
+                if isinstance(source_record.get("chemical_facts"), dict)
+                else {}
+            )
+            canonical = str(facts.get("canonical_topology_sha256") or "").lower()
+            if SHA256_PATTERN.fullmatch(canonical) is None:
+                return False
+            canonical_topologies.add(canonical)
+    return not has_verified_topology or len(canonical_topologies) <= 1
+
+
+@_serialized_staging_mutation
 def create_screening(
     project_dir: str,
     receptor_file: str,
     ligand_files: list[str],
     *,
+    ligand_candidate_ids: list[str] | None = None,
+    expected_staging_revision_sha256: str = "",
     vina_path: str | None = None,
     box: dict[str, Any],
     vina: dict[str, Any],
@@ -1864,6 +3905,9 @@ def create_screening(
 ) -> dict[str, Any]:
     """Create a screening job without changing the legacy project model."""
 
+    pending_inputs_root: Path | None = None
+    published_inputs_root: Path | None = None
+    screening_root_for_cleanup: Path | None = None
     try:
         root = _project_root(project_dir)
         if _state_path(root).exists():
@@ -1888,9 +3932,14 @@ def create_screening(
             minimum=0,
             maximum=limits.max_retries,
         )
-        if not ligand_files:
+        selected_candidate_ids = list(ligand_candidate_ids or [])
+        candidate_mode = bool(selected_candidate_ids)
+        input_count = (
+            len(selected_candidate_ids) if candidate_mode else len(ligand_files)
+        )
+        if input_count == 0:
             raise ValueError("至少需要一个配体 PDBQT。")
-        if len(ligand_files) > limits.max_ligands:
+        if input_count > limits.max_ligands:
             raise ValueError(f"配体数量超过资源上限 {limits.max_ligands}。")
         top_n = _strict_integer(
             top_n,
@@ -1900,28 +3949,93 @@ def create_screening(
         )
 
         receptor_path, receptor_relative = _project_file(root, receptor_file, label="受体")
-        ligand_entries: list[tuple[Path, str]] = []
-        seen: set[str] = set()
-        for ligand in ligand_files:
-            path, relative = _project_file(root, ligand, label="配体")
-            key = relative.casefold()
-            if key in seen:
-                raise ValueError(f"配体列表包含重复文件：{relative}")
-            seen.add(key)
+        ligand_inputs: list[tuple[Path, str, dict[str, Any]]] = []
+        selected_import_preview: dict[str, Any] | None = None
+        if candidate_mode:
+            selected_import_preview, candidate_lookup = (
+                _last_screening_import_candidates(
+                    root,
+                    expected_revision_sha256=(
+                        expected_staging_revision_sha256
+                    ),
+                )
+            )
+            seen_candidates: set[str] = set()
+            for candidate_id in selected_candidate_ids:
+                if (
+                    not isinstance(candidate_id, str)
+                    or not candidate_id
+                    or candidate_id in seen_candidates
+                ):
+                    raise ValueError("候选列表包含空值或重复 candidate_id。")
+                seen_candidates.add(candidate_id)
+                provenance = candidate_lookup.get(candidate_id)
+                if provenance is None:
+                    raise ValueError(f"没有找到配体候选：{candidate_id}")
+                if provenance.get("status") != "ready":
+                    raise ValueError(
+                        f"配体候选 {candidate_id} 不是可入队的 ready 状态。"
+                    )
+                path, relative = _project_file(
+                    root,
+                    str(provenance.get("file") or ""),
+                    label=f"配体候选 {candidate_id}",
+                )
+                if (
+                    str(provenance.get("sha256") or "").lower()
+                    != _sha256(path).lower()
+                    or int(provenance.get("size_bytes") or 0)
+                    != path.stat().st_size
+                ):
+                    raise ValueError(
+                        f"配体候选 {candidate_id} 的 PDBQT 身份校验失败。"
+                    )
+                ligand_inputs.append((path, relative, dict(provenance)))
+            if ligand_files:
+                supplied_relatives = [
+                    _project_file(root, ligand, label="配体")[1]
+                    for ligand in ligand_files
+                ]
+                selected_relatives = [
+                    relative for _path, relative, _record in ligand_inputs
+                ]
+                if supplied_relatives != selected_relatives:
+                    raise ValueError(
+                        "ligand_files 与 ligand_candidate_ids 指向的快照不一致。"
+                    )
+        else:
+            staged_records = _staging_records_by_file(root)
+            seen_files: set[str] = set()
+            for ligand in ligand_files:
+                path, relative = _project_file(root, ligand, label="配体")
+                key = relative.casefold()
+                if key in seen_files:
+                    raise ValueError(f"配体列表包含重复文件：{relative}")
+                seen_files.add(key)
+                provenance = staged_records.get(relative, {})
+                if provenance and not _legacy_staging_record_is_unambiguous(
+                    provenance
+                ):
+                    raise ValueError(
+                        f"staging 配体 {relative} 关联多个不同原始拓扑；"
+                        "请刷新导入预览并按 candidate_id 创建任务。"
+                    )
+                ligand_inputs.append((path, relative, provenance))
+            ligand_inputs.sort(
+                key=lambda entry: (entry[1].casefold(), entry[1])
+            )
+
+        for path, relative, _provenance in ligand_inputs:
             if path.stat().st_size > limits.max_ligand_bytes:
                 raise ValueError(f"配体文件超过单文件资源上限：{relative}")
-            ligand_entries.append((path, relative))
-        ligand_entries.sort(key=lambda entry: (entry[1].casefold(), entry[1]))
-        total_bytes = receptor_path.stat().st_size + sum(path.stat().st_size for path, _ in ligand_entries)
+        ligand_entries = [
+            (path, relative) for path, relative, _record in ligand_inputs
+        ]
+        total_bytes = receptor_path.stat().st_size + sum(
+            path.stat().st_size for path, _relative, _record in ligand_inputs
+        )
         if total_bytes > limits.max_total_input_bytes:
             raise ValueError("受体和配体输入总大小超过批量筛选资源上限。")
-        needs_staging_provenance = any(
-            relative.startswith(f"{STAGING_RELATIVE_PATH.as_posix()}/")
-            for _, relative in ligand_entries
-        )
-        staged_records = (
-            _staging_records_by_file(root) if needs_staging_provenance else {}
-        )
 
         parameter_warnings = _screening_parameter_warnings(vina)
         normalized_box, normalized_vina = _validate_settings(box, vina, limits)
@@ -1943,17 +4057,13 @@ def create_screening(
         if not capability_validation.get("ok"):
             return capability_validation
 
-        screening_root = root / SCREENING_ROOT
-        inputs_root = screening_root / "inputs"
-        receptor_snapshot = inputs_root / "receptor.pdbqt"
-        _copy_snapshot(receptor_path, receptor_snapshot)
-        items: list[ScreeningItem] = []
-        for index, (ligand_path, source_relative) in enumerate(ligand_entries, start=1):
+        preflight: list[dict[str, Any]] = []
+        for index, (
+            ligand_path,
+            source_relative,
+            provenance,
+        ) in enumerate(ligand_inputs, start=1):
             item_id = f"ligand_{index:04d}"
-            relative_snapshot = Path("screening", "inputs", "ligands", f"{item_id}.pdbqt")
-            snapshot_path = root / relative_snapshot
-            _copy_snapshot(ligand_path, snapshot_path)
-            provenance = staged_records.get(source_relative, {})
             if source_relative.startswith(
                 f"{STAGING_RELATIVE_PATH.as_posix()}/"
             ):
@@ -1961,27 +4071,164 @@ def create_screening(
                     raise ValueError(
                         f"staging 配体缺少来源索引记录：{source_relative}"
                     )
-                expected_sha = str(provenance.get("sha256") or "")
-                expected_size = int(provenance.get("size_bytes") or 0)
-                actual_sha = _sha256(snapshot_path)
-                actual_size = snapshot_path.stat().st_size
                 if (
-                    expected_sha != actual_sha
-                    or expected_size != actual_size
-                    or str(provenance.get("file") or "") != source_relative
+                    str(provenance.get("file") or "") != source_relative
+                    or str(provenance.get("sha256") or "").lower()
+                    != _sha256(ligand_path).lower()
+                    or int(provenance.get("size_bytes") or 0)
+                    != ligand_path.stat().st_size
                 ):
                     raise ValueError(
                         f"staging 配体来源索引校验失败：{source_relative}"
                     )
-            source_records = [
-                dict(value)
-                for value in (
-                    provenance.get("source_records")
-                    if isinstance(provenance.get("source_records"), list)
-                    else []
+            topology = (
+                _verified_screening_topology_record(
+                    root,
+                    provenance,
+                    label=f"配体 {item_id}",
                 )
-                if isinstance(value, dict)
+                if provenance
+                else None
+            )
+            has_candidate_identity = bool(
+                provenance.get("candidate_id")
+                or provenance.get("record_id")
+                or provenance.get("import_id")
+            )
+            preparation_evidence = (
+                _validated_stored_preparation_evidence(
+                    provenance,
+                    require_worker=topology is not None,
+                )
+                if has_candidate_identity
+                else {
+                    "schema_version": (
+                        SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+                    ),
+                    "status": "not_recorded",
+                    "source": "legacy_or_local_pdbqt",
+                }
+            )
+            preflight.append(
+                {
+                    "item_id": item_id,
+                    "topology": topology,
+                    "preparation_evidence": preparation_evidence,
+                }
+            )
+
+        screening_root = root / SCREENING_ROOT
+        screening_root.mkdir(parents=True, exist_ok=True)
+        screening_root_for_cleanup = screening_root
+        pending_inputs_root = Path(
+            tempfile.mkdtemp(prefix=".inputs-", dir=screening_root)
+        )
+        inputs_root = pending_inputs_root
+        receptor_snapshot = inputs_root / "receptor.pdbqt"
+        _copy_snapshot(receptor_path, receptor_snapshot)
+        items: list[ScreeningItem] = []
+        topology_items: list[dict[str, Any]] = []
+        library_manifest_records: list[dict[str, Any]] = []
+        for index, (
+            ligand_path,
+            source_relative,
+            provenance,
+        ) in enumerate(ligand_inputs, start=1):
+            item_id = f"ligand_{index:04d}"
+            relative_snapshot = Path("screening", "inputs", "ligands", f"{item_id}.pdbqt")
+            snapshot_path = inputs_root / "ligands" / f"{item_id}.pdbqt"
+            _copy_snapshot(ligand_path, snapshot_path)
+            topology = preflight[index - 1]["topology"]
+            if topology is not None:
+                topology_source, topology_origin_relative, chemical_facts = (
+                    topology
+                )
+                topology_relative = Path(
+                    "screening",
+                    "inputs",
+                    "topology",
+                    f"{item_id}{topology_source.suffix.lower()}",
+                )
+                topology_snapshot = (
+                    inputs_root
+                    / "topology"
+                    / f"{item_id}{topology_source.suffix.lower()}"
+                )
+                _copy_snapshot(topology_source, topology_snapshot)
+                topology_sha256 = _sha256(topology_snapshot)
+                topology_size_bytes = topology_snapshot.stat().st_size
+                if (
+                    topology_sha256
+                    != str(provenance.get("source_topology_sha256") or "").lower()
+                    or topology_size_bytes
+                    != int(provenance.get("source_topology_size_bytes") or 0)
+                ):
+                    raise ValueError(
+                        f"配体 {item_id} 的队列原始拓扑快照校验失败。"
+                    )
+                topology_integrity = "verified"
+                topology_items.append(
+                    {
+                        "item_id": item_id,
+                        "file": topology_relative.as_posix(),
+                        "sha256": topology_sha256,
+                        "size_bytes": topology_size_bytes,
+                        "source_file": topology_origin_relative,
+                    }
+                )
+            else:
+                topology_relative = Path()
+                topology_sha256 = ""
+                topology_size_bytes = 0
+                topology_integrity = "not_available"
+                chemical_facts = (
+                    dict(provenance.get("chemical_facts") or {})
+                    if isinstance(provenance.get("chemical_facts"), dict)
+                    else _unavailable_screening_chemical_facts(
+                        "任务输入没有冻结原始拓扑。",
+                        source="legacy_or_local_pdbqt",
+                    )
+                )
+
+            preparation_evidence = preflight[index - 1][
+                "preparation_evidence"
             ]
+
+            if candidate_mode:
+                source_records = [
+                    {
+                        key: provenance.get(key)
+                        for key in (
+                            "candidate_id",
+                            "import_id",
+                            "record_id",
+                            "source_file",
+                            "original_name",
+                            "source_format",
+                            "source_record_index",
+                            "source_record_name",
+                            "source_record_sha256",
+                            "source_record_size_bytes",
+                            "prepared_during_import",
+                            "source_topology_file",
+                            "source_topology_sha256",
+                            "source_topology_size_bytes",
+                            "topology_integrity",
+                            "chemical_facts",
+                            "preparation_evidence",
+                        )
+                    }
+                ]
+            else:
+                source_records = [
+                    dict(value)
+                    for value in (
+                        provenance.get("source_records")
+                        if isinstance(provenance.get("source_records"), list)
+                        else []
+                    )
+                    if isinstance(value, dict)
+                ]
             source_record_name = str(
                 provenance.get("source_record_name") or ""
             ).strip()
@@ -2009,10 +4256,98 @@ def create_screening(
                     source_record_sha256=str(
                         provenance.get("source_record_sha256") or ""
                     ),
+                    source_topology_file=(
+                        topology_relative.as_posix()
+                        if topology is not None
+                        else ""
+                    ),
+                    source_topology_sha256=topology_sha256,
+                    source_topology_size_bytes=topology_size_bytes,
+                    topology_integrity=topology_integrity,
+                    source_import_id=str(
+                        provenance.get("import_id") or ""
+                    ),
+                    source_candidate_id=str(
+                        provenance.get("candidate_id") or ""
+                    ),
+                    source_record_id=str(
+                        provenance.get("record_id") or ""
+                    ),
+                    chemical_facts=chemical_facts,
+                    preparation_evidence=preparation_evidence,
                     source_records=source_records,
                     display_label=display_label,
                 ),
             )
+            library_manifest_records.append(
+                {
+                    "item_id": item_id,
+                    "source_file": source_relative,
+                    "pdbqt_file": relative_snapshot.as_posix(),
+                    "pdbqt_sha256": _sha256(snapshot_path),
+                    "pdbqt_size_bytes": snapshot_path.stat().st_size,
+                    "import_id": str(provenance.get("import_id") or ""),
+                    "candidate_id": str(
+                        provenance.get("candidate_id") or ""
+                    ),
+                    "record_id": str(provenance.get("record_id") or ""),
+                    "source_record_sha256": str(
+                        provenance.get("source_record_sha256") or ""
+                    ),
+                    "topology_integrity": topology_integrity,
+                    "topology_file": (
+                        topology_relative.as_posix()
+                        if topology is not None
+                        else ""
+                    ),
+                    "topology_sha256": topology_sha256,
+                    "topology_size_bytes": topology_size_bytes,
+                    "chemical_facts": chemical_facts,
+                    "preparation_evidence": preparation_evidence,
+                }
+            )
+
+        topology_status = (
+            "complete"
+            if len(topology_items) == len(items)
+            else "partial"
+            if topology_items
+            else "unavailable"
+        )
+        library_manifest_relative = Path(
+            "screening",
+            "inputs",
+            "library_import_manifest.json",
+        )
+        library_manifest_path = inputs_root / "library_import_manifest.json"
+        atomic_write_json(
+            library_manifest_path,
+            {
+                "schema_version": (
+                    SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+                ),
+                "created_at": _now_iso(),
+                "selection_mode": (
+                    "candidate_ids" if candidate_mode else "legacy_files"
+                ),
+                "import_id": str(
+                    (selected_import_preview or {}).get("import_id") or ""
+                ),
+                "staging_revision_sha256": str(
+                    (selected_import_preview or {}).get("revision_sha256")
+                    or ""
+                ),
+                "topology_status": topology_status,
+                "topology_count": len(topology_items),
+                "item_count": len(items),
+                "items": library_manifest_records,
+            },
+        )
+        library_manifest_identity = {
+            "file": library_manifest_relative.as_posix(),
+            "sha256": _sha256(library_manifest_path),
+            "size_bytes": library_manifest_path.stat().st_size,
+        }
 
         created_at = _now_iso()
         state: dict[str, Any] = {
@@ -2039,7 +4374,16 @@ def create_screening(
                     "sha256": _sha256(receptor_snapshot),
                     "size_bytes": receptor_snapshot.stat().st_size,
                 },
-                "raw_ligand_topology_available": False,
+                "raw_ligand_topology_available": (
+                    topology_status == "complete"
+                ),
+                "topology": {
+                    "status": topology_status,
+                    "available_count": len(topology_items),
+                    "total_count": len(items),
+                    "items": topology_items,
+                },
+                "library_import_manifest": library_manifest_identity,
             },
             "box": normalized_box,
             "vina": normalized_vina,
@@ -2064,11 +4408,36 @@ def create_screening(
                 "reported_at": "",
                 "sdf": {
                     "generated": False,
+                    "status": (
+                        "pending"
+                        if topology_status == "complete"
+                        else "pending_partial"
+                        if topology_status == "partial"
+                        else "unavailable"
+                    ),
                     "file": "",
-                    "reason": "未提供原始配体拓扑；PDBQT 不包含可靠键级，未生成 SDF。",
+                    "reason": (
+                        "筛选完成后将从冻结原始拓扑和成功构象生成汇总 SDF。"
+                        if topology_status == "complete"
+                        else (
+                            "仅部分配体具有冻结原始拓扑；汇总 SDF 将明确标记覆盖范围。"
+                            if topology_status == "partial"
+                            else "未提供原始配体拓扑；PDBQT 不包含可靠键级，未生成 SDF。"
+                        )
+                    ),
+                    "topology_coverage": {
+                        "available_count": len(topology_items),
+                        "total_count": len(items),
+                    },
                 },
             },
         }
+        final_inputs_root = screening_root / "inputs"
+        if final_inputs_root.exists():
+            raise ValueError("screening/inputs 在任务发布前已经存在，已拒绝覆盖。")
+        os.replace(pending_inputs_root, final_inputs_root)
+        published_inputs_root = final_inputs_root
+        pending_inputs_root = None
         _write_state(root, state)
         return {
             "ok": True,
@@ -2079,6 +4448,31 @@ def create_screening(
             "error": None,
         }
     except Exception as exc:  # noqa: BLE001 - CLI/workflow boundary returns structured errors.
+        if (
+            pending_inputs_root is not None
+            and screening_root_for_cleanup is not None
+            and pending_inputs_root.is_dir()
+        ):
+            try:
+                _safe_rmtree(
+                    pending_inputs_root,
+                    expected_parent=screening_root_for_cleanup,
+                )
+            except Exception:
+                pass
+        if (
+            published_inputs_root is not None
+            and screening_root_for_cleanup is not None
+            and published_inputs_root.is_dir()
+            and not (screening_root_for_cleanup / "screening.json").exists()
+        ):
+            try:
+                _safe_rmtree(
+                    published_inputs_root,
+                    expected_parent=screening_root_for_cleanup,
+                )
+            except Exception:
+                pass
         return _error(
             "SCREENING_CREATE_ERROR",
             "创建批量筛选任务失败。",
@@ -2095,8 +4489,36 @@ def get_screening_status(project_dir: str) -> dict[str, Any]:
         import_preview: dict[str, Any] | None = None
         if index_path.is_file():
             index = json.loads(index_path.read_text(encoding="utf-8"))
+            if isinstance(index.get("last_import"), dict):
+                import_preview = index["last_import"]
+            if (
+                isinstance(import_preview, dict)
+                and import_preview.get("schema_version")
+                == SCREENING_LIBRARY_PREPARATION_SCHEMA_VERSION
+                and isinstance(import_preview.get("candidates"), list)
+            ):
+                selected_candidate_ids = index.get("selected_candidate_ids")
+                selected = (
+                    {
+                        str(value)
+                        for value in selected_candidate_ids
+                        if str(value)
+                    }
+                    if isinstance(selected_candidate_ids, list)
+                    else set()
+                )
+                staged = [
+                    dict(item)
+                    for item in import_preview["candidates"]
+                    if isinstance(item, dict)
+                    and item.get("status") == "ready"
+                    and (
+                        not selected
+                        or str(item.get("candidate_id") or "") in selected
+                    )
+                ]
             files = index.get("files") if isinstance(index, dict) else None
-            if isinstance(files, dict):
+            if isinstance(files, dict) and not staged:
                 records = [
                     item for item in files.values() if isinstance(item, dict)
                 ]
@@ -2112,8 +4534,6 @@ def get_screening_status(project_dir: str) -> dict[str, Any]:
                     ]
                 else:
                     staged = records
-                if isinstance(index.get("last_import"), dict):
-                    import_preview = index["last_import"]
         state = _read_state(root) if _state_path(root).is_file() else None
         return {
             "ok": True,
@@ -2640,6 +5060,27 @@ def _validate_archived_resource_state(
                     "inputs/receptor.pdbqt",
                 )
             ]
+            library_manifest = (
+                inputs.get("library_import_manifest")
+                if isinstance(inputs.get("library_import_manifest"), dict)
+                else None
+            )
+            if library_manifest is not None:
+                records.append(
+                    (
+                        _relocate_archive_logical_file(
+                            archive_dir,
+                            library_manifest.get("file"),
+                            expected_tail=(
+                                "inputs",
+                                "library_import_manifest.json",
+                            ),
+                        ),
+                        library_manifest,
+                        "批量配体导入 manifest",
+                        "inputs/library_import_manifest.json",
+                    )
+                )
             for item in state.get("items") or []:
                 item_id = str(item.get("item_id") or "")
                 records.append(
@@ -2658,15 +5099,79 @@ def _validate_archived_resource_state(
                         f"inputs/ligands/{item_id}.pdbqt",
                     )
                 )
+                topology_file = str(item.get("source_topology_file") or "")
+                if topology_file:
+                    topology_name = PurePosixPath(topology_file).name
+                    records.append(
+                        (
+                            _relocate_archive_logical_file(
+                                archive_dir,
+                                topology_file,
+                                expected_tail=(
+                                    "inputs",
+                                    "topology",
+                                    topology_name,
+                                ),
+                            ),
+                            {
+                                "sha256": item.get(
+                                    "source_topology_sha256"
+                                ),
+                                "size_bytes": item.get(
+                                    "source_topology_size_bytes"
+                                ),
+                            },
+                            f"配体 {item_id} 原始拓扑",
+                            f"inputs/topology/{topology_name}",
+                        )
+                    )
+            outputs = (
+                state.get("outputs")
+                if isinstance(state.get("outputs"), dict)
+                else {}
+            )
+            sdf_output = (
+                outputs.get("sdf")
+                if isinstance(outputs.get("sdf"), dict)
+                else {}
+            )
+            for artifact in (
+                sdf_output.get("artifacts")
+                if isinstance(sdf_output.get("artifacts"), list)
+                else []
+            ):
+                if not isinstance(artifact, dict):
+                    raise ValueError("批量结果 SDF artifact 记录无效。")
+                logical = PurePosixPath(str(artifact.get("file") or ""))
+                if (
+                    len(logical.parts) < 3
+                    or tuple(logical.parts[:2])
+                    != ("screening", "results")
+                ):
+                    raise ValueError("批量结果 SDF artifact 路径无效。")
+                relative_tail = tuple(logical.parts[1:])
+                records.append(
+                    (
+                        _relocate_archive_logical_file(
+                            archive_dir,
+                            logical.as_posix(),
+                            expected_tail=relative_tail,
+                        ),
+                        artifact,
+                        f"批量结果 SDF artifact {logical.name}",
+                        PurePosixPath(*relative_tail).as_posix(),
+                    )
+                )
             for path, record, label, relative in records:
                 expected_sha256 = str(record.get("sha256") or "").strip().lower()
                 expected_size = record.get("size_bytes")
+                allow_empty = label.startswith("批量结果 SDF artifact ")
                 if SHA256_PATTERN.fullmatch(expected_sha256) is None:
                     raise ValueError(f"{label}缺少有效 SHA256。")
                 if (
                     isinstance(expected_size, bool)
                     or not isinstance(expected_size, int)
-                    or expected_size <= 0
+                    or expected_size < (0 if allow_empty else 1)
                 ):
                     raise ValueError(f"{label}缺少有效文件大小。")
                 if source_records is None:
@@ -3714,6 +6219,21 @@ def _archive_export_allowlist(
     for fixed in tuple(allowed_files):
         add_file(fixed)
 
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    library_manifest = (
+        inputs.get("library_import_manifest")
+        if isinstance(inputs.get("library_import_manifest"), dict)
+        else None
+    )
+    if library_manifest is not None:
+        recorded = str(library_manifest.get("file") or "")
+        if recorded != "screening/inputs/library_import_manifest.json":
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                f"批量配体导入 manifest 路径不符合导出协议：{recorded}",
+            )
+        add_file("inputs/library_import_manifest.json")
+
     outputs = state.get("outputs") if isinstance(state.get("outputs"), dict) else {}
     output_paths = {
         "summary_csv": (
@@ -3739,11 +6259,75 @@ def _archive_export_allowlist(
                 )
             add_file(relative)
 
+    sdf_output = (
+        outputs.get("sdf") if isinstance(outputs.get("sdf"), dict) else {}
+    )
+    sdf_fixed_paths = {
+        "file": "screening/results/screening_poses.sdf",
+        "manifest_file": "screening/results/screening_pose_manifest.json",
+        "pose_map_file": "screening/results/screening_pose_map.csv",
+    }
+    for key, expected in sdf_fixed_paths.items():
+        recorded = str(sdf_output.get(key) or "")
+        if recorded:
+            if recorded != expected:
+                raise _ArchiveValidationError(
+                    "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                    f"批量结果 SDF 的 {key} 路径不符合导出协议：{recorded}",
+                )
+            add_file(PurePosixPath(*PurePosixPath(recorded).parts[1:]).as_posix())
+    artifacts = (
+        sdf_output.get("artifacts")
+        if isinstance(sdf_output.get("artifacts"), list)
+        else []
+    )
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                "批量结果 SDF artifacts 包含无效记录。",
+            )
+        recorded = str(artifact.get("file") or "")
+        logical = PurePosixPath(recorded)
+        if (
+            logical.is_absolute()
+            or ".." in logical.parts
+            or "\\" in recorded
+            or len(logical.parts) < 3
+            or tuple(logical.parts[:2]) != ("screening", "results")
+        ):
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                f"批量结果 SDF artifact 路径无效：{recorded}",
+            )
+        add_file(PurePosixPath(*logical.parts[1:]).as_posix())
+
     for item in state.get("items") or []:
         if not isinstance(item, dict):
             continue
         item_id = str(item.get("item_id") or "")
         add_file(f"inputs/ligands/{item_id}.pdbqt")
+        topology_file = str(item.get("source_topology_file") or "")
+        if topology_file:
+            logical_topology = PurePosixPath(topology_file)
+            expected_topology_parent = (
+                "screening",
+                "inputs",
+                "topology",
+            )
+            if (
+                len(logical_topology.parts) != 4
+                or tuple(logical_topology.parts[:3])
+                != expected_topology_parent
+                or Path(logical_topology.name).stem != item_id
+                or Path(logical_topology.name).suffix.lower()
+                not in {".sdf", ".mol"}
+            ):
+                raise _ArchiveValidationError(
+                    "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                    f"配体 {item_id} 的原始拓扑路径不符合导出协议。",
+                )
+            add_file(f"inputs/topology/{logical_topology.name}")
         seen_attempts: set[int] = set()
         for attempt in item.get("attempts") or []:
             if not isinstance(attempt, dict):
@@ -3799,6 +6383,42 @@ def _archive_export_allowlist(
                 relative = f"{relative_directory}/{filename}"
                 if os.path.lexists(archive_dir / Path(*PurePosixPath(relative).parts)):
                     add_file(relative)
+
+            input_snapshots = (
+                attempt.get("input_snapshots")
+                if isinstance(attempt.get("input_snapshots"), dict)
+                else {}
+            )
+            topology_snapshot = (
+                input_snapshots.get("source_topology")
+                if isinstance(input_snapshots.get("source_topology"), dict)
+                else None
+            )
+            if topology_snapshot is not None:
+                snapshot_name = str(
+                    topology_snapshot.get("snapshot_name") or ""
+                )
+                expected_topology_file = PurePosixPath(
+                    "screening",
+                    *attempt_tail,
+                    snapshot_name,
+                ).as_posix()
+                if (
+                    not snapshot_name
+                    or Path(snapshot_name).name != snapshot_name
+                    or Path(snapshot_name).suffix.lower()
+                    not in {".sdf", ".mol"}
+                    or str(topology_snapshot.get("file") or "")
+                    != expected_topology_file
+                ):
+                    raise _ArchiveValidationError(
+                        "SCREENING_ARCHIVE_EXPORT_CONTENT_INVALID",
+                        (
+                            f"配体 {item_id} attempt {attempt_number} 的"
+                            "原始拓扑快照路径不符合导出协议。"
+                        ),
+                    )
+                add_file(f"{relative_directory}/{snapshot_name}")
 
             output_file = str(attempt.get("output_file") or "")
             expected_output = PurePosixPath(
@@ -5821,6 +8441,7 @@ def _comparison_ranks(state: dict[str, Any]) -> dict[str, int]:
 def _comparison_item_summary(
     item: dict[str, Any],
     ranks: dict[str, int],
+    identity: dict[str, str],
 ) -> dict[str, Any]:
     item_id = str(item.get("item_id") or "")
     score = item.get("best_affinity_kcal_mol")
@@ -5837,6 +8458,221 @@ def _comparison_item_summary(
         "status": str(item.get("status") or ""),
         "best_affinity_kcal_mol": float(score) if valid_score else None,
         "rank": ranks.get(item_id),
+        "identity_basis": identity["basis"],
+        "pdbqt_sha256": identity["pdbqt_sha256"],
+        "canonical_topology_sha256": identity[
+            "canonical_topology_sha256"
+        ],
+        "source_topology_sha256": identity["source_topology_sha256"],
+        "source_import_id": str(item.get("source_import_id") or ""),
+        "source_candidate_id": str(item.get("source_candidate_id") or ""),
+        "source_record_id": str(item.get("source_record_id") or ""),
+    }
+
+
+def _comparison_candidate_provenance(
+    item: dict[str, Any],
+    *,
+    archive_id: str,
+) -> dict[str, str]:
+    item_id = str(item.get("item_id") or "")
+    provenance = {
+        "import_id": str(item.get("source_import_id") or ""),
+        "candidate_id": str(item.get("source_candidate_id") or ""),
+        "record_id": str(item.get("source_record_id") or ""),
+    }
+    if not any(provenance.values()):
+        return {}
+    if (
+        SCREENING_IMPORT_ID_PATTERN.fullmatch(provenance["import_id"]) is None
+        or SCREENING_RECORD_ID_PATTERN.fullmatch(provenance["record_id"]) is None
+        or re.fullmatch(
+            r"ligand_[0-9a-f]{12}_\d{4}(?:_\d{2,})?",
+            provenance["candidate_id"],
+        )
+        is None
+    ):
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            (
+                f"归档 {archive_id} 的配体 {item_id} 缺少完整、有效的"
+                " import/candidate/record 身份。"
+            ),
+        )
+    return provenance
+
+
+def _comparison_ligand_identity(
+    archive_dir: Path,
+    item: dict[str, Any],
+    *,
+    archive_id: str,
+    pdbqt_sha256: str,
+) -> dict[str, str]:
+    """Build a fail-closed comparison identity from verified frozen evidence."""
+
+    item_id = str(item.get("item_id") or "")
+    raw_integrity = item.get("topology_integrity")
+    topology_integrity = str(raw_integrity or "")
+    topology_fields_present = bool(
+        str(item.get("source_topology_file") or "")
+        or str(item.get("source_topology_sha256") or "")
+        or item.get("source_topology_size_bytes") not in (None, "", 0)
+    )
+    facts = (
+        item.get("chemical_facts")
+        if isinstance(item.get("chemical_facts"), dict)
+        else {}
+    )
+    provenance = _comparison_candidate_provenance(
+        item,
+        archive_id=archive_id,
+    )
+
+    if not topology_integrity:
+        if (
+            topology_fields_present
+            or provenance
+            or facts.get("status") == "verified"
+        ):
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+                (
+                    f"归档 {archive_id} 的配体 {item_id} 含现代身份字段，"
+                    "但缺少 topology_integrity。"
+                ),
+            )
+        return {
+            "identity_sha256": pdbqt_sha256,
+            "basis": "pdbqt_sha256",
+            "pdbqt_sha256": pdbqt_sha256,
+            "canonical_topology_sha256": "",
+            "source_topology_sha256": "",
+        }
+
+    if topology_integrity == "not_available":
+        if topology_fields_present or facts.get("status") == "verified":
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+                (
+                    f"归档 {archive_id} 的配体 {item_id} 将拓扑标记为"
+                    "不可用，却同时记录了可用拓扑证据。"
+                ),
+            )
+        if provenance:
+            try:
+                _validated_stored_preparation_evidence(
+                    item,
+                    require_worker=False,
+                )
+            except ValueError as exc:
+                raise _ArchiveValidationError(
+                    "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+                    (
+                        f"归档 {archive_id} 的配体 {item_id} PDBQT-only "
+                        f"候选身份无效：{exc}"
+                    ),
+                ) from exc
+        return {
+            "identity_sha256": pdbqt_sha256,
+            "basis": "pdbqt_sha256",
+            "pdbqt_sha256": pdbqt_sha256,
+            "canonical_topology_sha256": "",
+            "source_topology_sha256": "",
+        }
+
+    if topology_integrity != "verified":
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            (
+                f"归档 {archive_id} 的配体 {item_id} topology_integrity "
+                f"不受支持：{topology_integrity}。"
+            ),
+        )
+    if not provenance:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            (
+                f"归档 {archive_id} 的配体 {item_id} 已记录冻结拓扑，"
+                "但缺少候选来源身份。"
+            ),
+        )
+
+    topology_relative = str(item.get("source_topology_file") or "")
+    topology_logical = PurePosixPath(topology_relative)
+    topology_suffix = Path(topology_logical.name).suffix.lower()
+    if topology_suffix not in {".sdf", ".mol"}:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            f"归档 {archive_id} 的配体 {item_id} 原始拓扑格式无效。",
+        )
+    topology_path = _relocate_archive_logical_file(
+        archive_dir,
+        topology_relative,
+        expected_tail=(
+            "inputs",
+            "topology",
+            f"{item_id}{topology_suffix}",
+        ),
+    )
+    source_topology_sha256 = _verify_comparison_input(
+        topology_path,
+        {
+            "sha256": item.get("source_topology_sha256"),
+            "size_bytes": item.get("source_topology_size_bytes"),
+        },
+        archive_id=archive_id,
+        label=f"配体 {item_id} 原始拓扑",
+    )
+    source_record_sha256 = _comparison_recorded_sha256(
+        item.get("source_record_sha256"),
+        archive_id=archive_id,
+        label=f"配体 {item_id} 原始 record",
+    )
+    if source_record_sha256 != source_topology_sha256:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            (
+                f"归档 {archive_id} 的配体 {item_id} 原始 record 与"
+                "冻结拓扑 SHA256 不一致。"
+            ),
+        )
+    try:
+        validated_facts = _validated_screening_chemical_facts(
+            item.get("chemical_facts"),
+            source_topology_sha256=source_topology_sha256,
+        )
+        _validated_stored_preparation_evidence(
+            item,
+            require_worker=True,
+        )
+    except ValueError as exc:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_LIGAND_IDENTITY_INVALID",
+            (
+                f"归档 {archive_id} 的配体 {item_id} 规范拓扑证据无效："
+                f"{exc}"
+            ),
+        ) from exc
+    canonical_topology_sha256 = str(
+        validated_facts["canonical_topology_sha256"]
+    ).lower()
+    identity_payload = json.dumps(
+        {
+            "schema_version": 1,
+            "pdbqt_sha256": pdbqt_sha256,
+            "canonical_topology_sha256": canonical_topology_sha256,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "identity_sha256": hashlib.sha256(identity_payload).hexdigest(),
+        "basis": "pdbqt_sha256+canonical_topology_sha256",
+        "pdbqt_sha256": pdbqt_sha256,
+        "canonical_topology_sha256": canonical_topology_sha256,
+        "source_topology_sha256": source_topology_sha256,
     }
 
 
@@ -5875,7 +8711,7 @@ def _load_comparison_archive(
         label="受体输入",
     )
 
-    items_by_sha256: dict[str, list[dict[str, Any]]] = {}
+    items_by_identity: dict[str, list[dict[str, Any]]] = {}
     ranks = _comparison_ranks(normalized)
     for item in normalized.get("items") or []:
         if not isinstance(item, dict):
@@ -5894,8 +8730,14 @@ def _load_comparison_archive(
             archive_id=archive_id,
             label=f"配体 {item_id} 输入",
         )
-        items_by_sha256.setdefault(ligand_sha256, []).append(
-            _comparison_item_summary(item, ranks)
+        identity = _comparison_ligand_identity(
+            archive_dir,
+            item,
+            archive_id=archive_id,
+            pdbqt_sha256=ligand_sha256,
+        )
+        items_by_identity.setdefault(identity["identity_sha256"], []).append(
+            _comparison_item_summary(item, ranks, identity)
         )
 
     protocol_fingerprint = _comparison_protocol_fingerprint(
@@ -5917,7 +8759,7 @@ def _load_comparison_archive(
     return {
         "summary": summary,
         "state": normalized,
-        "items_by_sha256": items_by_sha256,
+        "items_by_identity": items_by_identity,
         "protocol_fingerprint": protocol_fingerprint,
         "attempt_integrity": attempt_integrity,
         "resource_integrity": resource_integrity,
@@ -5960,8 +8802,8 @@ def compare_screening_archives(
         )
         direct_score_comparison = not differences
 
-        baseline_groups = baseline["items_by_sha256"]
-        comparison_groups = comparison["items_by_sha256"]
+        baseline_groups = baseline["items_by_identity"]
+        comparison_groups = comparison["items_by_identity"]
         identities = sorted(
             set(baseline_groups) | set(comparison_groups),
             key=lambda sha256: (
@@ -6373,6 +9215,17 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
         code="SCREENING_LIGAND_SNAPSHOT_CHANGED",
         label=f"冻结配体 {item.get('item_id') or ''}",
     )
+    topology_record = _verified_frozen_item_topology(root, item)
+    topology_bytes = b""
+    topology_snapshot_name = ""
+    if topology_record is not None:
+        topology_path = root / Path(
+            *PurePosixPath(str(topology_record["file"])).parts
+        )
+        topology_bytes = topology_path.read_bytes()
+        topology_snapshot_name = (
+            f"ligand_source{topology_path.suffix.lower()}"
+        )
     vina_path, vina_sha256, vina_size_bytes = _verified_attempt_vina(state)
     config_bytes = _config_text(state).encode("utf-8")
     config_sha256 = hashlib.sha256(config_bytes).hexdigest()
@@ -6385,6 +9238,11 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
     atomic_write_bytes(attempt_dir / "receptor.pdbqt", receptor_bytes)
     atomic_write_bytes(attempt_dir / "ligand.pdbqt", ligand_bytes)
     atomic_write_bytes(attempt_dir / "config.txt", config_bytes)
+    if topology_snapshot_name:
+        atomic_write_bytes(
+            attempt_dir / topology_snapshot_name,
+            topology_bytes,
+        )
 
     output_path = attempt_dir / "out.pdbqt"
     stdout_path = attempt_dir / "stdout.txt"
@@ -6427,6 +9285,37 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
                 "source_record_sha256": str(
                     item.get("source_record_sha256") or ""
                 ),
+                "source_import_id": str(
+                    item.get("source_import_id") or ""
+                ),
+                "source_candidate_id": str(
+                    item.get("source_candidate_id") or ""
+                ),
+                "source_record_id": str(
+                    item.get("source_record_id") or ""
+                ),
+                "source_topology_file": str(
+                    item.get("source_topology_file") or ""
+                ),
+                "source_topology_sha256": str(
+                    item.get("source_topology_sha256") or ""
+                ),
+                "source_topology_size_bytes": int(
+                    item.get("source_topology_size_bytes") or 0
+                ),
+                "topology_integrity": str(
+                    item.get("topology_integrity") or "not_available"
+                ),
+                "chemical_facts": (
+                    dict(item.get("chemical_facts") or {})
+                    if isinstance(item.get("chemical_facts"), dict)
+                    else {}
+                ),
+                "preparation_evidence": (
+                    dict(item.get("preparation_evidence") or {})
+                    if isinstance(item.get("preparation_evidence"), dict)
+                    else {}
+                ),
                 "source_records": [
                     dict(value)
                     for value in (
@@ -6437,6 +9326,26 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
                     if isinstance(value, dict)
                 ],
             },
+            **(
+                {
+                    "source_topology": {
+                        "source_file": str(
+                            item.get("source_topology_file") or ""
+                        ),
+                        "file": (
+                            attempt_relative / topology_snapshot_name
+                        ).as_posix(),
+                        "snapshot_name": topology_snapshot_name,
+                        "sha256": str(topology_record["sha256"]),
+                        "size_bytes": len(topology_bytes),
+                        "chemical_facts": dict(
+                            topology_record["chemical_facts"]
+                        ),
+                    }
+                }
+                if topology_record is not None
+                else {}
+            ),
         },
         "config_snapshot": {
             "file": (attempt_relative / "config.txt").as_posix(),
@@ -6566,6 +9475,1010 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
     return success
 
 
+def _screening_result_topology_validator_script_text() -> str:
+    return r'''from __future__ import annotations
+
+import hashlib
+import io
+import json
+import sys
+from pathlib import Path
+
+from rdkit import Chem, rdBase
+
+
+def graph_sha256(molecule):
+    heavy_graph = Chem.RemoveHs(Chem.Mol(molecule))
+    smiles = Chem.MolToSmiles(
+        heavy_graph,
+        canonical=True,
+        isomericSmiles=True,
+        allBondsExplicit=True,
+    )
+    if not smiles:
+        raise RuntimeError("RDKit 未能生成规范重原子图身份。")
+    return hashlib.sha256(smiles.encode("utf-8")).hexdigest()
+
+
+def source_molecule(path):
+    payload = path.read_bytes()
+    if path.suffix.lower() == ".sdf":
+        molecules = [
+            molecule
+            for molecule in Chem.ForwardSDMolSupplier(
+                io.BytesIO(payload),
+                sanitize=True,
+                removeHs=False,
+            )
+            if molecule is not None
+        ]
+        if len(molecules) != 1:
+            raise RuntimeError("冻结原始 SDF 必须且只能包含一条可解析记录。")
+        return molecules[0]
+    if path.suffix.lower() == ".mol":
+        molecule = Chem.MolFromMolBlock(
+            payload.decode("utf-8", errors="replace"),
+            sanitize=True,
+            removeHs=False,
+        )
+        if molecule is None:
+            raise RuntimeError("RDKit 无法解析冻结原始 MOL。")
+        return molecule
+    raise RuntimeError("冻结原始拓扑必须是 SDF 或 MOL。")
+
+
+def main():
+    if len(sys.argv) != 5:
+        print("需要 source、exported SDF、manifest 与预期图身份。", file=sys.stderr)
+        return 2
+    source_path = Path(sys.argv[1])
+    exported_path = Path(sys.argv[2])
+    manifest_path = Path(sys.argv[3])
+    expected = sys.argv[4].lower()
+    source_graph = graph_sha256(source_molecule(source_path))
+    molecules = list(
+        Chem.ForwardSDMolSupplier(
+            io.BytesIO(exported_path.read_bytes()),
+            sanitize=True,
+            removeHs=False,
+        )
+    )
+    if not molecules or any(molecule is None for molecule in molecules):
+        raise RuntimeError("Meeko 导出的 SDF 包含空记录或无法解析的构象。")
+    output_graphs = [graph_sha256(molecule) for molecule in molecules]
+    manifest = {
+        "schema_version": 1,
+        "status": "verified",
+        "rdkit_version": str(rdBase.rdkitVersion),
+        "source_topology_sha256": hashlib.sha256(
+            source_path.read_bytes()
+        ).hexdigest(),
+        "source_graph_sha256": source_graph,
+        "expected_graph_sha256": expected,
+        "output_sdf_sha256": hashlib.sha256(
+            exported_path.read_bytes()
+        ).hexdigest(),
+        "pose_count": len(molecules),
+        "pose_graph_sha256": output_graphs,
+        "all_poses_match": (
+            source_graph == expected
+            and all(value == expected for value in output_graphs)
+        ),
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return 0 if manifest["all_poses_match"] else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def _validate_screening_result_topology(
+    root: Path,
+    python_path: str,
+    source_topology: Path,
+    exported_sdf: Path,
+    expected_graph_sha256: str,
+    *,
+    record_dir: Path,
+) -> dict[str, Any]:
+    if SHA256_PATTERN.fullmatch(expected_graph_sha256) is None:
+        raise ValueError("结果 SDF 拓扑验证缺少有效的预期图身份。")
+    record_dir.mkdir(parents=True, exist_ok=False)
+    script = (
+        root
+        / STAGING_RELATIVE_PATH
+        / "validate_screening_result_topology_rdkit.py"
+    )
+    script_text = _screening_result_topology_validator_script_text()
+    if not script.is_file() or script.read_text(encoding="utf-8") != script_text:
+        atomic_write_text(script, script_text)
+    manifest_path = record_dir / "validation_manifest.json"
+    command = [
+        python_path,
+        "-I",
+        "-B",
+        str(script),
+        str(source_topology),
+        str(exported_sdf),
+        str(manifest_path),
+        expected_graph_sha256,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=record_dir,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    atomic_write_text(record_dir / "stdout.txt", completed.stdout)
+    atomic_write_text(record_dir / "stderr.txt", completed.stderr)
+    atomic_write_json(
+        record_dir / "command_result.json",
+        {
+            "schema_version": (
+                SCREENING_RESULT_TOPOLOGY_VALIDATOR_SCHEMA_VERSION
+            ),
+            "created_at": _now_iso(),
+            "command": command,
+            "returncode": completed.returncode,
+            "validator_script_sha256": hashlib.sha256(
+                script_text.encode("utf-8")
+            ).hexdigest(),
+            "source_topology_sha256": _sha256(source_topology),
+            "exported_sdf_sha256": _sha256(exported_sdf),
+            "expected_graph_sha256": expected_graph_sha256,
+        },
+    )
+    if completed.returncode != 0 or not manifest_path.is_file():
+        detail = "\n".join(
+            value
+            for value in (completed.stderr.strip(), completed.stdout.strip())
+            if value
+        )
+        raise ValueError(
+            "结果 SDF 与冻结原始拓扑不一致："
+            f"{detail or f'validator exit={completed.returncode}'}"
+        )
+    if manifest_path.stat().st_size > 4 * 1024 * 1024:
+        raise ValueError("结果 SDF 拓扑验证 manifest 超过大小上限。")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version")
+        != SCREENING_RESULT_TOPOLOGY_VALIDATOR_SCHEMA_VERSION
+        or manifest.get("status") != "verified"
+        or manifest.get("all_poses_match") is not True
+        or str(manifest.get("expected_graph_sha256") or "").lower()
+        != expected_graph_sha256
+        or str(manifest.get("source_topology_sha256") or "").lower()
+        != _sha256(source_topology).lower()
+        or str(manifest.get("output_sdf_sha256") or "").lower()
+        != _sha256(exported_sdf).lower()
+        or isinstance(manifest.get("pose_count"), bool)
+        or not isinstance(manifest.get("pose_count"), int)
+        or int(manifest["pose_count"]) <= 0
+    ):
+        raise ValueError("结果 SDF 拓扑验证 manifest 内容无效。")
+    return manifest
+
+
+def _annotated_screening_sdf_records(
+    payload: bytes,
+    annotations: dict[str, Any],
+) -> tuple[bytes, int]:
+    records = _split_sdf_record_bytes(payload)
+    if not records:
+        raise ValueError("Meeko 导出的 SDF 没有分子记录。")
+    output: list[bytes] = []
+    for pose_index, record in enumerate(records, start=1):
+        marker = record.rfind(b"$$$$")
+        if marker < 0:
+            raise ValueError("Meeko 导出的 SDF 记录缺少 $$$$ 分隔符。")
+        # SD properties are separated by one blank line.  Meeko already
+        # writes properties of its own, so preserve a complete separator
+        # before appending DockStart metadata instead of merging our first
+        # header into the preceding value.
+        prefix = record[:marker].rstrip(b"\r\n") + b"\n\n"
+        properties = {
+            **annotations,
+            "DOCKSTART_POSE_INDEX": pose_index,
+        }
+        property_bytes = bytearray()
+        for key, raw_value in properties.items():
+            value = (
+                ""
+                if raw_value is None
+                else " ".join(str(raw_value).split())
+            )
+            property_bytes.extend(
+                f">  <{key}>\n{value}\n\n".encode("utf-8")
+            )
+        output.append(prefix + bytes(property_bytes) + b"$$$$\n")
+    return b"".join(output), len(records)
+
+
+def _verified_screening_best_output(
+    root: Path,
+    item: dict[str, Any],
+) -> Path:
+    item_id = str(item.get("item_id") or "")
+    relative = str(item.get("best_output_file") or "")
+    logical = PurePosixPath(relative)
+    if (
+        item.get("status") != "succeeded"
+        or logical.is_absolute()
+        or ".." in logical.parts
+        or "\\" in relative
+        or len(logical.parts) != 5
+        or tuple(logical.parts[:3])
+        != ("screening", "attempts", item_id)
+        or not re.fullmatch(r"attempt_\d{3,}", logical.parts[3])
+        or logical.parts[4] != "out.pdbqt"
+    ):
+        raise ValueError(f"配体 {item_id} 的最佳输出路径无效。")
+    path = root / Path(*logical.parts)
+    expected_sha256 = str(item.get("best_output_sha256") or "").lower()
+    expected_size = item.get("best_output_size_bytes")
+    if (
+        SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+        or not path.is_file()
+        or _path_is_link_or_reparse(path)
+        or path.stat().st_size != expected_size
+        or _sha256(path).lower() != expected_sha256
+    ):
+        raise ValueError(f"配体 {item_id} 的最佳输出完整性校验失败。")
+    return path
+
+
+def _screening_sdf_artifacts(
+    root: Path,
+    result_root: Path,
+) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in sorted(
+        (value for value in result_root.rglob("*") if value.is_file()),
+        key=lambda value: value.relative_to(root).as_posix(),
+    ):
+        if _path_is_link_or_reparse(path):
+            raise ValueError("结果 SDF 审计目录包含链接或重解析点。")
+        size = path.stat().st_size
+        total_bytes += size
+        if (
+            len(artifacts) >= 10_000
+            or size > MAX_SCREENING_EXPORT_MEMBER_BYTES
+            or total_bytes > MAX_SCREENING_EXPORT_TOTAL_BYTES
+        ):
+            raise ValueError("结果 SDF 审计文件超过资源上限。")
+        artifacts.append(
+            {
+                "file": path.relative_to(root).as_posix(),
+                "sha256": _sha256(path),
+                "size_bytes": size,
+            }
+        )
+    return artifacts
+
+
+def _screening_result_sdf_toolchain_snapshot(
+    python_tool: dict[str, Any],
+    rdkit_tool: dict[str, Any],
+    meeko_tool: dict[str, Any],
+) -> dict[str, Any]:
+    python_path = Path(str(python_tool.get("path") or "")).expanduser().resolve(
+        strict=True
+    )
+    if (
+        not python_path.is_file()
+        or _path_is_link_or_reparse(python_path)
+        or python_path.stat().st_size <= 0
+    ):
+        raise ValueError("结果 SDF 工具链的 Python 可执行文件无效。")
+    versions = {
+        "python": str(python_tool.get("version") or "").strip(),
+        "rdkit": str(rdkit_tool.get("version") or "").strip(),
+        "meeko": str(meeko_tool.get("version") or "").strip(),
+    }
+    if any(not value for value in versions.values()):
+        raise ValueError("结果 SDF 工具链缺少 Python、RDKit 或 Meeko 版本。")
+    snapshot: dict[str, Any] = {
+        "profile": SCREENING_RESULT_SDF_TOOLCHAIN_PROFILE,
+        "python": {
+            "path": str(python_path),
+            "source": str(python_tool.get("source") or "unknown"),
+            "version": versions["python"],
+            "sha256": _sha256(python_path),
+            "size_bytes": python_path.stat().st_size,
+        },
+        "rdkit": {
+            "version": versions["rdkit"],
+            "source": str(
+                rdkit_tool.get("source")
+                or rdkit_tool.get("python_source")
+                or "unknown"
+            ),
+        },
+        "meeko": {
+            "version": versions["meeko"],
+            "source": str(
+                meeko_tool.get("source")
+                or meeko_tool.get("python_source")
+                or "unknown"
+            ),
+        },
+    }
+    snapshot["snapshot_sha256"] = hashlib.sha256(
+        _canonical_json_bytes(snapshot)
+    ).hexdigest()
+    return snapshot
+
+
+def _verify_screening_result_sdf_python(
+    snapshot: dict[str, Any],
+) -> str:
+    python_record = (
+        snapshot.get("python")
+        if isinstance(snapshot.get("python"), dict)
+        else {}
+    )
+    path = Path(str(python_record.get("path") or "")).expanduser().resolve(
+        strict=True
+    )
+    expected_sha256 = str(python_record.get("sha256") or "").lower()
+    expected_size = python_record.get("size_bytes")
+    if (
+        SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+        or not path.is_file()
+        or _path_is_link_or_reparse(path)
+        or path.stat().st_size != expected_size
+        or _sha256(path).lower() != expected_sha256
+    ):
+        raise ValueError("结果 SDF 工具链的 Python 在导出期间发生变化。")
+    return str(path)
+
+
+def _verified_screening_result_artifact(
+    root: Path,
+    record: dict[str, Any],
+    *,
+    label: str,
+    expected_relative: str | None = None,
+) -> tuple[Path, str]:
+    relative = str(record.get("file") or "")
+    logical = PurePosixPath(relative)
+    if (
+        not relative
+        or "\\" in relative
+        or logical.is_absolute()
+        or ".." in logical.parts
+        or logical.as_posix() != relative
+        or (
+            expected_relative is not None
+            and relative != expected_relative
+        )
+        or (
+            expected_relative is None
+            and tuple(logical.parts[:3])
+            != ("screening", "results", "sdf_exports")
+        )
+    ):
+        raise ValueError(f"{label}路径无效。")
+    expected_sha256 = str(record.get("sha256") or "").lower()
+    expected_size = record.get("size_bytes")
+    if (
+        SHA256_PATTERN.fullmatch(expected_sha256) is None
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size < 0
+    ):
+        raise ValueError(f"{label}身份记录无效。")
+    cursor = root
+    for part in logical.parts:
+        cursor = cursor / part
+        if _path_is_link_or_reparse(cursor):
+            raise ValueError(f"{label}路径包含链接或重解析点。")
+    path = (root / Path(*logical.parts)).resolve(strict=True)
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label}越过项目目录。") from exc
+    if (
+        not path.is_file()
+        or path.stat().st_size != expected_size
+        or _sha256(path).lower() != expected_sha256
+    ):
+        raise ValueError(f"{label}完整性校验失败。")
+    return path, relative
+
+
+def _verified_existing_screening_result_sdf(
+    root: Path,
+    existing: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        existing.get("schema_version") != SCREENING_RESULT_SDF_SCHEMA_VERSION
+        or existing.get("generated") is not True
+        or existing.get("status") not in {"complete", "partial"}
+    ):
+        raise ValueError("已记录的批量结果 SDF 状态无效。")
+    fixed = {
+        "aggregate": (
+            "file",
+            "sha256",
+            "size_bytes",
+            "screening/results/screening_poses.sdf",
+        ),
+        "manifest": (
+            "manifest_file",
+            "manifest_sha256",
+            "manifest_size_bytes",
+            "screening/results/screening_pose_manifest.json",
+        ),
+        "pose map": (
+            "pose_map_file",
+            "pose_map_sha256",
+            "pose_map_size_bytes",
+            "screening/results/screening_pose_map.csv",
+        ),
+    }
+    verified: dict[str, Path] = {}
+    fixed_relatives: set[str] = set()
+    for label, (file_key, sha_key, size_key, expected_relative) in fixed.items():
+        path, relative = _verified_screening_result_artifact(
+            root,
+            {
+                "file": existing.get(file_key),
+                "sha256": existing.get(sha_key),
+                "size_bytes": existing.get(size_key),
+            },
+            label=f"批量结果 SDF {label}",
+            expected_relative=expected_relative,
+        )
+        verified[label] = path
+        fixed_relatives.add(relative)
+
+    artifacts = (
+        existing.get("artifacts")
+        if isinstance(existing.get("artifacts"), list)
+        else []
+    )
+    if not artifacts or len(artifacts) > MAX_SCREENING_EXPORT_FILES:
+        raise ValueError("批量结果 SDF 审计文件清单无效。")
+    seen: set[str] = set()
+    total_size = 0
+    for value in artifacts:
+        if not isinstance(value, dict):
+            raise ValueError("批量结果 SDF 审计文件记录无效。")
+        relative = str(value.get("file") or "")
+        if relative in seen:
+            raise ValueError("批量结果 SDF 审计文件清单包含重复路径。")
+        seen.add(relative)
+        _, verified_relative = _verified_screening_result_artifact(
+            root,
+            value,
+            label="批量结果 SDF 审计文件",
+            expected_relative=(
+                relative if relative in fixed_relatives else None
+            ),
+        )
+        seen.add(verified_relative)
+        total_size += int(value.get("size_bytes") or 0)
+        if total_size > MAX_SCREENING_EXPORT_TOTAL_BYTES:
+            raise ValueError("批量结果 SDF 审计文件总大小超过上限。")
+    if not fixed_relatives.issubset(seen):
+        raise ValueError("批量结果 SDF 审计文件清单缺少固定产物。")
+
+    toolchain = (
+        existing.get("toolchain")
+        if isinstance(existing.get("toolchain"), dict)
+        else {}
+    )
+    recorded_toolchain_sha256 = str(
+        toolchain.get("snapshot_sha256") or ""
+    ).lower()
+    unsigned_toolchain = dict(toolchain)
+    unsigned_toolchain.pop("snapshot_sha256", None)
+    if (
+        toolchain.get("profile") != SCREENING_RESULT_SDF_TOOLCHAIN_PROFILE
+        or SHA256_PATTERN.fullmatch(recorded_toolchain_sha256) is None
+        or hashlib.sha256(
+            _canonical_json_bytes(unsigned_toolchain)
+        ).hexdigest()
+        != recorded_toolchain_sha256
+    ):
+        raise ValueError("批量结果 SDF 工具链快照校验失败。")
+
+    manifest = _strict_json_object_bytes(
+        verified["manifest"].read_bytes(),
+        label="批量结果 SDF 拓扑验证清单",
+    )
+    coverage = (
+        existing.get("topology_coverage")
+        if isinstance(existing.get("topology_coverage"), dict)
+        else {}
+    )
+    pose_count = coverage.get("pose_count")
+    if (
+        manifest.get("schema_version") != SCREENING_RESULT_SDF_SCHEMA_VERSION
+        or manifest.get("status") != existing.get("status")
+        or manifest.get("aggregate_file") != existing.get("file")
+        or manifest.get("aggregate_sha256") != existing.get("sha256")
+        or manifest.get("aggregate_size_bytes")
+        != existing.get("size_bytes")
+        or manifest.get("pose_map_file") != existing.get("pose_map_file")
+        or manifest.get("pose_map_sha256")
+        != existing.get("pose_map_sha256")
+        or manifest.get("pose_map_size_bytes")
+        != existing.get("pose_map_size_bytes")
+        or manifest.get("coverage") != coverage
+        or manifest.get("toolchain") != toolchain
+        or isinstance(pose_count, bool)
+        or not isinstance(pose_count, int)
+        or pose_count <= 0
+        or len(manifest.get("poses") or []) != pose_count
+        or len(_split_sdf_record_bytes(verified["aggregate"].read_bytes()))
+        != pose_count
+    ):
+        raise ValueError("批量结果 SDF 拓扑验证清单与状态记录不一致。")
+    with verified["pose map"].open(
+        "r",
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        if sum(1 for _ in csv.DictReader(handle)) != pose_count:
+            raise ValueError("批量结果 SDF pose map 行数与状态记录不一致。")
+    return existing
+
+
+def _generate_screening_result_sdf(
+    root: Path,
+    state: dict[str, Any],
+    *,
+    mk_export_executor: Callable[..., dict[str, Any]] | None = None,
+    topology_validator: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    outputs = state.setdefault("outputs", {})
+    existing = outputs.get("sdf") if isinstance(outputs.get("sdf"), dict) else {}
+    if existing.get("generated") is True:
+        return _verified_existing_screening_result_sdf(root, existing)
+
+    succeeded = [
+        item
+        for item in state.get("items") or []
+        if isinstance(item, dict) and item.get("status") == "succeeded"
+    ]
+    topology_ready = [
+        item
+        for item in succeeded
+        if item.get("topology_integrity") == "verified"
+    ]
+    coverage = {
+        "total_items": len(state.get("items") or []),
+        "succeeded_items": len(succeeded),
+        "succeeded_with_topology": len(topology_ready),
+        "exported_items": 0,
+        "pose_count": 0,
+    }
+    if not succeeded:
+        result = {
+            "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+            "generated": False,
+            "status": "unavailable",
+            "file": "",
+            "reason": "本次批量筛选没有成功构象，未生成结果 SDF。",
+            "topology_coverage": coverage,
+            "failures": [],
+            "artifacts": [],
+        }
+        outputs["sdf"] = result
+        return result
+    if not topology_ready:
+        result = {
+            "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+            "generated": False,
+            "status": "unavailable",
+            "file": "",
+            "reason": "成功构象均缺少冻结原始拓扑；未从 PDBQT 猜测键级。",
+            "topology_coverage": coverage,
+            "failures": [
+                {
+                    "item_id": str(item.get("item_id") or ""),
+                    "code": "RAW_TOPOLOGY_UNAVAILABLE",
+                    "message": "该成功构象没有冻结原始拓扑。",
+                }
+                for item in succeeded
+            ],
+            "artifacts": [],
+        }
+        outputs["sdf"] = result
+        return result
+
+    tool_status = get_preparation_tool_status(str(root))
+    tools = (
+        tool_status.get("tools")
+        if isinstance(tool_status.get("tools"), dict)
+        else {}
+    )
+    python_tool = (
+        tools.get("python")
+        if isinstance(tools.get("python"), dict)
+        else {}
+    )
+    rdkit_tool = (
+        tools.get("rdkit")
+        if isinstance(tools.get("rdkit"), dict)
+        else {}
+    )
+    meeko_tool = (
+        tools.get("meeko")
+        if isinstance(tools.get("meeko"), dict)
+        else {}
+    )
+    if not tool_status.get("ok") or any(
+        tool.get("status") != "ok"
+        for tool in (python_tool, rdkit_tool, meeko_tool)
+    ):
+        result = {
+            "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+            "generated": False,
+            "status": "failed",
+            "file": "",
+            "reason": "结果 SDF 需要可用的 Python、RDKit 与 Meeko 工具链。",
+            "topology_coverage": coverage,
+            "failures": [
+                {
+                    "item_id": "",
+                    "code": "RESULT_SDF_TOOLCHAIN_UNAVAILABLE",
+                    "message": "无法验证并导出批量结果 SDF。",
+                }
+            ],
+            "artifacts": [],
+        }
+        outputs["sdf"] = result
+        return result
+    toolchain_snapshot = _screening_result_sdf_toolchain_snapshot(
+        python_tool,
+        rdkit_tool,
+        meeko_tool,
+    )
+    python_path = _verify_screening_result_sdf_python(toolchain_snapshot)
+    active_mk_export = mk_export_executor or execute_mk_export
+    active_validator = topology_validator or _validate_screening_result_topology
+    result_audit_root = root / "screening" / "results" / "sdf_exports"
+    result_audit_root.mkdir(parents=True, exist_ok=True)
+    result_root: Path | None = None
+    generation_id = ""
+    for generation_number in range(1, 1000):
+        generation_id = f"export_{generation_number:03d}"
+        candidate_root = result_audit_root / generation_id
+        try:
+            candidate_root.mkdir()
+        except FileExistsError:
+            continue
+        result_root = candidate_root
+        break
+    if result_root is None:
+        raise ValueError("无法分配新的批量结果 SDF 审计编号。")
+
+    aggregate_parts: list[bytes] = []
+    pose_rows: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
+    for item in succeeded:
+        item_id = str(item.get("item_id") or "")
+        if item.get("topology_integrity") != "verified":
+            failures.append(
+                {
+                    "item_id": item_id,
+                    "code": "RAW_TOPOLOGY_UNAVAILABLE",
+                    "message": "该成功构象没有冻结原始拓扑。",
+                }
+            )
+            continue
+        item_dir = result_root / item_id
+        item_dir.mkdir()
+        try:
+            python_path = _verify_screening_result_sdf_python(
+                toolchain_snapshot
+            )
+            topology_record = _verified_frozen_item_topology(root, item)
+            if topology_record is None:
+                raise ValueError("冻结原始拓扑不可用。")
+            topology_path = root / Path(
+                *PurePosixPath(str(topology_record["file"])).parts
+            )
+            output_pdbqt = _verified_screening_best_output(root, item)
+            inspection = inspect_meeko_ligand_pdbqt(output_pdbqt)
+            if inspection.get("embedded_topology") is not True:
+                raise ValueError(
+                    "成功构象缺少 Meeko SMILES/SMILES IDX 拓扑映射。"
+                )
+            exported_sdf = item_dir / "poses.sdf"
+            active_mk_export(
+                python_path,
+                output_pdbqt,
+                exported_sdf,
+                record_dir=item_dir / "mk_export_record",
+                cwd=item_dir,
+            )
+            if (
+                not exported_sdf.is_file()
+                or exported_sdf.stat().st_size <= 0
+            ):
+                raise ValueError("Meeko 未生成非空 poses.sdf。")
+            facts = topology_record["chemical_facts"]
+            expected_graph_sha256 = str(
+                facts.get("canonical_topology_sha256") or ""
+            ).lower()
+            validation = active_validator(
+                root,
+                python_path,
+                topology_path,
+                exported_sdf,
+                expected_graph_sha256,
+                record_dir=item_dir / "topology_validation",
+            )
+            if (
+                str(validation.get("rdkit_version") or "").strip()
+                != str(
+                    toolchain_snapshot["rdkit"].get("version") or ""
+                ).strip()
+            ):
+                raise ValueError(
+                    "结果 SDF 拓扑验证使用的 RDKit 版本与工具链快照不一致。"
+                )
+            _verify_screening_result_sdf_python(toolchain_snapshot)
+            annotated, pose_count = _annotated_screening_sdf_records(
+                exported_sdf.read_bytes(),
+                {
+                    "DOCKSTART_ITEM_ID": item_id,
+                    "DOCKSTART_SOURCE_CANDIDATE_ID": str(
+                        item.get("source_candidate_id") or ""
+                    ),
+                    "DOCKSTART_SOURCE_RECORD_ID": str(
+                        item.get("source_record_id") or ""
+                    ),
+                    "DOCKSTART_SOURCE_TOPOLOGY_SHA256": str(
+                        item.get("source_topology_sha256") or ""
+                    ),
+                    "DOCKSTART_RESULT_PDBQT_SHA256": str(
+                        item.get("best_output_sha256") or ""
+                    ),
+                    "DOCKSTART_BEST_AFFINITY_KCAL_MOL": (
+                        item.get("best_affinity_kcal_mol")
+                    ),
+                },
+            )
+            if pose_count != int(validation.get("pose_count") or 0):
+                raise ValueError("SDF 记录数与拓扑验证 manifest 不一致。")
+            aggregate_parts.append(annotated)
+            for pose_index in range(1, pose_count + 1):
+                pose_rows.append(
+                    {
+                        "item_id": item_id,
+                        "pose_index": pose_index,
+                        "source_candidate_id": str(
+                            item.get("source_candidate_id") or ""
+                        ),
+                        "source_record_id": str(
+                            item.get("source_record_id") or ""
+                        ),
+                        "source_topology_sha256": str(
+                            item.get("source_topology_sha256") or ""
+                        ),
+                        "result_pdbqt_sha256": str(
+                            item.get("best_output_sha256") or ""
+                        ),
+                        "best_affinity_kcal_mol": item.get(
+                            "best_affinity_kcal_mol"
+                        ),
+                        "validated_graph_sha256": expected_graph_sha256,
+                    }
+                )
+            coverage["exported_items"] += 1
+            coverage["pose_count"] += pose_count
+        except Exception as exc:  # noqa: BLE001 - isolate one item export.
+            code = (
+                exc.code
+                if isinstance(exc, ProtocolValidationError)
+                else "RESULT_SDF_ITEM_EXPORT_FAILED"
+            )
+            message = (
+                exc.message
+                if isinstance(exc, ProtocolValidationError)
+                else str(exc)
+            )
+            failures.append(
+                {
+                    "item_id": item_id,
+                    "code": str(code),
+                    "message": str(message),
+                }
+            )
+
+    aggregate_relative = Path(
+        "screening",
+        "results",
+        "screening_poses.sdf",
+    )
+    manifest_relative = Path(
+        "screening",
+        "results",
+        "screening_pose_manifest.json",
+    )
+    map_relative = Path(
+        "screening",
+        "results",
+        "screening_pose_map.csv",
+    )
+    aggregate_path = root / aggregate_relative
+    manifest_path = root / manifest_relative
+    map_path = root / map_relative
+    generated = bool(aggregate_parts)
+    if generated:
+        aggregate_payload = b"".join(aggregate_parts)
+        limits = _validated_resource_limits(state.get("resource_limits"))
+        if len(aggregate_payload) > limits.max_total_input_bytes:
+            raise ValueError("批量结果 SDF 超过任务总输入资源上限。")
+        atomic_write_bytes(aggregate_path, aggregate_payload)
+        buffer = io.StringIO(newline="")
+        fields = (
+            "item_id",
+            "pose_index",
+            "source_candidate_id",
+            "source_record_id",
+            "source_topology_sha256",
+            "result_pdbqt_sha256",
+            "best_affinity_kcal_mol",
+            "validated_graph_sha256",
+        )
+        writer = csv.DictWriter(buffer, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(pose_rows)
+        atomic_write_text(map_path, buffer.getvalue())
+        atomic_write_json(
+            manifest_path,
+            {
+                "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+                "created_at": _now_iso(),
+                "status": (
+                    "complete"
+                    if coverage["exported_items"] == len(succeeded)
+                    else "partial"
+                ),
+                "aggregate_file": aggregate_relative.as_posix(),
+                "aggregate_sha256": _sha256(aggregate_path),
+                "aggregate_size_bytes": aggregate_path.stat().st_size,
+                "pose_map_file": map_relative.as_posix(),
+                "pose_map_sha256": _sha256(map_path),
+                "pose_map_size_bytes": map_path.stat().st_size,
+                "coverage": coverage,
+                "poses": pose_rows,
+                "failures": failures,
+                "toolchain": toolchain_snapshot,
+            },
+        )
+    artifacts = _screening_sdf_artifacts(root, result_root)
+    if generated:
+        artifacts.extend(
+            [
+                {
+                    "file": aggregate_relative.as_posix(),
+                    "sha256": _sha256(aggregate_path),
+                    "size_bytes": aggregate_path.stat().st_size,
+                },
+                {
+                    "file": manifest_relative.as_posix(),
+                    "sha256": _sha256(manifest_path),
+                    "size_bytes": manifest_path.stat().st_size,
+                },
+                {
+                    "file": map_relative.as_posix(),
+                    "sha256": _sha256(map_path),
+                    "size_bytes": map_path.stat().st_size,
+                },
+            ]
+        )
+    result = {
+        "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+        "generation_id": generation_id,
+        "generated": generated,
+        "status": (
+            "complete"
+            if generated and coverage["exported_items"] == len(succeeded)
+            else "partial"
+            if generated
+            else "failed"
+        ),
+        "file": aggregate_relative.as_posix() if generated else "",
+        "sha256": _sha256(aggregate_path) if generated else "",
+        "size_bytes": aggregate_path.stat().st_size if generated else 0,
+        "manifest_file": manifest_relative.as_posix() if generated else "",
+        "manifest_sha256": _sha256(manifest_path) if generated else "",
+        "manifest_size_bytes": manifest_path.stat().st_size if generated else 0,
+        "pose_map_file": map_relative.as_posix() if generated else "",
+        "pose_map_sha256": _sha256(map_path) if generated else "",
+        "pose_map_size_bytes": map_path.stat().st_size if generated else 0,
+        "reason": (
+            "已从 Meeko 拓扑映射导出，并逐构象核对冻结原始重原子图。"
+            if generated and not failures
+            else "仅部分成功构象通过原始拓扑验证。"
+            if generated
+            else "没有成功构象通过受控拓扑导出与验证。"
+        ),
+        "topology_coverage": coverage,
+        "toolchain": toolchain_snapshot,
+        "failures": failures,
+        "artifacts": artifacts,
+    }
+    outputs["sdf"] = result
+    return result
+
+
+def generate_screening_result_sdf(
+    project_dir: str,
+    *,
+    mk_export_executor: Callable[..., dict[str, Any]] | None = None,
+    topology_validator: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        root = _project_root(project_dir)
+        state = _read_state(root)
+        if state.get("status") not in TERMINAL_SCREENING_STATUSES:
+            return _error(
+                "SCREENING_RESULT_SDF_NOT_TERMINAL",
+                "批量筛选尚未结束，不能生成最终结果 SDF。",
+            )
+        _verified_frozen_ligand_entries(root, state)
+        result = _generate_screening_result_sdf(
+            root,
+            state,
+            mk_export_executor=mk_export_executor,
+            topology_validator=topology_validator,
+        )
+        _write_state(root, state)
+        return {
+            "ok": result.get("status") != "failed",
+            "project_dir": str(root),
+            "screening": state,
+            "sdf": result,
+            "message": str(result.get("reason") or ""),
+            "error": (
+                None
+                if result.get("status") != "failed"
+                else {
+                    "code": "SCREENING_RESULT_SDF_FAILED",
+                    "title": "生成批量结果 SDF 失败。",
+                    "message": "生成批量结果 SDF 失败。",
+                    "raw_error": json.dumps(
+                        result.get("failures") or [],
+                        ensure_ascii=False,
+                    ),
+                    "suggestion": "请检查 Meeko 导出记录与冻结原始拓扑。",
+                }
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - workflow boundary.
+        return _error(
+            "SCREENING_RESULT_SDF_ERROR",
+            "生成批量结果 SDF 时发生错误。",
+            str(exc),
+            "请检查成功构象、冻结拓扑和 Assisted 工具链。",
+        )
+
+
 def _csv_payload(rows: list[dict[str, Any]], *, ranked: bool = False) -> str:
     fields = (("rank",) + SUMMARY_FIELDS) if ranked else SUMMARY_FIELDS
     buffer = io.StringIO(newline="")
@@ -6618,11 +10531,15 @@ def _write_summaries(root: Path, state: dict[str, Any]) -> None:
     outputs.setdefault("report_sha256", "")
     outputs.setdefault("report_size_bytes", 0)
     outputs.setdefault("reported_at", "")
-    outputs["sdf"] = {
-        "generated": False,
-        "file": "",
-        "reason": "未提供原始配体拓扑；PDBQT 不包含可靠键级，未生成 SDF。",
-    }
+    outputs.setdefault(
+        "sdf",
+        {
+            "generated": False,
+            "status": "unavailable",
+            "file": "",
+            "reason": "未提供原始配体拓扑；PDBQT 不包含可靠键级，未生成 SDF。",
+        },
+    )
 
 
 def _markdown_cell(value: Any) -> str:
@@ -6677,12 +10594,42 @@ def _screening_report_text(state: dict[str, Any]) -> str:
     }
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
     receptor = inputs.get("receptor") if isinstance(inputs.get("receptor"), dict) else {}
+    topology_summary = (
+        inputs.get("topology")
+        if isinstance(inputs.get("topology"), dict)
+        else {}
+    )
     tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
     vina_tool = tools.get("vina") if isinstance(tools.get("vina"), dict) else {}
     box = state.get("box") if isinstance(state.get("box"), dict) else {}
     vina = _screening_vina_with_defaults(state.get("vina"))
     outputs = state.get("outputs") if isinstance(state.get("outputs"), dict) else {}
     sdf = outputs.get("sdf") if isinstance(outputs.get("sdf"), dict) else {}
+    sdf_coverage = (
+        sdf.get("topology_coverage")
+        if isinstance(sdf.get("topology_coverage"), dict)
+        else {}
+    )
+    sdf_toolchain = (
+        sdf.get("toolchain")
+        if isinstance(sdf.get("toolchain"), dict)
+        else {}
+    )
+    sdf_python_tool = (
+        sdf_toolchain.get("python")
+        if isinstance(sdf_toolchain.get("python"), dict)
+        else {}
+    )
+    sdf_rdkit_tool = (
+        sdf_toolchain.get("rdkit")
+        if isinstance(sdf_toolchain.get("rdkit"), dict)
+        else {}
+    )
+    sdf_meeko_tool = (
+        sdf_toolchain.get("meeko")
+        if isinstance(sdf_toolchain.get("meeko"), dict)
+        else {}
+    )
     top_limit = max(1, int(state.get("top_n") or 20))
     max_evals_label = (
         "Vina 自动决定"
@@ -6699,6 +10646,40 @@ def _screening_report_text(state: dict[str, Any]) -> str:
         if str(value).strip()
     ]
     legacy_zero_applied = _valid_legacy_energy_range_zero_marker(state)
+    topology_rows: list[str] = []
+    for item in ordered:
+        facts = (
+            item.get("chemical_facts")
+            if isinstance(item.get("chemical_facts"), dict)
+            else {}
+        )
+        topology_rows.append(
+            "| {item_id} | {record} | {integrity} | {charge} | {heavy} | {rotatable} | {macrocycle} |".format(
+                item_id=_markdown_cell(item.get("item_id")),
+                record=_markdown_cell(
+                    item.get("source_record_name")
+                    or item.get("display_label")
+                    or item.get("source_file")
+                ),
+                integrity=(
+                    "已验证"
+                    if item.get("topology_integrity") == "verified"
+                    else "不可用"
+                ),
+                charge=_markdown_cell(facts.get("formal_charge")),
+                heavy=_markdown_cell(facts.get("heavy_atom_count")),
+                rotatable=_markdown_cell(
+                    facts.get("rotatable_bond_count")
+                ),
+                macrocycle=(
+                    "是"
+                    if facts.get("has_macrocycle") is True
+                    else "否"
+                    if facts.get("has_macrocycle") is False
+                    else "—"
+                ),
+            )
+        )
 
     lines = [
         "# DockStart 批量筛选实验记录",
@@ -6721,6 +10702,12 @@ def _screening_report_text(state: dict[str, Any]) -> str:
         "",
         f"- 受体快照：`{_markdown_cell(receptor.get('file'))}`",
         f"- 受体 SHA256：`{_markdown_cell(receptor.get('sha256'))}`",
+        (
+            "- 原始配体拓扑覆盖："
+            f"{_markdown_cell(topology_summary.get('status'))}，"
+            f"{_markdown_cell(topology_summary.get('available_count'))}/"
+            f"{_markdown_cell(topology_summary.get('total_count'))}"
+        ),
         f"- AutoDock Vina：{_markdown_cell(vina_tool.get('version'))}",
         f"- Vina 来源：{_markdown_cell(vina_tool.get('source'))}",
         f"- Vina SHA256：`{_markdown_cell(vina_tool.get('sha256'))}`",
@@ -6750,6 +10737,12 @@ def _screening_report_text(state: dict[str, Any]) -> str:
             f"| 尺寸（Å） | {_markdown_cell(box.get('size_x'))} | "
             f"{_markdown_cell(box.get('size_y'))} | {_markdown_cell(box.get('size_z'))} |"
         ),
+        "",
+        "### 配体原始拓扑与化学事实",
+        "",
+        "| 队列项 | 原始记录 | 拓扑 | 形式电荷 | 重原子数 | 可旋转键数 | 大环 |",
+        "|---|---|---|---:|---:|---:|---|",
+        *(topology_rows or ["| — | — | — | — | — | — | — |"]),
         "",
         f"## Top {min(top_limit, len(ranked))}",
         "",
@@ -6809,9 +10802,35 @@ def _screening_report_text(state: dict[str, Any]) -> str:
             f"- 完整汇总：`{_markdown_cell(outputs.get('summary_csv'))}`",
             f"- Top N 汇总：`{_markdown_cell(outputs.get('top_n_csv'))}`",
             (
-                f"- SDF：`{_markdown_cell(sdf.get('file'))}`"
+                (
+                    f"- SDF：`{_markdown_cell(sdf.get('file'))}`"
+                    f"（{_markdown_cell(sdf.get('status'))}；"
+                    f"{_markdown_cell(sdf_coverage.get('exported_items'))}"
+                    "/"
+                    f"{_markdown_cell(sdf_coverage.get('succeeded_items'))}"
+                    " 个成功配体）"
+                )
                 if sdf.get("generated")
                 else f"- SDF：未生成。{_markdown_cell(sdf.get('reason'))}"
+            ),
+            (
+                f"- SDF 拓扑验证清单：`{_markdown_cell(sdf.get('manifest_file'))}`"
+                if sdf.get("manifest_file")
+                else "- SDF 拓扑验证清单：—"
+            ),
+            (
+                "- SDF 导出工具链："
+                f"Python {_markdown_cell(sdf_python_tool.get('version'))}；"
+                f"RDKit {_markdown_cell(sdf_rdkit_tool.get('version'))}；"
+                f"Meeko {_markdown_cell(sdf_meeko_tool.get('version'))}"
+                if sdf.get("generated")
+                else "- SDF 导出工具链：—"
+            ),
+            (
+                "- SDF 工具链快照 SHA256："
+                f"`{_markdown_cell(sdf_toolchain.get('snapshot_sha256'))}`"
+                if sdf.get("generated")
+                else "- SDF 工具链快照 SHA256：—"
             ),
             "",
             "## 科学边界",
@@ -6820,6 +10839,7 @@ def _screening_report_text(state: dict[str, Any]) -> str:
             "- 排名只在本批次相同评分协议和参数下按 Vina 数值排序，不应与其他评分函数或其他输入条件直接比较。",
             "- 单项失败不会自动说明该配体不能结合；应结合错误日志、输入质量和必要的进一步计算或实验判断。",
             "- PDBQT 不保存可靠完整的键级信息；没有受控原始拓扑时，DockStart 不会据此猜测并生成 SDF。",
+            "- 批量结果 SDF 只收录经 Meeko 拓扑映射导出且与冻结原始重原子图一致的构象；失败或缺失覆盖会在清单中显式记录。",
             "",
         ]
     )
@@ -7030,6 +11050,40 @@ def run_screening(
             state["status"] = "completed_with_failures" if failed else "completed"
             state["finished_at"] = _now_iso()
         _write_summaries(root, state)
+        try:
+            _generate_screening_result_sdf(root, state)
+        except Exception as exc:  # noqa: BLE001 - docking result remains valid.
+            state.setdefault("outputs", {})["sdf"] = {
+                "schema_version": SCREENING_RESULT_SDF_SCHEMA_VERSION,
+                "generated": False,
+                "status": "failed",
+                "file": "",
+                "reason": "批量对接已完成，但结果 SDF 后处理失败。",
+                "topology_coverage": {
+                    "total_items": len(state.get("items") or []),
+                    "succeeded_items": sum(
+                        isinstance(item, dict)
+                        and item.get("status") == "succeeded"
+                        for item in state.get("items") or []
+                    ),
+                    "succeeded_with_topology": sum(
+                        isinstance(item, dict)
+                        and item.get("status") == "succeeded"
+                        and item.get("topology_integrity") == "verified"
+                        for item in state.get("items") or []
+                    ),
+                    "exported_items": 0,
+                    "pose_count": 0,
+                },
+                "failures": [
+                    {
+                        "item_id": "",
+                        "code": "SCREENING_RESULT_SDF_ERROR",
+                        "message": str(exc),
+                    }
+                ],
+                "artifacts": [],
+            }
         _write_state(root, state)
         return {
             "ok": True,
@@ -7082,7 +11136,9 @@ def _build_parser() -> argparse.ArgumentParser:
     create = commands.add_parser("create")
     create.add_argument("--project", required=True)
     create.add_argument("--receptor", required=True)
-    create.add_argument("--ligand", action="append", required=True)
+    create.add_argument("--ligand", action="append", default=[])
+    create.add_argument("--candidate-id", action="append", default=[])
+    create.add_argument("--staging-revision", default="")
     create.add_argument("--vina-path")
     create.add_argument("--box-json", type=_json_argument, required=True)
     create.add_argument("--vina-json", type=_json_argument, required=True)
@@ -7093,6 +11149,14 @@ def _build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--project", required=True)
     stage.add_argument("--file", action="append", required=True)
     stage.add_argument("--limits-json", type=_json_argument)
+    retry_preparation = commands.add_parser("retry-preparation")
+    retry_preparation.add_argument("--project", required=True)
+    retry_preparation.add_argument(
+        "--candidate-id",
+        action="append",
+        required=True,
+    )
+    retry_preparation.add_argument("--staging-revision", required=True)
     archives = commands.add_parser("archives")
     archives.add_argument("--project", required=True)
     archive_detail = commands.add_parser("archive-detail")
@@ -7106,7 +11170,15 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_compare = commands.add_parser("archive-compare")
     archive_compare.add_argument("--project", required=True)
     archive_compare.add_argument("--archive-id", action="append", required=True)
-    for name in ("status", "run", "cancel", "resume", "archive", "report"):
+    for name in (
+        "status",
+        "run",
+        "cancel",
+        "resume",
+        "archive",
+        "report",
+        "result-sdf",
+    ):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
         if name == "run":
@@ -7121,6 +11193,8 @@ def main(argv: list[str] | None = None) -> int:
             args.project,
             args.receptor,
             args.ligand,
+            ligand_candidate_ids=args.candidate_id,
+            expected_staging_revision_sha256=args.staging_revision,
             vina_path=args.vina_path,
             box=args.box_json,
             vina=args.vina_json,
@@ -7134,6 +11208,12 @@ def main(argv: list[str] | None = None) -> int:
             args.file,
             resource_limits=args.limits_json,
         )
+    elif args.command == "retry-preparation":
+        result = retry_screening_preparation(
+            args.project,
+            args.candidate_id,
+            expected_staging_revision_sha256=args.staging_revision,
+        )
     elif args.command == "status":
         result = get_screening_status(args.project)
     elif args.command == "run":
@@ -7144,6 +11224,8 @@ def main(argv: list[str] | None = None) -> int:
         result = resume_screening(args.project)
     elif args.command == "archive":
         result = archive_screening(args.project)
+    elif args.command == "result-sdf":
+        result = generate_screening_result_sdf(args.project)
     elif args.command == "archives":
         result = list_screening_archives(args.project)
     elif args.command == "archive-detail":

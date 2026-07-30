@@ -39,9 +39,9 @@ from dockstart_core.project import (
     _cancel_marker_path,
     _create_cancel_marker,
     _duration_seconds,
-    _format_config_number,
     _hash_snapshot,
     _now_iso,
+    _normalize_vina_pdbqt_output,
     _parse_pdbqt_stats,
     _project_from_dict,
     _project_grid_source,
@@ -74,6 +74,16 @@ PROTOCOL_NAME = "多配体共同对接（实验性）"
 SCHEMA_VERSION = 1
 MINIMUM_VINA_VERSION = "1.2.0"
 MEMBER_COUNT = 2
+RIGID_BODY_DOF_PER_LIGAND = 6
+MAX_EXPERIMENTAL_TOTAL_SEARCH_TORSIONS = 24
+MAX_EXPERIMENTAL_MEMBER_ATOMS = 1024
+MAX_EXPERIMENTAL_MEMBER_BYTES = 16 * 1024 * 1024
+RECOMMENDED_MIN_EXHAUSTIVENESS = 32
+BOX_FIT_EPSILON_ANGSTROM = 1e-6
+BRANCH_AXIS_MIN_LENGTH_ANGSTROM = 1e-6
+OUTPUT_GRID_EPSILON_ANGSTROM = 0.000501
+CONFIG_FLOAT_SERIALIZATION = "python_float_17g_round_trip_v1"
+PDBQT_HYDROGEN_ATOM_TYPES = frozenset({"H", "HD"})
 RUN_OUTPUT_FILE = "out.pdbqt"
 RUN_SCORES_FILE = "scores.csv"
 RUN_JOINT_POSES_FILE = "joint_poses.json"
@@ -94,19 +104,49 @@ SCIENTIFIC_DISCLAIMER = (
     "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-MODEL_PATTERN = re.compile(r"^\s*MODEL\s+(\d+)\s*$", re.IGNORECASE)
-ENDMDL_PATTERN = re.compile(r"^\s*ENDMDL\s*$", re.IGNORECASE)
+MODEL_PATTERN = re.compile(r"^MODEL[ \t]+(\d+)[ \t]*$")
+ENDMDL_PATTERN = re.compile(r"^ENDMDL[ \t]*$")
 VINA_RESULT_PATTERN = re.compile(
-    r"^\s*REMARK\s+VINA\s+RESULT:\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s+"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s+"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
-    re.IGNORECASE,
+    r"^REMARK[ \t]+VINA[ \t]+RESULT:[ \t]*"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))[ \t]+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))[ \t]+"
+    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))[ \t]*$",
+)
+OUTPUT_CANONICAL_TAGS = frozenset(
+    {
+        "MODEL",
+        "ENDMDL",
+        "ROOT",
+        "ENDROOT",
+        "BRANCH",
+        "ENDBRANCH",
+        "TORSDOF",
+        "ATOM",
+        "HETATM",
+        "REMARK",
+        "WARNING",
+        "TER",
+        "CONECT",
+    }
 )
 
 
 class _ProtocolPathError(RuntimeError):
     """Raised when a protocol artifact path is not an ordinary project path."""
+
+
+def _pdbqt_keyword(line: str) -> str:
+    tokens = str(line or "").split(maxsplit=1)
+    return tokens[0].upper() if tokens else ""
+
+
+def _pdbqt_atom_type(line: str) -> str:
+    tokens = str(line or "").split()
+    return tokens[-1].upper() if tokens else ""
+
+
+def _pdbqt_atom_is_hydrogen(line: str) -> bool:
+    return _pdbqt_atom_type(line) in PDBQT_HYDROGEN_ATOM_TYPES
 
 
 def _protocol_error(
@@ -124,12 +164,18 @@ def _clean_stats(stats: dict[str, Any]) -> dict[str, Any]:
         key: stats.get(key)
         for key in (
             "atom_count",
+            "heavy_atom_count",
             "coordinate_count",
+            "heavy_coordinate_count",
             "coordinate_bounds",
             "coordinate_center",
             "chains",
             "atom_types",
             "torsdof",
+            "branch_count",
+            "effective_branch_count",
+            "degenerate_branch_count",
+            "max_heavy_atom_distance_angstrom",
             "identity_sha256",
         )
     }
@@ -194,10 +240,603 @@ def _validate_joint_grid_resource(
                 or "请缩小对接箱体，或适当增大 spacing 后重试。"
             ),
         )
+    grid_estimate = dict(validation["grid_estimate"])
+    grid_estimate["config_number_serialization"] = (
+        CONFIG_FLOAT_SERIALIZATION
+    )
     return {
         "ok": True,
-        "grid_estimate": dict(validation["grid_estimate"]),
+        "grid_estimate": grid_estimate,
         "warnings": list(validation.get("warnings") or []),
+        "error": None,
+    }
+
+
+def _member_stats(member: dict[str, Any]) -> dict[str, Any]:
+    stats = (
+        member.get("stats")
+        if isinstance(member.get("stats"), dict)
+        else member
+    )
+    return stats if isinstance(stats, dict) else {}
+
+
+def _validate_joint_search_complexity(
+    members: list[dict[str, Any]],
+    vina: dict[str, Any],
+) -> dict[str, Any]:
+    """Freeze the explicit search dimensions used by the beta protocol.
+
+    Vina creates one search torsion for every non-empty PDBQT branch segment.
+    A leaf ``BRANCH`` containing only its immobile axis-end atom is parsed but
+    ignored by Vina's ``essentially_empty`` post-processing rule. ``TORSDOF``
+    remains a source-file declaration; Vina/Vinardo derive their torsion term
+    from the parsed molecular model instead. Each independently translated
+    and rotated ligand contributes another six rigid-body search dimensions.
+    """
+
+    member_facts: list[dict[str, int]] = []
+    torsion_declaration_difference_members: list[int] = []
+    degenerate_branch_members: list[int] = []
+    for member_index, member in enumerate(members, start=1):
+        stats = _member_stats(member)
+        try:
+            declared_torsdof = int(stats.get("torsdof"))
+            raw_branch_count = int(stats.get("branch_count"))
+            search_torsions = int(stats.get("effective_branch_count"))
+            degenerate_branch_count = int(
+                stats.get("degenerate_branch_count")
+            )
+            atom_count = int(stats.get("atom_count"))
+        except (TypeError, ValueError) as exc:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_SEARCH_COMPLEXITY_INVALID",
+                (
+                    "无法读取两个配体冻结的原子数、有效 BRANCH "
+                    "扭转或 TORSDOF 声明。"
+                ),
+                raw_error=f"member={member_index}; {exc}",
+                suggestion="请重新准备包含完整扭转树和 TORSDOF 的配体 PDBQT。",
+            )
+        if (
+            declared_torsdof < 0
+            or raw_branch_count < 0
+            or search_torsions < 0
+            or degenerate_branch_count < 0
+            or raw_branch_count
+            != search_torsions + degenerate_branch_count
+            or atom_count <= 0
+        ):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_SEARCH_COMPLEXITY_INVALID",
+                (
+                    "两个配体的原子数、BRANCH 树或 TORSDOF "
+                    "声明不满足共同对接审计要求。"
+                ),
+                raw_error=(
+                    f"member={member_index}; atoms={atom_count}; "
+                    f"raw_branches={raw_branch_count}; "
+                    f"effective_branches={search_torsions}; "
+                    f"degenerate_branches={degenerate_branch_count}; "
+                    f"torsdof={declared_torsdof}"
+                ),
+            )
+        if search_torsions != declared_torsdof:
+            torsion_declaration_difference_members.append(member_index)
+        if degenerate_branch_count:
+            degenerate_branch_members.append(member_index)
+        member_facts.append(
+            {
+                "member_index": member_index,
+                "atom_count": atom_count,
+                "raw_branch_count": raw_branch_count,
+                "degenerate_branch_count": degenerate_branch_count,
+                "search_torsions": search_torsions,
+                "declared_torsdof": declared_torsdof,
+                "rigid_body_dof": RIGID_BODY_DOF_PER_LIGAND,
+                "search_dof": (
+                    RIGID_BODY_DOF_PER_LIGAND + search_torsions
+                ),
+            }
+        )
+
+    total_search_torsions = sum(
+        item["search_torsions"]
+        for item in member_facts
+    )
+    total_branch_records = sum(
+        item["raw_branch_count"]
+        for item in member_facts
+    )
+    total_degenerate_branches = sum(
+        item["degenerate_branch_count"]
+        for item in member_facts
+    )
+    total_declared_torsdof = sum(
+        item["declared_torsdof"]
+        for item in member_facts
+    )
+    rigid_body_dof = MEMBER_COUNT * RIGID_BODY_DOF_PER_LIGAND
+    total_search_dof = rigid_body_dof + total_search_torsions
+    if (
+        total_search_torsions
+        > MAX_EXPERIMENTAL_TOTAL_SEARCH_TORSIONS
+    ):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_FLEXIBILITY_RISK_LIMIT_EXCEEDED",
+            (
+                "两个配体合计 Vina 有效搜索扭转数为 "
+                f"{total_search_torsions}，超过当前实验协议允许的"
+                "复杂度范围。"
+            ),
+            raw_error=json.dumps(
+                {
+                    "members": member_facts,
+                    "total_branch_records": total_branch_records,
+                    "total_degenerate_branches": (
+                        total_degenerate_branches
+                    ),
+                    "total_search_torsions": total_search_torsions,
+                    "total_declared_torsdof": total_declared_torsdof,
+                    "total_search_dof": total_search_dof,
+                    "maximum_experimental_total_search_torsions": (
+                        MAX_EXPERIMENTAL_TOTAL_SEARCH_TORSIONS
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            suggestion=(
+                "请降低活动扭转数量，或改为分别对接。该限制是 "
+                "DockStart 对实验协议的验证边界，不是 Vina 的硬上限。"
+            ),
+        )
+
+    try:
+        exhaustiveness = int(vina.get("exhaustiveness"))
+    except (TypeError, ValueError) as exc:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_SEARCH_COMPLEXITY_INVALID",
+            "无法读取共同对接冻结的 exhaustiveness。",
+            raw_error=str(exc),
+        )
+    warnings: list[str] = []
+    if degenerate_branch_members:
+        warnings.append(
+            "配体 "
+            + "、".join(str(value) for value in degenerate_branch_members)
+            + " 含仅有轴端原子的退化叶 BRANCH；Vina 会解析但不为"
+            "这些叶分支创建搜索扭转，DockStart 已按同一规则排除。"
+        )
+    if torsion_declaration_difference_members:
+        warnings.append(
+            "配体 "
+            + "、".join(
+                str(value)
+                for value in torsion_declaration_difference_members
+            )
+            + " 的 PDBQT TORSDOF 声明与 Vina 有效搜索扭转数不同；"
+            "二者语义不同，DockStart 只把 TORSDOF 作为来源声明记录。"
+        )
+    if exhaustiveness < RECOMMENDED_MIN_EXHAUSTIVENESS:
+        warnings.append(
+            "共同对接的搜索空间包含 "
+            f"{total_search_dof} 个显式自由度；当前 exhaustiveness="
+            f"{exhaustiveness} 低于实验协议复核建议值 "
+            f"{RECOMMENDED_MIN_EXHAUSTIVENESS}。请使用多个固定 seed "
+            "重复运行并比较联合构象稳定性。"
+        )
+    return {
+        "ok": True,
+        "search_complexity": {
+            "method": (
+                "two_rigid_bodies_plus_vina_effective_pdbqt_segments_v3"
+            ),
+            "members": member_facts,
+            "rigid_body_dof": rigid_body_dof,
+            "total_branch_records": total_branch_records,
+            "total_degenerate_branches": total_degenerate_branches,
+            "total_search_torsions": total_search_torsions,
+            "total_declared_torsdof": total_declared_torsdof,
+            "total_search_dof": total_search_dof,
+            "maximum_experimental_total_search_torsions": (
+                MAX_EXPERIMENTAL_TOTAL_SEARCH_TORSIONS
+            ),
+            "maximum_experimental_member_atoms": (
+                MAX_EXPERIMENTAL_MEMBER_ATOMS
+            ),
+            "maximum_experimental_member_bytes": (
+                MAX_EXPERIMENTAL_MEMBER_BYTES
+            ),
+            "torsion_declaration_difference_members": (
+                torsion_declaration_difference_members
+            ),
+            "degenerate_branch_members": degenerate_branch_members,
+            "exhaustiveness": exhaustiveness,
+            "recommended_min_exhaustiveness": (
+                RECOMMENDED_MIN_EXHAUSTIVENESS
+            ),
+            "within_experimental_limit": True,
+        },
+        "warnings": warnings,
+        "error": None,
+    }
+
+
+def _validate_joint_box_coverage(
+    box: dict[str, Any],
+    members: list[dict[str, Any]],
+    grid_estimate: dict[str, Any],
+) -> dict[str, Any]:
+    """Audit input geometry without rejecting a rotatable pose by orientation.
+
+    Absolute input placement is recorded but is deliberately not a blocker:
+    Vina global docking translates and rotates ligands.  Axis-aligned extents
+    are therefore warnings only.  The rotation-invariant maximum interatomic
+    heavy-atom distance is blocked only for a rigid ligand when it exceeds the
+    Box diagonal, which proves that the rigid conformation cannot fit in any
+    orientation. A flexible ligand can fold through its parsed torsions, so
+    its observed input diameter is never used as an impossibility proof.
+    """
+
+    axes = ("x", "y", "z")
+    try:
+        center = {
+            axis: float(box[f"center_{axis}"])
+            for axis in axes
+        }
+        requested_size = {
+            axis: float(box[f"size_{axis}"])
+            for axis in axes
+        }
+        spacing = float(grid_estimate["spacing_angstrom"])
+        intervals = {
+            axis: int(grid_estimate["axis_intervals"][axis])
+            for axis in axes
+        }
+    except (KeyError, TypeError, ValueError) as exc:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_BOX_COVERAGE_INVALID",
+            "无法读取共同对接冻结的 Box 中心或尺寸。",
+            raw_error=str(exc),
+        )
+    if not all(
+        math.isfinite(value)
+        for value in [
+            *center.values(),
+            *requested_size.values(),
+            spacing,
+        ]
+    ) or any(
+        value <= 0 for value in requested_size.values()
+    ) or spacing <= 0 or any(value <= 0 for value in intervals.values()):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_BOX_COVERAGE_INVALID",
+            "Box 中心必须是有限数，三个尺寸必须是有限正数。",
+            raw_error=json.dumps(
+                {
+                    "center": center,
+                    "requested_size": requested_size,
+                    "spacing": spacing,
+                    "axis_intervals": intervals,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+    effective_size = {
+        axis: intervals[axis] * spacing
+        for axis in axes
+    }
+    requested_bounds = {
+        "min": {
+            axis: center[axis] - requested_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + requested_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    effective_bounds = {
+        "min": {
+            axis: center[axis] - effective_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + effective_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    box_diagonal = math.sqrt(
+        sum(value**2 for value in effective_size.values())
+    )
+
+    member_facts: list[dict[str, Any]] = []
+    outside_source_members: list[int] = []
+    axis_aligned_oversized: list[dict[str, Any]] = []
+    impossible_rigid_diameters: list[dict[str, Any]] = []
+    flexible_diameter_audit_members: list[int] = []
+    for member_index, member in enumerate(members, start=1):
+        stats = _member_stats(member)
+        bounds = (
+            stats.get("coordinate_bounds")
+            if isinstance(stats.get("coordinate_bounds"), dict)
+            else {}
+        )
+        minimum = (
+            bounds.get("min")
+            if isinstance(bounds.get("min"), dict)
+            else {}
+        )
+        maximum = (
+            bounds.get("max")
+            if isinstance(bounds.get("max"), dict)
+            else {}
+        )
+        try:
+            atom_count = int(stats.get("atom_count"))
+            heavy_atom_count = int(stats.get("heavy_atom_count"))
+            coordinate_count = int(stats.get("coordinate_count"))
+            heavy_coordinate_count = int(
+                stats.get("heavy_coordinate_count")
+            )
+            search_torsions = int(
+                stats.get("effective_branch_count")
+            )
+            observed_min = {
+                axis: float(minimum[axis])
+                for axis in axes
+            }
+            observed_max = {
+                axis: float(maximum[axis])
+                for axis in axes
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_COORDINATE_COVERAGE_INVALID",
+                (
+                    f"第 {member_index} 个配体缺少完整、有限的三维"
+                    "坐标范围。"
+                ),
+                raw_error=str(exc),
+                suggestion="请重新准备包含有效三维坐标的配体 PDBQT。",
+            )
+        maximum_heavy_atom_distance: float | None = None
+        if search_torsions == 0:
+            try:
+                maximum_heavy_atom_distance = float(
+                    stats.get("max_heavy_atom_distance_angstrom")
+                )
+            except (TypeError, ValueError) as exc:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_COORDINATE_COVERAGE_INVALID",
+                    (
+                        f"第 {member_index} 个刚性配体缺少可验证的"
+                        "重原子直径。"
+                    ),
+                    raw_error=str(exc),
+                    suggestion="请重新准备包含有效三维坐标的配体 PDBQT。",
+                )
+        coordinates = [*observed_min.values(), *observed_max.values()]
+        if (
+            atom_count <= 0
+            or heavy_atom_count <= 0
+            or coordinate_count != atom_count
+            or heavy_coordinate_count != heavy_atom_count
+            or search_torsions < 0
+            or (
+                maximum_heavy_atom_distance is not None
+                and (
+                    not math.isfinite(maximum_heavy_atom_distance)
+                    or maximum_heavy_atom_distance < 0
+                )
+            )
+            or not all(math.isfinite(value) for value in coordinates)
+            or any(observed_max[axis] < observed_min[axis] for axis in axes)
+        ):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_COORDINATE_COVERAGE_INVALID",
+                (
+                    f"第 {member_index} 个配体的三维坐标记录不完整"
+                    "或范围无效。"
+                ),
+                raw_error=(
+                    f"atoms={atom_count}; coordinates={coordinate_count}; "
+                    f"heavy_atoms={heavy_atom_count}; "
+                    f"heavy_coordinates={heavy_coordinate_count}; "
+                    f"search_torsions={search_torsions}; "
+                    "heavy_atom_diameter="
+                    f"{maximum_heavy_atom_distance}; "
+                    f"bounds={json.dumps(bounds, ensure_ascii=False)}"
+                ),
+                suggestion="请重新准备包含有效三维坐标的配体 PDBQT。",
+            )
+        extent = {
+            axis: observed_max[axis] - observed_min[axis]
+            for axis in axes
+        }
+        fit_margin = {
+            axis: effective_size[axis] - extent[axis]
+            for axis in axes
+        }
+        failed_axes = [
+            axis
+            for axis in axes
+            if fit_margin[axis] < -BOX_FIT_EPSILON_ANGSTROM
+        ]
+        current_pose_inside_requested = all(
+            observed_min[axis]
+            >= requested_bounds["min"][axis]
+            - BOX_FIT_EPSILON_ANGSTROM
+            and observed_max[axis]
+            <= requested_bounds["max"][axis]
+            + BOX_FIT_EPSILON_ANGSTROM
+            for axis in axes
+        )
+        current_pose_inside_effective = all(
+            observed_min[axis]
+            >= effective_bounds["min"][axis]
+            - BOX_FIT_EPSILON_ANGSTROM
+            and observed_max[axis]
+            <= effective_bounds["max"][axis]
+            + BOX_FIT_EPSILON_ANGSTROM
+            for axis in axes
+        )
+        if failed_axes:
+            axis_aligned_oversized.append(
+                {
+                    "member_index": member_index,
+                    "failed_axes": failed_axes,
+                    "extent_angstrom": extent,
+                    "effective_grid_size_angstrom": dict(effective_size),
+                }
+            )
+        diameter_margin = (
+            box_diagonal - maximum_heavy_atom_distance
+            if maximum_heavy_atom_distance is not None
+            else None
+        )
+        if (
+            diameter_margin is not None
+            and diameter_margin < -BOX_FIT_EPSILON_ANGSTROM
+        ):
+            impossible_rigid_diameters.append(
+                {
+                    "member_index": member_index,
+                    "maximum_heavy_atom_distance_angstrom": (
+                        maximum_heavy_atom_distance
+                    ),
+                    "effective_grid_diagonal_angstrom": box_diagonal,
+                    "diameter_margin_angstrom": diameter_margin,
+                }
+            )
+        if search_torsions > 0:
+            flexible_diameter_audit_members.append(member_index)
+        if not current_pose_inside_requested:
+            outside_source_members.append(member_index)
+        member_facts.append(
+            {
+                "member_index": member_index,
+                "atom_count": atom_count,
+                "heavy_atom_count": heavy_atom_count,
+                "coordinate_count": coordinate_count,
+                "heavy_coordinate_count": heavy_coordinate_count,
+                "effective_search_torsions": search_torsions,
+                "input_bounds_angstrom": {
+                    "min": observed_min,
+                    "max": observed_max,
+                },
+                "input_extent_angstrom": extent,
+                "axis_aligned_fit_margin_angstrom": fit_margin,
+                "input_axis_aligned_extent_fits_box": not failed_axes,
+                "rigid_heavy_atom_diameter_gate_applicable": (
+                    search_torsions == 0
+                ),
+                "maximum_heavy_atom_distance_angstrom": (
+                    maximum_heavy_atom_distance
+                ),
+                "box_diagonal_margin_angstrom": diameter_margin,
+                "rigid_heavy_atom_diameter_fits_box_diagonal": (
+                    None
+                    if diameter_margin is None
+                    else diameter_margin >= -BOX_FIT_EPSILON_ANGSTROM
+                ),
+                "source_pose_inside_requested_box": (
+                    current_pose_inside_requested
+                ),
+                "source_pose_inside_effective_grid": (
+                    current_pose_inside_effective
+                ),
+            }
+        )
+
+    if impossible_rigid_diameters:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_BOX_DIAGONAL_TOO_SMALL_FOR_INPUT_GEOMETRY",
+            (
+                "至少一个刚性配体的重原子直径大于 Vina 有效网格"
+                "对角线，任何刚体旋转都无法把该刚性构象完整放入。"
+            ),
+            raw_error=json.dumps(
+                impossible_rigid_diameters,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            suggestion=(
+                "请增大 Box，并确认扩大的区域仍对应目标结合位点；"
+                "该阻断只适用于没有有效搜索扭转的刚性成员。"
+            ),
+        )
+
+    warnings: list[str] = []
+    if axis_aligned_oversized:
+        warnings.append(
+            "至少一个配体按源文件当前朝向的轴向尺寸大于 Box "
+            "对应轴；全局搜索允许旋转，因此这只作为提示，不作为"
+            "失败条件。请结合目标口袋与输出原子边界复核。"
+        )
+    if outside_source_members:
+        warnings.append(
+            "配体源文件 "
+            + "、".join(str(value) for value in outside_source_members)
+            + " 的当前绝对坐标不完全位于 Box 内。Vina 全局搜索会移动"
+            "配体，因此这不是阻断条件；仍需确认 Box 覆盖目标口袋，并"
+            "在结果中复核原子是否越出 Box。"
+        )
+    if flexible_diameter_audit_members:
+        warnings.append(
+            "配体 "
+            + "、".join(
+                str(value)
+                for value in flexible_diameter_audit_members
+            )
+            + " 含有效搜索扭转；柔性构象可折叠或伸展，因此输入"
+            "构象直径不作为无法容纳的硬门禁，最终按输出重原子"
+            "边界复核。"
+        )
+    return {
+        "ok": True,
+        "box_coverage": {
+            "method": (
+                "effective_grid_rigid_heavy_atom_diameter_gate_v4"
+            ),
+            "epsilon_angstrom": BOX_FIT_EPSILON_ANGSTROM,
+            "box_center_angstrom": center,
+            "requested_box_size_angstrom": requested_size,
+            "requested_box_bounds_angstrom": requested_bounds,
+            "effective_grid_spacing_angstrom": spacing,
+            "effective_grid_axis_intervals": intervals,
+            "effective_grid_size_angstrom": effective_size,
+            "effective_grid_bounds_angstrom": effective_bounds,
+            "effective_grid_diagonal_angstrom": box_diagonal,
+            "members": member_facts,
+            "all_applicable_rigid_heavy_atom_diameters_fit_box_diagonal": (
+                True
+            ),
+            "all_input_axis_aligned_extents_fit": (
+                not axis_aligned_oversized
+            ),
+            "axis_aligned_oversized_members": [
+                item["member_index"]
+                for item in axis_aligned_oversized
+            ],
+            "source_pose_inside_requested_box_required": False,
+            "outside_requested_box_source_pose_members": (
+                outside_source_members
+            ),
+            "flexible_diameter_audit_members": (
+                flexible_diameter_audit_members
+            ),
+            "interpretation": (
+                "源文件绝对位置和当前朝向不构成全局搜索硬门禁；"
+                "只有刚性成员的重原子直径大于有效网格对角线才能证明"
+                "该构象无法容纳；柔性成员不使用这一证明。重原子"
+                "直径通过也不证明两个配体能同时得到合理构象。"
+                "最终接受条件按 Vina 实际网格中的输出重原子复核。"
+            ),
+        },
+        "warnings": warnings,
         "error": None,
     }
 
@@ -314,13 +953,55 @@ def _pdbqt_identity_sha256(lines: list[str]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _pdbqt_file_identity_sha256(path: Path) -> str:
-    return _pdbqt_identity_sha256(
-        path.read_text(
-            encoding="utf-8",
-            errors="replace",
-        ).splitlines()
-    )
+def _pdbqt_finite_coordinates(
+    lines: list[str],
+    *,
+    heavy_only: bool = False,
+) -> list[tuple[float, float, float]]:
+    coordinates: list[tuple[float, float, float]] = []
+    for line in lines:
+        if line[:6].strip().upper() not in {"ATOM", "HETATM"}:
+            continue
+        if heavy_only and _pdbqt_atom_is_hydrogen(line):
+            continue
+        try:
+            point = (
+                float(line[30:38]),
+                float(line[38:46]),
+                float(line[46:54]),
+            )
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(value) for value in point):
+            coordinates.append(point)
+    return coordinates
+
+
+def _maximum_interatomic_distance(
+    coordinates: list[tuple[float, float, float]],
+) -> float:
+    maximum_squared = 0.0
+    for first_index, first in enumerate(coordinates):
+        for second in coordinates[first_index + 1 :]:
+            squared = sum(
+                (left - right) ** 2
+                for left, right in zip(first, second)
+            )
+            maximum_squared = max(maximum_squared, squared)
+    return math.sqrt(maximum_squared)
+
+
+def _read_member_pdbqt_text(path: Path) -> str:
+    """Read one experimental member without unbounded text allocation."""
+
+    with path.open("rb") as handle:
+        payload = handle.read(MAX_EXPERIMENTAL_MEMBER_BYTES + 1)
+    if len(payload) > MAX_EXPERIMENTAL_MEMBER_BYTES:
+        raise OverflowError(
+            "multiple-ligand member exceeds byte limit: "
+            f"observed>{MAX_EXPERIMENTAL_MEMBER_BYTES}"
+        )
+    return payload.decode("utf-8", errors="strict")
 
 
 def _relative_snapshot(
@@ -329,13 +1010,53 @@ def _relative_snapshot(
     *,
     ligand: bool,
 ) -> dict[str, Any]:
+    if ligand:
+        size_bytes = path.stat().st_size
+        if size_bytes > MAX_EXPERIMENTAL_MEMBER_BYTES:
+            raise ValueError(
+                "multiple-ligand member exceeds byte limit: "
+                f"size={size_bytes}; "
+                f"limit={MAX_EXPERIMENTAL_MEMBER_BYTES}"
+            )
+        ligand_text = _read_member_pdbqt_text(path)
+    else:
+        ligand_text = ""
     stats = _parse_pdbqt_stats(
         path,
         relative_path,
         ligand=ligand,
     )
     if ligand:
-        stats["identity_sha256"] = _pdbqt_file_identity_sha256(path)
+        lines = ligand_text.splitlines()
+        tree_validation = _validate_single_ligand_torsion_tree(lines, 1)
+        if not tree_validation.get("ok"):
+            detail = tree_validation.get("error") or {}
+            raise ValueError(
+                json.dumps(detail, ensure_ascii=False, sort_keys=True)
+            )
+        stats["identity_sha256"] = _pdbqt_identity_sha256(lines)
+        stats["branch_count"] = int(
+            tree_validation["branch_count"]
+        )
+        stats["effective_branch_count"] = int(
+            tree_validation["effective_branch_count"]
+        )
+        stats["degenerate_branch_count"] = int(
+            tree_validation["degenerate_branch_count"]
+        )
+        stats["heavy_atom_count"] = int(
+            tree_validation["heavy_atom_count"]
+        )
+        heavy_coordinates = _pdbqt_finite_coordinates(
+            lines,
+            heavy_only=True,
+        )
+        stats["heavy_coordinate_count"] = len(heavy_coordinates)
+        stats["max_heavy_atom_distance_angstrom"] = (
+            _maximum_interatomic_distance(heavy_coordinates)
+            if not stats["effective_branch_count"]
+            else None
+        )
     stats.pop("absolute_path", None)
     return stats
 
@@ -838,6 +1559,21 @@ def _build_command(vina_path: str, run_id: str) -> list[str]:
     ]
 
 
+def _format_roundtrip_config_number(value: int | float) -> str:
+    """Serialize a finite number without changing the float Vina receives."""
+
+    if isinstance(value, bool):
+        raise TypeError("布尔值不能作为 Vina 数字参数。")
+    if isinstance(value, int):
+        return str(value)
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("Vina 数字参数必须是有限数。")
+    if number == 0:
+        return "0"
+    return format(number, ".17g")
+
+
 def _build_config(project: Any, run_id: str) -> str:
     receptor = _fixed_run_relative(run_id, "inputs", "receptor.pdbqt")
     vina = project.vina
@@ -846,21 +1582,21 @@ def _build_config(project: Any, run_id: str) -> str:
         f"receptor = {receptor}",
         f"scoring = {vina.scoring}",
         "",
-        f"center_x = {_format_config_number(box.center_x)}",
-        f"center_y = {_format_config_number(box.center_y)}",
-        f"center_z = {_format_config_number(box.center_z)}",
+        f"center_x = {_format_roundtrip_config_number(box.center_x)}",
+        f"center_y = {_format_roundtrip_config_number(box.center_y)}",
+        f"center_z = {_format_roundtrip_config_number(box.center_z)}",
         "",
-        f"size_x = {_format_config_number(box.size_x)}",
-        f"size_y = {_format_config_number(box.size_y)}",
-        f"size_z = {_format_config_number(box.size_z)}",
+        f"size_x = {_format_roundtrip_config_number(box.size_x)}",
+        f"size_y = {_format_roundtrip_config_number(box.size_y)}",
+        f"size_z = {_format_roundtrip_config_number(box.size_z)}",
         "",
         f"exhaustiveness = {vina.exhaustiveness}",
         f"max_evals = {vina.max_evals}",
         f"num_modes = {vina.num_modes}",
-        f"min_rmsd = {_format_config_number(vina.min_rmsd)}",
-        f"energy_range = {_format_config_number(vina.energy_range)}",
+        f"min_rmsd = {_format_roundtrip_config_number(vina.min_rmsd)}",
+        f"energy_range = {_format_roundtrip_config_number(vina.energy_range)}",
         f"cpu = {vina.cpu}",
-        f"spacing = {_format_config_number(vina.spacing)}",
+        f"spacing = {_format_roundtrip_config_number(vina.spacing)}",
     ]
     if vina.no_refine:
         lines.append("no_refine = true")
@@ -934,6 +1670,17 @@ def _validate_single_ligand_torsion_tree(
 ) -> dict[str, Any]:
     """Validate one complete, non-MODE PDBQT ligand torsion tree."""
 
+    for line_number, line in enumerate(lines, start=1):
+        if line and not line.strip():
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_WHITESPACE_RECORD_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行只含"
+                    "空白字符；Vina 只忽略真正的空行。"
+                ),
+                raw_error=repr(line),
+                suggestion="请删除空白记录并重新保存标准 PDBQT。",
+            )
     records = [
         (line_number, line, line.split())
         for line_number, line in enumerate(lines, start=1)
@@ -1015,7 +1762,64 @@ def _validate_single_ligand_torsion_tree(
             suggestion="请移除 TORSDOF 后的附加记录，或重新准备配体。",
         )
 
+    vina_tags = {
+        "ROOT",
+        "ENDROOT",
+        "BRANCH",
+        "ENDBRANCH",
+        "TORSDOF",
+        "ATOM",
+        "HETATM",
+        "REMARK",
+        "WARNING",
+    }
+    for line_number, line, tokens in records:
+        raw_keyword = tokens[0]
+        keyword = raw_keyword.upper()
+        if keyword in vina_tags and line[:1].isspace():
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_TAG_ALIGNMENT_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行的 "
+                    f"{keyword} 前存在空白，Vina 要求标签从行首开始。"
+                ),
+                raw_error=line,
+                suggestion="请使用 Meeko 等工具重新导出标准 PDBQT。",
+            )
+        if keyword in vina_tags and raw_keyword != keyword:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_TAG_CASE_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行的 "
+                    f"{raw_keyword} 不是 Vina 接受的大写标签。"
+                ),
+                raw_error=line,
+                suggestion="请使用 Meeko 等工具重新导出标准 PDBQT。",
+            )
+        if keyword == "ATOM" and not line.startswith("ATOM  "):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_ATOM_RECORD_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行"
+                    "不是 Vina 接受的固定列 ATOM 记录。"
+                ),
+                raw_error=line,
+                suggestion="请使用 Meeko 等工具重新导出标准 PDBQT。",
+            )
+        if keyword == "HETATM" and not line.startswith("HETATM"):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_ATOM_RECORD_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行"
+                    "不是 Vina 接受的固定列 HETATM 记录。"
+                ),
+                raw_error=line,
+                suggestion="请使用 Meeko 等工具重新导出标准 PDBQT。",
+            )
+
     atom_serials: set[int] = set()
+    atom_coordinates: dict[int, tuple[float, float, float]] = {}
+    heavy_atom_count = 0
     for line_number, line, tokens in records:
         if tokens[0].upper() not in {"ATOM", "HETATM"}:
             continue
@@ -1038,13 +1842,71 @@ def _validate_single_ligand_torsion_tree(
                 raw_error=f"line={line_number}; serial={serial}",
             )
         atom_serials.add(serial)
+        try:
+            coordinates = (
+                float(line[30:38]),
+                float(line[38:46]),
+                float(line[46:54]),
+            )
+        except (TypeError, ValueError):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_COORDINATE_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行"
+                    "缺少标准、有限的 PDBQT 三维坐标。"
+                ),
+                raw_error=line,
+                suggestion="请重新准备该配体 PDBQT。",
+            )
+        if not all(math.isfinite(value) for value in coordinates):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_COORDINATE_INVALID",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行"
+                    "包含非有限三维坐标。"
+                ),
+                raw_error=line,
+                suggestion="请重新准备该配体 PDBQT。",
+            )
+        atom_coordinates[serial] = coordinates
+        if not _pdbqt_atom_is_hydrogen(line):
+            heavy_atom_count += 1
+
+    if not atom_serials or heavy_atom_count <= 0:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_INPUT_HEAVY_ATOMS_MISSING",
+            f"第 {member_index} 个配体必须至少包含一个非氢原子。",
+            suggestion="请重新准备有效的小分子配体 PDBQT。",
+        )
+    if len(atom_serials) > MAX_EXPERIMENTAL_MEMBER_ATOMS:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_MEMBER_ATOM_LIMIT_EXCEEDED",
+            (
+                f"第 {member_index} 个配体包含 {len(atom_serials)} 个原子，"
+                "超过当前共同对接实验协议的单成员安全上限。"
+            ),
+            raw_error=(
+                f"atoms={len(atom_serials)}; "
+                f"limit={MAX_EXPERIMENTAL_MEMBER_ATOMS}"
+            ),
+            suggestion=(
+                "请确认没有误选受体或聚合物文件；本协议只验证两个"
+                "已准备的小分子配体。"
+            ),
+        )
 
     root_open = False
     root_closed = False
     root_atom_count = 0
-    branch_stack: list[tuple[int, int]] = []
+    root_segment: dict[str, Any] = {
+        "atom_serials": [],
+        "has_child_branch": False,
+    }
+    branch_stack: list[dict[str, Any]] = []
     branch_count = 0
-    for line_number, _, tokens in records:
+    effective_branch_count = 0
+    degenerate_branch_count = 0
+    for line_number, line, tokens in records:
         keyword = tokens[0].upper()
         if keyword == "ROOT":
             if len(tokens) != 1 or root_open or root_closed or branch_stack:
@@ -1075,6 +1937,24 @@ def _validate_single_ligand_torsion_tree(
                     raw_error=pair_error or f"line={line_number}",
                 )
             assert pair is not None
+            parent_segment = (
+                branch_stack[-1]
+                if branch_stack
+                else root_segment
+            )
+            if pair[0] not in parent_segment["atom_serials"]:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_INPUT_BRANCH_PARENT_INVALID",
+                    (
+                        f"第 {member_index} 个配体的 BRANCH 父端点"
+                        "必须是当前父段中已经出现的原子。"
+                    ),
+                    raw_error=f"line={line_number}; pair={pair}",
+                    suggestion=(
+                        "请使用 Meeko 等工具重新准备与 Vina 解析"
+                        "语义一致的配体扭转树。"
+                    ),
+                )
             if pair[0] == pair[1]:
                 return _protocol_error(
                     "MULTIPLE_LIGAND_INPUT_BRANCH_ENDPOINT_INVALID",
@@ -1094,7 +1974,14 @@ def _validate_single_ligand_torsion_tree(
                     ),
                     raw_error=f"line={line_number}; pair={pair}",
                 )
-            branch_stack.append(pair)
+            parent_segment["has_child_branch"] = True
+            branch_stack.append(
+                {
+                    "pair": pair,
+                    "atom_serials": [],
+                    "has_child_branch": False,
+                }
+            )
             branch_count += 1
         elif keyword == "ENDBRANCH":
             pair, pair_error = _parse_branch_pair(
@@ -1104,7 +1991,7 @@ def _validate_single_ligand_torsion_tree(
             if (
                 pair_error
                 or not branch_stack
-                or pair != branch_stack[-1]
+                or pair != branch_stack[-1]["pair"]
             ):
                 return _protocol_error(
                     "MULTIPLE_LIGAND_INPUT_BRANCH_TREE_INVALID",
@@ -1116,7 +2003,8 @@ def _validate_single_ligand_torsion_tree(
                         pair_error
                         or (
                             f"line={line_number}; observed={pair}; "
-                            f"expected={branch_stack[-1] if branch_stack else None}"
+                            "expected="
+                            f"{branch_stack[-1]['pair'] if branch_stack else None}"
                         )
                     ),
                 )
@@ -1130,10 +2018,56 @@ def _validate_single_ligand_torsion_tree(
                     ),
                     raw_error=f"line={line_number}; pair={pair}",
                 )
-            branch_stack.pop()
+            axis_length = math.dist(
+                atom_coordinates[pair[0]],
+                atom_coordinates[pair[1]],
+            )
+            # This is intentionally stricter than Vina's handling of an
+            # essentially-empty leaf.  Vina may discard such a leaf before
+            # it needs a torsion axis, but two distinct bonded endpoints at
+            # coincident coordinates are not a scientifically usable input
+            # geometry.  The experimental protocol therefore rejects the raw
+            # branch as an explicit DockStart input-quality gate.
+            if axis_length <= BRANCH_AXIS_MIN_LENGTH_ANGSTROM:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_INPUT_BRANCH_AXIS_INVALID",
+                    (
+                        f"第 {member_index} 个配体的 BRANCH 两个轴端"
+                        "坐标重合或距离过小，不能定义稳定扭转轴。"
+                    ),
+                    raw_error=(
+                        f"line={line_number}; pair={pair}; "
+                        f"axis_length={axis_length}"
+                    ),
+                    suggestion="请重新准备该配体的三维构象与扭转树。",
+                )
+            branch = branch_stack.pop()
+            if pair[1] not in branch["atom_serials"]:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_INPUT_BRANCH_AXIS_END_MISSING",
+                    (
+                        f"第 {member_index} 个配体的 BRANCH 块"
+                        "没有包含其子端点原子。"
+                    ),
+                    raw_error=f"line={line_number}; pair={pair}",
+                    suggestion=(
+                        "请使用 Meeko 等工具重新准备完整的配体"
+                        "扭转树。"
+                    ),
+                )
+            essentially_empty = (
+                branch["atom_serials"] == [pair[1]]
+                and not branch["has_child_branch"]
+            )
+            if essentially_empty:
+                degenerate_branch_count += 1
+            else:
+                effective_branch_count += 1
         elif keyword in {"ATOM", "HETATM"}:
+            serial = int(_pdbqt_atom_serial(line))
             if root_open:
                 root_atom_count += 1
+                root_segment["atom_serials"].append(serial)
             elif not branch_stack:
                 return _protocol_error(
                     "MULTIPLE_LIGAND_INPUT_BRANCH_TREE_INVALID",
@@ -1142,6 +2076,24 @@ def _validate_single_ligand_torsion_tree(
                         "原子不在 ROOT 或 BRANCH 中。"
                     ),
                 )
+            else:
+                branch_stack[-1]["atom_serials"].append(serial)
+        elif keyword in {
+            "REMARK",
+            "WARNING",
+            "TORSDOF",
+        }:
+            continue
+        else:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_INPUT_TAG_UNSUPPORTED",
+                (
+                    f"第 {member_index} 个配体第 {line_number} 行包含"
+                    " Vina 配体解析器不接受的标签。"
+                ),
+                raw_error=line,
+                suggestion="请重新导出标准的单配体 PDBQT。",
+            )
 
     if root_open or not root_closed or root_atom_count <= 0:
         return _protocol_error(
@@ -1158,6 +2110,10 @@ def _validate_single_ligand_torsion_tree(
         "ok": True,
         "torsdof": torsdof,
         "branch_count": branch_count,
+        "effective_branch_count": effective_branch_count,
+        "degenerate_branch_count": degenerate_branch_count,
+        "atom_count": len(atom_serials),
+        "heavy_atom_count": heavy_atom_count,
         "root_atom_count": root_atom_count,
         "error": None,
     }
@@ -1187,10 +2143,25 @@ def _validate_source_ligand(
         )
     try:
         source = Path(path_value).expanduser().resolve(strict=True)
-        source_text = source.read_text(
-            encoding="utf-8",
-            errors="strict",
-        )
+        source_size = source.stat().st_size
+        if source_size > MAX_EXPERIMENTAL_MEMBER_BYTES:
+            return None, _protocol_error(
+                "MULTIPLE_LIGAND_MEMBER_FILE_LIMIT_EXCEEDED",
+                (
+                    f"第 {member_index} 个配体文件大小为 "
+                    f"{source_size} bytes，超过共同对接实验协议"
+                    "的单成员安全上限。"
+                ),
+                raw_error=(
+                    f"size={source_size}; "
+                    f"limit={MAX_EXPERIMENTAL_MEMBER_BYTES}"
+                ),
+                suggestion=(
+                    "请确认没有误选受体、轨迹或包含大量附加记录的"
+                    "文件；本协议只接受已准备的小分子 PDBQT。"
+                ),
+            )
+        source_text = _read_member_pdbqt_text(source)
         tree_validation = _validate_single_ligand_torsion_tree(
             source_text.splitlines(),
             member_index,
@@ -1202,8 +2173,43 @@ def _validate_source_ligand(
             source.name,
             ligand=True,
         )
+        stats["branch_count"] = int(
+            tree_validation["branch_count"]
+        )
+        stats["effective_branch_count"] = int(
+            tree_validation["effective_branch_count"]
+        )
+        stats["degenerate_branch_count"] = int(
+            tree_validation["degenerate_branch_count"]
+        )
+        stats["heavy_atom_count"] = int(
+            tree_validation["heavy_atom_count"]
+        )
+        source_coordinates = _pdbqt_finite_coordinates(
+            source_text.splitlines(),
+            heavy_only=True,
+        )
+        stats["heavy_coordinate_count"] = len(source_coordinates)
+        stats["max_heavy_atom_distance_angstrom"] = (
+            _maximum_interatomic_distance(source_coordinates)
+            if not stats["effective_branch_count"]
+            else None
+        )
         stats["identity_sha256"] = _pdbqt_identity_sha256(
             source_text.splitlines()
+        )
+    except OverflowError as exc:
+        return None, _protocol_error(
+            "MULTIPLE_LIGAND_MEMBER_FILE_LIMIT_EXCEEDED",
+            (
+                f"第 {member_index} 个配体在读取期间超过共同对接"
+                "实验协议的单成员安全上限。"
+            ),
+            raw_error=str(exc),
+            suggestion=(
+                "请确认文件没有被其他程序替换，并选择已准备的"
+                "小分子 PDBQT。"
+            ),
         )
     except ValueError as exc:
         return None, _protocol_error(
@@ -1338,25 +2344,148 @@ def _expected_member_stat(
     return stats.get(key) if isinstance(stats, dict) else None
 
 
-def _member_block_stats(lines: list[str]) -> dict[str, Any]:
-    atom_count = sum(
-        1
-        for line in lines
-        if line[:6].strip().upper() in {"ATOM", "HETATM"}
+def _member_block_stats(
+    lines: list[str],
+    member_index: int,
+) -> dict[str, Any]:
+    tree_validation = _validate_single_ligand_torsion_tree(
+        lines,
+        member_index,
     )
-    torsdof: int | None = None
+    if not tree_validation.get("ok"):
+        return tree_validation
+    atom_count = 0
+    heavy_atom_count = 0
+    hydrogen_atom_count = 0
+    coordinate_count = 0
+    heavy_coordinate_count = 0
+    hydrogen_coordinate_count = 0
+    coordinate_min: list[float] | None = None
+    coordinate_max: list[float] | None = None
+    heavy_coordinate_min: list[float] | None = None
+    heavy_coordinate_max: list[float] | None = None
+    hydrogen_coordinate_min: list[float] | None = None
+    hydrogen_coordinate_max: list[float] | None = None
     for line in lines:
-        if line.lstrip().upper().startswith("TORSDOF"):
-            parts = line.split()
-            if len(parts) == 2:
-                try:
-                    torsdof = int(parts[1])
-                except ValueError:
-                    torsdof = None
+        if line[:6].strip().upper() not in {"ATOM", "HETATM"}:
+            continue
+        atom_count += 1
+        is_hydrogen = _pdbqt_atom_is_hydrogen(line)
+        if is_hydrogen:
+            hydrogen_atom_count += 1
+        else:
+            heavy_atom_count += 1
+        try:
+            coordinates = [
+                float(line[30:38]),
+                float(line[38:46]),
+                float(line[46:54]),
+            ]
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in coordinates):
+            continue
+        coordinate_count += 1
+        if coordinate_min is None or coordinate_max is None:
+            coordinate_min = coordinates.copy()
+            coordinate_max = coordinates.copy()
+        else:
+            coordinate_min = [
+                min(current, value)
+                for current, value in zip(coordinate_min, coordinates)
+            ]
+            coordinate_max = [
+                max(current, value)
+                for current, value in zip(coordinate_max, coordinates)
+            ]
+        if is_hydrogen:
+            hydrogen_coordinate_count += 1
+            if (
+                hydrogen_coordinate_min is None
+                or hydrogen_coordinate_max is None
+            ):
+                hydrogen_coordinate_min = coordinates.copy()
+                hydrogen_coordinate_max = coordinates.copy()
+            else:
+                hydrogen_coordinate_min = [
+                    min(current, value)
+                    for current, value in zip(
+                        hydrogen_coordinate_min,
+                        coordinates,
+                    )
+                ]
+                hydrogen_coordinate_max = [
+                    max(current, value)
+                    for current, value in zip(
+                        hydrogen_coordinate_max,
+                        coordinates,
+                    )
+                ]
+        else:
+            heavy_coordinate_count += 1
+            if heavy_coordinate_min is None or heavy_coordinate_max is None:
+                heavy_coordinate_min = coordinates.copy()
+                heavy_coordinate_max = coordinates.copy()
+            else:
+                heavy_coordinate_min = [
+                    min(current, value)
+                    for current, value in zip(
+                        heavy_coordinate_min,
+                        coordinates,
+                    )
+                ]
+                heavy_coordinate_max = [
+                    max(current, value)
+                    for current, value in zip(
+                        heavy_coordinate_max,
+                        coordinates,
+                    )
+                ]
+
+    def bounds_from(
+        minimum: list[float] | None,
+        maximum: list[float] | None,
+    ) -> dict[str, dict[str, float]] | None:
+        if minimum is None or maximum is None:
+            return None
+        return {
+            "min": dict(zip(("x", "y", "z"), minimum)),
+            "max": dict(zip(("x", "y", "z"), maximum)),
+        }
+
+    coordinate_bounds = None
+    if coordinate_min is not None and coordinate_max is not None:
+        coordinate_bounds = bounds_from(
+            coordinate_min,
+            coordinate_max,
+        )
     return {
+        "ok": True,
         "atom_count": atom_count,
-        "torsdof": torsdof,
+        "heavy_atom_count": heavy_atom_count,
+        "hydrogen_atom_count": hydrogen_atom_count,
+        "coordinate_count": coordinate_count,
+        "heavy_coordinate_count": heavy_coordinate_count,
+        "hydrogen_coordinate_count": hydrogen_coordinate_count,
+        "coordinate_bounds": coordinate_bounds,
+        "heavy_coordinate_bounds": bounds_from(
+            heavy_coordinate_min,
+            heavy_coordinate_max,
+        ),
+        "hydrogen_coordinate_bounds": bounds_from(
+            hydrogen_coordinate_min,
+            hydrogen_coordinate_max,
+        ),
+        "branch_count": int(tree_validation["branch_count"]),
+        "effective_branch_count": int(
+            tree_validation["effective_branch_count"]
+        ),
+        "degenerate_branch_count": int(
+            tree_validation["degenerate_branch_count"]
+        ),
+        "torsdof": int(tree_validation["torsdof"]),
         "identity_sha256": _pdbqt_identity_sha256(lines),
+        "error": None,
     }
 
 
@@ -1419,7 +2548,10 @@ def _parse_model(
             )
         block_lines = segment[structural_start:]
         try:
-            observed = _member_block_stats(block_lines)
+            observed = _member_block_stats(
+                block_lines,
+                offset + 1,
+            )
         except ValueError as exc:
             return _protocol_error(
                 "MULTIPLE_LIGAND_MEMBER_PARTIAL_CHARGE_INVALID",
@@ -1430,22 +2562,58 @@ def _parse_model(
                 raw_error=str(exc),
                 suggestion="请确认 out.pdbqt 来自本次 Vina 运行且没有被修改。",
             )
+        if not observed.get("ok"):
+            return observed
         expected = members[offset]
         expected_atom_count = int(_expected_member_stat(expected, "atom_count") or 0)
+        expected_heavy_atom_count = int(
+            _expected_member_stat(expected, "heavy_atom_count") or 0
+        )
         expected_torsdof = _expected_member_stat(expected, "torsdof")
+        expected_branch_count = _expected_member_stat(
+            expected,
+            "branch_count",
+        )
+        expected_effective_branch_count = _expected_member_stat(
+            expected,
+            "effective_branch_count",
+        )
+        expected_degenerate_branch_count = _expected_member_stat(
+            expected,
+            "degenerate_branch_count",
+        )
         if (
             observed["atom_count"] != expected_atom_count
+            or observed["heavy_atom_count"] != expected_heavy_atom_count
             or observed["torsdof"] != expected_torsdof
+            or observed["branch_count"] != expected_branch_count
+            or observed["effective_branch_count"]
+            != expected_effective_branch_count
+            or observed["degenerate_branch_count"]
+            != expected_degenerate_branch_count
         ):
             return _protocol_error(
                 "MULTIPLE_LIGAND_MEMBER_STATS_MISMATCH",
                 (
                     f"联合构象 Mode {mode} 的第 {offset + 1} 个成员"
-                    "与冻结输入的原子数或 TORSDOF 不一致。"
+                    "与冻结输入的原子、BRANCH 树或 TORSDOF 声明不一致。"
                 ),
                 raw_error=(
-                    f"expected atoms={expected_atom_count}, TORSDOF={expected_torsdof}; "
+                    f"expected atoms={expected_atom_count}, "
+                    f"heavy_atoms={expected_heavy_atom_count}, "
+                    f"raw_BRANCH={expected_branch_count}, "
+                    "effective_BRANCH="
+                    f"{expected_effective_branch_count}, "
+                    "degenerate_BRANCH="
+                    f"{expected_degenerate_branch_count}, "
+                    f"TORSDOF={expected_torsdof}; "
                     f"observed atoms={observed['atom_count']}, "
+                    f"heavy_atoms={observed['heavy_atom_count']}, "
+                    f"raw_BRANCH={observed['branch_count']}, "
+                    "effective_BRANCH="
+                    f"{observed['effective_branch_count']}, "
+                    "degenerate_BRANCH="
+                    f"{observed['degenerate_branch_count']}, "
                     f"TORSDOF={observed['torsdof']}"
                 ),
                 suggestion="请保留本次 run 供排查，并重新准备新的共同对接。",
@@ -1487,6 +2655,29 @@ def _parse_model(
             {
                 "member_index": member_index,
                 "atom_count": observed["atom_count"],
+                "heavy_atom_count": observed["heavy_atom_count"],
+                "hydrogen_atom_count": observed["hydrogen_atom_count"],
+                "coordinate_count": observed["coordinate_count"],
+                "heavy_coordinate_count": (
+                    observed["heavy_coordinate_count"]
+                ),
+                "hydrogen_coordinate_count": (
+                    observed["hydrogen_coordinate_count"]
+                ),
+                "coordinate_bounds": observed["coordinate_bounds"],
+                "heavy_coordinate_bounds": (
+                    observed["heavy_coordinate_bounds"]
+                ),
+                "hydrogen_coordinate_bounds": (
+                    observed["hydrogen_coordinate_bounds"]
+                ),
+                "branch_count": observed["branch_count"],
+                "effective_branch_count": (
+                    observed["effective_branch_count"]
+                ),
+                "degenerate_branch_count": (
+                    observed["degenerate_branch_count"]
+                ),
                 "torsdof": observed["torsdof"],
                 "identity_sha256": observed["identity_sha256"],
                 "content": "\n".join(content_lines) + "\n",
@@ -1498,9 +2689,7 @@ def _parse_model(
             line
             for line in lines[block_start:]
             if line.strip()
-            and not line.lstrip().upper().startswith(
-                ("REMARK", "TER", "CONECT")
-            )
+            and _pdbqt_keyword(line) not in {"REMARK", "TER", "CONECT"}
         ]
         if trailing:
             return _protocol_error(
@@ -1531,6 +2720,41 @@ def parse_multiple_ligand_output_text(
             "共同对接输出 out.pdbqt 为空。",
             suggestion="请查看本次 run 的 stdout.txt 和 stderr.txt。",
         )
+    output_lines = output_text.splitlines()
+    for line_number, line in enumerate(output_lines, start=1):
+        tokens = line.split()
+        if not tokens:
+            continue
+        raw_keyword = tokens[0]
+        keyword = raw_keyword.upper()
+        if keyword not in OUTPUT_CANONICAL_TAGS:
+            continue
+        if line[:1].isspace():
+            return _protocol_error(
+                "MULTIPLE_LIGAND_OUTPUT_TAG_ALIGNMENT_INVALID",
+                (
+                    f"out.pdbqt 第 {line_number} 行的 {keyword} 前存在"
+                    "空白；Vina 结构标签必须从行首开始。"
+                ),
+                raw_error=line,
+                suggestion=(
+                    "结果文件可能被改写；请保留该 run 供审计，并"
+                    "重新执行共同对接。"
+                ),
+            )
+        if raw_keyword != keyword:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_OUTPUT_TAG_CASE_INVALID",
+                (
+                    f"out.pdbqt 第 {line_number} 行的 {raw_keyword} "
+                    "不是 Vina 输出使用的大写结构标签。"
+                ),
+                raw_error=line,
+                suggestion=(
+                    "结果文件可能被改写；请保留该 run 供审计，并"
+                    "重新执行共同对接。"
+                ),
+            )
     if not isinstance(members, list) or len(members) != MEMBER_COUNT:
         return _protocol_error(
             "MULTIPLE_LIGAND_MEMBER_MANIFEST_INVALID",
@@ -1550,7 +2774,7 @@ def parse_multiple_ligand_output_text(
     current_mode: int | None = None
     current_lines: list[str] = []
     observed_modes: set[int] = set()
-    for line_number, line in enumerate(output_text.splitlines(), start=1):
+    for line_number, line in enumerate(output_lines, start=1):
         model_match = MODEL_PATTERN.match(line)
         if model_match:
             if current_mode is not None:
@@ -1622,6 +2846,480 @@ def parse_multiple_ligand_output_text(
         "rmsd_scope": "joint_pose_relative_to_best_mode",
         "per_member_scores_available": False,
         "message": f"已解析 {len(models)} 个两配体联合构象。",
+        "error": None,
+    }
+
+
+def _validate_output_grid_coverage(
+    box: dict[str, Any],
+    grid_estimate: dict[str, Any],
+    models: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Audit every parsed output member against Vina's effective grid.
+
+    Vina rounds each requested search-space span up to an integral number of
+    grid intervals.  The effective grid can therefore be slightly larger than
+    the requested Box.  PDBQT coordinates are written to three decimal places,
+    so the comparison includes 0.0005 Å quantization plus a tiny float margin.
+    Vina's grid acceptance check skips H/HD atoms, so only movable heavy atoms
+    are fail-closed here. Hydrogen protrusions remain visible audit warnings.
+    """
+
+    axes = ("x", "y", "z")
+    try:
+        center = {
+            axis: float(box[f"center_{axis}"])
+            for axis in axes
+        }
+        requested_size = {
+            axis: float(box[f"size_{axis}"])
+            for axis in axes
+        }
+        spacing = float(grid_estimate["spacing_angstrom"])
+        intervals = {
+            axis: int(grid_estimate["axis_intervals"][axis])
+            for axis in axes
+        }
+        config_serialization = str(
+            grid_estimate["config_number_serialization"]
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_OUTPUT_GRID_AUDIT_INVALID",
+            "无法从冻结记录重建 Vina 实际网格边界。",
+            raw_error=str(exc),
+        )
+    numeric_values = [
+        *center.values(),
+        *requested_size.values(),
+        spacing,
+    ]
+    if (
+        not all(math.isfinite(value) for value in numeric_values)
+        or any(value <= 0 for value in requested_size.values())
+        or spacing <= 0
+        or any(value <= 0 for value in intervals.values())
+        or config_serialization != CONFIG_FLOAT_SERIALIZATION
+    ):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_OUTPUT_GRID_AUDIT_INVALID",
+            "冻结的 Box、spacing 或网格体素数无效。",
+            raw_error=json.dumps(
+                {
+                    "center": center,
+                    "requested_size": requested_size,
+                    "spacing": spacing,
+                    "axis_intervals": intervals,
+                    "config_number_serialization": (
+                        config_serialization
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    effective_size = {
+        axis: intervals[axis] * spacing
+        for axis in axes
+    }
+    effective_bounds = {
+        "min": {
+            axis: center[axis] - effective_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + effective_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    requested_bounds = {
+        "min": {
+            axis: center[axis] - requested_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + requested_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+
+    audited_models: list[dict[str, Any]] = []
+    heavy_outside: list[dict[str, Any]] = []
+    hydrogen_outside: list[dict[str, Any]] = []
+    for model in models:
+        try:
+            mode = int(model["mode"])
+        except (KeyError, TypeError, ValueError) as exc:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_OUTPUT_GRID_AUDIT_INVALID",
+                "输出网格复核遇到无效的联合构象编号。",
+                raw_error=str(exc),
+            )
+        audited_members: list[dict[str, Any]] = []
+        model_members = (
+            model.get("members")
+            if isinstance(model.get("members"), list)
+            else []
+        )
+        if len(model_members) != MEMBER_COUNT:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_OUTPUT_GRID_AUDIT_INVALID",
+                f"Mode {mode} 缺少完整的两个输出成员。",
+            )
+        for member in model_members:
+            all_bounds = (
+                member.get("coordinate_bounds")
+                if isinstance(member.get("coordinate_bounds"), dict)
+                else {}
+            )
+            heavy_bounds = (
+                member.get("heavy_coordinate_bounds")
+                if isinstance(
+                    member.get("heavy_coordinate_bounds"),
+                    dict,
+                )
+                else {}
+            )
+            hydrogen_bounds = (
+                member.get("hydrogen_coordinate_bounds")
+                if isinstance(
+                    member.get("hydrogen_coordinate_bounds"),
+                    dict,
+                )
+                else {}
+            )
+            try:
+                member_index = int(member["member_index"])
+                atom_count = int(member["atom_count"])
+                heavy_atom_count = int(member["heavy_atom_count"])
+                hydrogen_atom_count = int(member["hydrogen_atom_count"])
+                coordinate_count = int(member["coordinate_count"])
+                heavy_coordinate_count = int(
+                    member["heavy_coordinate_count"]
+                )
+                hydrogen_coordinate_count = int(
+                    member["hydrogen_coordinate_count"]
+                )
+                all_minimum = all_bounds["min"]
+                all_maximum = all_bounds["max"]
+                heavy_minimum = heavy_bounds["min"]
+                heavy_maximum = heavy_bounds["max"]
+                observed_all_min = {
+                    axis: float(all_minimum[axis])
+                    for axis in axes
+                }
+                observed_all_max = {
+                    axis: float(all_maximum[axis])
+                    for axis in axes
+                }
+                observed_heavy_min = {
+                    axis: float(heavy_minimum[axis])
+                    for axis in axes
+                }
+                observed_heavy_max = {
+                    axis: float(heavy_maximum[axis])
+                    for axis in axes
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_OUTPUT_COORDINATES_INVALID",
+                    (
+                        f"Mode {mode} 的输出成员缺少完整、有限的"
+                        "三维坐标范围。"
+                    ),
+                    raw_error=str(exc),
+                )
+            observed_hydrogen_min: dict[str, float] | None = None
+            observed_hydrogen_max: dict[str, float] | None = None
+            if hydrogen_atom_count:
+                try:
+                    hydrogen_minimum = hydrogen_bounds["min"]
+                    hydrogen_maximum = hydrogen_bounds["max"]
+                    observed_hydrogen_min = {
+                        axis: float(hydrogen_minimum[axis])
+                        for axis in axes
+                    }
+                    observed_hydrogen_max = {
+                        axis: float(hydrogen_maximum[axis])
+                        for axis in axes
+                    }
+                except (KeyError, TypeError, ValueError) as exc:
+                    return _protocol_error(
+                        "MULTIPLE_LIGAND_OUTPUT_COORDINATES_INVALID",
+                        (
+                            f"Mode {mode} 的第 {member_index} 个成员"
+                            "缺少完整的氢原子坐标范围。"
+                        ),
+                        raw_error=str(exc),
+                    )
+            coordinates = [
+                *observed_all_min.values(),
+                *observed_all_max.values(),
+                *observed_heavy_min.values(),
+                *observed_heavy_max.values(),
+            ]
+            if (
+                observed_hydrogen_min is not None
+                and observed_hydrogen_max is not None
+            ):
+                coordinates.extend(observed_hydrogen_min.values())
+                coordinates.extend(observed_hydrogen_max.values())
+            if (
+                atom_count <= 0
+                or heavy_atom_count <= 0
+                or hydrogen_atom_count < 0
+                or atom_count != heavy_atom_count + hydrogen_atom_count
+                or coordinate_count != atom_count
+                or heavy_coordinate_count != heavy_atom_count
+                or hydrogen_coordinate_count != hydrogen_atom_count
+                or not all(math.isfinite(value) for value in coordinates)
+                or any(
+                    observed_all_max[axis] < observed_all_min[axis]
+                    or observed_heavy_max[axis]
+                    < observed_heavy_min[axis]
+                    for axis in axes
+                )
+                or (
+                    observed_hydrogen_min is not None
+                    and observed_hydrogen_max is not None
+                    and any(
+                        observed_hydrogen_max[axis]
+                        < observed_hydrogen_min[axis]
+                        for axis in axes
+                    )
+                )
+            ):
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_OUTPUT_COORDINATES_INVALID",
+                    (
+                        f"Mode {mode} 的第 {member_index} 个成员"
+                        "坐标记录不完整或范围无效。"
+                    ),
+                    raw_error=(
+                        f"atoms={atom_count}; "
+                        f"coordinates={coordinate_count}; "
+                        f"heavy_atoms={heavy_atom_count}; "
+                        f"heavy_coordinates={heavy_coordinate_count}; "
+                        f"hydrogens={hydrogen_atom_count}; "
+                        "hydrogen_coordinates="
+                        f"{hydrogen_coordinate_count}; "
+                        "all_bounds="
+                        f"{json.dumps(all_bounds, ensure_ascii=False)}; "
+                        "heavy_bounds="
+                        f"{json.dumps(heavy_bounds, ensure_ascii=False)}"
+                    ),
+                )
+            all_boundary_margin = {
+                axis: min(
+                    observed_all_min[axis]
+                    - effective_bounds["min"][axis],
+                    effective_bounds["max"][axis]
+                    - observed_all_max[axis],
+                )
+                for axis in axes
+            }
+            heavy_boundary_margin = {
+                axis: min(
+                    observed_heavy_min[axis]
+                    - effective_bounds["min"][axis],
+                    effective_bounds["max"][axis]
+                    - observed_heavy_max[axis],
+                )
+                for axis in axes
+            }
+            hydrogen_boundary_margin = (
+                {
+                    axis: min(
+                        observed_hydrogen_min[axis]
+                        - effective_bounds["min"][axis],
+                        effective_bounds["max"][axis]
+                        - observed_hydrogen_max[axis],
+                    )
+                    for axis in axes
+                }
+                if observed_hydrogen_min is not None
+                and observed_hydrogen_max is not None
+                else None
+            )
+            heavy_outside_axes = [
+                axis
+                for axis in axes
+                if heavy_boundary_margin[axis]
+                < -OUTPUT_GRID_EPSILON_ANGSTROM
+            ]
+            hydrogen_outside_axes = [
+                axis
+                for axis in axes
+                if hydrogen_boundary_margin is not None
+                and hydrogen_boundary_margin[axis]
+                < -OUTPUT_GRID_EPSILON_ANGSTROM
+            ]
+            all_outside_axes = sorted(
+                set(heavy_outside_axes) | set(hydrogen_outside_axes)
+            )
+            member_audit = {
+                "member_index": member_index,
+                "atom_count": atom_count,
+                "heavy_atom_count": heavy_atom_count,
+                "hydrogen_atom_count": hydrogen_atom_count,
+                "coordinate_count": coordinate_count,
+                "heavy_coordinate_count": heavy_coordinate_count,
+                "hydrogen_coordinate_count": hydrogen_coordinate_count,
+                "output_all_atom_bounds_angstrom": {
+                    "min": observed_all_min,
+                    "max": observed_all_max,
+                },
+                "output_heavy_atom_bounds_angstrom": {
+                    "min": observed_heavy_min,
+                    "max": observed_heavy_max,
+                },
+                "output_hydrogen_bounds_angstrom": (
+                    {
+                        "min": observed_hydrogen_min,
+                        "max": observed_hydrogen_max,
+                    }
+                    if observed_hydrogen_min is not None
+                    and observed_hydrogen_max is not None
+                    else None
+                ),
+                "effective_grid_boundary_margin_all_atoms_angstrom": (
+                    all_boundary_margin
+                ),
+                "effective_grid_boundary_margin_heavy_atoms_angstrom": (
+                    heavy_boundary_margin
+                ),
+                "effective_grid_boundary_margin_hydrogens_angstrom": (
+                    hydrogen_boundary_margin
+                ),
+                "heavy_atoms_outside_effective_grid_axes": (
+                    heavy_outside_axes
+                ),
+                "hydrogens_outside_effective_grid_axes": (
+                    hydrogen_outside_axes
+                ),
+                "all_atoms_outside_effective_grid_axes": (
+                    all_outside_axes
+                ),
+                "all_movable_heavy_atoms_inside_effective_grid": (
+                    not heavy_outside_axes
+                ),
+                "all_atoms_inside_effective_grid": not all_outside_axes,
+            }
+            audited_members.append(member_audit)
+            if heavy_outside_axes:
+                heavy_outside.append(
+                    {
+                        "mode": mode,
+                        "member_index": member_index,
+                        "outside_axes": heavy_outside_axes,
+                        "output_heavy_atom_bounds_angstrom": {
+                            "min": observed_heavy_min,
+                            "max": observed_heavy_max,
+                        },
+                        "effective_grid_bounds_angstrom": effective_bounds,
+                    }
+                )
+            if hydrogen_outside_axes:
+                hydrogen_outside.append(
+                    {
+                        "mode": mode,
+                        "member_index": member_index,
+                        "outside_axes": hydrogen_outside_axes,
+                        "output_hydrogen_bounds_angstrom": {
+                            "min": observed_hydrogen_min,
+                            "max": observed_hydrogen_max,
+                        },
+                        "effective_grid_bounds_angstrom": effective_bounds,
+                    }
+                )
+        audited_models.append(
+            {
+                "mode": mode,
+                "members": audited_members,
+                "all_movable_heavy_atoms_inside_effective_grid": all(
+                    item[
+                        "all_movable_heavy_atoms_inside_effective_grid"
+                    ]
+                    for item in audited_members
+                ),
+                "all_atoms_inside_effective_grid": all(
+                    item["all_atoms_inside_effective_grid"]
+                    for item in audited_members
+                ),
+            }
+        )
+
+    audit = {
+        "method": (
+            "movable_heavy_atom_bounds_vs_effective_vina_grid_v3"
+        ),
+        "acceptance_policy": (
+            "vina_non_hydrogen_grid_semantics_fail_closed"
+        ),
+        "config_number_serialization": config_serialization,
+        "coordinate_rounding_tolerance_angstrom": (
+            OUTPUT_GRID_EPSILON_ANGSTROM
+        ),
+        "spacing_angstrom": spacing,
+        "axis_intervals": intervals,
+        "requested_box_center_angstrom": center,
+        "requested_box_size_angstrom": requested_size,
+        "requested_box_bounds_angstrom": requested_bounds,
+        "effective_grid_size_angstrom": effective_size,
+        "effective_grid_bounds_angstrom": effective_bounds,
+        "models": audited_models,
+        "audited_model_count": len(audited_models),
+        "audited_member_pose_count": sum(
+            len(model["members"])
+            for model in audited_models
+        ),
+        "all_output_movable_heavy_atoms_inside_effective_grid": (
+            not heavy_outside
+        ),
+        "all_output_atoms_inside_effective_grid": (
+            not heavy_outside and not hydrogen_outside
+        ),
+        "hydrogen_outside_effective_grid_pose_count": len(
+            hydrogen_outside
+        ),
+        "hydrogen_outside_effective_grid": hydrogen_outside,
+        "interpretation": (
+            "边界按 Vina 的 spacing 与整数网格体素数重建；"
+            "与 Vina 1.2.7 的 is_in_grid 语义一致，只有可移动"
+            "非氢原子越界才使结果失败。H/HD 越界会完整记录并"
+            "提示，但不会把 Vina 已接受的构象误判为无效。"
+        ),
+    }
+    warnings: list[str] = []
+    if hydrogen_outside:
+        warnings.append(
+            "至少一个联合输出构象只有 H/HD 氢原子越出实际网格；"
+            "Vina 的网格接受检查忽略氢原子，本次保留为审计警告。"
+        )
+    if heavy_outside:
+        failure = _protocol_error(
+            "MULTIPLE_LIGAND_OUTPUT_OUTSIDE_EFFECTIVE_GRID",
+            (
+                "至少一个联合输出构象有可移动非氢原子越出 "
+                "Vina 实际网格边界。"
+            ),
+            raw_error=json.dumps(
+                heavy_outside,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            suggestion=(
+                "请保留该 run 供审计，重新检查 Box 中心与尺寸后"
+                "创建新的共同对接；不要将本次结果用于后续分析。"
+            ),
+        )
+        failure["output_box_coverage"] = audit
+        return failure
+    return {
+        "ok": True,
+        "output_box_coverage": audit,
+        "warnings": warnings,
         "error": None,
     }
 
@@ -1801,6 +3499,29 @@ def prepare_multiple_ligand_run(
         return grid_validation
     grid_estimate = dict(grid_validation["grid_estimate"])
     grid_warnings = list(grid_validation.get("warnings") or [])
+    complexity_validation = _validate_joint_search_complexity(
+        source_members,
+        dict(project.vina.__dict__),
+    )
+    if not complexity_validation.get("ok"):
+        return complexity_validation
+    search_complexity = dict(
+        complexity_validation["search_complexity"]
+    )
+    complexity_warnings = list(
+        complexity_validation.get("warnings") or []
+    )
+    coverage_validation = _validate_joint_box_coverage(
+        dict(project.box.__dict__),
+        source_members,
+        grid_estimate,
+    )
+    if not coverage_validation.get("ok"):
+        return coverage_validation
+    box_coverage = dict(coverage_validation["box_coverage"])
+    coverage_warnings = list(
+        coverage_validation.get("warnings") or []
+    )
 
     receptor_relative = str(project.receptor.file or "")
     if not receptor_relative:
@@ -1945,6 +3666,8 @@ def prepare_multiple_ligand_run(
             "box": dict(project.box.__dict__),
             "vina": dict(project.vina.__dict__),
             "grid_estimate": grid_estimate,
+            "search_complexity": search_complexity,
+            "box_coverage": box_coverage,
             "command": command,
             "command_preview": " ".join(
                 f'"{part}"' if any(char.isspace() for char in part) else part
@@ -1992,6 +3715,8 @@ def prepare_multiple_ligand_run(
                 "这是实验性共同搜索协议，不是串行批量筛选。",
                 JOINT_SCORE_DISCLAIMER,
                 *grid_warnings,
+                *complexity_warnings,
+                *coverage_warnings,
             ],
             "error": None,
         }
@@ -2250,13 +3975,10 @@ def _verify_snapshots(
                 frozen_stats.get("identity_sha256") or ""
             ).lower()
             try:
-                observed_stats = _parse_pdbqt_stats(
+                observed_stats = _relative_snapshot(
                     path,
                     expected_relative,
                     ligand=True,
-                )
-                observed_stats["identity_sha256"] = (
-                    _pdbqt_file_identity_sha256(path)
                 )
             except (OSError, UnicodeError, ValueError) as exc:
                 return _protocol_error(
@@ -2353,6 +4075,89 @@ def _verify_snapshots(
             suggestion="请保留该 run 供审计，并重新准备新的共同对接。",
         )
     verified["grid_estimate"] = observed_grid_estimate
+    complexity_validation = _validate_joint_search_complexity(
+        verified_member_stats,
+        (
+            metadata.get("vina")
+            if isinstance(metadata.get("vina"), dict)
+            else {}
+        ),
+    )
+    if not complexity_validation.get("ok"):
+        return complexity_validation
+    observed_search_complexity = complexity_validation[
+        "search_complexity"
+    ]
+    frozen_search_complexity = (
+        metadata.get("search_complexity")
+        if isinstance(metadata.get("search_complexity"), dict)
+        else {}
+    )
+    if json.dumps(
+        frozen_search_complexity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ) != json.dumps(
+        observed_search_complexity,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_SEARCH_COMPLEXITY_ATTESTATION_INVALID",
+            "共同对接冻结的自由度风险记录与两个配体快照不一致。",
+            raw_error=json.dumps(
+                {
+                    "frozen": frozen_search_complexity,
+                    "observed": observed_search_complexity,
+                },
+                ensure_ascii=False,
+            ),
+            suggestion="请保留该 run 供审计，并重新准备新的共同对接。",
+        )
+    coverage_validation = _validate_joint_box_coverage(
+        (
+            metadata.get("box")
+            if isinstance(metadata.get("box"), dict)
+            else {}
+        ),
+        verified_member_stats,
+        observed_grid_estimate,
+    )
+    if not coverage_validation.get("ok"):
+        return coverage_validation
+    observed_box_coverage = coverage_validation["box_coverage"]
+    frozen_box_coverage = (
+        metadata.get("box_coverage")
+        if isinstance(metadata.get("box_coverage"), dict)
+        else {}
+    )
+    if json.dumps(
+        frozen_box_coverage,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ) != json.dumps(
+        observed_box_coverage,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_BOX_COVERAGE_ATTESTATION_INVALID",
+            "共同对接冻结的 Box 几何覆盖记录与配体快照不一致。",
+            raw_error=json.dumps(
+                {
+                    "frozen": frozen_box_coverage,
+                    "observed": observed_box_coverage,
+                },
+                ensure_ascii=False,
+            ),
+            suggestion="请保留该 run 供审计，并重新准备新的共同对接。",
+        )
+    verified["search_complexity"] = observed_search_complexity
+    verified["box_coverage"] = observed_box_coverage
     return {"ok": True, "files": verified, "error": None}
 
 
@@ -2460,6 +4265,30 @@ def _build_report(
         if isinstance(metadata.get("box"), dict)
         else {}
     )
+    search_complexity = (
+        metadata.get("search_complexity")
+        if isinstance(metadata.get("search_complexity"), dict)
+        else {}
+    )
+    box_coverage = (
+        metadata.get("box_coverage")
+        if isinstance(metadata.get("box_coverage"), dict)
+        else {}
+    )
+    output_box_coverage = (
+        metadata.get("output_box_coverage")
+        if isinstance(metadata.get("output_box_coverage"), dict)
+        else joint_manifest.get("output_box_coverage")
+        if isinstance(joint_manifest.get("output_box_coverage"), dict)
+        else {}
+    )
+    output_normalization = (
+        metadata.get("output_normalization")
+        if isinstance(metadata.get("output_normalization"), dict)
+        else joint_manifest.get("output_normalization")
+        if isinstance(joint_manifest.get("output_normalization"), dict)
+        else {}
+    )
     snapshots = (
         metadata.get("snapshots")
         if isinstance(metadata.get("snapshots"), dict)
@@ -2541,6 +4370,314 @@ def _build_report(
     lines.extend(
         [
             "",
+            "## 搜索复杂度门禁",
+            "",
+            "| 字段 | 冻结值 |",
+            "|---|---:|",
+            (
+                "| 两个刚体自由度 | "
+                f"{_report_value(search_complexity.get('rigid_body_dof'))} |"
+            ),
+            (
+                "| PDBQT BRANCH 记录总数 | "
+                + _report_value(
+                    search_complexity.get("total_branch_records")
+                )
+                + " |"
+            ),
+            (
+                "| Vina 忽略的退化叶 BRANCH | "
+                + _report_value(
+                    search_complexity.get("total_degenerate_branches")
+                )
+                + " |"
+            ),
+            (
+                "| 合计有效搜索扭转 | "
+                + _report_value(
+                    search_complexity.get("total_search_torsions")
+                )
+                + " |"
+            ),
+            (
+                "| PDBQT 声明 TORSDOF 合计 | "
+                + _report_value(
+                    search_complexity.get("total_declared_torsdof")
+                )
+                + " |"
+            ),
+            (
+                "| 合计显式搜索自由度 | "
+                f"{_report_value(search_complexity.get('total_search_dof'))} |"
+            ),
+            (
+                "| 实验协议可搜索扭转上限 | "
+                + _report_value(
+                    search_complexity.get(
+                        "maximum_experimental_total_search_torsions"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 单成员原子数上限 | "
+                + _report_value(
+                    search_complexity.get(
+                        "maximum_experimental_member_atoms"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 单成员文件字节上限 | "
+                + _report_value(
+                    search_complexity.get(
+                        "maximum_experimental_member_bytes"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| exhaustiveness | "
+                f"{_report_value(search_complexity.get('exhaustiveness'))} |"
+            ),
+            "",
+            (
+                "搜索维度按 Vina 实际生成的非退化 PDBQT segment "
+                "计数；只有轴端原子且没有子分支的叶 BRANCH 不产生"
+                "搜索扭转。TORSDOF 只作为来源声明记录，不是搜索"
+                "维度，Vina/Vinardo 也不直接用它计算扭转项。该"
+                "上限是 DockStart 当前实验协议边界，不是 Vina 硬上限。"
+            ),
+            "",
+            "## Box 几何覆盖门禁",
+            "",
+            (
+                "| 成员 | X 尺寸 / 同轴余量 (Å) | "
+                "Y 尺寸 / 同轴余量 (Å) | "
+                "Z 尺寸 / 同轴余量 (Å) | "
+                "刚性重原子直径 / 有效网格对角线余量 (Å) | "
+                "源坐标在请求 Box 内 |"
+            ),
+            "|---:|---:|---:|---:|---:|---|",
+        ]
+    )
+    for member in box_coverage.get("members") or []:
+        if not isinstance(member, dict):
+            continue
+        extent = (
+            member.get("input_extent_angstrom")
+            if isinstance(member.get("input_extent_angstrom"), dict)
+            else {}
+        )
+        margin = (
+            member.get("axis_aligned_fit_margin_angstrom")
+            if isinstance(
+                member.get("axis_aligned_fit_margin_angstrom"),
+                dict,
+            )
+            else {}
+        )
+        cells = [
+            _report_value(member.get("member_index")),
+            f"{_report_value(extent.get('x'))} / {_report_value(margin.get('x'))}",
+            f"{_report_value(extent.get('y'))} / {_report_value(margin.get('y'))}",
+            f"{_report_value(extent.get('z'))} / {_report_value(margin.get('z'))}",
+            (
+                _report_value(
+                    member.get(
+                        "maximum_heavy_atom_distance_angstrom"
+                    )
+                )
+                + " / "
+                + _report_value(
+                    member.get("box_diagonal_margin_angstrom")
+                )
+            ),
+            _report_value(
+                member.get("source_pose_inside_requested_box")
+            ),
+        ]
+        lines.append(
+            "| " + " | ".join(_markdown_cell(cell) for cell in cells) + " |"
+        )
+    lines.extend(
+        [
+            "",
+            _report_value(box_coverage.get("interpretation")),
+            "",
+            "## 输出构象 Box 覆盖复核",
+            "",
+            "| 字段 | 值 |",
+            "|---|---|",
+            (
+                "| 实际网格尺寸 (Å) | "
+                + _markdown_cell(
+                    json.dumps(
+                        output_box_coverage.get(
+                            "effective_grid_size_angstrom"
+                        )
+                        or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 坐标舍入容差 (Å) | "
+                + _report_value(
+                    output_box_coverage.get(
+                        "coordinate_rounding_tolerance_angstrom"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 已复核联合构象数 | "
+                + _report_value(
+                    output_box_coverage.get("audited_model_count")
+                )
+                + " |"
+            ),
+            (
+                "| 全部可移动重原子位于实际网格内 | "
+                + _report_value(
+                    output_box_coverage.get(
+                        "all_output_movable_heavy_atoms_inside_effective_grid"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 全部输出原子（含氢）位于实际网格内 | "
+                + _report_value(
+                    output_box_coverage.get(
+                        "all_output_atoms_inside_effective_grid"
+                    )
+                )
+                + " |"
+            ),
+            (
+                "| 仅氢越界的成员构象数 | "
+                + _report_value(
+                    output_box_coverage.get(
+                        "hydrogen_outside_effective_grid_pose_count"
+                    )
+                )
+                + " |"
+            ),
+            "",
+            (
+                "| Mode | 成员 | X 重原子最小余量 (Å) | "
+                "Y 重原子最小余量 (Å) | Z 重原子最小余量 (Å) |"
+            ),
+            "|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for model in output_box_coverage.get("models") or []:
+        if not isinstance(model, dict):
+            continue
+        for member in model.get("members") or []:
+            if not isinstance(member, dict):
+                continue
+            margin = (
+                member.get(
+                    "effective_grid_boundary_margin_heavy_atoms_angstrom"
+                )
+                if isinstance(
+                    member.get(
+                        "effective_grid_boundary_margin_heavy_atoms_angstrom"
+                    ),
+                    dict,
+                )
+                else {}
+            )
+            cells = [
+                _report_value(model.get("mode")),
+                _report_value(member.get("member_index")),
+                _report_value(margin.get("x")),
+                _report_value(margin.get("y")),
+                _report_value(margin.get("z")),
+            ]
+            lines.append(
+                "| "
+                + " | ".join(_markdown_cell(cell) for cell in cells)
+                + " |"
+            )
+    lines.extend(
+        [
+            "",
+            _report_value(output_box_coverage.get("interpretation")),
+            "",
+            "## Vina 输出文本完整性",
+            "",
+            "| 字段 | 值 |",
+            "|---|---|",
+            (
+                "| 状态 | "
+                + _report_value(
+                    output_normalization.get("status")
+                )
+                + " |"
+            ),
+            (
+                "| 方法 | "
+                + _report_value(
+                    output_normalization.get("method")
+                )
+                + " |"
+            ),
+            (
+                "| 原始输出已改变 | "
+                + _report_value(
+                    output_normalization.get("changed")
+                )
+                + " |"
+            ),
+            (
+                "| 检测 / 移除 NUL 字节 | "
+                + _report_value(
+                    output_normalization.get("nul_bytes_detected")
+                )
+                + " / "
+                + _report_value(
+                    output_normalization.get("nul_bytes_removed")
+                )
+                + " |"
+            ),
+            (
+                "| 原始输出归档 | `"
+                + _report_value(
+                    output_normalization.get("raw_output_file")
+                )
+                + "` |"
+            ),
+            (
+                "| 原始 SHA256 | `"
+                + _report_value(
+                    output_normalization.get("source_sha256")
+                )
+                + "` |"
+            ),
+            (
+                "| 规范化 SHA256 | `"
+                + _report_value(
+                    output_normalization.get("normalized_sha256")
+                )
+                + "` |"
+            ),
+            "",
+            _report_value(
+                output_normalization.get(
+                    "scientific_content_policy"
+                )
+            ),
+        ]
+    )
+    lines.extend(
+        [
+            "",
             "## 完整冻结 Vina 参数",
             "",
             "| 参数 | 冻结值 |",
@@ -2572,8 +4709,11 @@ def _build_report(
             "",
             "## 冻结成员",
             "",
-            "| 顺序 | 名称 | 原子数 | TORSDOF | SHA256 |",
-            "|---:|---|---:|---:|---|",
+            (
+                "| 顺序 | 名称 | 原子数 | 重原子数 | BRANCH 记录 | "
+                "有效扭转 | 退化叶分支 | TORSDOF 声明 | SHA256 |"
+            ),
+            "|---:|---|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for member in metadata.get("members") or []:
@@ -2585,6 +4725,10 @@ def _build_report(
                     _report_value(member.get("member_index")),
                     _markdown_cell(_report_value(member.get("display_name"))),
                     _report_value(stats.get("atom_count")),
+                    _report_value(stats.get("heavy_atom_count")),
+                    _report_value(stats.get("branch_count")),
+                    _report_value(stats.get("effective_branch_count")),
+                    _report_value(stats.get("degenerate_branch_count")),
                     _report_value(stats.get("torsdof")),
                     f"`{_report_value(member.get('sha256'))}`",
                 ]
@@ -3210,6 +5354,10 @@ def _execute_multiple_ligand_run_impl(
     run_dir = _safe_run_directory(project_root, run_id)
     fixed_output_relatives = {
         "output": _fixed_run_relative(run_id, RUN_OUTPUT_FILE),
+        "raw_output": _fixed_run_relative(
+            run_id,
+            "out.vina_raw.pdbqt",
+        ),
         "stdout": _fixed_run_relative(run_id, "stdout.txt"),
         "stderr": _fixed_run_relative(run_id, "stderr.txt"),
         "log": _fixed_run_relative(run_id, "log.txt"),
@@ -3504,6 +5652,76 @@ def _execute_multiple_ligand_run_impl(
             message="Vina 成功退出，但没有生成非空 out.pdbqt。",
             suggestion="请查看该 run 的 stdout.txt 和 stderr.txt。",
         )
+    normalized_output = _normalize_vina_pdbqt_output(
+        fixed_outputs["output"],
+        fixed_output_relatives["output"],
+        allow_multiple_ligand_member_boundary=True,
+    )
+    output_normalization = dict(
+        normalized_output.get("record") or {}
+    )
+    output_normalization_artifacts = dict(
+        normalized_output.get("artifacts") or {}
+    )
+    output_normalization_warning = str(
+        normalized_output.get("warning") or ""
+    )
+    if (
+        normalized_output.get("ok")
+        and fixed_outputs["output"].is_file()
+    ):
+        output_normalization_artifacts["output"] = _artifact_snapshot(
+            project_root,
+            fixed_output_relatives["output"],
+        )
+
+    def record_output_normalization(
+        current: dict[str, Any],
+    ) -> dict[str, Any]:
+        if current.get("status") != "running":
+            return current
+        current["output_normalization"] = output_normalization
+        current_artifacts = (
+            dict(current.get("artifacts") or {})
+            if isinstance(current.get("artifacts"), dict)
+            else {}
+        )
+        current_artifacts.update(output_normalization_artifacts)
+        current["artifacts"] = current_artifacts
+        if output_normalization_warning:
+            current_warnings = list(current.get("warnings") or [])
+            if output_normalization_warning not in current_warnings:
+                current_warnings.append(output_normalization_warning)
+            current["warnings"] = current_warnings
+        return current
+
+    running, normalization_metadata_error = (
+        _update_run_metadata_transaction(
+            str(project_root),
+            run_id,
+            record_output_normalization,
+        )
+    )
+    if normalization_metadata_error:
+        return normalization_metadata_error
+    assert running is not None
+    if not normalized_output.get("ok"):
+        detail = normalized_output.get("error") or {}
+        return _mark_failed(
+            project_root,
+            run_id,
+            running,
+            code=str(
+                detail.get("code")
+                or "MULTIPLE_LIGAND_OUTPUT_NORMALIZATION_FAILED"
+            ),
+            message=str(
+                detail.get("message")
+                or "共同对接输出未通过文本完整性检查。"
+            ),
+            raw_error=str(detail.get("raw_error") or ""),
+            suggestion=str(detail.get("suggestion") or ""),
+        )
     try:
         output_text = fixed_outputs["output"].read_text(
             encoding="utf-8",
@@ -3544,6 +5762,71 @@ def _execute_multiple_ligand_run_impl(
             raw_error=str(detail.get("raw_error") or ""),
             suggestion=str(detail.get("suggestion") or ""),
         )
+    output_coverage_validation = _validate_output_grid_coverage(
+        metadata.get("box")
+        if isinstance(metadata.get("box"), dict)
+        else {},
+        metadata.get("grid_estimate")
+        if isinstance(metadata.get("grid_estimate"), dict)
+        else {},
+        parsed_output["models"],
+    )
+    audited_output_coverage = (
+        output_coverage_validation.get("output_box_coverage")
+        if isinstance(
+            output_coverage_validation.get("output_box_coverage"),
+            dict,
+        )
+        else None
+    )
+    output_coverage_warnings = list(
+        output_coverage_validation.get("warnings") or []
+    )
+    if audited_output_coverage is not None:
+        def record_output_coverage(
+            current: dict[str, Any],
+        ) -> dict[str, Any]:
+            if current.get("status") == "running":
+                current["output_box_coverage"] = (
+                    audited_output_coverage
+                )
+                current_warnings = list(current.get("warnings") or [])
+                for warning in output_coverage_warnings:
+                    if warning not in current_warnings:
+                        current_warnings.append(warning)
+                current["warnings"] = current_warnings
+            return current
+
+        running, coverage_metadata_error = (
+            _update_run_metadata_transaction(
+                str(project_root),
+                run_id,
+                record_output_coverage,
+            )
+        )
+        if coverage_metadata_error:
+            return coverage_metadata_error
+        assert running is not None
+    if not output_coverage_validation.get("ok"):
+        detail = output_coverage_validation.get("error") or {}
+        return _mark_failed(
+            project_root,
+            run_id,
+            running,
+            code=str(
+                detail.get("code")
+                or "MULTIPLE_LIGAND_OUTPUT_GRID_AUDIT_INVALID"
+            ),
+            message=str(
+                detail.get("message")
+                or "共同对接输出未通过实际网格边界复核。"
+            ),
+            raw_error=str(detail.get("raw_error") or ""),
+            suggestion=str(detail.get("suggestion") or ""),
+        )
+    output_box_coverage = dict(
+        output_coverage_validation["output_box_coverage"]
+    )
     parsed_scores = parse_vina_log_text(log_text)
     if isinstance(parsed_scores, dict):
         detail = parsed_scores.get("error") or {}
@@ -3718,6 +6001,8 @@ def _execute_multiple_ligand_run_impl(
         "rmsd_scope": "joint_pose_relative_to_best_mode",
         "per_member_scores_available": False,
         "output_model_is_pose_authority": True,
+        "output_box_coverage": output_box_coverage,
+        "output_normalization": output_normalization,
     }
     scores_text = _scores_csv_text(scores)
     try:
@@ -3804,12 +6089,18 @@ def _execute_multiple_ligand_run_impl(
                 if scores
                 else None
             ),
+            "output_box_coverage": output_box_coverage,
             "per_member_scores_available": False,
             "error": None,
         }
     )
     try:
-        artifacts = {
+        artifacts = (
+            dict(finished.get("artifacts") or {})
+            if isinstance(finished.get("artifacts"), dict)
+            else {}
+        )
+        artifacts.update({
             "output": _artifact_snapshot(
                 project_root,
                 fixed_output_relatives["output"],
@@ -3834,7 +6125,7 @@ def _execute_multiple_ligand_run_impl(
                 project_root,
                 fixed_output_relatives["joint_poses"],
             ),
-        }
+        })
         finished["artifacts"] = artifacts
         report_text = _build_report(finished, joint_manifest)
         _safe_atomic_write_text(

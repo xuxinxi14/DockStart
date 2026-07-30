@@ -6,8 +6,11 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -24,11 +27,13 @@ from dockstart_core.screening import (  # noqa: E402
     create_screening,
     export_screening_archive_zip,
     export_screening_markdown_report,
+    generate_screening_result_sdf,
     get_screening_archive,
     get_screening_status,
     list_screening_archives,
     main,
     request_screening_cancel,
+    retry_screening_preparation,
     resume_screening,
     run_screening,
     stage_screening_inputs,
@@ -95,12 +100,174 @@ def _screening_preparation_tools() -> dict:
         "tools": {
             "python": {
                 "status": "ok",
-                "path": sys.executable,
+                # A regular, readable file keeps the tool-snapshot integrity
+                # test independent of Windows Store Python reparse aliases.
+                "path": str(Path(__file__).resolve()),
+                "version": ".".join(
+                    str(value) for value in sys.version_info[:3]
+                ),
+                "source": "current_environment",
             },
-            "rdkit": {"status": "ok"},
-            "meeko": {"status": "ok"},
+            "rdkit": {
+                "status": "ok",
+                "version": "test-rdkit",
+                "source": "current_environment",
+            },
+            "meeko": {
+                "status": "ok",
+                "version": "test-meeko",
+                "source": "current_environment",
+            },
         },
     }
+
+
+def _sdf_record_bytes(path: Path, index: int) -> bytes:
+    records: list[bytes] = []
+    current: list[bytes] = []
+    for line in path.read_bytes().splitlines(keepends=True):
+        current.append(line)
+        if line.strip() == b"$$$$":
+            records.append(b"".join(current))
+            current = []
+    if current and b"".join(current).strip():
+        records.append(b"".join(current))
+    return records[index - 1]
+
+
+def _fake_chemical_facts(
+    raw_record: bytes,
+    *,
+    canonical_sha256: str | None = None,
+    has_macrocycle: bool = False,
+) -> dict:
+    atom_count = 8 if has_macrocycle else 2
+    bond_count = 8 if has_macrocycle else 1
+    return {
+        "schema_version": 1,
+        "status": "verified",
+        "source": "frozen_raw_topology",
+        "calculation_profile": (
+            "rdkit_source_formal_charge_heavy_atoms_"
+            "strict_rotatable_bonds_v1"
+        ),
+        "source_topology_sha256": hashlib.sha256(raw_record).hexdigest(),
+        "rdkit_version": "test-rdkit",
+        "formal_charge": 0,
+        "heavy_atom_count": atom_count,
+        "rotatable_bond_count": 0,
+        "fragment_count": 1,
+        "max_ring_size": 8 if has_macrocycle else 0,
+        "has_macrocycle": has_macrocycle,
+        "canonical_topology_sha256": (
+            canonical_sha256
+            or hashlib.sha256(b"canonical:" + raw_record).hexdigest()
+        ),
+        "canonical_atom_count": atom_count,
+        "canonical_bond_count": bond_count,
+    }
+
+
+def _fake_worker_evidence() -> dict:
+    return {
+        "schema_version": 2,
+        "preparation_profile": "dockstart_screening_rdkit_meeko_fail_closed_v2",
+        "hydrogen_policy": "rdkit_add_hs_preserve_source_indices_v1",
+        "toolchain": {
+            "python_version": "test-python",
+            "rdkit_version": "test-rdkit",
+            "meeko_version": "test-meeko",
+        },
+        "worker_script_sha256": "a" * 64,
+        "worker_manifest_sha256": "b" * 64,
+        "worker_manifest_size_bytes": 1,
+    }
+
+
+def _fake_worker_identity(
+    source: Path,
+    index: int,
+    *,
+    include_facts: bool = True,
+    canonical_sha256: str | None = None,
+    has_macrocycle: bool = False,
+) -> dict:
+    raw_record = _sdf_record_bytes(source, index)
+    result = {
+        "source_record_sha256": hashlib.sha256(raw_record).hexdigest(),
+        "source_record_size_bytes": len(raw_record),
+        "_worker_evidence": _fake_worker_evidence(),
+    }
+    if include_facts:
+        result["chemical_facts"] = _fake_chemical_facts(
+            raw_record,
+            canonical_sha256=canonical_sha256,
+            has_macrocycle=has_macrocycle,
+        )
+    return result
+
+
+def _fake_library_worker(specifications: list[dict]):
+    def worker(
+        root,
+        original,
+        python_path,
+        *,
+        max_records,
+        expected_sha256,
+        expected_size_bytes,
+        record_dir=None,
+    ):
+        staging_root = root / "screening" / "staging"
+        staging_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(
+            prefix=".test-library-",
+            dir=staging_root,
+        )
+        temporary_root = Path(temporary.name)
+        records: list[dict] = []
+        for specification in specifications:
+            index = int(specification["index"])
+            status = str(specification.get("status") or "ready")
+            record = {
+                "status": status,
+                "source_record_index": index,
+                "source_record_name": str(
+                    specification.get("name") or f"Record {index}"
+                ),
+                **_fake_worker_identity(
+                    original,
+                    index,
+                    include_facts=bool(
+                        specification.get("include_facts", True)
+                    ),
+                    canonical_sha256=specification.get(
+                        "canonical_sha256"
+                    ),
+                    has_macrocycle=bool(
+                        specification.get("has_macrocycle", False)
+                    ),
+                ),
+            }
+            if status == "ready":
+                output = temporary_root / f"record_{index:06d}.pdbqt"
+                output.write_text(
+                    _pdbqt(str(specification.get("atom") or "C")),
+                    encoding="utf-8",
+                )
+                record["_pdbqt_path"] = output
+            else:
+                record["error"] = dict(
+                    specification.get("error")
+                    or {
+                        "code": "LIGAND_PREPARATION_FAILED",
+                        "message": "测试准备失败。",
+                    }
+                )
+            records.append(record)
+        return temporary, records
+
+    return worker
 
 
 def _successful_runner(
@@ -328,6 +495,74 @@ class ScreeningWorkflowTests(unittest.TestCase):
             self.assertTrue(created["ok"], created)
             self.assertEqual(created["screening"]["items"][0]["source_file"], relative)
 
+    def test_concurrent_staging_mutations_are_serialized(self) -> None:
+        first_source = self.root / "first-external.pdbqt"
+        second_source = self.root / "second-external.pdbqt"
+        first_source.write_text(_pdbqt("C"), encoding="utf-8")
+        second_source.write_text(_pdbqt("O"), encoding="utf-8")
+
+        import dockstart_core.screening as screening_module
+
+        original_expand = screening_module._expand_screening_input_files
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release_first = threading.Event()
+        counter_lock = threading.Lock()
+        calls = 0
+
+        def controlled_expand(files, limits):
+            nonlocal calls
+            with counter_lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                first_entered.set()
+                self.assertTrue(release_first.wait(5))
+            elif call_number == 2:
+                second_entered.set()
+            return original_expand(files, limits)
+
+        with (
+            patch(
+                "dockstart_core.screening._expand_screening_input_files",
+                side_effect=controlled_expand,
+            ),
+            ThreadPoolExecutor(max_workers=2) as pool,
+        ):
+            first_future = pool.submit(
+                stage_screening_inputs,
+                str(self.root),
+                [str(first_source)],
+            )
+            self.assertTrue(first_entered.wait(2))
+            second_future = pool.submit(
+                stage_screening_inputs,
+                str(self.root),
+                [str(second_source)],
+            )
+            time.sleep(0.1)
+            self.assertFalse(second_entered.is_set())
+            release_first.set()
+            first = first_future.result(timeout=5)
+            second = second_future.result(timeout=5)
+
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(second["ok"], second)
+        self.assertTrue(second_entered.is_set())
+        self.assertNotEqual(
+            first["import_preview"]["import_id"],
+            second["import_preview"]["import_id"],
+        )
+        index = json.loads(
+            (
+                self.root
+                / "screening"
+                / "staging"
+                / "index.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(index["imports"]), 2)
+
     def test_stage_multirecord_sdf_isolates_invalid_record_and_preserves_order(self) -> None:
         source = self.root / "library.sdf"
         source.write_bytes(
@@ -344,6 +579,7 @@ class ScreeningWorkflowTests(unittest.TestCase):
             max_records,
             expected_sha256,
             expected_size_bytes,
+            record_dir=None,
         ):
             staging_root = root / "screening" / "staging"
             staging_root.mkdir(parents=True, exist_ok=True)
@@ -362,11 +598,17 @@ class ScreeningWorkflowTests(unittest.TestCase):
                     "source_record_index": 1,
                     "source_record_name": "First molecule",
                     "_pdbqt_path": first,
+                    **_fake_worker_identity(original, 1),
                 },
                 {
                     "status": "invalid",
                     "source_record_index": 2,
                     "source_record_name": "Broken molecule",
+                    **_fake_worker_identity(
+                        original,
+                        2,
+                        include_facts=False,
+                    ),
                     "error": {
                         "code": "RDKIT_RECORD_INVALID",
                         "message": "RDKit 未能读取该分子记录。",
@@ -377,6 +619,7 @@ class ScreeningWorkflowTests(unittest.TestCase):
                     "source_record_index": 3,
                     "source_record_name": "Third molecule",
                     "_pdbqt_path": third,
+                    **_fake_worker_identity(original, 3),
                 },
             ]
 
@@ -399,6 +642,7 @@ class ScreeningWorkflowTests(unittest.TestCase):
                 "total": 3,
                 "ready": 2,
                 "duplicate": 0,
+                "review_required": 0,
                 "invalid": 1,
                 "source_files": 1,
             },
@@ -431,6 +675,7 @@ class ScreeningWorkflowTests(unittest.TestCase):
             max_records,
             expected_sha256,
             expected_size_bytes,
+            record_dir=None,
         ):
             staging_root = root / "screening" / "staging"
             staging_root.mkdir(parents=True, exist_ok=True)
@@ -449,12 +694,22 @@ class ScreeningWorkflowTests(unittest.TestCase):
                     "source_record_index": 1,
                     "source_record_name": "First",
                     "_pdbqt_path": first,
+                    **_fake_worker_identity(
+                        original,
+                        1,
+                        canonical_sha256="c" * 64,
+                    ),
                 },
                 {
                     "status": "ready",
                     "source_record_index": 2,
                     "source_record_name": "Duplicate",
                     "_pdbqt_path": second,
+                    **_fake_worker_identity(
+                        original,
+                        2,
+                        canonical_sha256="c" * 64,
+                    ),
                 },
             ]
 
@@ -511,6 +766,7 @@ class ScreeningWorkflowTests(unittest.TestCase):
             max_records,
             expected_sha256,
             expected_size_bytes,
+            record_dir=None,
         ):
             staging_root = root / "screening" / "staging"
             staging_root.mkdir(parents=True, exist_ok=True)
@@ -523,6 +779,11 @@ class ScreeningWorkflowTests(unittest.TestCase):
                     "status": "invalid",
                     "source_record_index": index,
                     "source_record_name": f"Bad {index}",
+                    **_fake_worker_identity(
+                        original,
+                        index,
+                        include_facts=False,
+                    ),
                     "error": {
                         "code": "RDKIT_RECORD_INVALID",
                         "message": "RDKit 未能读取该分子记录。",
@@ -597,6 +858,714 @@ class ScreeningWorkflowTests(unittest.TestCase):
             ["alpha.pdbqt", "zeta.pdbqt", "beta.pdbqt"],
         )
         self.assertEqual(len(response["staged"]), 3)
+
+    def test_stage_v2_freezes_every_raw_record_and_preserves_failure_states(self) -> None:
+        source = self.root / "audited-library.sdf"
+        records = [
+            b"ready\nmock\n$$$$\n",
+            b"broken\nmock\n$$$$\n",
+            b"macrocycle\nmock\n$$$$\n",
+        ]
+        source.write_bytes(b"".join(records))
+        worker = _fake_library_worker(
+            [
+                {"index": 1, "status": "ready", "atom": "C"},
+                {
+                    "index": 2,
+                    "status": "invalid",
+                    "include_facts": False,
+                    "error": {
+                        "code": "RDKIT_RECORD_INVALID",
+                        "message": "无法解析。",
+                    },
+                },
+                {
+                    "index": 3,
+                    "status": "invalid",
+                    "has_macrocycle": True,
+                    "error": {
+                        "code": "LIGAND_PREPARATION_FAILED",
+                        "message": "Meeko 在大环上失败。",
+                    },
+                },
+            ]
+        )
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=worker,
+            ),
+        ):
+            response = stage_screening_inputs(str(self.root), [str(source)])
+
+        self.assertTrue(response["ok"], response)
+        preview = response["import_preview"]
+        self.assertEqual(preview["schema_version"], 2)
+        self.assertEqual(
+            preview["summary"],
+            {
+                "total": 3,
+                "ready": 1,
+                "duplicate": 0,
+                "review_required": 1,
+                "invalid": 1,
+                "source_files": 1,
+            },
+        )
+        self.assertEqual(
+            [candidate["status"] for candidate in preview["candidates"]],
+            ["ready", "invalid", "review_required"],
+        )
+        self.assertFalse(preview["candidates"][2]["retryable"])
+        self.assertEqual(
+            preview["candidates"][2]["error"]["code"],
+            "MACROCYCLE_REVIEW_REQUIRED",
+        )
+        for raw, candidate in zip(records, preview["candidates"], strict=True):
+            topology = self.root / candidate["source_topology_file"]
+            self.assertEqual(topology.read_bytes(), raw)
+            self.assertEqual(
+                hashlib.sha256(raw).hexdigest(),
+                candidate["source_topology_sha256"],
+            )
+            self.assertEqual(candidate["topology_integrity"], "verified")
+        failure_manifest = preview["failure_manifest"]
+        failure_json = self.root / failure_manifest["json_file"]
+        self.assertEqual(
+            hashlib.sha256(failure_json.read_bytes()).hexdigest(),
+            failure_manifest["json_sha256"],
+        )
+        failures = json.loads(failure_json.read_text(encoding="utf-8"))
+        self.assertEqual(failures["failure_count"], 2)
+
+    def test_stage_rejects_worker_record_identity_mismatch(self) -> None:
+        source = self.root / "identity-mismatch.sdf"
+        source.write_bytes(b"molecule\nmock\n$$$$\n")
+        worker = _fake_library_worker([{"index": 1, "status": "ready"}])
+
+        def mismatched_worker(*args, **kwargs):
+            temporary, records = worker(*args, **kwargs)
+            records[0]["source_record_sha256"] = "f" * 64
+            return temporary, records
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=mismatched_worker,
+            ),
+        ):
+            response = stage_screening_inputs(str(self.root), [str(source)])
+
+        self.assertFalse(response["ok"])
+        self.assertIn("冻结原始记录身份不一致", response["error"]["raw_error"])
+        import_manifests = list(
+            (self.root / "screening" / "staging" / "imports").glob(
+                "import_*/import_manifest.json"
+            )
+        )
+        self.assertEqual(len(import_manifests), 1)
+        self.assertEqual(
+            json.loads(import_manifests[0].read_text(encoding="utf-8"))[
+                "status"
+            ],
+            "failed",
+        )
+
+    def test_stage_rejects_unknown_worker_preparation_profile(self) -> None:
+        source = self.root / "profile-mismatch.sdf"
+        source.write_bytes(b"molecule\nmock\n$$$$\n")
+        worker = _fake_library_worker([{"index": 1, "status": "ready"}])
+
+        def mismatched_worker(*args, **kwargs):
+            temporary, records = worker(*args, **kwargs)
+            records[0]["_worker_evidence"]["preparation_profile"] = (
+                "untrusted-preparation-profile"
+            )
+            return temporary, records
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=mismatched_worker,
+            ),
+        ):
+            response = stage_screening_inputs(str(self.root), [str(source)])
+
+        self.assertFalse(response["ok"])
+        self.assertIn("准备规范不受支持", response["error"]["raw_error"])
+
+    def test_stage_rejects_rdkit_version_mismatch_between_facts_and_evidence(
+        self,
+    ) -> None:
+        source = self.root / "rdkit-version-mismatch.sdf"
+        source.write_bytes(b"molecule\nmock\n$$$$\n")
+        worker = _fake_library_worker([{"index": 1, "status": "ready"}])
+
+        def mismatched_worker(*args, **kwargs):
+            temporary, records = worker(*args, **kwargs)
+            records[0]["_worker_evidence"]["toolchain"]["rdkit_version"] = (
+                "different-rdkit"
+            )
+            return temporary, records
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=mismatched_worker,
+            ),
+        ):
+            response = stage_screening_inputs(str(self.root), [str(source)])
+
+        self.assertFalse(response["ok"])
+        self.assertIn("RDKit 版本不一致", response["error"]["raw_error"])
+
+    def test_candidate_creation_binds_distinct_topologies_with_same_pdbqt(self) -> None:
+        source = self.root / "same-pdbqt-different-topology.sdf"
+        raw_records = [
+            b"topology one\nmock\n$$$$\n",
+            b"topology two\nmock\n$$$$\n",
+        ]
+        source.write_bytes(b"".join(raw_records))
+        worker = _fake_library_worker(
+            [
+                {
+                    "index": 1,
+                    "status": "ready",
+                    "atom": "C",
+                    "canonical_sha256": "1" * 64,
+                },
+                {
+                    "index": 2,
+                    "status": "ready",
+                    "atom": "C",
+                    "canonical_sha256": "2" * 64,
+                },
+            ]
+        )
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=worker,
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        self.assertTrue(staged["ok"], staged)
+        candidates = staged["import_preview"]["candidates"]
+        self.assertEqual([item["status"] for item in candidates], ["ready", "ready"])
+        self.assertEqual(candidates[0]["sha256"], candidates[1]["sha256"])
+
+        created = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[
+                candidate["candidate_id"] for candidate in candidates
+            ],
+            expected_staging_revision_sha256=staged["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertTrue(created["ok"], created)
+        items = created["screening"]["items"]
+        self.assertEqual(len(items), 2)
+        self.assertNotEqual(
+            items[0]["source_topology_sha256"],
+            items[1]["source_topology_sha256"],
+        )
+        for raw, item in zip(raw_records, items, strict=True):
+            self.assertEqual(
+                (self.root / item["source_topology_file"]).read_bytes(),
+                raw,
+            )
+            self.assertTrue(item["source_candidate_id"])
+            self.assertTrue(item["source_record_id"])
+        self.assertEqual(
+            created["screening"]["inputs"]["topology"]["status"],
+            "complete",
+        )
+
+        finished = run_screening(
+            str(self.root),
+            runner=_successful_runner([]),
+        )
+        self.assertTrue(finished["ok"], finished)
+        for item in finished["screening"]["items"]:
+            topology_snapshot = item["attempts"][0]["input_snapshots"][
+                "source_topology"
+            ]
+            self.assertEqual(
+                topology_snapshot["sha256"],
+                item["source_topology_sha256"],
+            )
+
+    def test_batch_result_sdf_is_topology_validated_annotated_and_archivable(self) -> None:
+        source = self.root / "result-export-source.sdf"
+        source.write_bytes(b"source topology\nmock\n$$$$\n")
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [{"index": 1, "status": "ready", "atom": "C"}]
+                ),
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        candidate = staged["import_preview"]["candidates"][0]
+        created = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[candidate["candidate_id"]],
+            expected_staging_revision_sha256=staged["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertTrue(created["ok"], created)
+        finished = run_screening(
+            str(self.root),
+            runner=_successful_runner([]),
+        )
+        self.assertTrue(finished["ok"], finished)
+
+        def fake_mk_export(
+            python_path,
+            output_pdbqt,
+            output_sdf,
+            *,
+            record_dir,
+            cwd,
+        ):
+            output_sdf.parent.mkdir(parents=True, exist_ok=True)
+            output_sdf.write_bytes(
+                b"pose one\nmock\n$$$$\npose two\nmock\n$$$$\n"
+            )
+            record_dir.mkdir(parents=True)
+            (record_dir / "stdout.txt").write_text("", encoding="utf-8")
+            (record_dir / "stderr.txt").write_text("", encoding="utf-8")
+            (record_dir / "command_result.json").write_text(
+                '{"status":"success"}',
+                encoding="utf-8",
+            )
+            return {"status": "success"}
+
+        def fake_validator(
+            root,
+            python_path,
+            topology_path,
+            exported_sdf,
+            expected_graph_sha256,
+            *,
+            record_dir,
+        ):
+            record_dir.mkdir(parents=True)
+            manifest = {
+                "schema_version": 1,
+                "status": "verified",
+                "rdkit_version": "test-rdkit",
+                "pose_count": 2,
+                "all_poses_match": True,
+            }
+            (record_dir / "validation_manifest.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            return manifest
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening.inspect_meeko_ligand_pdbqt",
+                return_value={"embedded_topology": True},
+            ),
+        ):
+            exported = generate_screening_result_sdf(
+                str(self.root),
+                mk_export_executor=fake_mk_export,
+                topology_validator=fake_validator,
+            )
+        self.assertTrue(exported["ok"], exported)
+        sdf = exported["sdf"]
+        self.assertTrue(sdf["generated"])
+        self.assertEqual(sdf["status"], "complete")
+        self.assertEqual(sdf["topology_coverage"]["pose_count"], 2)
+        self.assertEqual(
+            sdf["toolchain"]["profile"],
+            "meeko_export_rdkit_heavy_graph_validation_v1",
+        )
+        self.assertEqual(sdf["toolchain"]["rdkit"]["version"], "test-rdkit")
+        self.assertRegex(
+            sdf["toolchain"]["snapshot_sha256"],
+            r"^[0-9a-f]{64}$",
+        )
+        aggregate = (self.root / sdf["file"]).read_text(encoding="utf-8")
+        self.assertEqual(aggregate.count("$$$$"), 2)
+        self.assertIn("<DOCKSTART_ITEM_ID>", aggregate)
+        self.assertIn("<DOCKSTART_SOURCE_TOPOLOGY_SHA256>", aggregate)
+        self.assertEqual(
+            hashlib.sha256((self.root / sdf["file"]).read_bytes()).hexdigest(),
+            sdf["sha256"],
+        )
+        manifest = json.loads(
+            (self.root / sdf["manifest_file"]).read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["toolchain"], sdf["toolchain"])
+        reused = generate_screening_result_sdf(str(self.root))
+        self.assertTrue(reused["ok"], reused)
+        manifest_path = self.root / sdf["manifest_file"]
+        manifest_bytes = manifest_path.read_bytes()
+        manifest_path.write_text("{}\n", encoding="utf-8")
+        tampered = generate_screening_result_sdf(str(self.root))
+        self.assertFalse(tampered["ok"])
+        self.assertEqual(
+            tampered["error"]["code"],
+            "SCREENING_RESULT_SDF_ERROR",
+        )
+        self.assertIn("完整性校验失败", tampered["error"]["raw_error"])
+        manifest_path.write_bytes(manifest_bytes)
+
+        archived = archive_screening(str(self.root))
+        self.assertTrue(archived["ok"], archived)
+        with tempfile.TemporaryDirectory() as destination_dir:
+            destination = Path(destination_dir) / "audited-screening.zip"
+            zipped = export_screening_archive_zip(
+                str(self.root),
+                archived["archive_id"],
+                str(destination),
+            )
+        self.assertTrue(zipped["ok"], zipped)
+
+    def test_result_sdf_annotations_are_separate_properties_and_preserve_zero(
+        self,
+    ) -> None:
+        from dockstart_core.screening import _annotated_screening_sdf_records
+
+        payload = (
+            b"pose\n"
+            b"mock\n"
+            b">  <meeko>\n"
+            b"{\"is_sidechain\": [false]}\n\n"
+            b"$$$$\n"
+        )
+        annotated, count = _annotated_screening_sdf_records(
+            payload,
+            {
+                "DOCKSTART_ITEM_ID": "ligand_0001",
+                "DOCKSTART_BEST_AFFINITY_KCAL_MOL": 0.0,
+            },
+        )
+
+        self.assertEqual(count, 1)
+        self.assertIn(
+            b"{\"is_sidechain\": [false]}\n\n"
+            b">  <DOCKSTART_ITEM_ID>\nligand_0001\n\n",
+            annotated,
+        )
+        self.assertIn(
+            b">  <DOCKSTART_BEST_AFFINITY_KCAL_MOL>\n0.0\n\n",
+            annotated,
+        )
+
+    def test_batch_result_sdf_excludes_topology_mismatch(self) -> None:
+        source = self.root / "result-mismatch-source.sdf"
+        source.write_bytes(b"source topology\nmock\n$$$$\n")
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [{"index": 1, "status": "ready", "atom": "C"}]
+                ),
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        candidate = staged["import_preview"]["candidates"][0]
+        created = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[candidate["candidate_id"]],
+            expected_staging_revision_sha256=staged["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertTrue(created["ok"], created)
+        self.assertTrue(
+            run_screening(
+                str(self.root),
+                runner=_successful_runner([]),
+            )["ok"]
+        )
+
+        def fake_mk_export(
+            python_path,
+            output_pdbqt,
+            output_sdf,
+            *,
+            record_dir,
+            cwd,
+        ):
+            output_sdf.parent.mkdir(parents=True, exist_ok=True)
+            output_sdf.write_bytes(b"wrong topology\nmock\n$$$$\n")
+            record_dir.mkdir(parents=True)
+            return {"status": "success"}
+
+        def rejecting_validator(*args, **kwargs):
+            record_dir = kwargs["record_dir"]
+            record_dir.mkdir(parents=True)
+            raise ValueError("导出构象的重原子图与冻结拓扑不一致")
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening.inspect_meeko_ligand_pdbqt",
+                return_value={"embedded_topology": True},
+            ),
+        ):
+            response = generate_screening_result_sdf(
+                str(self.root),
+                mk_export_executor=fake_mk_export,
+                topology_validator=rejecting_validator,
+            )
+        self.assertFalse(response["ok"])
+        self.assertFalse(response["sdf"]["generated"])
+        self.assertEqual(response["sdf"]["status"], "failed")
+        self.assertIn(
+            "冻结拓扑不一致",
+            response["sdf"]["failures"][0]["message"],
+        )
+        self.assertFalse(
+            (self.root / "screening" / "results" / "screening_poses.sdf").exists()
+        )
+
+    def test_candidate_creation_rejects_stale_revision_without_orphans(self) -> None:
+        first_source = self.root / "first-import.pdbqt"
+        second_source = self.root / "second-import.pdbqt"
+        first_source.write_text(_pdbqt("C"), encoding="utf-8")
+        second_source.write_text(_pdbqt("N"), encoding="utf-8")
+        first = stage_screening_inputs(str(self.root), [str(first_source)])
+        second = stage_screening_inputs(str(self.root), [str(second_source)])
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(second["ok"], second)
+
+        response = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[
+                first["import_preview"]["candidates"][0]["candidate_id"]
+            ],
+            expected_staging_revision_sha256=first["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertFalse(response["ok"])
+        self.assertIn("已经变化", response["error"]["raw_error"])
+        self.assertFalse((self.root / "screening" / "inputs").exists())
+
+    def test_candidate_creation_rejects_topology_tamper_without_orphans(self) -> None:
+        source = self.root / "tamper-topology.sdf"
+        source.write_bytes(b"molecule\nmock\n$$$$\n")
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [{"index": 1, "status": "ready"}]
+                ),
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        self.assertTrue(staged["ok"], staged)
+        candidate = staged["import_preview"]["candidates"][0]
+        (self.root / candidate["source_topology_file"]).write_bytes(b"tampered")
+
+        response = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[candidate["candidate_id"]],
+            expected_staging_revision_sha256=staged["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertFalse(response["ok"])
+        self.assertIn("完整性校验失败", response["error"]["raw_error"])
+        self.assertFalse((self.root / "screening" / "inputs").exists())
+
+    def test_stage_deduplicates_same_resolved_source_path(self) -> None:
+        directory = self.root / "deduplicate-source"
+        directory.mkdir()
+        source = directory / "same.pdbqt"
+        source.write_text(_pdbqt("C"), encoding="utf-8")
+        response = stage_screening_inputs(
+            str(self.root),
+            [str(source), str(directory)],
+        )
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["import_preview"]["summary"]["total"], 1)
+        self.assertEqual(len(response["staged"]), 1)
+
+    def test_retry_preparation_uses_frozen_record_and_appends_attempt(self) -> None:
+        source = self.root / "retry-source.sdf"
+        raw = b"retry molecule\nmock\n$$$$\n"
+        source.write_bytes(raw)
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [
+                        {
+                            "index": 1,
+                            "status": "invalid",
+                            "error": {
+                                "code": "LIGAND_PREPARATION_FAILED",
+                                "message": "首次准备失败。",
+                            },
+                        }
+                    ]
+                ),
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        self.assertTrue(staged["ok"], staged)
+        candidate = staged["import_preview"]["candidates"][0]
+        self.assertTrue(candidate["retryable"])
+        self.assertEqual(len(candidate["preparation_attempts"]), 1)
+        old_revision = staged["import_preview"]["revision_sha256"]
+
+        source.unlink()
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [{"index": 1, "status": "ready", "atom": "N"}]
+                ),
+            ),
+        ):
+            retried = retry_screening_preparation(
+                str(self.root),
+                [candidate["candidate_id"]],
+                expected_staging_revision_sha256=old_revision,
+            )
+        self.assertTrue(retried["ok"], retried)
+        updated = retried["import_preview"]["candidates"][0]
+        self.assertEqual(updated["status"], "ready")
+        self.assertFalse(updated["retryable"])
+        self.assertEqual(len(updated["preparation_attempts"]), 2)
+        self.assertEqual(
+            [attempt["attempt"] for attempt in updated["preparation_attempts"]],
+            [1, 2],
+        )
+        self.assertNotEqual(
+            retried["import_preview"]["revision_sha256"],
+            old_revision,
+        )
+        self.assertEqual(
+            (self.root / updated["source_topology_file"]).read_bytes(),
+            raw,
+        )
+
+        created = self.create(
+            ligand_files=[],
+            ligand_candidate_ids=[updated["candidate_id"]],
+            expected_staging_revision_sha256=retried["import_preview"][
+                "revision_sha256"
+            ],
+        )
+        self.assertTrue(created["ok"], created)
+
+    def test_retry_execution_failure_is_recorded_without_losing_raw_record(self) -> None:
+        source = self.root / "retry-execution-failure.sdf"
+        raw = b"retry failure\nmock\n$$$$\n"
+        source.write_bytes(raw)
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=_fake_library_worker(
+                    [
+                        {
+                            "index": 1,
+                            "status": "invalid",
+                            "error": {
+                                "code": "LIGAND_PREPARATION_FAILED",
+                                "message": "首次准备失败。",
+                            },
+                        }
+                    ]
+                ),
+            ),
+        ):
+            staged = stage_screening_inputs(str(self.root), [str(source)])
+        candidate = staged["import_preview"]["candidates"][0]
+
+        with (
+            patch(
+                "dockstart_core.screening.get_preparation_tool_status",
+                return_value=_screening_preparation_tools(),
+            ),
+            patch(
+                "dockstart_core.screening._prepare_raw_screening_library",
+                side_effect=RuntimeError("worker crashed"),
+            ),
+        ):
+            retried = retry_screening_preparation(
+                str(self.root),
+                [candidate["candidate_id"]],
+                expected_staging_revision_sha256=staged["import_preview"][
+                    "revision_sha256"
+                ],
+            )
+        self.assertTrue(retried["ok"], retried)
+        updated = retried["import_preview"]["candidates"][0]
+        self.assertEqual(updated["status"], "invalid")
+        self.assertTrue(updated["retryable"])
+        self.assertEqual(
+            updated["error"]["code"],
+            "LIGAND_PREPARATION_RETRY_EXECUTION_FAILED",
+        )
+        self.assertEqual(len(updated["preparation_attempts"]), 2)
+        self.assertEqual(
+            (self.root / updated["source_topology_file"]).read_bytes(),
+            raw,
+        )
 
     def test_create_without_vina_path_uses_settings_detection_and_records_tool(self) -> None:
         detection = SimpleNamespace(
@@ -3726,6 +4695,126 @@ class ScreeningWorkflowTests(unittest.TestCase):
         self.assertEqual(
             row["comparison_items"][0]["display_label"],
             "renamed-candidate.pdbqt",
+        )
+        self.assertEqual(
+            row["baseline_items"][0]["identity_basis"],
+            "pdbqt_sha256",
+        )
+
+    def test_compare_archives_does_not_match_same_pdbqt_with_different_topology(
+        self,
+    ) -> None:
+        def create_modern_archive(
+            filename: str,
+            raw_record: bytes,
+            canonical_topology_sha256: str,
+        ) -> dict:
+            source = self.root / filename
+            source.write_bytes(raw_record)
+            with (
+                patch(
+                    "dockstart_core.screening.get_preparation_tool_status",
+                    return_value=_screening_preparation_tools(),
+                ),
+                patch(
+                    "dockstart_core.screening._prepare_raw_screening_library",
+                    side_effect=_fake_library_worker(
+                        [
+                            {
+                                "index": 1,
+                                "status": "ready",
+                                "atom": "C",
+                                "canonical_sha256": (
+                                    canonical_topology_sha256
+                                ),
+                            }
+                        ]
+                    ),
+                ),
+            ):
+                staged = stage_screening_inputs(
+                    str(self.root),
+                    [str(source)],
+                )
+            self.assertTrue(staged["ok"], staged)
+            candidate = staged["import_preview"]["candidates"][0]
+            created = self.create(
+                ligand_files=[],
+                ligand_candidate_ids=[candidate["candidate_id"]],
+                expected_staging_revision_sha256=staged["import_preview"][
+                    "revision_sha256"
+                ],
+            )
+            self.assertTrue(created["ok"], created)
+            with patch(
+                "dockstart_core.screening._generate_screening_result_sdf",
+                return_value={},
+            ):
+                finished = run_screening(
+                    str(self.root),
+                    runner=_successful_runner([]),
+                )
+            self.assertTrue(finished["ok"], finished)
+            archived = archive_screening(str(self.root))
+            self.assertTrue(archived["ok"], archived)
+            return archived
+
+        baseline = create_modern_archive(
+            "topology-a.sdf",
+            b"topology a\nmock\n$$$$\n",
+            "1" * 64,
+        )
+        comparison = create_modern_archive(
+            "topology-b.sdf",
+            b"topology b\nmock\n$$$$\n",
+            "2" * 64,
+        )
+
+        response = compare_screening_archives(
+            str(self.root),
+            [baseline["archive_id"], comparison["archive_id"]],
+        )
+
+        self.assertTrue(response["ok"], response)
+        self.assertEqual(response["counts"]["matched"], 0)
+        self.assertEqual(response["counts"]["baseline_only"], 1)
+        self.assertEqual(response["counts"]["comparison_only"], 1)
+        self.assertEqual(response["counts"]["rows"], 2)
+        self.assertEqual(
+            {row["match_status"] for row in response["rows"]},
+            {"baseline_only", "comparison_only"},
+        )
+        self.assertEqual(
+            len({row["identity_sha256"] for row in response["rows"]}),
+            2,
+        )
+        summaries = [
+            item
+            for row in response["rows"]
+            for side in ("baseline_items", "comparison_items")
+            for item in row[side]
+        ]
+        self.assertEqual(len(summaries), 2)
+        self.assertEqual(
+            len({item["pdbqt_sha256"] for item in summaries}),
+            1,
+        )
+        self.assertEqual(
+            {
+                item["canonical_topology_sha256"]
+                for item in summaries
+            },
+            {"1" * 64, "2" * 64},
+        )
+        self.assertTrue(
+            all(
+                item["identity_basis"]
+                == "pdbqt_sha256+canonical_topology_sha256"
+                for item in summaries
+            )
+        )
+        self.assertTrue(
+            all(item["source_candidate_id"] for item in summaries)
         )
 
     def test_compare_archives_does_not_match_same_name_with_different_content(self) -> None:

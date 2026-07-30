@@ -2,6 +2,11 @@
 
 这些文件只用于 DockStart 的真实工具链回归，不会进入 Basic/Assisted 安装包，也不能单独证明对接结果具有实验意义。
 
+其中 `flexible_mmcif_identity` 是 DockStart 自行构造的最小格式/身份映射
+fixture，不是实验结构；其用途和字段覆盖见该目录的 `README.md`。
+`flexible_mmcif_1h4w` 只保存 RCSB 1H4W 的来源、SHA256 与预期身份事实，
+不提交第三方坐标文件；真实文件由验证者显式提供。
+
 ## 来源和许可证
 
 - 上游项目：AutoDock Vina `v1.2.7`
@@ -19,5 +24,7 @@ DockStart 运行时依赖，也不会随安装包分发。
 ## 使用边界
 
 - `flexible_1fpu` 用于验证默认严格失败、坏残基清单审阅以及明确确认后的 `--allow_bad_res`。
+- `flexible_mmcif_identity` 用于验证 author/label 残基身份、插入码、altloc、occupancy、model 与 Gemmi PDB 桥接。
+- `flexible_mmcif_1h4w` 用于在外部真实复杂 mmCIF 上复核同一身份链，并将 Meeko 不兼容明确报告为阻断。
 - `macrocycle_bace1` 用于验证 Meeko 大环自动断环、刚性对照、Vina/CLI 一致性和拓扑安全导出。
 - Golden hash 只适用于 manifest 写明的工具链版本和输入；工具版本变化后必须重新做科学审阅，不能直接刷新 hash。

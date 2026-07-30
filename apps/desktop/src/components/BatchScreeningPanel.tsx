@@ -38,11 +38,15 @@ import {
 } from "../utils/screeningVina";
 import {
   defaultLigandSelection,
+  ligandTopologyCoverage,
   normalizeLigandImportPreview,
+  retryableLigandCandidateIds,
   selectAllReadyLigands,
+  selectedLigandCandidateIds as collectSelectedLigandCandidateIds,
   selectedLigandFiles,
   toggleLigandSelection,
   type LigandImportPreview,
+  type LigandImportStatus,
 } from "../utils/screeningLigandImport";
 import {
   archiveExportIntegrityLabel,
@@ -208,9 +212,10 @@ function parseResponse(raw: string): ScreeningResponse {
   return JSON.parse(raw) as ScreeningResponse;
 }
 
-function ligandImportStatusLabel(status: "ready" | "duplicate" | "invalid"): string {
+function ligandImportStatusLabel(status: LigandImportStatus): string {
   if (status === "ready") return "可用";
   if (status === "duplicate") return "重复";
+  if (status === "review_required") return "需审查";
   return "失败";
 }
 
@@ -313,6 +318,7 @@ export default function BatchScreeningPanel({
   const [ligandImportPreview, setLigandImportPreview] = useState<LigandImportPreview | null>(null);
   const [selectedLigandCandidateIds, setSelectedLigandCandidateIds] = useState<Set<string>>(new Set());
   const [importingLigands, setImportingLigands] = useState(false);
+  const [retryingPreparation, setRetryingPreparation] = useState(false);
   const [maxRetries, setMaxRetries] = useState(1);
   const [topN, setTopN] = useState(20);
   const [cpuPerTask, setCpuPerTask] = useState(
@@ -355,6 +361,22 @@ export default function BatchScreeningPanel({
     () => ligandImportPreview
       ? selectedLigandFiles(ligandImportPreview, selectedLigandCandidateIds)
       : [],
+    [ligandImportPreview, selectedLigandCandidateIds],
+  );
+  const selectedCandidateIds = useMemo(
+    () => ligandImportPreview
+      ? collectSelectedLigandCandidateIds(ligandImportPreview, selectedLigandCandidateIds)
+      : [],
+    [ligandImportPreview, selectedLigandCandidateIds],
+  );
+  const retryableCandidateIds = useMemo(
+    () => ligandImportPreview ? retryableLigandCandidateIds(ligandImportPreview) : [],
+    [ligandImportPreview],
+  );
+  const topologyCoverage = useMemo(
+    () => ligandImportPreview
+      ? ligandTopologyCoverage(ligandImportPreview, selectedLigandCandidateIds)
+      : null,
     [ligandImportPreview, selectedLigandCandidateIds],
   );
   const stagedLabels = useMemo(() => {
@@ -930,6 +952,55 @@ export default function BatchScreeningPanel({
     });
   };
 
+  const retryPreparation = async () => {
+    if (
+      !ligandImportPreview
+      || ligandImportPreview.schemaVersion !== 2
+      || !ligandImportPreview.revisionSha256
+      || !retryableCandidateIds.length
+    ) return;
+    const request = ++ligandImportRequestRef.current;
+    const generation = projectGenerationRef.current;
+    setBusy(true);
+    setRetryingPreparation(true);
+    setRawError("");
+    try {
+      const parsed = parseResponse(await invoke<string>("retry_screening_preparation", {
+        projectDir,
+        candidateIds: retryableCandidateIds,
+        expectedStagingRevisionSha256: ligandImportPreview.revisionSha256,
+      }));
+      if (
+        request !== ligandImportRequestRef.current
+        || generation !== projectGenerationRef.current
+      ) return;
+      if (!parsed.ok) throw new Error(parsed.error?.message || "配体准备重试失败。");
+      const preview = normalizeLigandImportPreview(parsed);
+      const selection = defaultLigandSelection(preview);
+      setLigandImportPreview(preview);
+      setSelectedLigandCandidateIds(selection);
+      if (collectSelectedLigandCandidateIds(preview, selection).length > 1) {
+        onBatchModeDetected?.();
+      }
+      setMessage(parsed.message || "已重新准备可重试的失败记录。");
+    } catch (error) {
+      if (
+        request === ligandImportRequestRef.current
+        && generation === projectGenerationRef.current
+      ) {
+        setRawError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (
+        request === ligandImportRequestRef.current
+        && generation === projectGenerationRef.current
+      ) {
+        setBusy(false);
+        setRetryingPreparation(false);
+      }
+    }
+  };
+
   const create = async (): Promise<boolean> => {
     if (!receptorFile || !stagedFiles.length) return false;
     setBusy(true);
@@ -939,6 +1010,12 @@ export default function BatchScreeningPanel({
         projectDir,
         receptorFile,
         ligandFiles: stagedFiles,
+        ligandCandidateIds: ligandImportPreview?.schemaVersion === 2
+          ? selectedCandidateIds
+          : undefined,
+        expectedStagingRevisionSha256: ligandImportPreview?.schemaVersion === 2
+          ? ligandImportPreview.revisionSha256
+          : undefined,
         boxJson: JSON.stringify(box),
         vinaJson: serializeScreeningVinaSettings(vina, cpuPerTask),
         maxRetries,
@@ -1664,7 +1741,7 @@ export default function BatchScreeningPanel({
                   <span>配体库</span>
                   <strong>
                     {ligandImportPreview
-                      ? `已选 ${stagedFiles.length} / ${ligandImportPreview.counts.ready} 个可用配体`
+                      ? `已选 ${selectedCandidateIds.length} / ${ligandImportPreview.counts.ready} 个可用配体`
                       : "导入配体文件或文件夹"}
                   </strong>
                   <small>PDBQT 可直接加入；SDF 与 MOL 会逐条准备并列出失败记录。</small>
@@ -1695,12 +1772,26 @@ export default function BatchScreeningPanel({
                     <div><span>记录</span><strong>{ligandImportPreview.counts.total}</strong></div>
                     <div><span>可用</span><strong>{ligandImportPreview.counts.ready}</strong></div>
                     <div><span>重复</span><strong>{ligandImportPreview.counts.duplicate}</strong></div>
+                    <div><span>需审查</span><strong>{ligandImportPreview.counts.reviewRequired}</strong></div>
                     <div><span>失败</span><strong>{ligandImportPreview.counts.invalid}</strong></div>
-                    <div><span>已选</span><strong>{stagedFiles.length}</strong></div>
+                    <div><span>已选</span><strong>{selectedCandidateIds.length}</strong></div>
                   </div>
                   <div className="batch-screening-import-toolbar">
-                    <span>仅可用记录会进入队列。</span>
+                    <span>
+                      {topologyCoverage?.status === "complete"
+                        ? `已选记录的原始拓扑已全部冻结（${topologyCoverage.verified}/${topologyCoverage.selected}）`
+                        : topologyCoverage?.status === "partial"
+                          ? `原始拓扑部分可追溯（${topologyCoverage.verified}/${topologyCoverage.selected}）`
+                          : "所选记录没有可验证的原始拓扑"}
+                    </span>
                     <div>
+                      <button
+                        type="button"
+                        disabled={busy || !retryableCandidateIds.length}
+                        onClick={() => void retryPreparation()}
+                      >
+                        重试准备{retryableCandidateIds.length ? `（${retryableCandidateIds.length}）` : ""}
+                      </button>
                       <button
                         type="button"
                         disabled={!ligandImportPreview.counts.ready}
@@ -1748,6 +1839,11 @@ export default function BatchScreeningPanel({
                             <td>
                               <strong>{candidate.displayName}</strong>
                               <small>{candidate.sourceFormat.toUpperCase()} · {ligandImportSizeLabel(candidate.sizeBytes)}</small>
+                              <small>
+                                {candidate.chemicalFacts?.status === "verified"
+                                  ? `形式电荷 ${candidate.chemicalFacts.formalCharge} · 重原子 ${candidate.chemicalFacts.heavyAtomCount} · 可旋转键 ${candidate.chemicalFacts.rotatableBondCount}`
+                                  : "化学事实不可用"}
+                              </small>
                             </td>
                             <td title={candidate.sourceFile}>
                               <strong>{candidate.originalName}</strong>
@@ -1763,12 +1859,42 @@ export default function BatchScreeningPanel({
                                     ? "与已保留记录相同"
                                     : "可加入筛选队列")}
                               </small>
+                              {candidate.preparationAttempts.length ? (
+                                <small>
+                                  已准备 {candidate.preparationAttempts.length} 次
+                                  {candidate.retryable ? " · 可重试" : ""}
+                                </small>
+                              ) : null}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  {ligandImportPreview.failureManifest ? (
+                    <AdvancedDetails
+                      summary={`准备失败清单：${ligandImportPreview.failureManifest.failureCount} 条`}
+                    >
+                      <dl className="batch-screening-protocol-list">
+                        <div>
+                          <dt>JSON</dt>
+                          <dd><code>{ligandImportPreview.failureManifest.jsonFile}</code></dd>
+                        </div>
+                        <div>
+                          <dt>JSON SHA256</dt>
+                          <dd><code>{ligandImportPreview.failureManifest.jsonSha256}</code></dd>
+                        </div>
+                        <div>
+                          <dt>CSV</dt>
+                          <dd><code>{ligandImportPreview.failureManifest.csvFile}</code></dd>
+                        </div>
+                        <div>
+                          <dt>CSV SHA256</dt>
+                          <dd><code>{ligandImportPreview.failureManifest.csvSha256}</code></dd>
+                        </div>
+                      </dl>
+                    </AdvancedDetails>
+                  ) : null}
                 </>
               ) : null}
             </section>
@@ -1858,9 +1984,11 @@ export default function BatchScreeningPanel({
         detail={`原归档不会被修改${exportingArchiveId ? ` · ${exportingArchiveId}` : ""}`}
       />
       <OperationLoadingDialog
-        open={importingLigands}
-        title="正在导入配体库"
-        message="正在逐条读取、准备并核对配体记录。"
+        open={importingLigands || retryingPreparation}
+        title={retryingPreparation ? "正在重试配体准备" : "正在导入配体库"}
+        message={retryingPreparation
+          ? "正在重新准备可重试的失败记录并生成新的 staging revision。"
+          : "正在逐条读取、准备并核对配体记录。"}
         detail="完成后可选择进入队列的配体"
       />
     </section>

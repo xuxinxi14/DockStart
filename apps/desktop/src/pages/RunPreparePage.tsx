@@ -21,7 +21,9 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import AutoGridMapsPanel from "../components/AutoGridMapsPanel";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
-import FlexibleReceptorPanel from "../components/FlexibleReceptorPanel";
+import FlexibleReceptorPanel, {
+  type FlexibleReceptorIdentityContext,
+} from "../components/FlexibleReceptorPanel";
 import MultiLigandDockingPanel from "../components/MultiLigandDockingPanel";
 import RunBoxInspector, {
   type RunAxisSpacing,
@@ -347,7 +349,13 @@ export default function RunPreparePage({
   const [workspaceMode, setWorkspaceMode] = useState<DockingWorkspaceMode>(() => readDockingWorkspaceMode(initialProject.project_dir));
   const [residueSelectionActive, setResidueSelectionActive] = useState(false);
   const [flexibleResidues, setFlexibleResidues] = useState<string[]>([]);
-  const [pickedResidue, setPickedResidue] = useState({ selector: "", token: 0 });
+  const [pickedResidue, setPickedResidue] = useState({
+    selector: "",
+    selectionContextSha256: "",
+    token: 0,
+  });
+  const [flexibleIdentityContext, setFlexibleIdentityContext] =
+    useState<FlexibleReceptorIdentityContext | null>(null);
   const mountedRef = useRef(true);
   const dirtyRef = useRef(false);
   const preflightRequestRef = useRef(0);
@@ -501,13 +509,32 @@ export default function RunPreparePage({
     setIsDirty(true);
     dirtyRef.current = true;
   }, [activeRunBlocked, isAd4Maps, project, selectWorkspaceMode, workspaceMode]);
-  const handleResidueSelect = useCallback((selector: string) => {
-    setPickedResidue((current) => ({ selector, token: current.token + 1 }));
+  const handleResidueSelect = useCallback((selector: string, selectionContextSha256: string) => {
+    setPickedResidue((current) => ({
+      selector,
+      selectionContextSha256,
+      token: current.token + 1,
+    }));
   }, []);
+  const handleFlexibleIdentityContext = useCallback(
+    (context: FlexibleReceptorIdentityContext | null) => {
+      setFlexibleIdentityContext(context);
+    },
+    [],
+  );
 
   useEffect(() => {
     setWorkspaceMode(readDockingWorkspaceMode(initialProject.project_dir));
   }, [initialProject.project_dir]);
+
+  useEffect(() => {
+    setFlexibleIdentityContext(null);
+    setPickedResidue({
+      selector: "",
+      selectionContextSha256: "",
+      token: 0,
+    });
+  }, [project.project_dir]);
 
   useEffect(() => {
     if ((isAd4Maps || isEvaluationMode) && workspaceMode === "batch") {
@@ -1227,6 +1254,14 @@ export default function RunPreparePage({
                   axisSpacing={axisSpacing}
                   residueSelectionActive={residueSelectionActive}
                   selectedResidues={flexibleResidues}
+                  residueSelectionStructure={
+                    residueSelectionActive
+                      ? flexibleIdentityContext?.viewer ?? null
+                      : null
+                  }
+                  selectionContextSha256={
+                    flexibleIdentityContext?.selection_context_sha256 ?? ""
+                  }
                   onResidueSelect={handleResidueSelect}
                   onResidueSelectionComplete={() => setResidueSelectionActive(false)}
                   useActiveReceptorInputs={
@@ -1782,9 +1817,11 @@ export default function RunPreparePage({
             disabled={isBusy || activeRunBlocked || isDirty}
             pickedResidue={pickedResidue.selector}
             pickedResidueToken={pickedResidue.token}
+            pickedResidueContextSha256={pickedResidue.selectionContextSha256}
             selectionActive={residueSelectionActive}
             onSelectionActiveChange={setResidueSelectionActive}
             onResiduesChange={setFlexibleResidues}
+            onIdentityContextChange={handleFlexibleIdentityContext}
             onProjectChange={(nextProject) => {
               commitProject(nextProject, true);
               void refreshPreflight(true);

@@ -39,7 +39,9 @@ type RunStructurePreviewProps = {
   fitRequestKey?: number;
   residueSelectionActive?: boolean;
   selectedResidues?: string[];
-  onResidueSelect?: (selector: string) => void;
+  residueSelectionStructure?: ViewerStructureResult | null;
+  selectionContextSha256?: string;
+  onResidueSelect?: (selector: string, selectionContextSha256: string) => void;
   onResidueSelectionComplete?: () => void;
   useActiveReceptorInputs?: boolean;
 };
@@ -142,6 +144,8 @@ export default function RunStructurePreview({
   fitRequestKey = 0,
   residueSelectionActive = false,
   selectedResidues = [],
+  residueSelectionStructure = null,
+  selectionContextSha256 = "",
   onResidueSelect,
   onResidueSelectionComplete,
   useActiveReceptorInputs = false,
@@ -241,10 +245,14 @@ export default function RunStructurePreview({
         stick: { radius: 0.1, colorscheme: "Jmol" },
       });
       for (const selector of selectedResidues) {
-        const [chain, residueNumber] = selector.split(":");
+        const [chain, residueNumber, insertionCode] = selector.split(":");
         if (!chain || !residueNumber) continue;
         receptorModel.setStyle(
-          { chain, resi: Number.isFinite(Number(residueNumber)) ? Number(residueNumber) : residueNumber },
+          {
+            chain,
+            resi: Number.isFinite(Number(residueNumber)) ? Number(residueNumber) : residueNumber,
+            ...(insertionCode ? { icode: insertionCode } : {}),
+          },
           { stick: { radius: 0.3, color: "#f4c95d" }, sphere: { scale: 0.22, color: "#f4c95d" } },
           true,
         );
@@ -261,7 +269,11 @@ export default function RunStructurePreview({
           setMessage("最多选择 8 个柔性残基。");
           return;
         }
-        onResidueSelect?.(selector);
+        if (!selectionContextSha256) {
+          setMessage("当前 3D 结构没有身份合同哈希，已拒绝记录该残基。");
+          return;
+        }
+        onResidueSelect?.(selector, selectionContextSha256);
         setMessage(`已点选 ${selector}${atom.resn ? ` ${atom.resn}` : ""}；可继续点选或进入柔性准备。`);
       } : undefined);
     }
@@ -328,7 +340,7 @@ export default function RunStructurePreview({
       viewer.zoomTo();
     }
     viewer.render();
-  }, [axisSpacing, boxLineThickness, ensureViewer, onResidueSelect, refreshKey, residueSelectionActive, selectedResidues, showAxes, showBox, showLigand, showReceptor, structures]);
+  }, [axisSpacing, boxLineThickness, ensureViewer, onResidueSelect, refreshKey, residueSelectionActive, selectedResidues, selectionContextSha256, showAxes, showBox, showLigand, showReceptor, structures]);
 
   const refreshBoxOverlay = useCallback(async () => {
     const sceneGeneration = sceneGenerationRef.current;
@@ -421,24 +433,22 @@ export default function RunStructurePreview({
     async function loadPreview() {
       setMessage("正在读取受体、配体与搜索范围…");
       try {
-        const [receptorPayload, flexReceptorPayload, ligandPayload] = await Promise.all([
-          invoke<string>("load_structure_for_viewer", {
-            projectDir,
-            fileKind: useActiveReceptorInputs ? "receptor_run" : "receptor_prepared",
-          }),
+        const [receptor, flexReceptor, ligandPayload] = await Promise.all([
+          residueSelectionActive && residueSelectionStructure?.ok
+            ? Promise.resolve(residueSelectionStructure)
+            : invoke<string>("load_structure_for_viewer", {
+                projectDir,
+                fileKind: useActiveReceptorInputs ? "receptor_run" : "receptor_prepared",
+              }).then(parseStructure),
           useActiveReceptorInputs
             ? invoke<string>("load_structure_for_viewer", {
                 projectDir,
                 fileKind: "receptor_flex",
-              })
-            : Promise.resolve(""),
+              }).then(parseStructure)
+            : Promise.resolve(null),
           invoke<string>("load_structure_for_viewer", { projectDir, fileKind: "ligand_prepared" }),
         ]);
         if (cancelled || generation !== loadGenerationRef.current) return;
-        const receptor = parseStructure(receptorPayload);
-        const flexReceptor = flexReceptorPayload
-          ? parseStructure(flexReceptorPayload)
-          : null;
         const ligand = parseStructure(ligandPayload);
         setStructures({ receptor, flexReceptor, ligand });
         if (receptor.ok && ligand.ok && (!useActiveReceptorInputs || flexReceptor?.ok)) {
@@ -460,7 +470,13 @@ export default function RunStructurePreview({
     return () => {
       cancelled = true;
     };
-  }, [projectDir, refreshKey, useActiveReceptorInputs]);
+  }, [
+    projectDir,
+    refreshKey,
+    residueSelectionActive,
+    residueSelectionStructure,
+    useActiveReceptorInputs,
+  ]);
 
   useEffect(() => {
     const shouldFit = !hasFitRef.current && Boolean(structures.receptor?.ok || structures.ligand?.ok);

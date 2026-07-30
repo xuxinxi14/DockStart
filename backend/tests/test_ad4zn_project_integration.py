@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from dockstart_core import ad4zn as ad4zn_module  # noqa: E402
 from dockstart_core.ad4zn import (  # noqa: E402
     REQUIRED_CONFIRMATIONS,
     get_status as get_ad4zn_status,
@@ -97,6 +99,10 @@ PARAMETER_TEXT = "\n".join(
         "FE_coeff_estat 0.1406",
         "FE_coeff_desolv 0.1322",
         "FE_coeff_tors 0.2983",
+        "atom_par C 4.00 0.150 33.5103 -0.00143 0.0 0.0 0 -1 -1 0",
+        "atom_par NA 3.50 0.160 22.4493 -0.00162 1.9 5.0 4 -1 -1 1",
+        "atom_par OA 3.20 0.200 17.1573 -0.00251 1.9 5.0 5 -1 -1 2",
+        "atom_par SA 4.00 0.200 33.5103 -0.00214 2.5 1.0 5 -1 -1 6",
         "atom_par ZN 1.48 0.550 1.7000 -0.00110 0.0 0.0 0 -1 -1 4",
         "atom_par TZ 1.00 0.000 0.0000 0.00000 0.0 0.0 0 -1 -1 0",
         "",
@@ -105,6 +111,18 @@ PARAMETER_TEXT = "\n".join(
 
 
 class AD4ZnProjectIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        reference_sha256 = hashlib.sha256(
+            PARAMETER_TEXT.encode("utf-8")
+        ).hexdigest()
+        patcher = patch.object(
+            ad4zn_module,
+            "SUPPORTED_PARAMETER_REFERENCE_SHA256",
+            reference_sha256,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def _fake_autogrid(
         _executable: str,
@@ -230,6 +248,33 @@ class AD4ZnProjectIntegrationTests(unittest.TestCase):
             manifest = generated["manifest"]
             self.assertEqual(manifest["protocol_id"], "ad4zn_beta")
             self.assertEqual(manifest["stability"], "beta")
+            coverage = manifest["ad4zn"]["box_coverage"]
+            self.assertEqual(
+                coverage["method"],
+                "ad4zn_zn_tz_requested_box_and_autogrid_npts_spacing_v1",
+            )
+            self.assertEqual(coverage["interval_semantics"], "closed")
+            self.assertTrue(
+                coverage["all_zn_tz_inside_requested_box"]
+            )
+            self.assertTrue(
+                coverage["all_zn_tz_inside_effective_grid"]
+            )
+            self.assertEqual(set(coverage["markers"]), {"ZN", "TZ"})
+            self.assertEqual(
+                manifest["grid"]["requested_box"],
+                {
+                    "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "size": {"x": 20.0, "y": 20.0, "z": 20.0},
+                },
+            )
+            project_payload = json.loads(
+                (project_dir / "project.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                project_payload["ad4zn"]["box_coverage_sha256"],
+                manifest["ad4zn"]["box_coverage_sha256"],
+            )
             self.assertEqual(
                 manifest["ad4zn"]["algorithm"]["algorithm_version"],
                 "1.2",
@@ -248,6 +293,26 @@ class AD4ZnProjectIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 manifest["autogrid"]["log_summary"]["successful_completion"],
                 True,
+            )
+            receptor_snapshot_relative = Path(
+                "maps",
+                generated["map_set_id"],
+                "inputs",
+                "receptor_tz.pdbqt",
+            ).as_posix()
+            self.assertEqual(
+                manifest["receptor"]["relative_path"],
+                receptor_snapshot_relative,
+            )
+            receptor_snapshot = project_dir / receptor_snapshot_relative
+            self.assertTrue(receptor_snapshot.is_file())
+            self.assertEqual(
+                manifest["receptor"]["size_bytes"],
+                receptor_snapshot.stat().st_size,
+            )
+            self.assertEqual(
+                manifest["receptor"]["sha256"],
+                hashlib.sha256(receptor_snapshot.read_bytes()).hexdigest(),
             )
             gpf = (
                 project_dir
@@ -329,6 +394,256 @@ class AD4ZnProjectIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 rejected["error"]["code"],
                 "RUN_AD4ZN_POST_HASH_MISMATCH",
+            )
+
+    def test_zn_tz_outside_requested_box_blocks_before_autogrid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir, _parameter = self._prepared_project(root)
+            moved = update_box_params(
+                str(project_dir),
+                {
+                    "center_x": 100,
+                    "center_y": 100,
+                    "center_z": 100,
+                    "size_x": 20,
+                    "size_y": 20,
+                    "size_z": 20,
+                },
+            )
+            self.assertTrue(moved["ok"], moved)
+            autogrid = Path(root) / "autogrid4.exe"
+            autogrid.write_bytes(b"mock AutoGrid 4.2.7")
+            runner = Mock(side_effect=self._fake_autogrid)
+
+            with patch(
+                "dockstart_core.autogrid.autogrid_adapter.detect",
+                return_value=self._tool(
+                    "autogrid4",
+                    "AutoGrid4",
+                    "4.2.7",
+                    autogrid,
+                ),
+            ):
+                generated = generate_maps(
+                    str(project_dir),
+                    runner=runner,
+                )
+
+            self.assertFalse(generated["ok"], generated)
+            self.assertEqual(
+                generated["error"]["code"],
+                "AD4ZN_ZN_TZ_OUTSIDE_REQUESTED_BOX",
+            )
+            runner.assert_not_called()
+
+    def test_zn_tz_outside_effective_grid_blocks_before_autogrid(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir, _parameter = self._prepared_project(root)
+            autogrid = Path(root) / "autogrid4.exe"
+            autogrid.write_bytes(b"mock AutoGrid 4.2.7")
+            runner = Mock(side_effect=self._fake_autogrid)
+
+            with patch(
+                "dockstart_core.autogrid.autogrid_adapter.detect",
+                return_value=self._tool(
+                    "autogrid4",
+                    "AutoGrid4",
+                    "4.2.7",
+                    autogrid,
+                ),
+            ):
+                generated = generate_maps(
+                    str(project_dir),
+                    {
+                        "spacing": 0.1,
+                        "grid_points": [2, 2, 2],
+                    },
+                    runner=runner,
+                )
+
+            self.assertFalse(generated["ok"], generated)
+            self.assertEqual(
+                generated["error"]["code"],
+                "AD4ZN_ZN_TZ_OUTSIDE_EFFECTIVE_GRID",
+            )
+            runner.assert_not_called()
+
+    def test_zn_tz_on_closed_box_and_grid_boundaries_is_allowed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir, _parameter = self._prepared_project(root)
+            moved = update_box_params(
+                str(project_dir),
+                {
+                    "center_x": -10,
+                    "center_y": -10,
+                    "center_z": -10,
+                    "size_x": 20,
+                    "size_y": 20,
+                    "size_z": 20,
+                },
+            )
+            self.assertTrue(moved["ok"], moved)
+            autogrid = Path(root) / "autogrid4.exe"
+            autogrid.write_bytes(b"mock AutoGrid 4.2.7")
+            runner = Mock(side_effect=self._fake_autogrid)
+
+            with patch(
+                "dockstart_core.autogrid.autogrid_adapter.detect",
+                return_value=self._tool(
+                    "autogrid4",
+                    "AutoGrid4",
+                    "4.2.7",
+                    autogrid,
+                ),
+            ):
+                generated = generate_maps(
+                    str(project_dir),
+                    {
+                        "spacing": 1.0,
+                        "grid_points": [20, 20, 20],
+                    },
+                    runner=runner,
+                )
+                validated = (
+                    validate_active_maps(str(project_dir))
+                    if generated.get("ok")
+                    else generated
+                )
+
+            self.assertTrue(generated["ok"], generated)
+            runner.assert_called_once()
+            coverage = generated["manifest"]["ad4zn"]["box_coverage"]
+            self.assertEqual(
+                coverage["markers"]["ZN"][
+                    "requested_box_margin_angstrom"
+                ],
+                {"x": 0.0, "y": 0.0, "z": 0.0},
+            )
+            self.assertEqual(
+                coverage["markers"]["ZN"][
+                    "effective_grid_margin_angstrom"
+                ],
+                {"x": 0.0, "y": 0.0, "z": 0.0},
+            )
+            self.assertTrue(validated["ready"], validated)
+
+    def test_active_maps_recompute_and_reject_coverage_tampering(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            project_dir, _parameter = self._prepared_project(root)
+            autogrid = Path(root) / "autogrid4.exe"
+            autogrid.write_bytes(b"mock AutoGrid 4.2.7")
+            with patch(
+                "dockstart_core.autogrid.autogrid_adapter.detect",
+                return_value=self._tool(
+                    "autogrid4",
+                    "AutoGrid4",
+                    "4.2.7",
+                    autogrid,
+                ),
+            ):
+                generated = generate_maps(
+                    str(project_dir),
+                    runner=self._fake_autogrid,
+                )
+            self.assertTrue(generated["ok"], generated)
+            manifest_path = project_dir / generated["manifest_file"]
+            manifest_bytes = manifest_path.read_bytes()
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+
+            without_coverage = json.loads(json.dumps(manifest))
+            without_coverage["ad4zn"].pop("box_coverage")
+            manifest_path.write_text(
+                json.dumps(
+                    without_coverage,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            missing = validate_active_maps(str(project_dir))
+            self.assertFalse(missing["ready"], missing)
+            self.assertIn(
+                "缺少 ZN/TZ Box 覆盖记录",
+                "；".join(missing["issues"]),
+            )
+
+            tampered_coverage = json.loads(json.dumps(manifest))
+            tampered_coverage["ad4zn"]["box_coverage"]["markers"]["ZN"][
+                "coordinate_angstrom"
+            ]["x"] = 0.5
+            manifest_path.write_text(
+                json.dumps(
+                    tampered_coverage,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            tampered = validate_active_maps(str(project_dir))
+            self.assertFalse(tampered["ready"], tampered)
+            self.assertIn(
+                "覆盖记录摘要不匹配",
+                "；".join(tampered["issues"]),
+            )
+
+            manifest_path.write_bytes(manifest_bytes)
+            prepared_path = (
+                project_dir
+                / manifest["receptor"]["source_relative_path"]
+            )
+            prepared_bytes = prepared_path.read_bytes()
+            prepared_lines = prepared_bytes.decode("utf-8").splitlines(
+                keepends=True
+            )
+            for index, line in enumerate(prepared_lines):
+                if line.split() and line.split()[-1].upper() == "TZ":
+                    prepared_lines[index] = (
+                        line[:30] + f"{0.500:8.3f}" + line[38:]
+                    )
+                    break
+            prepared_path.write_text(
+                "".join(prepared_lines),
+                encoding="utf-8",
+            )
+            coordinate_changed = validate_active_maps(str(project_dir))
+            self.assertFalse(
+                coordinate_changed["ready"],
+                coordinate_changed,
+            )
+            self.assertIn(
+                "重算的 ZN/TZ Box 覆盖与 manifest 不一致",
+                "；".join(coordinate_changed["issues"]),
+            )
+            prepared_path.write_bytes(prepared_bytes)
+
+            current_box = generated["manifest"]["grid"]["actual_size"]
+            moved = update_box_params(
+                str(project_dir),
+                {
+                    "center_x": 1,
+                    "center_y": 0,
+                    "center_z": 0,
+                    "size_x": current_box["x"],
+                    "size_y": current_box["y"],
+                    "size_z": current_box["z"],
+                },
+            )
+            self.assertTrue(moved["ok"], moved)
+            box_changed = validate_active_maps(str(project_dir))
+            self.assertFalse(box_changed["ready"], box_changed)
+            self.assertIn(
+                "当前 Box 的 center_x 与 maps 网格不一致",
+                "；".join(box_changed["issues"]),
             )
 
     def test_autogrid_426_is_a_hard_gate(self) -> None:

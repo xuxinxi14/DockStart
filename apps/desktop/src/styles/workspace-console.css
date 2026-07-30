@@ -350,55 +350,269 @@
   padding: 14px;
 }
 
-.preparation-macrocycle-intro {
+.macrocycle-selector {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.42fr);
-  align-items: end;
-  gap: 16px;
+  gap: 14px;
 }
 
-.preparation-macrocycle-intro > div,
-.preparation-macrocycle-intro > label,
-.preparation-macrocycle-settings > label {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
+.macrocycle-selector-header,
+.macrocycle-candidates-heading,
+.macrocycle-confirmation-bar,
+.macrocycle-evidence > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 }
 
-.preparation-macrocycle-intro strong,
-.preparation-macrocycle-intro span,
-.preparation-macrocycle-settings label > span {
-  color: var(--ds-text-on-dark);
-  font-size: 12px;
-}
-
-.preparation-macrocycle-intro p,
-.preparation-macrocycle-note {
+.macrocycle-selector-header h3,
+.macrocycle-selector-header p,
+.macrocycle-mode-field p,
+.macrocycle-candidates-heading strong,
+.macrocycle-candidates-heading span,
+.macrocycle-evidence header strong,
+.macrocycle-evidence header span {
   margin: 0;
+}
+
+.macrocycle-selector-header h3 {
+  color: var(--ds-text-on-dark);
+  font-size: 14px;
+}
+
+.macrocycle-selector-header p,
+.macrocycle-mode-field p,
+.macrocycle-candidates-heading span,
+.macrocycle-evidence header span {
   color: var(--ds-text-on-dark-muted);
   font-size: 11px;
   line-height: 1.5;
 }
 
-.preparation-macrocycle-intro select,
-.preparation-macrocycle-settings input[type="number"] {
+.macrocycle-mode-field {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.4fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.macrocycle-mode-field > label,
+.macrocycle-review-settings > label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.macrocycle-mode-field label > span,
+.macrocycle-review-settings label > span {
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
+.macrocycle-mode-field select,
+.macrocycle-review-settings input[type="number"] {
   width: 100%;
   min-width: 0;
   min-height: 36px;
 }
 
-.preparation-macrocycle-settings {
+.macrocycle-review-settings {
   display: grid;
-  grid-template-columns: repeat(2, minmax(130px, 0.55fr)) repeat(3, minmax(155px, 1fr));
-  align-items: end;
-  gap: 10px 14px;
+  grid-template-columns: repeat(2, minmax(110px, 0.5fr)) repeat(3, minmax(160px, 1fr)) auto;
+  align-items: center;
+  gap: 12px 14px;
   padding-top: 12px;
   border-top: 1px solid var(--ds-on-dark-border-subtle);
 }
 
-.preparation-macrocycle-note {
-  padding-left: 9px;
-  border-left: 2px solid var(--ds-warning-on-dark);
+.macrocycle-inline-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid var(--ds-on-dark-border-subtle);
+  border-radius: 6px;
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 12px;
+}
+
+.macrocycle-inline-message.is-warning {
+  border-color: color-mix(in srgb, var(--ds-warning-on-dark) 50%, transparent);
+  color: var(--ds-warning-on-dark);
+}
+
+.macrocycle-issues {
+  display: grid;
+  gap: 8px;
+}
+
+.macrocycle-issues > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ds-warning-on-dark) 45%, transparent);
+  border-radius: 6px;
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 11px;
+}
+
+.macrocycle-issues strong {
+  color: var(--ds-warning-on-dark);
+  font-size: 12px;
+}
+
+.macrocycle-candidates {
+  display: grid;
+  gap: 10px;
+}
+
+.macrocycle-candidates-heading > div,
+.macrocycle-evidence header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.macrocycle-candidates-heading strong,
+.macrocycle-evidence header strong {
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
+.macrocycle-candidate-list {
+  display: grid;
+  gap: 8px;
+  max-height: 390px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.macrocycle-candidate-workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.macrocycle-candidate-preview {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.macrocycle-candidate-preview > strong {
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
+.macrocycle-candidate-preview > span {
+  color: var(--ds-text-on-dark-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.macrocycle-candidate-preview .structure-mini-preview {
+  min-height: 360px;
+  margin: 6px 0 0;
+}
+
+.macrocycle-candidate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--ds-on-dark-border-subtle);
+  border-radius: 7px;
+  background: var(--ds-on-dark-surface);
+  cursor: pointer;
+}
+
+.macrocycle-candidate.is-selected {
+  border-color: var(--ds-brand-on-dark);
+  background: var(--ds-brand-hover-on-dark);
+}
+
+.macrocycle-candidate input {
+  margin-top: 3px;
+}
+
+.macrocycle-candidate-body,
+.macrocycle-bond-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.macrocycle-candidate-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--ds-text-on-dark-muted);
+  font-size: 10px;
+}
+
+.macrocycle-candidate-title strong {
+  color: var(--ds-text-on-dark);
+  font-size: 12px;
+}
+
+.macrocycle-bond-list code {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 11px;
+}
+
+.macrocycle-confirmation-bar {
+  min-height: 52px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.macrocycle-confirmation-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-text-on-dark-secondary);
+  font-size: 12px;
+}
+
+.macrocycle-evidence {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 7px;
+  background: var(--ds-on-dark-surface);
+}
+
+.macrocycle-evidence dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.macrocycle-evidence dl > div {
+  display: grid;
+  gap: 3px;
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.macrocycle-evidence dt {
+  color: var(--ds-text-on-dark-muted);
+  font-size: 10px;
+}
+
+.macrocycle-evidence dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ds-text-on-dark);
+  font-size: 11px;
 }
 
 .preparation-drop-zone,
@@ -1595,8 +1809,21 @@
     padding-top: 4px;
   }
 
-  .preparation-macrocycle-intro,
-  .preparation-macrocycle-settings {
+  .macrocycle-mode-field,
+  .macrocycle-review-settings,
+  .macrocycle-candidate-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .macrocycle-selector-header,
+  .macrocycle-candidates-heading,
+  .macrocycle-confirmation-bar,
+  .macrocycle-evidence > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macrocycle-evidence dl {
     grid-template-columns: 1fr;
   }
 
@@ -1755,22 +1982,46 @@
 }
 
 :root[data-theme="light"] .preparation-macrocycle-panel > summary,
-:root[data-theme="light"] .preparation-macrocycle-intro strong,
-:root[data-theme="light"] .preparation-macrocycle-intro span,
-:root[data-theme="light"] .preparation-macrocycle-settings label > span {
+:root[data-theme="light"] .macrocycle-selector-header h3,
+:root[data-theme="light"] .macrocycle-mode-field label > span,
+:root[data-theme="light"] .macrocycle-review-settings label > span,
+:root[data-theme="light"] .macrocycle-candidates-heading strong,
+:root[data-theme="light"] .macrocycle-candidate-title strong,
+:root[data-theme="light"] .macrocycle-evidence header strong,
+:root[data-theme="light"] .macrocycle-evidence dd {
   color: var(--ds-text-primary);
 }
 
-:root[data-theme="light"] .preparation-macrocycle-intro p,
-:root[data-theme="light"] .preparation-macrocycle-note {
+:root[data-theme="light"] .macrocycle-selector-header p,
+:root[data-theme="light"] .macrocycle-mode-field p,
+:root[data-theme="light"] .macrocycle-candidates-heading span,
+:root[data-theme="light"] .macrocycle-evidence header span,
+:root[data-theme="light"] .macrocycle-evidence dt {
   color: var(--ds-text-secondary);
 }
 
-:root[data-theme="light"] .preparation-macrocycle-intro select,
-:root[data-theme="light"] .preparation-macrocycle-settings input[type="number"] {
+:root[data-theme="light"] .macrocycle-mode-field select,
+:root[data-theme="light"] .macrocycle-review-settings input[type="number"] {
   border-color: var(--ds-border-default);
   background: var(--ds-surface-input);
   color: var(--ds-text-primary);
+}
+
+:root[data-theme="light"] .macrocycle-candidate,
+:root[data-theme="light"] .macrocycle-evidence {
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-panel);
+}
+
+:root[data-theme="light"] .macrocycle-candidate.is-selected {
+  border-color: var(--ds-brand);
+  background: var(--ds-surface-selected);
+}
+
+:root[data-theme="light"] .macrocycle-bond-list code,
+:root[data-theme="light"] .macrocycle-confirmation-bar > div,
+:root[data-theme="light"] .macrocycle-inline-message {
+  color: var(--ds-text-secondary);
 }
 
 :root[data-theme="light"] .preparation-target-row {

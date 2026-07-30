@@ -1,7 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_id": "macrocycle_bace1",
-  "purpose": "Meeko 大环准备、Vina 对接、CLI 对照和拓扑安全导出回归",
+  "purpose": "Meeko macrocycle preparation, Vina docking, public-project-API verification, and topology-safe SDF export.",
+  "scientific_scope": {
+    "positive_claim": "workflow_and_topology_reconstruction_only",
+    "pose_recovery_claimed": false,
+    "reason": "The fixture does not pin an independently validated same-coordinate-frame crystal-pose atom mapping."
+  },
   "upstream": {
     "project": "AutoDock Vina",
     "version": "v1.2.7",
@@ -49,5 +54,78 @@
     "energy_range": 5,
     "cpu": 1,
     "seed": 12345
+  },
+  "expected": {
+    "toolchain": {
+      "python": "3.11.15",
+      "rdkit": "2026.03.3",
+      "meeko": "0.7.1",
+      "vina": "1.2.7"
+    },
+    "standard_preparation_rejection_code": "MACROCYCLE_REVIEW_REQUIRED",
+    "review": {
+      "candidate_count_total": 7,
+      "recommended_candidate_id": "candidate_72113262ddb85177",
+      "atom_table_sha256": "96d3d8656d06ecaabb32db504281678051ca1201ea786c6df83ca980dff2471f",
+      "bond_topology_sha256": "492bf3ec66d7312a85e1fd3b4381df68d6bdcf75908d2337568a9b708d4a96f8",
+      "analysis_sha256": "0341ce43fb6de690df08493b768aa48caf8f721b10feca937a2b04a0c181f71e",
+      "candidate_key": [
+        {
+          "candidate_id": "candidate_f02681bbc996f7c2",
+          "exact_bonds": [[0, 1]]
+        },
+        {
+          "candidate_id": "candidate_282742ca59d5380d",
+          "exact_bonds": [[1, 2]]
+        },
+        {
+          "candidate_id": "candidate_72113262ddb85177",
+          "exact_bonds": [[2, 3]]
+        },
+        {
+          "candidate_id": "candidate_59d0155a975f748d",
+          "exact_bonds": [[3, 4]]
+        },
+        {
+          "candidate_id": "candidate_842f99264c534652",
+          "exact_bonds": [[4, 5]]
+        },
+        {
+          "candidate_id": "candidate_0c433cd6cef595cd",
+          "exact_bonds": [[5, 6]]
+        },
+        {
+          "candidate_id": "candidate_1056982f6f5b2975",
+          "exact_bonds": [[6, 7]]
+        }
+      ]
+    },
+    "reviewed_preparation": {
+      "selection_mode": "candidate",
+      "exact_bonds": [[2, 3]],
+      "glue_pseudo_atom_count": 2,
+      "protocol": "meeko_macrocycle",
+      "protocol_mode": "reviewed",
+      "run_attribution": "formal_reviewed"
+    },
+    "exported_pose_topology": {
+      "source_atom_count": 87,
+      "heavy_atom_count": 38,
+      "heavy_bond_count": 39,
+      "total_formal_charge": 0,
+      "canonical_isomeric_smiles_sha256": "dd32dfb5f78d9c9486a35d42fff1190f167e462d2b09bf1865041600daba0c6d",
+      "forbidden_atomic_numbers": [0],
+      "forbidden_pseudo_atom_prefix": "G"
+    },
+    "run": {
+      "minimum_mode_count": 1,
+      "maximum_mode_count": 20,
+      "require_continuous_modes": true,
+      "require_finite_scores": true,
+      "report_required_ascii_phrases": [
+        "Docking score",
+        "candidate_72113262ddb85177"
+      ]
+    }
   }
 }

@@ -1,0 +1,555 @@
+{
+  "schema_version": 1,
+  "fixture_id": "multiple_ligands_4dm3_external",
+  "distribution": "metadata_only",
+  "contains_upstream_coordinate_files": false,
+  "purpose": "Experimental DockStart scientific acceptance contract for a reproducible simultaneous two-ligand RCO plus IMD run in the same-chain 4DM3 PNMT and SAH receptor context",
+  "upstream": {
+    "provider": "RCSB Protein Data Bank",
+    "entry_id": "4DM3",
+    "entry_doi": "10.2210/pdb4DM3/pdb",
+    "experimental_method": "X-RAY DIFFRACTION",
+    "resolution_angstrom": 2.4,
+    "mmcif_revision": {
+      "major": 1,
+      "minor": 3,
+      "date": "2024-11-27"
+    },
+    "paper": {
+      "title": "Missing Fragments: Detecting Cooperative Binding in Fragment-Based Drug Design",
+      "doi": "10.1021/ml300015u",
+      "pmid": "24900472"
+    },
+    "coordinates_redistributed": false,
+    "retrieval_audit_date": "2026-07-29"
+  },
+  "source_files": {
+    "structure_mmcif": {
+      "required": true,
+      "role": "coordinate_source_of_truth",
+      "local_filename": "4DM3.cif",
+      "url": "https://files.rcsb.org/download/4DM3.cif",
+      "content_identity": {
+        "algorithm": "raw_bytes_sha256_v1",
+        "size_bytes": 516180,
+        "sha256": "e1320f9ed829103e77097753cb2c25ca6fb95a02d130f7967216bbed74ee4649"
+      }
+    },
+    "legacy_pdb_cross_evidence": {
+      "required": false,
+      "role": "optional_cross_evidence_not_source_of_truth",
+      "local_filename": "4DM3.pdb",
+      "url": "https://files.rcsb.org/download/4DM3.pdb",
+      "content_identity": {
+        "algorithm": "raw_bytes_sha256_v1",
+        "size_bytes": 403866,
+        "sha256": "58aa939e9979de2694d51a2d5e2106a944576a3213768fe75d3e60b6cbff0cad"
+      }
+    },
+    "rco_instance_sdf": {
+      "required": true,
+      "role": "RCO_topology_and_altloc_A_coordinates_without_crystallographic_atom_names",
+      "local_filename": "RCO_A.sdf",
+      "url": "https://models.rcsb.org/v1/4dm3/ligand?auth_seq_id=2002&encoding=sdf&filename=4dm3_D_RCO.sdf&label_asym_id=D",
+      "content_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_first_molblock_through_m_end_sha256_v1",
+        "size_bytes": 803,
+        "sha256": "d78494113d561fb929b89aba744c6c6eb3a17cd4e63c073c63445077cbafe676"
+      },
+      "molecule": {
+        "component_id": "RCO",
+        "name": "resorcinol",
+        "formula": "C6 H6 O2",
+        "formal_charge": 0,
+        "inchi_key": "GHMLBKRAJCXXBS-UHFFFAOYSA-N",
+        "atom_count": 8,
+        "bond_count": 8
+      }
+    },
+    "imd_instance_sdf": {
+      "required": true,
+      "role": "IMD_topology_atom_names_and_coordinates",
+      "local_filename": "IMD_A.sdf",
+      "url": "https://models.rcsb.org/v1/4dm3/ligand?auth_seq_id=2003&encoding=sdf&filename=4dm3_E_IMD.sdf&label_asym_id=E",
+      "content_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_first_molblock_through_m_end_sha256_v1",
+        "size_bytes": 527,
+        "sha256": "51cb03e7ac7f91b3244350775eb4f95b2182b03603e455688bae3c720318625d"
+      },
+      "molecule": {
+        "component_id": "IMD",
+        "name": "imidazole",
+        "formula": "C3 H5 N2",
+        "formal_charge": 1,
+        "inchi_key": "RAXXELZNTBOGNW-UHFFFAOYSA-O",
+        "atom_count": 5,
+        "bond_count": 5
+      }
+    },
+    "sah_instance_sdf": {
+      "required": true,
+      "role": "SAH_input_for_separate_hydrogenation_and_Meeko_ligand_preparation_before_rigid_receptor_merge",
+      "local_filename": "SAH_A.sdf",
+      "url": "https://models.rcsb.org/v1/4dm3/ligand?auth_seq_id=2001&encoding=sdf&filename=4dm3_C_SAH.sdf&label_asym_id=C",
+      "content_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_first_molblock_through_m_end_sha256_v1",
+        "size_bytes": 2503,
+        "sha256": "947af8e59da961f4795e93c0c2ff7d962c7b0175c2f211004c1026dd29f562b0"
+      },
+      "molecule": {
+        "component_id": "SAH",
+        "atom_count": 26,
+        "bond_count": 28
+      }
+    }
+  },
+  "structure_selection": {
+    "model_number": 1,
+    "receptor": {
+      "author_chain_id": "A",
+      "polymer": {
+        "label_asym_id": "A",
+        "entity_id": "1",
+        "residue_count": 257,
+        "atom_site_count": 2016
+      },
+      "retained_cofactor": {
+        "component_id": "SAH",
+        "label_asym_id": "C",
+        "author_chain_id": "A",
+        "author_sequence_id": 2001,
+        "atom_site_count": 26
+      },
+      "retained_atom_site_count": 2042
+    },
+    "docking_ligands": [
+      {
+        "member_index": 1,
+        "component_id": "RCO",
+        "label_asym_id": "D",
+        "author_chain_id": "A",
+        "author_sequence_id": 2002,
+        "atom_site_count": 16,
+        "heavy_atoms_per_altloc": 8
+      },
+      {
+        "member_index": 2,
+        "component_id": "IMD",
+        "label_asym_id": "E",
+        "author_chain_id": "A",
+        "author_sequence_id": 2003,
+        "atom_site_count": 5,
+        "heavy_atom_count": 5
+      }
+    ],
+    "excluded": {
+      "author_chain_A_docking_ligands_atom_site_count": 21,
+      "author_chain_A_water_atom_site_count": 83,
+      "author_chain_B_all_atom_site_count": 2248,
+      "total_atom_site_count": 2352
+    },
+    "atom_accounting": {
+      "source_total_atom_site_count": 4394,
+      "retained_receptor_atom_site_count": 2042,
+      "excluded_atom_site_count": 2352,
+      "partition_must_be_exact_and_non_overlapping": true
+    },
+    "same_protomer_guard": {
+      "required": true,
+      "minimum_author_chain_B_polymer_to_reference_ligand_distance_angstrom": 17.76553,
+      "rationale": "Do not mix the chain-A RCO and IMD reference pair with the second protomer."
+    }
+  },
+  "reference_poses": {
+    "coordinate_identity": {
+      "algorithm": "sorted_atom_name_element_xyz_3dp_json_sha256_v1",
+      "payload": "Sort rows by atom name; encode each row as [atom_name, element, x, y, z] with coordinates formatted to exactly three decimals; serialize compact ASCII JSON; hash with SHA-256."
+    },
+    "rco": {
+      "run_input_altloc": "B",
+      "run_input_selection_rule": "highest_occupancy_complete_altloc",
+      "input_derivation": {
+        "topology_and_altloc_A_coordinates_source": "rco_instance_sdf",
+        "crystallographic_atom_name_source": "structure_mmcif",
+        "atom_name_assignment": "complete_element_plus_altloc_A_xyz_3dp_bijection",
+        "source_sdf_coordinate_altloc": "A",
+        "replacement_coordinate_source": "structure_mmcif",
+        "replacement_altloc": "B",
+        "mapping_key": "component_id_plus_atom_name",
+        "require_complete_bijection": true
+      },
+      "crystal_recovery_reference_policy": "minimum_symmetry_aware_rmsd_over_altloc_A_and_altloc_B",
+      "symmetry_oracle": {
+        "include_graph_automorphisms": true,
+        "include_explicit_crystal_atom_name_mapping": true,
+        "output_atom_identity_source": "Meeko_REMARK_INDEX_MAP",
+        "explicit_atom_name_permutations": [
+          {
+            "C1": "C1",
+            "C2": "C2",
+            "C3": "C3",
+            "C4": "C4",
+            "C5": "C5",
+            "C6": "C6",
+            "O1": "O1",
+            "O3": "O3"
+          },
+          {
+            "C1": "C3",
+            "C2": "C2",
+            "C3": "C1",
+            "C4": "C6",
+            "C5": "C5",
+            "C6": "C4",
+            "O1": "O3",
+            "O3": "O1"
+          }
+        ]
+      },
+      "conformers": [
+        {
+          "altloc": "A",
+          "occupancy": 0.33,
+          "heavy_atom_count": 8,
+          "coordinate_sha256": "7b671c99105eb59effed8b37b2c4bed0140d0ca6b05f8f5d648ad97e70741ce5",
+          "atoms": [
+            ["C1", "C", "29.239", "45.128", "20.030"],
+            ["C2", "C", "28.942", "43.778", "19.897"],
+            ["C3", "C", "28.602", "43.265", "18.648"],
+            ["C4", "C", "28.562", "44.108", "17.543"],
+            ["C5", "C", "28.857", "45.461", "17.667"],
+            ["C6", "C", "29.195", "45.969", "18.916"],
+            ["O1", "O", "29.565", "45.624", "21.249"],
+            ["O3", "O", "28.306", "41.946", "18.495"]
+          ]
+        },
+        {
+          "altloc": "B",
+          "occupancy": 0.48,
+          "heavy_atom_count": 8,
+          "coordinate_sha256": "8a0e20d62bb6b30eb2ed67f67050da45a294364c9fe6ffd9543d9c0d4e4bab05",
+          "atoms": [
+            ["C1", "C", "28.511", "45.546", "17.572"],
+            ["C2", "C", "28.507", "44.156", "17.620"],
+            ["C3", "C", "28.842", "43.484", "18.797"],
+            ["C4", "C", "29.190", "44.200", "19.945"],
+            ["C5", "C", "29.196", "45.591", "19.898"],
+            ["C6", "C", "28.855", "46.260", "18.716"],
+            ["O1", "O", "28.181", "46.196", "16.421"],
+            ["O3", "O", "28.824", "42.123", "18.806"]
+          ]
+        }
+      ]
+    },
+    "imd": {
+      "run_input_altloc": null,
+      "occupancy": 1.0,
+      "heavy_atom_count": 5,
+      "coordinate_sha256": "0e0aa5da15902d3c6aa4458248f75e7137652247687b74b634eb98aaae1ae465",
+      "atoms": [
+        ["N1", "N", "27.144", "44.512", "15.169"],
+        ["C2", "C", "28.312", "43.964", "14.811"],
+        ["N3", "N", "28.081", "42.782", "14.240"],
+        ["C4", "C", "26.756", "42.613", "14.245"],
+        ["C5", "C", "26.182", "43.683", "14.803"]
+      ],
+      "symmetry_oracle": {
+        "include_graph_automorphisms": true,
+        "include_explicit_resonance_mapping": true,
+        "explicit_atom_name_permutations": [
+          {
+            "C2": "C2",
+            "C4": "C4",
+            "C5": "C5",
+            "N1": "N1",
+            "N3": "N3"
+          },
+          {
+            "C2": "C2",
+            "C4": "C5",
+            "C5": "C4",
+            "N1": "N3",
+            "N3": "N1"
+          }
+        ]
+      }
+    }
+  },
+  "preparation_contract": {
+    "network_access_after_source_verification": false,
+    "receptor": {
+      "protein_selection": "model_1_author_chain_A_polymer_only",
+      "final_selection": "prepared_author_chain_A_polymer_plus_separately_prepared_SAH_A_2001",
+      "rigid": true,
+      "sah_preparation": {
+        "source": "sah_instance_sdf",
+        "pipeline": "add_hydrogens_then_Meeko_ligand_PDBQT_preparation",
+        "merge": "retain_prepared_SAH_atom_records_renumber_assign_residue_name_SAH_then_merge_with_rigid_protein_receptor",
+        "used_as_Meeko_receptor_residue_template": false,
+        "prepared_formal_charge": 0,
+        "protonation_interpretation": "frozen_computational_microstate_not_an_experimentally_unique_assignment"
+      },
+      "allow_bad_res": false,
+      "silent_atom_or_residue_deletion": false,
+      "unmatched_residue_policy": "fail_closed"
+    },
+    "ligands": {
+      "ordered_members": ["RCO", "IMD"],
+      "source_records": ["rco_instance_sdf", "imd_instance_sdf"],
+      "rco_coordinate_derivation": "replace_pinned_SDF_altloc_A_coordinates_with_mmcif_altloc_B_by_component_and_atom_name",
+      "hydrogenation": {
+        "method": "RDKit_AddHs",
+        "add_coordinates": true,
+        "require_3d_conformer_flag": true
+      },
+      "chemical_states": {
+        "RCO": {
+          "canonical_smiles": "Oc1cccc(O)c1",
+          "formal_charge": 0
+        },
+        "IMD": {
+          "canonical_smiles": "c1c[nH+]c[nH]1",
+          "formal_charge": 1,
+          "automatic_neutralization_forbidden": true
+        }
+      },
+      "heavy_atom_coordinate_preservation": "only_PDBQT_three_decimal_rounding_is_permitted",
+      "expected_heavy_atom_counts": {
+        "RCO": 8,
+        "IMD": 5
+      },
+      "expected_effective_torsions": {
+        "RCO": 2,
+        "IMD": 0
+      },
+      "distinct_prepared_files_required": true
+    }
+  },
+  "box_contract": {
+    "algorithm": "reference_union_plus_padding_even_voxel_v1",
+    "source": "RCO_altloc_A_plus_RCO_altloc_B_plus_IMD_heavy_atom_union",
+    "padding_each_side_angstrom": 6.0,
+    "spacing_angstrom": 0.375,
+    "force_even_voxels": true,
+    "rounding": "ceil_each_axis_interval_count_then_increment_if_odd",
+    "source_bounds": {
+      "minimum": {
+        "x": 26.182,
+        "y": 41.946,
+        "z": 14.24
+      },
+      "maximum": {
+        "x": 29.565,
+        "y": 46.26,
+        "z": 21.249
+      }
+    },
+    "center": {
+      "x": 27.8735,
+      "y": 44.103,
+      "z": 17.7445
+    },
+    "intervals": {
+      "x": 42,
+      "y": 44,
+      "z": 52
+    },
+    "size_angstrom": {
+      "x": 15.75,
+      "y": 16.5,
+      "z": 19.5
+    }
+  },
+  "toolchain": {
+    "validation_platform": "windows",
+    "python_runtime": {
+      "relative_path": "resources/python/python.exe",
+      "version": "3.11.15",
+      "size_bytes": 91648,
+      "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57"
+    },
+    "packages": {
+      "meeko": "0.7.1",
+      "rdkit": "2026.03.3",
+      "gemmi": "0.7.5"
+    },
+    "vina": {
+      "relative_path": "resources/vina/vina.exe",
+      "version": "1.2.7",
+      "size_bytes": 1233920,
+      "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+    }
+  },
+  "docking_protocol": {
+    "protocol": "multiple_ligands",
+    "maturity": "experimental",
+    "scoring": "vina",
+    "search_mode": "global_dock",
+    "receptor_mode": "rigid",
+    "grid_mode": "receptor_grid",
+    "maps": false,
+    "autobox": false,
+    "flex": false,
+    "exhaustiveness": 32,
+    "num_modes": 20,
+    "min_rmsd": 1,
+    "energy_range": 5,
+    "cpu": 1,
+    "spacing": 0.375,
+    "force_even_voxels": true,
+    "ligand_order": ["RCO", "IMD"],
+    "command_semantics": "--ligand receives two separate ordered PDBQT paths in one Vina invocation"
+  },
+  "run_matrix": [
+    {
+      "run_id": "seed_12345_primary",
+      "role": "distinct_seed",
+      "seed": 12345,
+      "repeat_of": null
+    },
+    {
+      "run_id": "seed_23456",
+      "role": "distinct_seed",
+      "seed": 23456,
+      "repeat_of": null
+    },
+    {
+      "run_id": "seed_34567",
+      "role": "distinct_seed",
+      "seed": 34567,
+      "repeat_of": null
+    },
+    {
+      "run_id": "seed_12345_repeat",
+      "role": "repeatability",
+      "seed": 12345,
+      "repeat_of": "seed_12345_primary"
+    }
+  ],
+  "acceptance": {
+    "source_and_preparation": {
+      "hard_gate": true,
+      "require_all_required_source_identities": true,
+      "require_exact_structure_selection_and_atom_accounting": true,
+      "require_exact_tool_versions_and_executable_hashes": true,
+      "require_exact_box_derivation": true,
+      "require_ordered_distinct_prepared_ligand_files": true,
+      "require_all_heavy_output_atoms_inside_effective_grid": true
+    },
+    "run_completion": {
+      "hard_gate": true,
+      "required_distinct_seed_count": 3,
+      "required_repeat_count": 1,
+      "all_runs_must_finish": true,
+      "minimum_joint_modes_per_run": 1
+    },
+    "crystal_recovery": {
+      "hard_gate": true,
+      "method": "common_receptor_frame_symmetry_aware_no_fit_heavy_atom_rmsd_v1",
+      "perform_rigid_body_fit": false,
+      "rco_reference_policy": "minimum_over_altloc_A_and_altloc_B",
+      "imd_explicit_resonance_mapping_required": true,
+      "member_threshold_angstrom": {
+        "RCO": 2.0,
+        "IMD": 2.0
+      },
+      "joint_pose_requires_both_members_to_pass": true,
+      "all_distinct_seeds_require_a_recovered_joint_pose": true,
+      "maximum_rank_considered": 20,
+      "selected_recovered_pose_policy": "minimum_joint_member_rmsd_quadratic_mean_then_lowest_rank_tiebreak_v1",
+      "selected_recovered_pose_metric": "sqrt((RCO_best_reference_RMSD_squared + IMD_RMSD_squared) / 2)"
+    },
+    "ranking_diagnostic": {
+      "hard_gate": false,
+      "top_k": 5,
+      "target_distinct_seed_count": 2,
+      "total_distinct_seed_count": 3,
+      "failure_must_not_fail_overall_acceptance": true,
+      "rationale": "Vina ranking performance is reported honestly but is not treated as DockStart program correctness."
+    },
+    "cross_seed_stability": {
+      "hard_gate": true,
+      "selected_pose_pairwise_diameter_max_angstrom": {
+        "RCO": 2.0,
+        "IMD": 2.0
+      },
+      "mode_1_joint_affinity_range_max_kcal_mol": 1.0,
+      "distinct_seeds_only": true
+    },
+    "same_seed_repeatability": {
+      "hard_gate": true,
+      "same_vina_binary_required": true,
+      "raw_output_pdbqt_sha256_must_match": true,
+      "normalized_output_pdbqt_sha256_must_match": true,
+      "parsed_score_rows_must_match": true,
+      "canonical_scientific_payload_must_match": true,
+      "canonical_payload_excludes": [
+        "run_id",
+        "filesystem_paths",
+        "timestamps",
+        "wall_clock_timings"
+      ],
+      "logs_are_not_byte_identity_oracles": true
+    },
+    "score_semantics": {
+      "hard_gate": true,
+      "score_granularity": "one_score_per_joint_pose",
+      "per_member_affinity": "unavailable",
+      "infer_per_member_affinity": false,
+      "compare_joint_score_to_single_ligand_score_as_equivalent": false
+    }
+  },
+  "observed_reference_evidence": {
+    "scope": "windows_pinned_toolchain_nonblocking_provenance",
+    "input_contract": "RCO_altloc_B_plus_IMD_with_explicit_resonance_symmetry",
+    "hard_acceptance_oracle": false,
+    "cross_platform_byte_or_ranking_oracle": false,
+    "distinct_seed_results": [
+      {
+        "seed": 12345,
+        "first_joint_recovered_rank": 15,
+        "joint_recovered_pose_count": 3,
+        "selected_minimum_joint_rmsd_rank": 15,
+        "mode_1_joint_affinity_kcal_mol": -9.17
+      },
+      {
+        "seed": 23456,
+        "first_joint_recovered_rank": 15,
+        "joint_recovered_pose_count": 4,
+        "selected_minimum_joint_rmsd_rank": 16,
+        "mode_1_joint_affinity_kcal_mol": -9.185
+      },
+      {
+        "seed": 34567,
+        "first_joint_recovered_rank": 10,
+        "joint_recovered_pose_count": 4,
+        "selected_minimum_joint_rmsd_rank": 20,
+        "mode_1_joint_affinity_kcal_mol": -9.183
+      }
+    ],
+    "ranking_diagnostic": {
+      "distinct_seeds_with_top_5_joint_recovery": 0,
+      "total_distinct_seed_count": 3
+    },
+    "mode_1_joint_affinity_range_kcal_mol": 0.015,
+    "same_seed_repeatability": {
+      "seed": 12345,
+      "raw_output_pdbqt_sha256": "dced8285e569bb807fed0d96601cf6c20bb81ed0ddbf53e0ee4f313333f19527",
+      "normalized_output_pdbqt_sha256": "104c0a7398199b23af02ca576ba2e25fa8dd203f0d7132b9aa7ac4bc25daece5",
+      "raw_nul_byte_count": 700,
+      "pdbqt_model_block_count": 40,
+      "project_api_joint_pose_count": 20,
+      "primary_and_repeat_raw_outputs_byte_identical": true,
+      "primary_and_repeat_normalized_outputs_byte_identical": true
+    }
+  },
+  "scientific_boundaries": [
+    "The 4DM3 paper supplies a cooperative fragment context; this gate does not estimate or decompose cooperativity.",
+    "A Vina joint score belongs to the complete RCO plus IMD pose and cannot be assigned to either member.",
+    "Docking scores provide a structural ranking hypothesis and do not replace experimental validation.",
+    "Top-five recovery is a non-blocking ranking diagnostic, not a DockStart software-correctness gate.",
+    "Excluding the deposited pocket waters is a frozen dry-receptor modelling assumption, not a claim that those waters are unimportant.",
+    "The neutral prepared SAH microstate is not presented as an experimentally unique protonation state.",
+    "This simultaneous multiple-ligand protocol remains Experimental."
+  ]
+}

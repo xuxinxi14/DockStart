@@ -20,6 +20,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from dockstart_core import __version__  # noqa: E402
 from dockstart_core.project import (  # noqa: E402
     PROJECT_DIRS,
+    build_markdown_report,
     build_vina_config_text,
     cancel_vina_run,
     create_project,
@@ -50,6 +51,255 @@ from adapters.vina_adapter import ManagedRunResult  # noqa: E402
 
 
 class ProjectTests(unittest.TestCase):
+    @staticmethod
+    def _macrocycle_candidate_pdbqt() -> str:
+        return (
+            "REMARK SMILES C1CCCCCCC1\n"
+            "REMARK SMILES IDX 1 1 2 2\n"
+            "ROOT\n"
+            "ATOM      1  C1  LIG A   1       0.000   0.000   0.000"
+            "  1.00  0.00     0.000 C\n"
+            "ATOM      2  G1  LIG A   1       1.000   0.000   0.000"
+            "  1.00  0.00     0.000 G0\n"
+            "ATOM      3  G2  LIG A   1       0.000   1.000   0.000"
+            "  1.00  0.00     0.000 G1\n"
+            "ENDROOT\n"
+            "TORSDOF 1\n"
+        )
+
+    def _install_formal_macrocycle_preparation(self, project_dir: Path) -> dict[str, str]:
+        ligand = project_dir / "prepared" / "ligand.pdbqt"
+        ligand.write_text(self._macrocycle_candidate_pdbqt(), encoding="utf-8")
+        ligand_sha256 = hashlib.sha256(ligand.read_bytes()).hexdigest()
+        ligand_size = ligand.stat().st_size
+
+        prep_dir = project_dir / "preparation" / "ligand_001"
+        prep_dir.mkdir()
+        review_dir = (
+            project_dir
+            / "preparation"
+            / "macrocycle_reviews"
+            / "review_001"
+        )
+        review_dir.mkdir(parents=True)
+        review_input = review_dir / "input.sdf"
+        frozen_input = prep_dir / "macrocycle_input.sdf"
+        review_input.write_text("mock reviewed macrocycle\n", encoding="utf-8")
+        frozen_input.write_bytes(review_input.read_bytes())
+        frozen_sha256 = hashlib.sha256(frozen_input.read_bytes()).hexdigest()
+        frozen_size = frozen_input.stat().st_size
+
+        confirmation_sha256 = "c" * 64
+        atom_table_sha256 = "a" * 64
+        bond_topology = [
+            {
+                "atom_indices_zero_based": [0, 1],
+                "bond_type": "SINGLE",
+                "bond_order": 1.0,
+                "is_aromatic": False,
+                "is_conjugated": False,
+                "stereo": "STEREONONE",
+                "stereo_atom_indices_zero_based": [],
+            }
+        ]
+        bond_topology_sha256 = hashlib.sha256(
+            json.dumps(
+                bond_topology,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        atom_indexing = {
+            "hydrogen_policy": project_module.MACROCYCLE_HYDROGEN_POLICY,
+            "source_atom_count": 2,
+            "prepared_atom_count": 2,
+            "source_heavy_atom_indices_zero_based": [0, 1],
+            "source_to_prepared_indices_zero_based": [0, 1],
+            "added_hydrogen_indices_zero_based": [],
+            "source_indices_preserved": True,
+        }
+        contract = {
+            "protocol_id": "meeko_macrocycle",
+            "schema_version": project_module.MACROCYCLE_CONTRACT_SCHEMA_VERSION,
+            "analysis_version": project_module.MACROCYCLE_ANALYSIS_VERSION,
+            "meeko_api_profile": project_module.MACROCYCLE_MEEKO_API_PROFILE,
+            "hydrogen_policy": project_module.MACROCYCLE_HYDROGEN_POLICY,
+            "review_id": "review_001",
+            "confirmation_sha256": confirmation_sha256,
+            "selection_mode": "candidate",
+            "candidate_id": "candidate_001",
+            "exact_bonds": [[0, 1]],
+            "selected_bonds": [
+                {
+                    "atom_indices_zero_based": [0, 1],
+                    "atom_numbers_one_based": [1, 2],
+                    "atom_labels": ["C1", "C2"],
+                }
+            ],
+            "atom_table_sha256": atom_table_sha256,
+            "atom_indexing": atom_indexing,
+            "bond_topology": bond_topology,
+            "bond_topology_sha256": bond_topology_sha256,
+            "review_input": {
+                "relative_path": review_input.relative_to(project_dir).as_posix(),
+                "sha256": frozen_sha256,
+                "size_bytes": frozen_size,
+            },
+            "runtime_input": {
+                "relative_path": frozen_input.relative_to(project_dir).as_posix(),
+                "sha256": frozen_sha256,
+                "size_bytes": frozen_size,
+            },
+            "tool_versions": {
+                "meeko": "0.7.1",
+                "rdkit": "2026.03.3",
+            },
+        }
+        contract_file = prep_dir / "macrocycle_contract.json"
+        contract_file.write_text(
+            json.dumps(contract, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        contract_sha256 = hashlib.sha256(contract_file.read_bytes()).hexdigest()
+
+        candidate_file = prep_dir / "candidate_ligand.pdbqt"
+        candidate_file.write_bytes(ligand.read_bytes())
+        evidence = {
+            "ok": True,
+            "protocol_id": "meeko_macrocycle",
+            "output_file": str(candidate_file.resolve()),
+            "output_sha256": ligand_sha256,
+            "output_size_bytes": ligand_size,
+            "selection_mode": "candidate",
+            "candidate_id": "candidate_001",
+            "expected_bonds": [[0, 1]],
+            "actual_bonds": [[0, 1]],
+            "glue_pseudo_atom_count": 2,
+            "atom_table_sha256": atom_table_sha256,
+            "bond_topology_sha256": bond_topology_sha256,
+            "hydrogen_policy": project_module.MACROCYCLE_HYDROGEN_POLICY,
+            "atom_indexing": atom_indexing,
+            "review_id": "review_001",
+            "confirmation_sha256": confirmation_sha256,
+            "meeko_version": "0.7.1",
+            "rdkit_version": "2026.03.3",
+            "error": None,
+        }
+        evidence_file = prep_dir / "macrocycle_evidence.json"
+        evidence_file.write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        evidence_sha256 = hashlib.sha256(evidence_file.read_bytes()).hexdigest()
+        inspection = {
+            "embedded_topology": True,
+            "macrocycle_evidence": True,
+            "glue_pseudo_atoms": [
+                {"serial": 2, "atom_type": "G0"},
+                {"serial": 3, "atom_type": "G1"},
+            ],
+        }
+        contract_relative = contract_file.relative_to(project_dir).as_posix()
+        evidence_relative = evidence_file.relative_to(project_dir).as_posix()
+        frozen_relative = frozen_input.relative_to(project_dir).as_posix()
+        metadata = {
+            "prep_id": "ligand_001",
+            "target": "ligand",
+            "status": "finished",
+            "method": "meeko_macrocycle",
+            "protocol": "meeko_macrocycle",
+            "protocol_mode": "reviewed",
+            "published": True,
+            "output_non_empty": True,
+            "options": {
+                "macrocycle": {
+                    "mode": "reviewed",
+                    "review_id": "review_001",
+                    "confirmation_sha256": confirmation_sha256,
+                }
+            },
+            "macrocycle_contract": contract,
+            "macrocycle_contract_file": contract_relative,
+            "macrocycle_contract_sha256": contract_sha256,
+            "macrocycle_evidence_file": evidence_relative,
+            "macrocycle_input_file": frozen_relative,
+            "macrocycle_expected_output_evidence": {
+                "selection_mode": "candidate",
+                "candidate_id": "candidate_001",
+                "exact_bonds": [[0, 1]],
+                "atom_table_sha256": atom_table_sha256,
+                "bond_topology_sha256": bond_topology_sha256,
+                "confirmation_sha256": confirmation_sha256,
+            },
+            "protocol_evidence": {
+                "ok": True,
+                "mode": "reviewed",
+                "contract_file": contract_relative,
+                "contract_sha256": contract_sha256,
+                "contract_snapshot": {
+                    "path": contract_relative,
+                    "sha256": contract_sha256,
+                    "size": contract_file.stat().st_size,
+                },
+                "input_snapshot": {
+                    "path": frozen_relative,
+                    "sha256": frozen_sha256,
+                    "size": frozen_size,
+                },
+                "evidence_file": evidence_relative,
+                "evidence_snapshot": {
+                    "path": evidence_relative,
+                    "sha256": evidence_sha256,
+                    "size": evidence_file.stat().st_size,
+                },
+                "evidence": evidence,
+                "candidate_output": {
+                    "path": candidate_file.relative_to(project_dir).as_posix(),
+                    "sha256": ligand_sha256,
+                    "size": ligand_size,
+                },
+                "inspection": inspection,
+                "issues": [],
+            },
+            "meeko_version": "0.7.1",
+            "rdkit_version": "2026.03.3",
+            "python_source": "bundled",
+            "output": {
+                "path": "prepared/ligand.pdbqt",
+                "sha256": ligand_sha256,
+                "size": ligand_size,
+            },
+        }
+        metadata_file = prep_dir / "metadata.json"
+        metadata_file.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        project_json = project_dir / "project.json"
+        payload = json.loads(project_json.read_text(encoding="utf-8"))
+        payload["preparation"]["ligand"].update(
+            {
+                "prep_id": "ligand_001",
+                "status": "finished",
+                "method": "meeko_macrocycle",
+                "metadata_file": metadata_file.relative_to(project_dir).as_posix(),
+            }
+        )
+        project_json.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return {
+            "contract_sha256": contract_sha256,
+            "evidence_sha256": evidence_sha256,
+            "bond_topology_sha256": bond_topology_sha256,
+            "evidence_file": str(evidence_file),
+            "candidate_absolute_path": str(candidate_file.resolve()),
+        }
+
     def _create_project_with_imports(self, temp_dir: str) -> Path:
         project_response = create_project("demo_project", temp_dir)
         project_dir = Path(project_response["project_dir"])
@@ -152,6 +402,7 @@ class ProjectTests(unittest.TestCase):
         *,
         exit_code: int = 0,
         create_output: bool = True,
+        output_bytes: bytes | None = None,
         on_call: object | None = None,
     ) -> dict[str, object]:
         def fake_run(
@@ -169,7 +420,10 @@ class ProjectTests(unittest.TestCase):
             Path(log_path).write_text("fake vina stdout\n", encoding="utf-8")
             if create_output:
                 output = Path(cwd) / "runs" / run_id / "out.pdbqt"
-                output.write_text("MODEL 1\nENDMDL\n", encoding="utf-8")
+                if output_bytes is None:
+                    output.write_text("MODEL 1\nENDMDL\n", encoding="utf-8")
+                else:
+                    output.write_bytes(output_bytes)
             return ManagedRunResult(pid=4242, exit_code=exit_code)
 
         with (
@@ -1233,13 +1487,49 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(prepared["ok"], prepared)
             run_id = prepared["run_id"]
             flex_snapshot = project_dir / "runs" / run_id / "inputs" / "flex.pdbqt"
+            protocol_snapshot = (
+                project_dir
+                / "runs"
+                / run_id
+                / "inputs"
+                / "flexible_receptor_protocol.json"
+            )
             self.assertTrue(flex_snapshot.is_file())
+            self.assertTrue(protocol_snapshot.is_file())
+            self.assertEqual(
+                prepared["metadata"]["snapshots"][
+                    "flexible_receptor_protocol"
+                ]["sha256"],
+                hashlib.sha256(protocol_snapshot.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                prepared["metadata"]["input_sha256"][
+                    "flexible_receptor_protocol"
+                ],
+                hashlib.sha256(protocol_snapshot.read_bytes()).hexdigest(),
+            )
             self.assertEqual(prepared["metadata"]["docking_protocol"]["mode"], "flexible")
             self.assertEqual(prepared["metadata"]["docking_protocol"]["protocol_id"], "flexible_single")
             self.assertEqual(
                 prepared["metadata"]["command"][-2:],
                 ["--flex", f"runs/{run_id}/inputs/flex.pdbqt"],
             )
+
+            original_protocol_snapshot = protocol_snapshot.read_bytes()
+            protocol_snapshot.write_bytes(
+                original_protocol_snapshot + b"\n"
+            )
+            blocked = project_module._validate_execute_prerequisites(
+                str(project_dir),
+                run_id,
+                prepared["metadata"],
+            )
+            self.assertFalse(blocked["ok"])
+            self.assertEqual(
+                blocked["error"]["code"],
+                "RUN_SNAPSHOT_HASH_MISMATCH",
+            )
+            protocol_snapshot.write_bytes(original_protocol_snapshot)
 
             observed: list[list[str]] = []
             executed = self._execute_with_mock_adapter(
@@ -1291,8 +1581,299 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(prepared["ok"], prepared)
             self.assertTrue(prepared["metadata"]["ligand_preparation"]["matched"])
             self.assertEqual(prepared["metadata"]["ligand_preparation"]["protocol"], "meeko_macrocycle")
+            self.assertEqual(
+                prepared["metadata"]["ligand_preparation"]["integrity"],
+                "legacy_partial",
+            )
+            self.assertFalse(
+                prepared["metadata"]["ligand_preparation"]["formal_reviewed"]
+            )
+            self.assertEqual(
+                prepared["metadata"]["ligand_preparation"]["protocol_mode"],
+                "legacy",
+            )
             snapshot = project_dir / prepared["metadata"]["ligand_preparation_snapshot"]
             self.assertTrue(snapshot.is_file())
+
+    def test_run_freezes_only_fully_verified_formal_macrocycle_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            expected = self._install_formal_macrocycle_preparation(project_dir)
+
+            with unittest.mock.patch(
+                "dockstart_core.project.vina_adapter.detect",
+                return_value=self._vina_ok_result(),
+            ):
+                prepared = prepare_vina_run(str(project_dir))
+
+            self.assertTrue(prepared["ok"], prepared)
+            attributed = prepared["metadata"]["ligand_preparation"]
+            self.assertTrue(attributed["matched"])
+            self.assertTrue(attributed["formal_reviewed"])
+            self.assertEqual(attributed["integrity"], "formal_reviewed")
+            summary = attributed["macrocycle_summary"]
+            self.assertEqual(summary["selection_mode"], "candidate")
+            self.assertEqual(summary["review_id"], "review_001")
+            self.assertEqual(summary["candidate_id"], "candidate_001")
+            self.assertEqual(
+                summary["break_bonds"],
+                [
+                    {
+                        "atom_numbers_one_based": [1, 2],
+                        "atom_labels": ["C1", "C2"],
+                        "display": "C1（原子 1）—C2（原子 2）",
+                    }
+                ],
+            )
+            self.assertEqual(summary["glue_pseudo_atom_count"], 2)
+            self.assertEqual(
+                summary["contract_sha256"],
+                expected["contract_sha256"],
+            )
+            self.assertEqual(
+                summary["evidence_sha256"],
+                expected["evidence_sha256"],
+            )
+            self.assertEqual(summary["meeko_version"], "0.7.1")
+            self.assertEqual(summary["rdkit_version"], "2026.03.3")
+
+            snapshot_file = Path(
+                prepared["metadata"]["ligand_preparation_snapshot"]
+            )
+            snapshot_path = project_dir / snapshot_file
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            self.assertEqual(snapshot, attributed)
+            self.assertNotIn(str(project_dir.resolve()), snapshot_path.read_text(encoding="utf-8"))
+
+    def test_formal_macrocycle_tamper_or_missing_evidence_is_not_attributed(self) -> None:
+        for mutation in ("tampered", "missing"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp_dir:
+                project_dir = self._create_config_ready_project(temp_dir)
+                installed = self._install_formal_macrocycle_preparation(
+                    project_dir
+                )
+                evidence_path = Path(installed["evidence_file"])
+                if mutation == "missing":
+                    evidence_path.unlink()
+                else:
+                    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                    evidence["actual_bonds"] = [[1, 2]]
+                    evidence_path.write_text(
+                        json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+
+                with unittest.mock.patch(
+                    "dockstart_core.project.vina_adapter.detect",
+                    return_value=self._vina_ok_result(),
+                ):
+                    prepared = prepare_vina_run(str(project_dir))
+
+                self.assertTrue(prepared["ok"], prepared)
+                attributed = prepared["metadata"]["ligand_preparation"]
+                self.assertFalse(attributed["matched"])
+                self.assertEqual(attributed["integrity"], "rejected")
+                self.assertIn("正式大环准备记录未通过完整性校验", attributed["reason"])
+                self.assertNotIn("protocol", attributed)
+                self.assertEqual(
+                    prepared["metadata"]["ligand_preparation_snapshot"],
+                    "",
+                )
+                if mutation == "tampered":
+                    self.assertTrue(
+                        any(
+                            "断环键" in issue
+                            for issue in attributed["integrity_issues"]
+                        )
+                    )
+                else:
+                    self.assertTrue(
+                        any(
+                            "worker 证据" in issue
+                            for issue in attributed["integrity_issues"]
+                        )
+                    )
+
+    def test_report_displays_formal_macrocycle_evidence_and_scientific_boundary(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            installed = self._install_formal_macrocycle_preparation(project_dir)
+            with unittest.mock.patch(
+                "dockstart_core.project.vina_adapter.detect",
+                return_value=self._vina_ok_result(),
+            ):
+                prepared = prepare_vina_run(str(project_dir))
+            self.assertTrue(prepared["ok"], prepared)
+
+            run_id = prepared["run_id"]
+            run_dir = project_dir / "runs" / run_id
+            scores_file = run_dir / "scores.csv"
+            scores_file.write_text(
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n"
+                "1,-8.7,0.0,0.0\n"
+                "2,-8.2,1.5,2.1\n",
+                encoding="utf-8",
+            )
+            metadata_path = run_dir / "metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata.update(
+                {
+                    "status": "finished",
+                    "started_at": "2026-07-29T00:00:00+00:00",
+                    "finished_at": "2026-07-29T00:01:00+00:00",
+                    "exit_code": 0,
+                    "scores_file": scores_file.relative_to(project_dir).as_posix(),
+                    "project_scores_file": "results/scores.csv",
+                }
+            )
+            metadata_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["runs"][0].update(
+                {
+                    "status": "finished",
+                    "scores_file": scores_file.relative_to(project_dir).as_posix(),
+                }
+            )
+            project_json.write_text(
+                json.dumps(project, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            built = build_markdown_report(str(project_dir), run_id)
+
+            self.assertTrue(built["ok"], built)
+            report = built["report_text"]
+            self.assertIn("正式审查（完整证据）", report)
+            self.assertIn("C1（原子 1）—C2（原子 2）", report)
+            self.assertIn("| G* 胶合伪原子 | 2 |", report)
+            self.assertIn(installed["contract_sha256"], report)
+            self.assertIn(installed["evidence_sha256"], report)
+            self.assertIn(installed["bond_topology_sha256"], report)
+            self.assertIn(project_module.MACROCYCLE_HYDROGEN_POLICY, report)
+            self.assertIn("不证明所选构象、质子化、电荷或结合模式正确", report)
+            self.assertIn("不是原始闭环化学拓扑", report)
+            self.assertNotIn(installed["candidate_absolute_path"], report)
+
+    def test_report_marks_legacy_macrocycle_as_partial_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_config_ready_project(temp_dir)
+            ligand = project_dir / "prepared" / "ligand.pdbqt"
+            prep_dir = project_dir / "preparation" / "ligand_001"
+            prep_dir.mkdir()
+            metadata_file = prep_dir / "metadata.json"
+            metadata_file.write_text(
+                json.dumps(
+                    {
+                        "prep_id": "ligand_001",
+                        "status": "finished",
+                        "method": "meeko_macrocycle",
+                        "protocol": "meeko_macrocycle",
+                        "protocol_mode": "legacy",
+                        "options": {"macrocycle": {"mode": "auto"}},
+                        "protocol_evidence": {
+                            "ok": True,
+                            "mode": "legacy",
+                            "inspection": {
+                                "embedded_topology": True,
+                                "glue_pseudo_atoms": [],
+                            },
+                        },
+                        "meeko_version": "0.7.1",
+                        "rdkit_version": "2026.03.3",
+                        "output": {
+                            "sha256": hashlib.sha256(
+                                ligand.read_bytes()
+                            ).hexdigest()
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            project_json = project_dir / "project.json"
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["preparation"]["ligand"].update(
+                {
+                    "prep_id": "ligand_001",
+                    "status": "finished",
+                    "method": "meeko_macrocycle",
+                    "metadata_file": metadata_file.relative_to(
+                        project_dir
+                    ).as_posix(),
+                }
+            )
+            project_json.write_text(
+                json.dumps(project, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            with unittest.mock.patch(
+                "dockstart_core.project.vina_adapter.detect",
+                return_value=self._vina_ok_result(),
+            ):
+                prepared = prepare_vina_run(str(project_dir))
+            self.assertTrue(prepared["ok"], prepared)
+
+            run_id = prepared["run_id"]
+            run_dir = project_dir / "runs" / run_id
+            scores_file = run_dir / "scores.csv"
+            scores_file.write_text(
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n"
+                "1,-7.5,0.0,0.0\n",
+                encoding="utf-8",
+            )
+            run_metadata_path = run_dir / "metadata.json"
+            run_metadata = json.loads(
+                run_metadata_path.read_text(encoding="utf-8")
+            )
+            run_metadata.update(
+                {
+                    "status": "finished",
+                    "started_at": "2026-07-29T00:00:00+00:00",
+                    "finished_at": "2026-07-29T00:01:00+00:00",
+                    "exit_code": 0,
+                    "scores_file": scores_file.relative_to(
+                        project_dir
+                    ).as_posix(),
+                    "project_scores_file": "results/scores.csv",
+                }
+            )
+            run_metadata_path.write_text(
+                json.dumps(run_metadata, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            project = json.loads(project_json.read_text(encoding="utf-8"))
+            project["runs"][0].update(
+                {
+                    "status": "finished",
+                    "scores_file": scores_file.relative_to(
+                        project_dir
+                    ).as_posix(),
+                }
+            )
+            project_json.write_text(
+                json.dumps(project, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            built = build_markdown_report(str(project_dir), run_id)
+
+            self.assertTrue(built["ok"], built)
+            report = built["report_text"]
+            self.assertIn(
+                "旧版兼容（部分证据，非正式审查）",
+                report,
+            )
+            self.assertIn("旧版未冻结精确断环键", report)
+            self.assertIn("不得视为正式大环审查", report)
+            self.assertIn("不得仅凭 G* 伪原子反推原始断环键", report)
 
     def test_prepare_vina_run_uses_resolved_bundled_vina_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1429,6 +2010,284 @@ class ProjectTests(unittest.TestCase):
             file_status = get_run_files_status(str(project_dir), run_id)
             self.assertTrue(file_status["ok"])
             self.assertEqual(file_status["metadata"]["status"], "finished")
+
+    def test_execute_normalizes_observed_windows_vina_nul_padding_and_preserves_raw_output(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir, run_id = self._create_prepared_run_with_command(temp_dir)
+            raw_output = (
+                b"MODEL 1\r\n"
+                b"REMARK VINA RESULT: -13.877 0.000 0.000\r\n"
+                b"ROOT\r\nENDROOT\r\n"
+                b"TORSDOF 6\r\n"
+                + (b"\x00" * 47)
+                + b"\r\nENDMDL\r\n"
+            )
+            normalized_output = raw_output.replace(b"\x00" * 47, b"")
+
+            response = self._execute_with_mock_adapter(
+                project_dir,
+                run_id,
+                output_bytes=raw_output,
+            )
+
+            self.assertTrue(response["ok"], response)
+            run_dir = project_dir / "runs" / run_id
+            output_path = run_dir / "out.pdbqt"
+            raw_path = run_dir / "out.vina_raw.pdbqt"
+            self.assertEqual(output_path.read_bytes(), normalized_output)
+            self.assertEqual(raw_path.read_bytes(), raw_output)
+
+            metadata = response["metadata"]
+            normalization = metadata["output_normalization"]
+            self.assertEqual(normalization["status"], "normalized")
+            self.assertEqual(normalization["nul_bytes_detected"], 47)
+            self.assertEqual(normalization["nul_bytes_removed"], 47)
+            self.assertEqual(normalization["recognized_padding_blocks"], 1)
+            self.assertEqual(normalization["recognized_padding_lengths"], [47])
+            self.assertEqual(
+                normalization["source_sha256"],
+                hashlib.sha256(raw_output).hexdigest(),
+            )
+            self.assertEqual(
+                normalization["normalized_sha256"],
+                hashlib.sha256(normalized_output).hexdigest(),
+            )
+            self.assertEqual(
+                metadata["artifacts"]["out_vina_raw"]["sha256"],
+                hashlib.sha256(raw_output).hexdigest(),
+            )
+            self.assertEqual(
+                metadata["artifacts"]["out"]["sha256"],
+                hashlib.sha256(normalized_output).hexdigest(),
+            )
+            self.assertTrue(
+                any("NUL" in warning for warning in metadata["warnings"])
+            )
+
+            file_status = get_run_files_status(str(project_dir), run_id)
+            raw_status = next(
+                item
+                for item in file_status["files"]
+                if item["key"] == "out_vina_raw"
+            )
+            self.assertEqual(raw_status["status"], "ok")
+
+            scores_file = run_dir / "scores.csv"
+            scores_file.write_text(
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n"
+                "1,-13.877,0.0,0.0\n",
+                encoding="utf-8",
+            )
+            metadata_path = run_dir / "metadata.json"
+            stored_metadata = json.loads(
+                metadata_path.read_text(encoding="utf-8")
+            )
+            stored_metadata.update(
+                {
+                    "scores_file": scores_file.relative_to(
+                        project_dir
+                    ).as_posix(),
+                    "project_scores_file": "results/scores.csv",
+                }
+            )
+            metadata_path.write_text(
+                json.dumps(stored_metadata, ensure_ascii=False, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+            project_path = project_dir / "project.json"
+            project = json.loads(project_path.read_text(encoding="utf-8"))
+            project["runs"][0].update(
+                {
+                    "scores_file": scores_file.relative_to(
+                        project_dir
+                    ).as_posix(),
+                }
+            )
+            project_path.write_text(
+                json.dumps(project, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = build_markdown_report(str(project_dir), run_id)
+
+            self.assertTrue(report["ok"], report)
+            self.assertIn("out.vina_raw.pdbqt", report["report_text"])
+            self.assertIn(
+                hashlib.sha256(raw_output).hexdigest(),
+                report["report_text"],
+            )
+            self.assertIn(
+                hashlib.sha256(normalized_output).hexdigest(),
+                report["report_text"],
+            )
+            self.assertEqual(
+                report["report_text"].count("Vina 输出标准化"),
+                1,
+            )
+            self.assertEqual(
+                report["report_text"].count("Vina 原始输出 SHA256"),
+                1,
+            )
+            self.assertEqual(
+                report["report_text"].count("标准 PDBQT SHA256"),
+                1,
+            )
+
+    def test_execute_records_no_change_for_text_safe_vina_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir, run_id = self._create_prepared_run_with_command(temp_dir)
+            output = b"MODEL 1\nROOT\nENDROOT\nTORSDOF 0\nENDMDL\n"
+
+            response = self._execute_with_mock_adapter(
+                project_dir,
+                run_id,
+                output_bytes=output,
+            )
+
+            self.assertTrue(response["ok"], response)
+            normalization = response["metadata"]["output_normalization"]
+            self.assertEqual(normalization["status"], "not_required")
+            self.assertFalse(normalization["changed"])
+            self.assertEqual(normalization["source_sha256"], normalization["normalized_sha256"])
+            self.assertEqual(normalization["source_sha256"], hashlib.sha256(output).hexdigest())
+            self.assertNotIn("out_vina_raw", response["metadata"]["artifacts"])
+            self.assertFalse(
+                (
+                    project_dir
+                    / "runs"
+                    / run_id
+                    / "out.vina_raw.pdbqt"
+                ).exists()
+            )
+
+    def test_flexible_output_normalizer_only_accepts_torsdof_to_valid_begin_res_padding(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "out.pdbqt"
+            raw_output = (
+                b"MODEL 1\r\n"
+                b"REMARK VINA RESULT: -8.1 0.0 0.0\r\n"
+                b"ROOT\r\nENDROOT\r\nTORSDOF 1\r\n"
+                + (b"\x00" * 20)
+                + b"\r\nBEGIN_RES GLN A 192\r\n"
+                b"ROOT\r\nENDROOT\r\nTORSDOF 0\r\n"
+                b"END_RES GLN A 192\r\nENDMDL\r\n"
+            )
+            expected = raw_output.replace(b"\x00" * 20, b"")
+            output_path.write_bytes(raw_output)
+
+            normalized = project_module._normalize_vina_pdbqt_output(
+                output_path,
+                "runs/run_001/out.pdbqt",
+                allow_flexible_residue_boundary=True,
+            )
+
+            self.assertTrue(normalized["ok"], normalized)
+            self.assertEqual(output_path.read_bytes(), expected)
+            self.assertEqual(
+                (Path(temp_dir) / "out.vina_raw.pdbqt").read_bytes(),
+                raw_output,
+            )
+            record = normalized["record"]
+            self.assertEqual(
+                record["method"],
+                "torsdof_flexible_residue_or_endmdl_nul_padding_v3",
+            )
+            self.assertEqual(record["nul_bytes_removed"], 20)
+            self.assertEqual(record["recognized_padding_blocks"], 1)
+            self.assertEqual(
+                record["normalized_sha256"],
+                hashlib.sha256(expected).hexdigest(),
+            )
+
+        invalid_suffixes = (
+            b"\r\nBEGIN_RES GLN $ 192\r\n",
+            b"\r\nBEGIN_RES GLN A 192 extra\r\n",
+            b"\r\nATOM      1  C   GLN A 192\r\n",
+        )
+        for suffix in invalid_suffixes:
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as temp_dir:
+                output_path = Path(temp_dir) / "out.pdbqt"
+                raw_output = (
+                    b"MODEL 1\nROOT\nENDROOT\nTORSDOF 1\n"
+                    + (b"\x00" * 7)
+                    + suffix
+                    + b"ENDMDL\n"
+                )
+                output_path.write_bytes(raw_output)
+
+                normalized = project_module._normalize_vina_pdbqt_output(
+                    output_path,
+                    "runs/run_001/out.pdbqt",
+                    allow_flexible_residue_boundary=True,
+                )
+
+                self.assertFalse(normalized["ok"])
+                self.assertEqual(
+                    normalized["error"]["code"],
+                    "VINA_OUTPUT_BINARY_CONTROL_CHARACTER",
+                )
+                self.assertFalse(output_path.exists())
+                self.assertEqual(
+                    (Path(temp_dir) / "out.vina_raw.pdbqt").read_bytes(),
+                    raw_output,
+                )
+
+    def test_execute_rejects_unrecognized_control_or_invalid_utf8_output(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "control",
+                b"MODEL 1\nREMARK bad\x01control\nTORSDOF 0\nENDMDL\n",
+                "VINA_OUTPUT_BINARY_CONTROL_CHARACTER",
+            ),
+            (
+                "misplaced_nul",
+                b"MODEL 1\nREMARK bad\x00padding\nTORSDOF 0\nENDMDL\n",
+                "VINA_OUTPUT_BINARY_CONTROL_CHARACTER",
+            ),
+            (
+                "invalid_utf8",
+                b"MODEL 1\nREMARK bad\xfftext\nTORSDOF 0\nENDMDL\n",
+                "VINA_OUTPUT_TEXT_ENCODING_INVALID",
+            ),
+        )
+        for label, output, expected_code in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temp_dir:
+                project_dir, run_id = self._create_prepared_run_with_command(
+                    temp_dir
+                )
+
+                response = self._execute_with_mock_adapter(
+                    project_dir,
+                    run_id,
+                    output_bytes=output,
+                )
+
+                self.assertFalse(response["ok"])
+                self.assertEqual(response["metadata"]["status"], "failed")
+                self.assertEqual(response["error"]["code"], expected_code)
+                run_dir = project_dir / "runs" / run_id
+                self.assertFalse((run_dir / "out.pdbqt").exists())
+                self.assertEqual(
+                    (run_dir / "out.vina_raw.pdbqt").read_bytes(),
+                    output,
+                )
+                normalization = response["metadata"]["output_normalization"]
+                self.assertEqual(normalization["status"], "failed")
+                self.assertEqual(normalization["normalized_file"], "")
+                self.assertEqual(normalization["normalized_sha256"], "")
+                self.assertEqual(
+                    response["metadata"]["artifacts"]["out_vina_raw"][
+                        "sha256"
+                    ],
+                    hashlib.sha256(output).hexdigest(),
+                )
 
     def test_execute_fake_vina_nonzero_exit_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

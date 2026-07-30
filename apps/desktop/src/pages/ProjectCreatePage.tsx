@@ -9,6 +9,7 @@ import PathInput from "../components/PathInput";
 import type { PageId, ProjectTaskIntent, StartMode } from "../navigation/pages";
 import type { DemoProjectSummary, DemoProjectsResponse, DockStartProject, ProjectResponse, SettingsResponse } from "../types";
 import { writeDockingWorkspaceMode } from "../utils/dockingMode";
+import { normalizeLigandImportPreview } from "../utils/screeningLigandImport";
 import {
   effectiveProjectTaskIntent,
   projectCreateProtocol,
@@ -206,6 +207,15 @@ function demoToolHint(demo: DemoProjectSummary): string {
   return "复制后可在对应步骤继续检查工具链。";
 }
 
+function projectStagedFilePath(projectDir: string, stagedFile: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(stagedFile)) return stagedFile;
+  return `${projectDir.replace(/[\\/]+$/, "")}\\${stagedFile.replace(/^[\\/]+/, "").replace(/\//g, "\\")}`;
+}
+
+function noReadyLigandMessage(): string {
+  return "导入结果中没有可用配体。重复、准备失败或需要正式大环审查的记录不会进入任务；项目已保留，可检查后重新导入。";
+}
+
 function projectFromResponse(response: ProjectResponse, fallbackMessage: string): DockStartProject {
   if (response.ok && response.project) {
     return response.project;
@@ -349,18 +359,43 @@ export default function ProjectCreatePage({
           { projectDir: project.project_dir, sourcePath: receptorPdbqtPath },
           "受体 PDBQT 导入失败。",
         );
-        project = await runProjectCommand(
-          "import_ligand_pdbqt",
-          { projectDir: project.project_dir, sourcePath: ligandPdbqtPaths[0] ?? "" },
-          "配体 PDBQT 导入失败。",
-        );
-        if (taskProtocol.runMode === "dock" && ligandPdbqtPaths.length > 1) {
-          const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+        if (taskProtocol.runMode === "dock") {
+          const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
             projectDir: project.project_dir,
             files: ligandPdbqtPaths,
-          })) as { ok?: boolean; error?: { message?: string } };
-          if (!staged.ok) throw new Error(staged.error?.message || "多配体导入失败。");
-          writeDockingWorkspaceMode(project.project_dir, "batch");
+          })) as {
+            ok?: boolean;
+            error?: { message?: string; raw_error?: string };
+            [key: string]: unknown;
+          };
+          if (!stageResponse.ok) {
+            throw new Error(stageResponse.error?.raw_error || stageResponse.error?.message || "配体导入失败。");
+          }
+          const preview = normalizeLigandImportPreview(stageResponse);
+          const firstReady = preview.candidates.find(
+            (candidate) => candidate.status === "ready" && candidate.stagedFile,
+          );
+          if (preview.counts.ready === 0 || !firstReady?.stagedFile) {
+            throw new Error(noReadyLigandMessage());
+          }
+          project = await runProjectCommand(
+            "import_ligand_pdbqt",
+            {
+              projectDir: project.project_dir,
+              sourcePath: projectStagedFilePath(project.project_dir, firstReady.stagedFile),
+            },
+            "首个可用配体预览文件导入失败。",
+          );
+          writeDockingWorkspaceMode(
+            project.project_dir,
+            preview.counts.ready >= 2 ? "batch" : "single",
+          );
+        } else {
+          project = await runProjectCommand(
+            "import_ligand_pdbqt",
+            { projectDir: project.project_dir, sourcePath: ligandPdbqtPaths[0] ?? "" },
+            "配体 PDBQT 导入失败。",
+          );
         }
         onCreated(project, taskProtocol.runMode === "dock" ? "import-pdbqt" : "run-prepare");
         return;
@@ -383,18 +418,37 @@ export default function ProjectCreatePage({
           { projectDir: project.project_dir, sourcePath: receptorRawPath },
           "受体结构文件导入失败。",
         );
-        if (taskProtocol.runMode === "dock" && ligandRawPaths.length > 1) {
-          const staged = JSON.parse(await invoke<string>("stage_screening_inputs", {
+        if (taskProtocol.runMode === "dock") {
+          const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
             projectDir: project.project_dir,
             files: ligandRawPaths,
-          })) as { ok?: boolean; staged?: Array<{ file?: string }>; error?: { message?: string } };
-          if (!staged.ok || !staged.staged?.length) throw new Error(staged.error?.message || "多个配体自动准备失败。");
+          })) as {
+            ok?: boolean;
+            error?: { message?: string; raw_error?: string };
+            [key: string]: unknown;
+          };
+          if (!stageResponse.ok) {
+            throw new Error(stageResponse.error?.raw_error || stageResponse.error?.message || "配体自动准备失败。");
+          }
+          const preview = normalizeLigandImportPreview(stageResponse);
+          const firstReady = preview.candidates.find(
+            (candidate) => candidate.status === "ready" && candidate.stagedFile,
+          );
+          if (preview.counts.ready === 0 || !firstReady?.stagedFile) {
+            throw new Error(noReadyLigandMessage());
+          }
           project = await runProjectCommand(
             "import_ligand_pdbqt",
-            { projectDir: project.project_dir, sourcePath: `${project.project_dir}\\${String(staged.staged[0].file || "").replace(/\//g, "\\")}` },
-            "首个配体预览文件导入失败。",
+            {
+              projectDir: project.project_dir,
+              sourcePath: projectStagedFilePath(project.project_dir, firstReady.stagedFile),
+            },
+            "首个可用配体预览文件导入失败。",
           );
-          writeDockingWorkspaceMode(project.project_dir, "batch");
+          writeDockingWorkspaceMode(
+            project.project_dir,
+            preview.counts.ready >= 2 ? "batch" : "single",
+          );
         } else {
           project = await runProjectCommand(
             "import_ligand_raw_file",
@@ -702,7 +756,7 @@ export default function ProjectCreatePage({
                         ? ligandPdbqtPaths.length === 1
                           ? "已选择 1 个待评价姿势"
                           : "姿势评分与局部优化一次只能使用一个配体"
-                        : `已选择 ${ligandPdbqtPaths.length} 个；${ligandPdbqtPaths.length > 1 ? "将默认进入串行批量筛选" : "将进入单配体任务"}`
+                        : `已选择 ${ligandPdbqtPaths.length} 个文件；导入后按实际可用配体数量决定单配体或批量筛选`
                       : "尚未选择"}
                   </span>
                 </div>
@@ -774,7 +828,7 @@ export default function ProjectCreatePage({
                             ? ligandRawPaths.length === 1
                               ? "已选择 1 个待评价结构"
                               : "姿势评分与局部优化一次只能使用一个配体"
-                            : `已选择 ${ligandRawPaths.length} 个；${ligandRawPaths.length > 1 ? "将自动准备并默认进入串行批量筛选" : "将进入单配体准备"}`
+                            : `已选择 ${ligandRawPaths.length} 个文件；准备后按实际可用配体数量决定单配体或批量筛选`
                           : "尚未选择"}
                       </span>
                     </div>

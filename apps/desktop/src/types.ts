@@ -1121,12 +1121,24 @@ export type ProjectFileRef = {
   file: string;
 };
 
-export type PreparationStatus = "not_started" | "checking" | "ready" | "running" | "finished" | "failed";
+export type PreparationStatus =
+  | "not_started"
+  | "checking"
+  | "ready"
+  | "running"
+  | "finished"
+  | "failed"
+  | "interrupted";
 export type PreparationTarget = "receptor" | "ligand";
-export type PreparationMethod = "meeko" | "rdkit_meeko" | "external_manual";
+export type PreparationMethod =
+  | "meeko"
+  | "rdkit_meeko"
+  | "meeko_macrocycle"
+  | "external_manual";
 
 export type PreparationResult = {
   target: PreparationTarget;
+  prep_id: string;
   status: PreparationStatus;
   method: PreparationMethod | null;
   input_file: string | null;
@@ -1141,6 +1153,11 @@ export type PreparationResult = {
   stdout_file: string;
   stderr_file: string;
   log_file: string;
+  metadata_file: string;
+  command_file: string;
+  input_snapshot_file: string;
+  output_check_file: string;
+  exit_code: number | null;
   error: {
     code?: string;
     message?: string;
@@ -1153,6 +1170,189 @@ export type PreparationResult = {
 export type PreparationState = {
   receptor: PreparationResult;
   ligand: PreparationResult;
+};
+
+export type MacrocycleReviewOptions = {
+  min_ring_size: number;
+  max_breaks: number;
+  allow_atom_type_a_endpoints: boolean;
+  keep_chorded_rings: boolean;
+  keep_equivalent_rings: boolean;
+};
+
+export type MacrocycleBondEndpoint = {
+  index_zero_based: number;
+  number_one_based: number;
+  name: string;
+  element: string;
+  coordinates: [number, number, number] | number[];
+};
+
+export type MacrocycleBond = {
+  atom_indices_zero_based: [number, number] | number[];
+  atom_numbers_one_based: [number, number] | number[];
+  atom_labels: [string, string] | string[];
+  endpoints: [MacrocycleBondEndpoint, MacrocycleBondEndpoint] | MacrocycleBondEndpoint[];
+  bond_type: string;
+  bond_order: number;
+  is_aromatic: boolean;
+  stereo: string;
+  is_conjugated: boolean;
+};
+
+export type MacrocycleCandidate = {
+  candidate_id: string;
+  exact_bonds: Array<[number, number] | number[]>;
+  bonds: MacrocycleBond[];
+  bond_score: number | null;
+  unbroken_ring_ids: string[];
+  ring_coverage_complete: boolean;
+};
+
+export type MacrocycleRecordPointer = {
+  review_id?: string;
+  confirmation_id?: string;
+  relative_path: string;
+  sha256: string;
+  size_bytes: number;
+  analysis_sha256?: string;
+  source_sha256?: string;
+  binding_sha256?: string;
+  created_at: string;
+};
+
+export type MacrocycleIssue = {
+  code: string;
+  title: string;
+  message: string;
+  raw_error?: string;
+  suggestion?: string;
+  blocking?: boolean;
+};
+
+export type MacrocycleReview = {
+  review_id: string;
+  valid: boolean;
+  protocol_id: "meeko_macrocycle" | string;
+  analysis_sha256: string;
+  source: {
+    relative_path: string;
+    sha256: string;
+    size_bytes: number;
+  };
+  options: MacrocycleReviewOptions & {
+    max_ring_size?: number;
+  };
+  molecule: {
+    name: string;
+    atom_count: number;
+    bond_count: number;
+    conformer_count: number;
+    record_count: number;
+    has_3d_coordinates: boolean;
+  };
+  rings: Array<{
+    ring_id: string;
+    size: number;
+    atom_numbers_one_based?: number[];
+    is_macrocycle?: boolean;
+  }>;
+  macrocycle_ring_ids: string[];
+  is_macrocycle: boolean;
+  candidate_sets: MacrocycleCandidate[];
+  candidate_count_total: number;
+  recommended_candidate_id: string;
+  flexible_supported: boolean;
+  rigid_supported: boolean;
+  unsupported_reasons: MacrocycleIssue[];
+  tool_versions: {
+    python?: string;
+    rdkit?: string;
+    meeko?: string;
+  };
+  record: MacrocycleRecordPointer;
+  invalid_reason?: string;
+};
+
+export type MacrocycleConfirmation = {
+  confirmation_id: string;
+  review_id: string;
+  selection_mode: "candidate" | "rigid";
+  candidate_id: string;
+  exact_bonds: Array<[number, number] | number[]>;
+  selected_bonds: MacrocycleBond[];
+  binding_sha256: string;
+  valid: boolean;
+  record: MacrocycleRecordPointer;
+  invalid_reason?: string;
+};
+
+export type MacrocycleStatusResponse = {
+  ok: boolean;
+  project_dir?: string;
+  project?: DockStartProject;
+  protocol_id?: "meeko_macrocycle" | string;
+  schema_version?: number;
+  state?:
+    | "not_reviewed"
+    | "reviewed"
+    | "confirmed"
+    | "stale"
+    | "unsupported"
+    | "not_macrocycle"
+    | string;
+  source?: {
+    relative_path: string;
+    sha256: string;
+    size_bytes: number;
+    suffix: string;
+  } | null;
+  review?: MacrocycleReview | null;
+  confirmation?: MacrocycleConfirmation | null;
+  integrity?: {
+    ok: boolean;
+    issues: MacrocycleIssue[];
+  };
+  can_review?: boolean;
+  can_confirm?: boolean;
+  can_confirm_candidate?: boolean;
+  can_confirm_rigid?: boolean;
+  can_prepare?: boolean;
+  message?: string;
+  error?: {
+    code?: string;
+    title?: string;
+    message?: string;
+    raw_error?: string;
+    suggestion?: string;
+  } | null;
+};
+
+export type MacrocycleSelection =
+  | { kind: "candidate"; candidateId: string }
+  | { kind: "rigid" }
+  | null;
+
+export type MacrocyclePreparationOptions = {
+  protocol: "meeko_macrocycle";
+  macrocycle: {
+    mode: "reviewed";
+    review_id: string;
+    confirmation_sha256: string;
+  };
+};
+
+export type MacrocyclePreparationEvidence = {
+  selectionMode: "candidate" | "rigid" | "";
+  candidateId: string;
+  reviewId: string;
+  confirmationSha256: string;
+  expectedBonds: number[][];
+  actualBonds: number[][];
+  gluePseudoAtomCount: number | null;
+  bondsMatch: boolean | null;
+  meekoVersion: string;
+  rdkitVersion: string;
 };
 
 export type VinaSettings = {

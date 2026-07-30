@@ -76,6 +76,7 @@ class ResultParsingTests(unittest.TestCase):
         self.assertIsInstance(scores, list)
         self.assertEqual(scores[0]["mode"], 1)
         self.assertEqual(scores[0]["affinity_kcal_mol"], -8.7)
+        self.assertEqual(scores[0]["affinity_text"], "-8.7")
         self.assertEqual(scores[1]["rmsd_lb"], 1.532)
         self.assertEqual(scores[1]["rmsd_ub"], 2.145)
 

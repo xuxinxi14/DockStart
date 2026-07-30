@@ -492,7 +492,7 @@
 
 .batch-screening-import-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-top: 1px solid var(--ds-border-subtle);
   border-bottom: 1px solid var(--ds-border-subtle);
 }
@@ -617,6 +617,7 @@
 }
 
 .batch-screening-import-table tr[data-status="duplicate"],
+.batch-screening-import-table tr[data-status="review_required"],
 .batch-screening-import-table tr[data-status="invalid"] {
   background: color-mix(in srgb, var(--ds-surface-panel) 70%, transparent);
 }
@@ -638,6 +639,12 @@
 }
 
 .batch-screening-import-status.is-duplicate {
+  border-color: var(--ds-warning-border);
+  background: var(--ds-warning-soft);
+  color: var(--ds-warning-text);
+}
+
+.batch-screening-import-status.is-review_required {
   border-color: var(--ds-warning-border);
   background: var(--ds-warning-soft);
   color: var(--ds-warning-text);
@@ -1473,7 +1480,7 @@
   }
 
   .batch-screening-import-metrics {
-    grid-template-columns: repeat(5, minmax(70px, 1fr));
+    grid-template-columns: repeat(6, minmax(70px, 1fr));
     overflow-x: auto;
   }
 

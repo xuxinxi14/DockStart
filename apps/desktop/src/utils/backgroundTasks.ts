@@ -107,6 +107,8 @@ export async function startFlexibleReceptorTask(
   maxResidues = 8,
   allowBadRes = false,
   acknowledgedBadResidues: string[] = [],
+  resolvedAltlocs: Record<string, string> = {},
+  selectionContextSha256 = "",
 ): Promise<BackgroundTaskStatus> {
   const payload = await invoke<string>("start_flexible_receptor_task", {
     projectDir,
@@ -114,6 +116,8 @@ export async function startFlexibleReceptorTask(
     maxResidues,
     allowBadRes,
     acknowledgedBadResidues,
+    resolvedAltlocs,
+    selectionContextSha256,
   });
   return assertStarted(normalizeTaskStatus(payload));
 }

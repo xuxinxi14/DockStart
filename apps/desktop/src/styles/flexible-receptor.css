@@ -97,6 +97,27 @@
   padding: 0 12px;
 }
 
+.flexible-altloc-review {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--ds-border-subtle);
+  padding: 10px;
+}
+
+.flexible-altloc-review label {
+  grid-template-columns: minmax(130px, auto) minmax(220px, 1fr);
+  align-items: center;
+}
+
+.flexible-altloc-review select {
+  min-height: 36px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 7px;
+  background: var(--ds-surface-input);
+  color: var(--ds-text-primary);
+  padding: 0 10px;
+}
+
 .flexible-receptor-actions {
   display: flex;
   gap: 8px;

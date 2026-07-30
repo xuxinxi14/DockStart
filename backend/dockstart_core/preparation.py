@@ -16,10 +16,18 @@ from typing import Any
 
 from adapters import meeko_adapter, rdkit_adapter, vina_adapter
 from dockstart_core.advanced_protocols import (
+    MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
     ProtocolValidationError,
-    build_meeko_macrocycle_plan,
     inspect_meeko_ligand_pdbqt,
-    validate_macrocycle_options,
+    meeko_receptor_control_arguments,
+    normalize_meeko_receptor_controls,
+)
+from dockstart_core.macrocycle import (
+    ANALYSIS_VERSION,
+    CONTRACT_SCHEMA_VERSION,
+    HYDROGEN_POLICY,
+    MEEKO_API_PROFILE,
+    build_reviewed_preparation_plan,
 )
 from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
 from dockstart_core.project import (
@@ -55,10 +63,57 @@ PREPARATION_RECORD_ROOT = Path("preparation")
 PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
 PREPARATION_TOOLS_SNAPSHOT_ENV_VAR = "DOCKSTART_PREPARATION_TOOLS_JSON"
 MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES = 16 * 1024
+MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES = 32 * 1024
+MAX_MACROCYCLE_EVIDENCE_JSON_BYTES = 1024 * 1024
+MAX_PREPARATION_ERROR_STREAM_CHARS = 16 * 1024
+MACROCYCLE_REVIEW_ID_PATTERN = re.compile(r"^review_[0-9]{3,}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class PreparationPathError(RuntimeError):
     """Raised when a preparation path can escape through a reparse point."""
+
+
+class CandidateOutputIntegrityError(RuntimeError):
+    """Raised when a validated preparation candidate changes before publication."""
+
+
+def _bounded_preparation_stream(value: str) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) <= MAX_PREPARATION_ERROR_STREAM_CHARS:
+        return normalized
+    half = MAX_PREPARATION_ERROR_STREAM_CHARS // 2
+    omitted = len(normalized) - (half * 2)
+    return (
+        normalized[:half]
+        + f"\n… 已省略 {omitted} 个字符；完整内容保存在 preparation 日志文件 …\n"
+        + normalized[-half:]
+    )
+
+
+def _preparation_failure_diagnostic(
+    *,
+    publication_error: str,
+    stdout: str,
+    stderr: str,
+    exit_code: int,
+) -> str:
+    parts: list[str] = []
+    if str(publication_error or "").strip():
+        parts.append(
+            "[publish]\n" + _bounded_preparation_stream(publication_error)
+        )
+    if str(stdout or "").strip():
+        parts.append("[stdout]\n" + _bounded_preparation_stream(stdout))
+    if str(stderr or "").strip():
+        parts.append("[stderr]\n" + _bounded_preparation_stream(stderr))
+    if not parts:
+        parts.append(
+            "输出 PDBQT 不存在或为空。"
+            if exit_code == 0
+            else f"准备命令退出码为 {exit_code}，但没有捕获到 stdout/stderr。"
+        )
+    return "\n\n".join(parts)
 
 
 def _now_iso() -> str:
@@ -209,6 +264,17 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _sha256_if_readable(path: Path) -> tuple[str, str]:
@@ -600,6 +666,36 @@ def _build_preparation_metadata(
     if "protocol" in built:
         payload["protocol"] = str(built.get("protocol") or "")
         payload["options"] = copy.deepcopy(built.get("options", {}))
+        payload["protocol_mode"] = str(built.get("protocol_mode") or "legacy")
+    if built.get("macrocycle_reviewed") is True:
+        payload["macrocycle_contract"] = copy.deepcopy(
+            built.get("macrocycle_contract", {}),
+        )
+        payload["macrocycle_contract_file"] = str(
+            built.get("macrocycle_contract_file") or "",
+        )
+        payload["macrocycle_contract_sha256"] = str(
+            built.get("macrocycle_contract_sha256") or "",
+        )
+        payload["macrocycle_evidence_file"] = str(
+            built.get("macrocycle_evidence_file") or "",
+        )
+        payload["macrocycle_input_file"] = str(
+            built.get("macrocycle_input_file") or "",
+        )
+        payload["macrocycle_expected_output_evidence"] = copy.deepcopy(
+            built.get("macrocycle_expected_output_evidence", {}),
+        )
+    if isinstance(built.get("receptor_controls"), Mapping):
+        payload["receptor_controls"] = copy.deepcopy(
+            built["receptor_controls"],
+        )
+        payload["receptor_controls_sha256"] = str(
+            built.get("receptor_controls_sha256") or "",
+        )
+        payload["receptor_controls_canonicalization"] = str(
+            built.get("receptor_controls_canonicalization") or "",
+        )
     if "protocol_evidence" in built:
         payload["protocol_evidence"] = copy.deepcopy(built.get("protocol_evidence"))
     return payload
@@ -615,8 +711,14 @@ def _attach_executor_identity(built: dict[str, Any]) -> None:
     built["executor_executable"] = str((identity or {}).get("executable_path") or "")
 
 
-def _publish_candidate_output(candidate: Path, destination: Path, project_path: Path | None = None) -> None:
-    """Validate and atomically publish a generated text PDBQT candidate."""
+def _publish_candidate_output(
+    candidate: Path,
+    destination: Path,
+    project_path: Path | None = None,
+    *,
+    expected_snapshot: Mapping[str, Any] | None = None,
+) -> None:
+    """Validate and atomically publish the exact PDBQT bytes that were read."""
 
     if project_path is not None:
         candidate = _safe_project_path(project_path, candidate, allow_missing=False)
@@ -624,10 +726,28 @@ def _publish_candidate_output(candidate: Path, destination: Path, project_path: 
 
     if not candidate.is_file() or candidate.stat().st_size <= 0:
         raise RuntimeError("Meeko 没有生成非空的 PDBQT 候选文件。")
-    text = candidate.read_text(encoding="utf-8", errors="strict")
+    payload = candidate.read_bytes()
+    if expected_snapshot is not None:
+        expected_sha256 = str(expected_snapshot.get("sha256") or "").lower()
+        try:
+            expected_size = int(expected_snapshot.get("size"))
+        except (TypeError, ValueError):
+            expected_size = -1
+        actual_sha256 = hashlib.sha256(payload).hexdigest()
+        if (
+            not SHA256_PATTERN.fullmatch(expected_sha256)
+            or expected_size != len(payload)
+            or expected_sha256 != actual_sha256
+        ):
+            raise CandidateOutputIntegrityError(
+                "大环候选 PDBQT 在证据校验后发生变化，已拒绝发布。"
+            )
+    text = payload.decode("utf-8", errors="strict")
     if not text.strip():
         raise RuntimeError("Meeko 生成的 PDBQT 候选文件只包含空白内容。")
-    atomic_write_text(destination, text)
+    # Publish the same bytes whose size/hash were checked above.  Re-reading
+    # ``candidate`` here would reopen the evidence-to-publication TOCTOU gap.
+    atomic_write_bytes(destination, payload)
 
 
 def _project_error_payload(
@@ -924,6 +1044,440 @@ def _restore_previous_output(destination: Path, previous: bytes | None) -> str:
         return str(exc)
 
 
+def _normalized_macrocycle_bonds(value: Any, *, label: str) -> list[list[int]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} 必须是原子索引对列表")
+    normalized: list[list[int]] = []
+    for pair in value:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(f"{label} 包含无效原子索引对")
+        left, right = pair
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, int)
+            or not isinstance(right, int)
+            or left < 0
+            or right < 0
+            or left == right
+        ):
+            raise ValueError(f"{label} 包含无效原子索引")
+        normalized.append([min(left, right), max(left, right)])
+    if normalized != sorted(normalized) or len({tuple(pair) for pair in normalized}) != len(
+        normalized
+    ):
+        raise ValueError(f"{label} 必须按规范顺序排列且不能重复")
+    return normalized
+
+
+def _reviewed_macrocycle_evidence_gate(
+    project_path: Path,
+    built: dict[str, Any],
+    candidate_output_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Validate worker evidence before a reviewed macrocycle can be published."""
+
+    issues: list[dict[str, str]] = []
+
+    def issue(code: str, message: str, detail: str = "") -> None:
+        issues.append({"code": code, "message": message, "detail": detail})
+
+    contract = built.get("macrocycle_contract")
+    expected = built.get("macrocycle_expected_output_evidence")
+    if not isinstance(contract, Mapping):
+        contract = {}
+        issue(
+            "MACROCYCLE_CONTRACT_NOT_RECORDED",
+            "准备记录缺少大环合同。",
+        )
+    elif (
+        isinstance(contract.get("schema_version"), bool)
+        or contract.get("schema_version") != CONTRACT_SCHEMA_VERSION
+        or contract.get("analysis_version") != ANALYSIS_VERSION
+        or contract.get("meeko_api_profile") != MEEKO_API_PROFILE
+        or contract.get("hydrogen_policy") != HYDROGEN_POLICY
+    ):
+        issue(
+            "MACROCYCLE_CONTRACT_PROFILE_MISMATCH",
+            "大环合同不是当前正式协议版本。",
+            json.dumps(
+                {
+                    "schema_version": contract.get("schema_version"),
+                    "analysis_version": contract.get("analysis_version"),
+                    "meeko_api_profile": contract.get("meeko_api_profile"),
+                    "hydrogen_policy": contract.get("hydrogen_policy"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+    if not isinstance(expected, Mapping):
+        expected = {}
+        issue(
+            "MACROCYCLE_EXPECTED_EVIDENCE_NOT_RECORDED",
+            "准备记录缺少预期的大环输出证据。",
+        )
+
+    contract_file = str(built.get("macrocycle_contract_file") or "")
+    contract_sha256 = str(built.get("macrocycle_contract_sha256") or "").lower()
+    contract_snapshot: dict[str, Any] = {}
+    try:
+        contract_path = _safe_project_path(
+            project_path,
+            Path(contract_file),
+            allow_missing=False,
+        )
+        contract_snapshot = _file_snapshot(contract_path, project_path)
+        if (
+            not SHA256_PATTERN.fullmatch(contract_sha256)
+            or contract_snapshot.get("sha256") != contract_sha256
+        ):
+            issue(
+                "MACROCYCLE_CONTRACT_HASH_MISMATCH",
+                "大环合同 SHA256 与准备计划不一致。",
+                json.dumps(contract_snapshot, ensure_ascii=False, sort_keys=True),
+            )
+        persisted_contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        if not isinstance(persisted_contract, dict) or persisted_contract != dict(contract):
+            issue(
+                "MACROCYCLE_CONTRACT_CONTENT_MISMATCH",
+                "大环合同文件与任务内存快照不一致。",
+            )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_CONTRACT_READ_FAILED",
+            "无法读取或核验大环合同文件。",
+            str(exc),
+        )
+
+    macrocycle_input_file = str(built.get("macrocycle_input_file") or "")
+    macrocycle_input_snapshot: dict[str, Any] = {}
+    runtime_input = contract.get("runtime_input") if isinstance(contract, Mapping) else None
+    try:
+        macrocycle_input_path = _safe_project_path(
+            project_path,
+            Path(macrocycle_input_file),
+            allow_missing=False,
+        )
+        macrocycle_input_snapshot = _file_snapshot(macrocycle_input_path, project_path)
+        if not isinstance(runtime_input, Mapping):
+            issue(
+                "MACROCYCLE_RUNTIME_INPUT_NOT_RECORDED",
+                "大环合同缺少冻结运行输入。",
+            )
+        else:
+            runtime_relative = Path(
+                str(runtime_input.get("relative_path") or ""),
+            ).as_posix()
+            if (
+                runtime_relative != Path(macrocycle_input_file).as_posix()
+                or macrocycle_input_snapshot.get("sha256")
+                != str(runtime_input.get("sha256") or "")
+                or int(macrocycle_input_snapshot.get("size") or 0)
+                != int(runtime_input.get("size_bytes") or 0)
+            ):
+                issue(
+                    "MACROCYCLE_RUNTIME_INPUT_MISMATCH",
+                    "大环 worker 输入不是审查合同绑定的冻结副本。",
+                    json.dumps(
+                        {
+                            "expected": dict(runtime_input),
+                            "actual": macrocycle_input_snapshot,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
+    except (OSError, ValueError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_RUNTIME_INPUT_READ_FAILED",
+            "无法读取大环审查冻结输入。",
+            str(exc),
+        )
+
+    evidence_file = str(built.get("macrocycle_evidence_file") or "")
+    evidence: dict[str, Any] = {}
+    evidence_snapshot: dict[str, Any] = {}
+    try:
+        evidence_path = _safe_project_path(
+            project_path,
+            Path(evidence_file),
+            allow_missing=False,
+        )
+        evidence_size = evidence_path.stat().st_size
+        if evidence_size <= 0 or evidence_size > MAX_MACROCYCLE_EVIDENCE_JSON_BYTES:
+            raise ValueError(
+                f"evidence size={evidence_size}, "
+                f"limit={MAX_MACROCYCLE_EVIDENCE_JSON_BYTES}"
+            )
+        evidence_snapshot = _file_snapshot(evidence_path, project_path)
+        parsed = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
+            raise ValueError("macrocycle_evidence.json 顶层不是对象")
+        evidence = parsed
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_EVIDENCE_READ_FAILED",
+            "无法读取有效的 macrocycle_evidence.json。",
+            str(exc),
+        )
+
+    candidate_snapshot = _file_snapshot(candidate_output_path, project_path)
+    inspection: dict[str, Any] = {}
+    if candidate_snapshot.get("non_empty"):
+        try:
+            inspection = inspect_meeko_ligand_pdbqt(candidate_output_path)
+        except ProtocolValidationError as exc:
+            issue(
+                "MACROCYCLE_PDBQT_INSPECTION_FAILED",
+                "无法核验大环候选 PDBQT。",
+                json.dumps(exc.to_dict(), ensure_ascii=False, sort_keys=True),
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            issue(
+                "MACROCYCLE_PDBQT_INSPECTION_FAILED",
+                "无法核验大环候选 PDBQT。",
+                str(exc),
+            )
+    else:
+        issue(
+            "MACROCYCLE_CANDIDATE_OUTPUT_MISSING",
+            "大环 worker 未生成非空候选 PDBQT。",
+        )
+
+    try:
+        expected_bonds = _normalized_macrocycle_bonds(
+            contract.get("exact_bonds"),
+            label="合同断环键",
+        )
+        plan_bonds = _normalized_macrocycle_bonds(
+            expected.get("exact_bonds"),
+            label="计划断环键",
+        )
+        evidence_expected_bonds = _normalized_macrocycle_bonds(
+            evidence.get("expected_bonds"),
+            label="证据预期断环键",
+        )
+        evidence_actual_bonds = _normalized_macrocycle_bonds(
+            evidence.get("actual_bonds"),
+            label="证据实际断环键",
+        )
+        if not (
+            expected_bonds
+            == plan_bonds
+            == evidence_expected_bonds
+            == evidence_actual_bonds
+        ):
+            issue(
+                "MACROCYCLE_BOND_EVIDENCE_MISMATCH",
+                "合同、计划、预期与实际断环键不一致。",
+                json.dumps(
+                    {
+                        "contract": expected_bonds,
+                        "plan": plan_bonds,
+                        "expected": evidence_expected_bonds,
+                        "actual": evidence_actual_bonds,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+    except (TypeError, ValueError) as exc:
+        expected_bonds = []
+        issue(
+            "MACROCYCLE_BOND_EVIDENCE_INVALID",
+            "大环断环键证据格式无效。",
+            str(exc),
+        )
+
+    selection_mode = str(contract.get("selection_mode") or "")
+    candidate_id = str(contract.get("candidate_id") or "")
+    confirmation_sha256 = str(contract.get("confirmation_sha256") or "").lower()
+    review_id = str(contract.get("review_id") or "")
+    atom_table_sha256 = str(contract.get("atom_table_sha256") or "").lower()
+    bond_topology_sha256 = str(
+        contract.get("bond_topology_sha256") or ""
+    ).lower()
+    bond_topology = contract.get("bond_topology")
+    atom_indexing = contract.get("atom_indexing")
+    contract_tool_versions = contract.get("tool_versions")
+    try:
+        bond_topology_matches = (
+            isinstance(bond_topology, list)
+            and _canonical_json_sha256(bond_topology)
+            == bond_topology_sha256
+        )
+    except (TypeError, ValueError):
+        bond_topology_matches = False
+    if (
+        not SHA256_PATTERN.fullmatch(bond_topology_sha256)
+        or not bond_topology_matches
+    ):
+        issue(
+            "MACROCYCLE_BOND_TOPOLOGY_INVALID",
+            "大环合同中的键拓扑或 SHA256 无效。",
+        )
+    if not isinstance(atom_indexing, Mapping):
+        issue(
+            "MACROCYCLE_ATOM_INDEXING_INVALID",
+            "大环合同缺少显式氢与原始原子索引映射。",
+        )
+    if not isinstance(contract_tool_versions, Mapping):
+        contract_tool_versions = {}
+        issue(
+            "MACROCYCLE_TOOL_VERSIONS_INVALID",
+            "大环合同缺少审查工具版本。",
+        )
+    scalar_expectations = (
+        ("protocol_id", "meeko_macrocycle"),
+        ("selection_mode", selection_mode),
+        ("candidate_id", candidate_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("review_id", review_id),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+        ("hydrogen_policy", HYDROGEN_POLICY),
+    )
+    if evidence.get("ok") is not True:
+        issue(
+            "MACROCYCLE_WORKER_REPORTED_FAILURE",
+            "大环 worker 没有报告成功。",
+            json.dumps(evidence.get("error"), ensure_ascii=False, sort_keys=True),
+        )
+    for key, value in scalar_expectations:
+        if evidence.get(key) != value:
+            issue(
+                "MACROCYCLE_EVIDENCE_FIELD_MISMATCH",
+                f"大环证据字段 {key} 与合同不一致。",
+                f"expected={value!r}; actual={evidence.get(key)!r}",
+            )
+    for key, value in (
+        ("selection_mode", selection_mode),
+        ("candidate_id", candidate_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+    ):
+        if expected.get(key) != value:
+            issue(
+                "MACROCYCLE_PLAN_FIELD_MISMATCH",
+                f"大环准备计划字段 {key} 与合同不一致。",
+                f"expected={value!r}; actual={expected.get(key)!r}",
+            )
+    if evidence.get("atom_indexing") != atom_indexing:
+        issue(
+            "MACROCYCLE_ATOM_INDEXING_EVIDENCE_MISMATCH",
+            "worker 的显式氢/原始原子索引映射与合同不一致。",
+        )
+    for key in ("rdkit", "meeko"):
+        expected_version = str(contract_tool_versions.get(key) or "")
+        actual_version = str(evidence.get(f"{key}_version") or "")
+        if not expected_version or actual_version != expected_version:
+            issue(
+                "MACROCYCLE_TOOL_VERSION_EVIDENCE_MISMATCH",
+                f"worker 的 {key} 版本与审查合同不一致。",
+                f"expected={expected_version!r}; actual={actual_version!r}",
+            )
+
+    output_sha256 = str(evidence.get("output_sha256") or "").lower()
+    try:
+        evidence_output_size = int(evidence.get("output_size_bytes"))
+    except (TypeError, ValueError):
+        evidence_output_size = -1
+    if (
+        not SHA256_PATTERN.fullmatch(output_sha256)
+        or output_sha256 != candidate_snapshot.get("sha256")
+        or evidence_output_size != int(candidate_snapshot.get("size") or 0)
+    ):
+        issue(
+            "MACROCYCLE_OUTPUT_EVIDENCE_MISMATCH",
+            "大环证据中的输出 SHA256 或大小与候选 PDBQT 不一致。",
+            json.dumps(
+                {
+                    "evidence_sha256": output_sha256,
+                    "evidence_size": evidence_output_size,
+                    "candidate": candidate_snapshot,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    try:
+        glue_count = int(evidence.get("glue_pseudo_atom_count"))
+    except (TypeError, ValueError):
+        glue_count = -1
+    inspected_glue_count = len(inspection.get("glue_pseudo_atoms") or [])
+    expected_glue_count = 2 * len(expected_bonds)
+    if (
+        glue_count != expected_glue_count
+        or inspected_glue_count != expected_glue_count
+    ):
+        issue(
+            "MACROCYCLE_GLUE_EVIDENCE_MISMATCH",
+            "G* 胶合伪原子数量与断环键数量不一致。",
+            (
+                f"expected={expected_glue_count}; worker={glue_count}; "
+                f"pdbqt={inspected_glue_count}"
+            ),
+        )
+
+    if selection_mode == "rigid":
+        if candidate_id or expected_bonds or glue_count != 0 or inspected_glue_count != 0:
+            issue(
+                "MACROCYCLE_RIGID_EVIDENCE_MISMATCH",
+                "刚性大环输出包含候选标识、断环键或 G* 伪原子。",
+            )
+    elif selection_mode == "candidate":
+        if not candidate_id or not expected_bonds:
+            issue(
+                "MACROCYCLE_CANDIDATE_EVIDENCE_INCOMPLETE",
+                "柔性大环合同缺少候选标识或精确断环键。",
+            )
+        if inspection and not inspection.get("macrocycle_evidence"):
+            issue(
+                "MACROCYCLE_PDBQT_CLOSURE_EVIDENCE_MISSING",
+                "柔性大环 PDBQT 缺少闭环伪原子证据。",
+            )
+    else:
+        issue(
+            "MACROCYCLE_SELECTION_MODE_INVALID",
+            "大环合同选择模式不是 candidate 或 rigid。",
+            selection_mode,
+        )
+
+    if inspection and not inspection.get("embedded_topology"):
+        issue(
+            "MACROCYCLE_TOPOLOGY_EVIDENCE_MISSING",
+            "大环候选 PDBQT 缺少 REMARK SMILES/SMILES IDX 拓扑映射。",
+        )
+
+    protocol_evidence = {
+        "ok": not issues,
+        "mode": "reviewed",
+        "contract_file": contract_file,
+        "contract_sha256": contract_sha256,
+        "contract_snapshot": contract_snapshot,
+        "input_snapshot": macrocycle_input_snapshot,
+        "evidence_file": evidence_file,
+        "evidence_snapshot": evidence_snapshot,
+        "evidence": copy.deepcopy(evidence),
+        "candidate_output": candidate_snapshot,
+        "inspection": inspection,
+        "issues": issues,
+    }
+    if not issues:
+        return protocol_evidence, None
+    error = {
+        "code": "MACROCYCLE_EVIDENCE_GATE_FAILED",
+        "message": "正式大环准备证据不完整或不一致，候选 PDBQT 未发布。",
+        "raw_error": json.dumps(issues, ensure_ascii=False, sort_keys=True),
+        "suggestion": "请保留 preparation 审计记录，刷新大环审查与确认后重新准备。",
+    }
+    protocol_evidence["error"] = copy.deepcopy(error)
+    return protocol_evidence, error
+
+
 def _finalize_preparation(
     project_path: Path,
     target: PreparationTarget,
@@ -950,17 +1504,36 @@ def _finalize_preparation(
 
     finished_at = _now_iso()
     candidate_ok = candidate_output_path.is_file() and candidate_output_path.stat().st_size > 0
-    if target == "ligand" and built.get("protocol") == "meeko_macrocycle" and candidate_ok:
+    protocol_gate_error: dict[str, Any] | None = None
+    if (
+        target == "ligand"
+        and built.get("protocol") == "meeko_macrocycle"
+        and built.get("macrocycle_reviewed") is True
+    ):
+        built["protocol_evidence"], protocol_gate_error = (
+            _reviewed_macrocycle_evidence_gate(
+                project_path,
+                built,
+                candidate_output_path,
+            )
+        )
+    elif target == "ligand" and built.get("protocol") == "meeko_macrocycle" and candidate_ok:
         try:
             built["protocol_evidence"] = {
                 "ok": True,
+                "mode": "legacy",
                 "inspection": inspect_meeko_ligand_pdbqt(candidate_output_path),
             }
         except ProtocolValidationError as exc:
-            built["protocol_evidence"] = {"ok": False, "error": exc.to_dict()}
+            built["protocol_evidence"] = {
+                "ok": False,
+                "mode": "legacy",
+                "error": exc.to_dict(),
+            }
         except (OSError, UnicodeError, ValueError) as exc:
             built["protocol_evidence"] = {
                 "ok": False,
+                "mode": "legacy",
                 "error": {
                     "code": "MACROCYCLE_EVIDENCE_READ_FAILED",
                     "message": "无法读取大环 PDBQT 证据。",
@@ -976,6 +1549,23 @@ def _finalize_preparation(
     error: dict[str, Any] | None = None
     input_verification: dict[str, Any] = {}
     output_verification: dict[str, Any] = {}
+    if (
+        target == "ligand"
+        and built.get("protocol") is None
+        and exit_code == 5
+        and "MACROCYCLE_REVIEW_REQUIRED" in stderr
+    ):
+        error = {
+            "code": "MACROCYCLE_REVIEW_REQUIRED",
+            "message": (
+                "检测到大环配体；标准准备已停止，未采用 Meeko 的自动断环结果。"
+            ),
+            "raw_error": stderr.strip(),
+            "suggestion": (
+                "请在“大环配体准备”中选择“受审查的大环准备”，"
+                "分析并确认断环候选或刚性大环。"
+            ),
+        }
 
     with _preparation_target_lock(project_path, target):
         with _project_lock(project_path):
@@ -1017,12 +1607,45 @@ def _finalize_preparation(
                     error = stale_error
                 elif not output_matches:
                     error = output_conflict_error
+                elif protocol_gate_error is not None:
+                    error = copy.deepcopy(protocol_gate_error)
                 previous_output: bytes | None = None
                 if error is None and exit_code == 0 and candidate_ok:
                     try:
                         previous_output = output_path.read_bytes() if output_path.is_file() else None
-                        _publish_candidate_output(candidate_output_path, output_path, project_path)
+                        expected_candidate_snapshot = None
+                        if (
+                            target == "ligand"
+                            and built.get("protocol") == "meeko_macrocycle"
+                            and built.get("macrocycle_reviewed") is True
+                            and isinstance(built.get("protocol_evidence"), Mapping)
+                        ):
+                            candidate_evidence = built["protocol_evidence"].get(
+                                "candidate_output"
+                            )
+                            if isinstance(candidate_evidence, Mapping):
+                                expected_candidate_snapshot = candidate_evidence
+                        _publish_candidate_output(
+                            candidate_output_path,
+                            output_path,
+                            project_path,
+                            expected_snapshot=expected_candidate_snapshot,
+                        )
                         published = True
+                    except CandidateOutputIntegrityError as exc:
+                        publication_error = str(exc)
+                        error = {
+                            "code": "MACROCYCLE_CANDIDATE_CHANGED_BEFORE_PUBLISH",
+                            "message": (
+                                "大环候选 PDBQT 在证据校验后发生变化，"
+                                "候选文件未发布。"
+                            ),
+                            "raw_error": publication_error,
+                            "suggestion": (
+                                "请保留 preparation 审计记录，检查项目目录中的"
+                                "同步、杀毒或外部写入进程后重新准备。"
+                            ),
+                        }
                     except Exception as exc:  # noqa: BLE001 - preserve previous output below.
                         publication_error = str(exc)
 
@@ -1035,12 +1658,18 @@ def _finalize_preparation(
                 else:
                     current_prep.status = "failed"
                     if error is None:
-                        raw_error = publication_error or stderr or stdout or (
-                            "输出 PDBQT 不存在或为空。" if exit_code == 0 else ""
+                        raw_error = _preparation_failure_diagnostic(
+                            publication_error=publication_error,
+                            stdout=stdout,
+                            stderr=stderr,
+                            exit_code=exit_code,
                         )
                         error = {
                             "code": f"{target.upper()}_PREPARATION_FAILED",
-                            "message": f"{target} PDBQT 自动准备失败，请查看 stderr 和日志。",
+                            "message": (
+                                f"{target} PDBQT 自动准备失败，"
+                                "请查看 stdout、stderr 和 preparation 日志。"
+                            ),
                             "raw_error": raw_error,
                             "suggestion": (
                                 "请确认 RDKit/Meeko 版本、输入结构和配体准备能力。"
@@ -1207,6 +1836,8 @@ def _prepare_target_pdbqt(
             message = f"{target} 准备期间 raw 输入发生变化，候选输出未发布。"
         elif final_error.get("code") == "PREPARATION_OUTPUT_CONFLICT":
             message = f"{target} 准备期间 prepared 输出发生变化，候选输出未发布。"
+        elif final_error.get("code") == "MACROCYCLE_REVIEW_REQUIRED":
+            message = "检测到大环配体，请先审查并确认断环方案或刚性大环。"
         elif success:
             message = (
                 "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"
@@ -1495,6 +2126,17 @@ def prepare_ligand_for_meeko(molecule):
     return molecule
 
 
+def detected_macrocycle_rings(molecule):
+    """Return one-based atom numbers for perceived rings that require review."""
+
+    rings = []
+    for atom_indices in Chem.GetSymmSSSR(molecule):
+        indices = [int(index) for index in atom_indices]
+        if len(indices) >= 7:
+            rings.append([index + 1 for index in indices])
+    return rings
+
+
 def normalize_writer_result(result):
     if isinstance(result, tuple):
         if len(result) >= 2 and result[1] is False:
@@ -1518,6 +2160,35 @@ def main() -> int:
     if not setups:
         print("Meeko 未生成 ligand setup，无法写出 PDBQT。", file=sys.stderr)
         return 3
+    perceived_rings = detected_macrocycle_rings(molecule)
+    removed_bonds = sorted(
+        {
+            tuple(sorted((int(pair[0]), int(pair[1]))))
+            for setup in setups
+            for pair in getattr(
+                getattr(setup, "ring_closure_info", None),
+                "bonds_removed",
+                [],
+            )
+        }
+    )
+    if perceived_rings or removed_bonds:
+        print(
+            json.dumps(
+                {
+                    "code": "MACROCYCLE_REVIEW_REQUIRED",
+                    "message": "检测到大环配体，标准准备不会静默采用 Meeko 自动断环。",
+                    "ring_atom_numbers_one_based": perceived_rings,
+                    "meeko_proposed_bonds_zero_based": [
+                        list(pair) for pair in removed_bonds
+                    ],
+                    "suggestion": "请选择“受审查的大环准备”，分析并确认断环候选或刚性大环。",
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 5
 
     result = PDBQTWriter.write_string(setups[0])
     pdbqt_text = normalize_writer_result(result)
@@ -1535,19 +2206,10 @@ if __name__ == "__main__":
 '''
 
 
-def _protocol_validation_error(exc: ProtocolValidationError) -> dict[str, Any]:
-    return _error(
-        exc.code,
-        exc.message,
-        raw_error=exc.detail,
-        suggestion=exc.suggestion,
-    )
-
-
 def _normalize_ligand_preparation_options(
     options: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Normalize the opt-in ligand protocol without changing the legacy path."""
+    """Accept only the formal reviewed macrocycle protocol for new tasks."""
 
     if options is None or not options:
         return None, None
@@ -1584,14 +2246,64 @@ def _normalize_ligand_preparation_options(
             raw_error=type(macrocycle).__name__,
             suggestion="请在 macrocycle 字段中传入 Meeko 大环参数对象。",
         )
-    try:
-        normalized_macrocycle = validate_macrocycle_options(macrocycle)
-    except ProtocolValidationError as exc:
-        return None, _protocol_validation_error(exc)
-    return {
-        "protocol": "meeko_macrocycle",
-        "macrocycle": normalized_macrocycle,
-    }, None
+    macrocycle_raw = dict(macrocycle)
+    mode = str(macrocycle_raw.get("mode") or "").strip().lower()
+    if mode == "reviewed":
+        unknown_reviewed = sorted(
+            set(macrocycle_raw) - {"mode", "review_id", "confirmation_sha256"}
+        )
+        if unknown_reviewed:
+            return None, _error(
+                "MACROCYCLE_REVIEWED_OPTIONS_UNKNOWN",
+                "受审查的大环准备包含未支持字段。",
+                raw_error=", ".join(unknown_reviewed),
+                suggestion="正式大环准备只提交 mode、review_id 和 confirmation_sha256。",
+            )
+        review_id = str(macrocycle_raw.get("review_id") or "").strip()
+        confirmation_sha256 = str(
+            macrocycle_raw.get("confirmation_sha256") or "",
+        ).strip().lower()
+        if not MACROCYCLE_REVIEW_ID_PATTERN.fullmatch(review_id):
+            return None, _error(
+                "MACROCYCLE_REVIEW_ID_INVALID",
+                "大环 review_id 格式无效。",
+                raw_error=review_id or "（空）",
+                suggestion="请刷新当前大环审查并使用后端返回的 review_id。",
+            )
+        if not SHA256_PATTERN.fullmatch(confirmation_sha256):
+            return None, _error(
+                "MACROCYCLE_CONFIRMATION_SHA256_INVALID",
+                "大环 confirmation_sha256 格式无效。",
+                raw_error=confirmation_sha256 or "（空）",
+                suggestion="请使用当前确认记录的 64 位 SHA256，不要提交断环原子对。",
+            )
+        return {
+            "protocol": "meeko_macrocycle",
+            "macrocycle": {
+                "mode": "reviewed",
+                "review_id": review_id,
+                "confirmation_sha256": confirmation_sha256,
+            },
+        }, None
+    if mode not in {"auto", "rigid"}:
+        return None, _error(
+            "INVALID_MACROCYCLE_MODE",
+            "大环准备模式无效。",
+            raw_error=mode or "（空）",
+            suggestion=(
+                "新任务仅接受受审查模式；请先审查并提交 mode=reviewed、"
+                "review_id 和 confirmation_sha256。"
+            ),
+        )
+    return None, _error(
+        "MACROCYCLE_LEGACY_MODE_DISABLED",
+        "旧版大环自动/刚性入口已停止创建新任务。",
+        raw_error=str(macrocycle_raw.get("mode") or "（空）"),
+        suggestion=(
+            "请先创建大环审查，确认后提交 mode=reviewed、review_id "
+            "和 confirmation_sha256。旧项目记录仍可读取，但不能作为正式审查证据。"
+        ),
+    )
 
 
 def _parse_ligand_options_json(raw: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -1726,6 +2438,8 @@ def build_ligand_preparation_command_or_script(
     overwrite: bool = False,
     prep_id: str | None = None,
     options: Mapping[str, Any] | None = None,
+    *,
+    target_lock_held: bool = False,
 ) -> dict[str, Any]:
     normalized_options, options_error = _normalize_ligand_preparation_options(options)
     if options_error:
@@ -1758,25 +2472,40 @@ def build_ligand_preparation_command_or_script(
             str(candidate_output_path),
         ]
     else:
-        try:
-            plan = build_meeko_macrocycle_plan(
-                validation["tools"]["python"]["path"],
-                validation["input_path"],
-                candidate_output_path,
-                normalized_options["macrocycle"],
-            )
-        except ProtocolValidationError as exc:
+        reviewed = normalized_options["macrocycle"]
+        plan = build_reviewed_preparation_plan(
+            project_dir,
+            validation["tools"]["python"]["path"],
+            candidate_output_path,
+            record_dir=record_dir,
+            expected_review_id=reviewed["review_id"],
+            expected_confirmation_sha256=reviewed["confirmation_sha256"],
+            target_lock_held=target_lock_held,
+        )
+        if not plan.get("ok"):
             try:
                 record_dir.rmdir()
             except OSError:
                 pass
-            return _protocol_validation_error(exc)
+            return plan
         command = list(plan["argv"])
-        warnings.extend(str(item) for item in plan.get("warnings", []))
         protocol_fields = {
             "protocol": "meeko_macrocycle",
-            "options": {"macrocycle": copy.deepcopy(plan["options"])},
+            "protocol_mode": "reviewed",
+            "options": {"macrocycle": copy.deepcopy(reviewed)},
+            "macrocycle_reviewed": True,
+            "macrocycle_contract": copy.deepcopy(plan["contract"]),
+            "macrocycle_contract_file": str(plan["contract_file"]),
+            "macrocycle_contract_sha256": str(plan["contract_sha256"]),
+            "macrocycle_evidence_file": str(plan["evidence_file"]),
+            "macrocycle_input_file": str(plan["input_snapshot_file"]),
+            "macrocycle_expected_output_evidence": copy.deepcopy(
+                plan["expected_output_evidence"],
+            ),
         }
+        warnings.append(
+            "本任务只使用已审查并由 SHA256 绑定的冻结配体输入与断环选择。",
+        )
 
     built = {
         **validation,
@@ -1824,6 +2553,7 @@ def prepare_ligand_pdbqt(
                 overwrite=overwrite,
                 prep_id=prep_id,
                 options=normalized_options,
+                target_lock_held=True,
             )
 
     return _prepare_target_pdbqt(
@@ -1871,6 +2601,112 @@ def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
         "message": "ligand preparation 日志已读取。",
         "error": None,
     }
+
+
+def _normalize_receptor_preparation_options(
+    options: Mapping[str, Any] | None,
+    *,
+    structure_path: str | Path | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate the only accepted non-default rigid receptor protocol.
+
+    The contract intentionally reuses the reviewed flexible-receptor control
+    schema.  It accepts typed residue decisions only; free argv,
+    ``default_altloc`` and ``allow_bad_res`` are not available.
+    """
+
+    if options is None or not options:
+        return None, None
+    if not isinstance(options, Mapping):
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_INVALID",
+            "受体准备选项必须是 JSON 对象。",
+            raw_error=type(options).__name__,
+            suggestion="请传入 protocol 和 receptor_controls；不要传入命令行字符串。",
+        )
+    raw = dict(options)
+    unknown = sorted(set(raw) - {"protocol", "receptor_controls"})
+    if unknown:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_UNKNOWN",
+            "受体准备选项包含未支持的字段。",
+            raw_error=", ".join(str(item) for item in unknown),
+            suggestion="当前只接受 protocol 和 receptor_controls。",
+        )
+    protocol = str(raw.get("protocol") or "").strip()
+    if protocol != "meeko_receptor_controls":
+        return None, _error(
+            "RECEPTOR_PREPARATION_PROTOCOL_INVALID",
+            "受体准备协议无效。",
+            raw_error=protocol or "（空）",
+            suggestion=(
+                "普通受体准备请省略 options；显式残基决定请使用"
+                " protocol=meeko_receptor_controls。"
+            ),
+        )
+    controls = raw.get("receptor_controls")
+    if not isinstance(controls, Mapping):
+        return None, _error(
+            "RECEPTOR_CONTROLS_INVALID",
+            "受体残基控制合同必须是 JSON 对象。",
+            raw_error=type(controls).__name__,
+            suggestion=(
+                "请提交 schema_version、allow_bad_res=false、alternate_locations、"
+                "template_assignments 和 deleted_residues。"
+            ),
+        )
+    try:
+        normalized_controls = normalize_meeko_receptor_controls(
+            controls,
+            structure_path=structure_path,
+        )
+    except ProtocolValidationError as exc:
+        detail = ": ".join(
+            item for item in (exc.title, exc.detail) if str(item).strip()
+        )
+        return None, _error(
+            exc.code,
+            exc.message,
+            raw_error=detail,
+            suggestion=exc.suggestion,
+        )
+    return {
+        "protocol": "meeko_receptor_controls",
+        "receptor_controls": normalized_controls,
+    }, None
+
+
+def _parse_receptor_options_json(
+    raw: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    encoded_size = len(str(raw).encode("utf-8"))
+    if encoded_size > MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_TOO_LARGE",
+            "受体准备选项 JSON 超过大小限制。",
+            raw_error=f"{encoded_size} bytes",
+            suggestion=(
+                "请将逐残基控制合同控制在"
+                f" {MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES} bytes 以内。"
+            ),
+        )
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_JSON_INVALID",
+            "受体准备选项不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请传入 UTF-8 JSON 对象，不要拼接命令行参数。",
+        )
+    if not isinstance(parsed, dict):
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_INVALID",
+            "受体准备选项必须是 JSON 对象。",
+            raw_error=type(parsed).__name__,
+            suggestion="请传入 protocol 和 receptor_controls。",
+        )
+    return parsed, None
 
 
 def validate_receptor_preparation_input(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
@@ -1985,10 +2821,31 @@ def build_receptor_preparation_command_or_script(
     project_dir: str,
     overwrite: bool = False,
     prep_id: str | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     validation = validate_receptor_preparation_input(project_dir, overwrite=overwrite)
     if not validation.get("ok"):
         return validation
+    normalized_options, options_error = _normalize_receptor_preparation_options(options)
+    if options_error:
+        return options_error
+    if normalized_options is not None and str(validation.get("format") or "") != ".pdb":
+        return _error(
+            "RECEPTOR_CONTROLS_PDB_REQUIRED",
+            "当前显式受体残基控制只接受原始 PDB。",
+            raw_error=str(validation.get("format") or ""),
+            suggestion=(
+                "请使用保留原始残基身份的 PDB，或先在 mmCIF 审计桥接流程中"
+                "确认作者/标签编号和替代构象；DockStart 不会把 PDB 选择静默套到 CIF。"
+            ),
+        )
+    if normalized_options is not None:
+        normalized_options, options_error = _normalize_receptor_preparation_options(
+            normalized_options,
+            structure_path=validation["input_path"],
+        )
+        if options_error:
+            return options_error
 
     project_path = Path(validation["project_dir"]).expanduser().resolve()
     _ensure_preparation_directories(project_path)
@@ -2000,6 +2857,8 @@ def build_receptor_preparation_command_or_script(
     output_stem = str(candidate_output_path.with_suffix(""))
     python_path = validation["tools"]["python"]["path"]
     is_cif = str(validation.get("format") or "").lower() == ".cif"
+    protocol_fields: dict[str, Any] = {}
+    warnings = list(validation.get("warnings", []))
     script_file = ""
     intermediate_input_file = ""
     if is_cif:
@@ -2030,6 +2889,23 @@ def build_receptor_preparation_command_or_script(
             output_stem,
             "-p",
         ]
+        if normalized_options is not None:
+            controls = normalized_options["receptor_controls"]
+            command.extend(meeko_receptor_control_arguments(controls))
+            controls_sha256 = _canonical_json_sha256(controls)
+            protocol_fields = {
+                "protocol": "meeko_receptor_controls",
+                "protocol_mode": "reviewed",
+                "options": copy.deepcopy(normalized_options),
+                "receptor_controls": copy.deepcopy(controls),
+                "receptor_controls_sha256": controls_sha256,
+                "receptor_controls_canonicalization": (
+                    MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION
+                ),
+            }
+            warnings.append(
+                "本次受体准备只采用已显式记录并由 SHA256 绑定的逐残基替代构象、模板和删除决定。"
+            )
 
     return {
         **validation,
@@ -2040,6 +2916,7 @@ def build_receptor_preparation_command_or_script(
         "intermediate_input_file": intermediate_input_file,
         "candidate_output_file": _relative_path(candidate_output_path, project_path),
         "candidate_output_path": str(candidate_output_path),
+        "warnings": warnings,
         "stdout_file": paths["stdout_file"],
         "stderr_file": paths["stderr_file"],
         "log_file": paths["metadata_file"],
@@ -2047,17 +2924,41 @@ def build_receptor_preparation_command_or_script(
         "command_file": paths["command_file"],
         "input_snapshot_file": paths["input_snapshot_file"],
         "output_check_file": paths["output_check_file"],
+        **protocol_fields,
     }
 
 
 def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
-    _ = options or {}
+    normalized_options, options_error = _normalize_receptor_preparation_options(
+        options,
+    )
+    if options_error:
+        return options_error
+    if normalized_options is None:
+        builder = build_receptor_preparation_command_or_script
+        method = "meeko"
+    else:
+        method = "meeko_receptor_controls"
+
+        def builder(
+            nested_project_dir: str,
+            *,
+            overwrite: bool,
+            prep_id: str,
+        ) -> dict[str, Any]:
+            return build_receptor_preparation_command_or_script(
+                nested_project_dir,
+                overwrite=overwrite,
+                prep_id=prep_id,
+                options=normalized_options,
+            )
+
     return _prepare_target_pdbqt(
         project_dir,
         "receptor",
         overwrite=overwrite,
-        method="meeko",
-        builder=build_receptor_preparation_command_or_script,
+        method=method,
+        builder=builder,
     )
 
 
@@ -2361,8 +3262,31 @@ def main() -> None:
         if len(sys.argv) < 3:
             _print_json(_error("RECEPTOR_PREPARATION_ARGS", "准备 receptor PDBQT 需要 project_dir 参数。"))
             return
+        if len(sys.argv) > 5:
+            _print_json(
+                _error(
+                    "RECEPTOR_PREPARATION_ARGS",
+                    "准备 receptor PDBQT 的参数数量无效。",
+                    suggestion=(
+                        "用法：prepare-receptor <project_dir> [overwrite] [options_json]。"
+                    ),
+                )
+            )
+            return
         overwrite = len(sys.argv) >= 4 and sys.argv[3].strip().lower() in {"1", "true", "yes", "y"}
-        _print_json(prepare_receptor_pdbqt(sys.argv[2], overwrite=overwrite))
+        options = None
+        if len(sys.argv) >= 5:
+            options, options_error = _parse_receptor_options_json(sys.argv[4])
+            if options_error:
+                _print_json(options_error)
+                return
+        _print_json(
+            prepare_receptor_pdbqt(
+                sys.argv[2],
+                overwrite=overwrite,
+                options=options,
+            )
+        )
         return
 
     if command == "receptor-log":

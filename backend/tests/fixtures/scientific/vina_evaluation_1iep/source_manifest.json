@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "fixture_id": "vina_evaluation_1iep_external",
+  "distributed_with_dockstart": false,
+  "purpose": "External real-tool acceptance for score_only, two-stage local_only, and advanced Vina capability gates.",
+  "upstream_license": "Apache-2.0",
+  "sources": {
+    "receptor": {
+      "label": "AutoDock Vina v1.2.7 1IEP prepared receptor PDBQT",
+      "upstream_project": "ccsb-scripps/AutoDock-Vina",
+      "upstream_tag": "v1.2.7",
+      "upstream_path": "example/python_scripting/1iep_receptor.pdbqt",
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/python_scripting/1iep_receptor.pdbqt",
+      "size_bytes": 216188,
+      "sha256": "761469710e3915b89b274483076dfe49754be7956661bc42f4cc36a182399d59"
+    },
+    "ligand": {
+      "label": "AutoDock Vina v1.2.7 1IEP prepared ligand PDBQT",
+      "upstream_project": "ccsb-scripps/AutoDock-Vina",
+      "upstream_tag": "v1.2.7",
+      "upstream_path": "example/python_scripting/1iep_ligand.pdbqt",
+      "url": "https://raw.githubusercontent.com/ccsb-scripps/AutoDock-Vina/v1.2.7/example/python_scripting/1iep_ligand.pdbqt",
+      "size_bytes": 3630,
+      "sha256": "37a20e58e77072c6b3ff07f285a345e647dd4e564af316a06e49518b15b7aa61"
+    }
+  },
+  "tool": {
+    "name": "AutoDock Vina",
+    "version": "1.2.7",
+    "repository_bundled_path": "resources/vina/vina.exe",
+    "size_bytes": 1233920,
+    "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
+    "help_advanced_sha256": "fc85023362623eaf979e262257f8b949019b5ae235a106ca9035a22f3dc368ab"
+  },
+  "protocols": {
+    "global_dock": {
+      "run_mode": "dock",
+      "autobox": false,
+      "confirm_pose_input": false,
+      "box": {
+        "center_x": 15.19,
+        "center_y": 53.903,
+        "center_z": 16.917,
+        "size_x": 20.0,
+        "size_y": 20.0,
+        "size_z": 20.0
+      },
+      "vina": {
+        "scoring": "vina",
+        "exhaustiveness": 1,
+        "max_evals": 500,
+        "num_modes": 3,
+        "min_rmsd": 0.5,
+        "energy_range": 4.0,
+        "spacing": 0.5,
+        "unbound_energy": 7.25,
+        "no_refine": false,
+        "force_even_voxels": false,
+        "verbosity": 2,
+        "cpu": 1,
+        "seed": 12345
+      },
+      "expected": {
+        "generated_config_sha256": "0865a2ab8f2b5923f533888d8222766df63bb464a01440c76905405e3bf4ec60",
+        "config_snapshot_sha256": "ad8f6358014e228ebf3f839fc2dd6ecc0a115bd2ebecc5ff090eaab53323568c",
+        "mode_count": 1,
+        "mode_1_affinity_kcal_mol": 2.9875,
+        "score_tolerance_kcal_mol": 0.00005,
+        "output_pose_sha256": "d94e358afcaa02be3243553f59800f99a13d72a818052add69da585cf1ed90e2",
+        "required_config_lines": [
+          "max_evals = 500",
+          "min_rmsd = 0.5",
+          "spacing = 0.5",
+          "verbosity = 2"
+        ],
+        "forbidden_config_fields": [
+          "unbound_energy"
+        ]
+      }
+    },
+    "score_only": {
+      "run_mode": "score_only",
+      "autobox": true,
+      "confirm_pose_input": true,
+      "vina": {
+        "scoring": "vina",
+        "spacing": 0.375,
+        "unbound_energy": 0.0,
+        "no_refine": true,
+        "force_even_voxels": true,
+        "verbosity": 2,
+        "cpu": 1
+      },
+      "expected": {
+        "generated_config_sha256": "e85db1aaa9f4607994f9122bbf29af17c9a5d327069e84c121c5cb453fef6b4b",
+        "config_snapshot_sha256": "3792d2cbf4a2908b38435f5ddf8e163c3b7f09c9e32cd595138d707a8aa20bb6",
+        "primary_score_kcal_mol": -11.939,
+        "score_tolerance_kcal_mol": 0.0005,
+        "output_pose_generated": false,
+        "unbound_energy_kcal_mol": 0.0
+      }
+    },
+    "local_only": {
+      "run_mode": "local_only",
+      "autobox": true,
+      "confirm_pose_input": true,
+      "vina": {
+        "scoring": "vina",
+        "spacing": 0.375,
+        "unbound_energy": null,
+        "no_refine": true,
+        "force_even_voxels": true,
+        "verbosity": 2,
+        "cpu": 1
+      },
+      "expected": {
+        "generated_config_sha256": "329091a72b73cbf047420fb280c149689193b4befa3deb3ef658c28eb426609b",
+        "config_snapshot_sha256": "dc31970390546dd9a8e609571c4d63d7adf8b2b7659747b1371208665d6598e9",
+        "input_score_kcal_mol": -11.595,
+        "optimized_score_kcal_mol": -12.483,
+        "delta_score_kcal_mol": -0.888,
+        "score_tolerance_kcal_mol": 0.0005,
+        "optimized_pose_sha256": "2b36734fcd676d59e2cbfa3c74a0d597e540551e22b97a56b0c92fd55faa3dcf",
+        "heavy_atom_count": 37,
+        "heavy_atom_rmsd_no_alignment_angstrom": 0.256155,
+        "geometry_tolerance_angstrom": 0.0000005
+      }
+    }
+  },
+  "capability_gate": {
+    "requested_features": {
+      "no_refine": true,
+      "force_even_voxels": true,
+      "unbound_energy": 0.0
+    },
+    "positive_status": "accepted_from_real_help_advanced",
+    "negative_case": "same_request_with_capability_evidence_removed",
+    "negative_error_code": "VINA_NO_REFINE_UNSUPPORTED"
+  },
+  "acceptance_policy": {
+    "network_or_download_forbidden": true,
+    "synthetic_vina_output_forbidden": true,
+    "missing_input_is_blocking": true,
+    "input_hash_mismatch_is_blocking": true,
+    "missing_vina_is_blocking": true,
+    "vina_version_or_hash_mismatch_is_blocking": true,
+    "global_advanced_parameter_run_is_required": true,
+    "score_only_pose_output_is_failure": true,
+    "local_only_missing_baseline_is_failure": true,
+    "capability_gate_must_show_success_and_failure": true
+  }
+}

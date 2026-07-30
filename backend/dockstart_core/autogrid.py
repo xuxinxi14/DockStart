@@ -11,7 +11,7 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from adapters import autogrid_adapter
 from dockstart_core.persistence import atomic_write_text
@@ -26,9 +26,18 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_SPACING = 0.375
 MAX_GRID_POINTS = 126
 MAX_PARAMETER_FILE_BYTES = 5 * 1024 * 1024
+BOX_COVERAGE_EPSILON_ANGSTROM = 0.0
+GRID_GEOMETRY_TOLERANCE_ANGSTROM = 1e-6
+REQUESTED_BOX_GRID_COVERAGE_METHOD = (
+    "requested_box_and_autogrid_npts_spacing_v1"
+)
 AD4ZN_PROTOCOL_ID = "ad4zn_beta"
 HYDRATED_PROTOCOL_ID = "hydrated_ad4_experimental"
 AD4ZN_RECEPTOR_TYPES = {"Zn", "TZ"}
+AD4ZN_BOX_COVERAGE_METHOD = (
+    "ad4zn_zn_tz_requested_box_and_autogrid_npts_spacing_v1"
+)
+AD4_MIN_AUTOGRID_VERSION = (4, 2, 6)
 AD4ZN_MIN_AUTOGRID_VERSION = (4, 2, 7)
 AD4ZN_NBP_R_EPS = (
     "nbp_r_eps 0.25 23.2135 12 6 NA TZ",
@@ -63,7 +72,9 @@ STANDARD_NON_METAL_TYPES = {
 METAL_TYPES = {"Ca", "Co", "Cu", "Fe", "Mg", "Mn", "Ni", "Zn"}
 CANONICAL_TYPES = {
     value.lower(): value
-    for value in sorted(STANDARD_NON_METAL_TYPES | METAL_TYPES | {"TZ"})
+    for value in sorted(
+        STANDARD_NON_METAL_TYPES | METAL_TYPES | {"TZ", "W"}
+    )
 }
 
 
@@ -167,8 +178,33 @@ def _project_file(root: Path, relative_path: str, label: str) -> tuple[Path | No
     return candidate, None
 
 
-def _canonical_atom_type(value: str) -> str:
+def canonical_atom_type(value: str) -> str:
+    """Return AutoDock's canonical spelling for a known atom type.
+
+    PDBQT writers are not consistent about element-like case (for example
+    ``CL`` versus ``Cl``).  AutoGrid map filenames and parameter files use the
+    canonical spelling.  Unknown values are deliberately preserved so normal
+    parameter/type validation can reject them instead of silently translating
+    them into a supported type.
+    """
+
     return CANONICAL_TYPES.get(str(value or "").strip().lower(), str(value or "").strip())
+
+
+def canonical_atom_types(values: Any) -> list[str]:
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        return []
+    return sorted(
+        {
+            normalized
+            for value in values
+            if (normalized := canonical_atom_type(str(value or "")))
+        }
+    )
+
+
+# Internal compatibility alias for the existing call sites in this module.
+_canonical_atom_type = canonical_atom_type
 
 
 def read_pdbqt_atom_types(path: str | Path) -> dict[str, Any]:
@@ -312,37 +348,266 @@ def _validated_ad4zn_receptor_types(
     return sorted("ZN" if item == "Zn" else item for item in normalized), None
 
 
+def _validate_ad4zn_parameter_snapshot(
+    parameter_path: Path,
+    *,
+    recorded_parameter: dict[str, Any],
+    receptor_snapshot: Path,
+    ligand_snapshot: Path,
+    receptor_types: list[str],
+    ligand_types: list[str],
+) -> dict[str, Any]:
+    """Revalidate the exact AD4Zn.dat bytes AutoGrid is about to read."""
+
+    from dockstart_core.ad4zn import validate_parameter_file
+
+    validation = validate_parameter_file(parameter_path)
+    try:
+        observed_size = parameter_path.stat().st_size
+        observed_sha256 = _sha256(parameter_path)
+    except OSError as exc:
+        return _error(
+            "AD4ZN_PARAMETER_SNAPSHOT_INVALID",
+            "无法复核 AutoGrid 即将读取的 AD4Zn.dat 快照。",
+            str(exc),
+            "请停止同时修改参数文件，并重新生成 AD4Zn maps。",
+        )
+
+    expected_sha256 = str(recorded_parameter.get("sha256") or "").lower()
+    try:
+        expected_size = int(recorded_parameter.get("size_bytes"))
+    except (TypeError, ValueError):
+        expected_size = -1
+    if (
+        expected_size <= 0
+        or observed_size != expected_size
+        or not SHA256_PATTERN.fullmatch(expected_sha256)
+        or observed_sha256 != expected_sha256
+    ):
+        validation_error = (
+            validation.get("error")
+            if isinstance(validation.get("error"), dict)
+            else {}
+        )
+        return _error(
+            "AD4ZN_PARAMETER_CHANGED_DURING_MAPS_PREPARATION",
+            "AD4Zn.dat 在 maps 准备过程中发生变化，已阻止启动 AutoGrid。",
+            json.dumps(
+                {
+                    "expected_size_bytes": expected_size,
+                    "observed_size_bytes": observed_size,
+                    "expected_sha256": expected_sha256,
+                    "observed_sha256": observed_sha256,
+                    "strict_validation_code": str(
+                        validation_error.get("code") or ""
+                    ),
+                    "strict_validation_message": str(
+                        validation_error.get("message") or ""
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请停止同时修改参数文件，重新记录官方 AD4Zn.dat 后再生成 maps。",
+        )
+    if not validation.get("ok"):
+        error = validation.get("error") or {}
+        return _error(
+            "AD4ZN_PARAMETER_SNAPSHOT_INVALID",
+            "AutoGrid 即将读取的 AD4Zn.dat 未通过严格复核。",
+            json.dumps(
+                {
+                    "validation_code": str(error.get("code") or ""),
+                    "validation_message": str(error.get("message") or ""),
+                    "validation_raw_error": str(
+                        error.get("raw_error") or ""
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请重新记录固定上游的官方 AD4Zn.dat 后再生成 maps。",
+        )
+    if (
+        validation.get("matches_reference_sha256") is not True
+        or validation.get("canonical_sha256")
+        != validation.get("reference_sha256")
+    ):
+        return _error(
+            "AD4ZN_PARAMETER_SNAPSHOT_REFERENCE_MISMATCH",
+            "AutoGrid 即将读取的 AD4Zn.dat 不是固定的受支持版本。",
+            (
+                f"actual={validation.get('canonical_sha256')}; "
+                f"expected={validation.get('reference_sha256')}"
+            ),
+            "请从固定上游参考重新取得 AutoDock Vina v1.2.7 AD4Zn.dat。",
+        )
+
+    receptor_detected = read_pdbqt_atom_types(receptor_snapshot)
+    if not receptor_detected.get("ok"):
+        return receptor_detected
+    ligand_detected = read_pdbqt_atom_types(ligand_snapshot)
+    if not ligand_detected.get("ok"):
+        return ligand_detected
+    frozen_receptor_types = sorted(
+        {
+            "ZN" if str(item).strip().upper() == "ZN" else str(item).strip()
+            for item in receptor_detected["atom_types"]
+            if str(item).strip()
+        }
+    )
+    frozen_ligand_types = sorted(
+        {
+            str(item).strip()
+            for item in ligand_detected["atom_types"]
+            if str(item).strip()
+        }
+    )
+    declared_receptor_types = sorted(
+        {
+            "ZN" if str(item).strip().upper() == "ZN" else str(item).strip()
+            for item in receptor_types
+            if str(item).strip()
+        }
+    )
+    declared_ligand_types = sorted(
+        {
+            str(item).strip()
+            for item in ligand_types
+            if str(item).strip()
+        }
+    )
+    if (
+        frozen_receptor_types != declared_receptor_types
+        or frozen_ligand_types != declared_ligand_types
+    ):
+        return _error(
+            "AD4ZN_INPUT_TYPES_CHANGED_DURING_MAPS_PREPARATION",
+            "冻结输入的原子类型与生成 GPF 时的声明不一致，已阻止启动 AutoGrid。",
+            json.dumps(
+                {
+                    "declared_receptor_atom_types": declared_receptor_types,
+                    "frozen_receptor_atom_types": frozen_receptor_types,
+                    "declared_ligand_atom_types": declared_ligand_types,
+                    "frozen_ligand_atom_types": frozen_ligand_types,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请停止同时修改受体或配体，并重新生成 AD4Zn maps。",
+        )
+
+    parameter_atom_types = sorted(
+        {
+            str(item).strip().upper()
+            for item in validation.get("atom_types", [])
+            if str(item).strip()
+        }
+    )
+    required_atom_types = sorted(
+        {
+            str(item).strip().upper()
+            for item in frozen_receptor_types + frozen_ligand_types
+            if str(item).strip()
+        }
+    )
+    missing_atom_types = sorted(
+        set(required_atom_types) - set(parameter_atom_types)
+    )
+    if missing_atom_types:
+        return _error(
+            "AD4ZN_PARAMETER_SNAPSHOT_ATOM_TYPES_UNCOVERED",
+            "冻结的 AD4Zn.dat 未覆盖实际输入中的全部原子类型。",
+            ", ".join(missing_atom_types),
+            "请检查受体和配体 PDBQT 原子类型；不要用未参数化类型运行 AutoGrid。",
+        )
+    return {
+        "ok": True,
+        "parameter_validation": validation,
+        "receptor_atom_types": frozen_receptor_types,
+        "ligand_atom_types": frozen_ligand_types,
+        "required_atom_types": required_atom_types,
+        "error": None,
+    }
+
+
 def _version_tuple(value: str) -> tuple[int, ...]:
     match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(value or ""))
     return tuple(int(part) for part in match.groups()) if match else ()
 
 
-def _autogrid_supports_ad4zn(version: str) -> bool:
+def minimum_autogrid_version(protocol_id: str) -> tuple[int, int, int]:
+    """Return the minimum scientifically accepted AutoGrid version."""
+
+    return (
+        AD4ZN_MIN_AUTOGRID_VERSION
+        if str(protocol_id or "").strip().lower() == AD4ZN_PROTOCOL_ID
+        else AD4_MIN_AUTOGRID_VERSION
+    )
+
+
+def autogrid_version_supported(version: str, protocol_id: str) -> bool:
+    """Check a recorded AutoGrid version against the protocol hard gate."""
+
     parsed = _version_tuple(version)
-    return bool(parsed) and parsed >= AD4ZN_MIN_AUTOGRID_VERSION
+    return bool(parsed) and parsed >= minimum_autogrid_version(protocol_id)
+
+
+def _autogrid_version_label(protocol_id: str) -> str:
+    return ".".join(str(part) for part in minimum_autogrid_version(protocol_id))
+
+
+def _autogrid_supports_ad4zn(version: str) -> bool:
+    return autogrid_version_supported(version, AD4ZN_PROTOCOL_ID)
 
 
 def _even_grid_points(size: float, spacing: float) -> int:
     points = max(2, math.ceil(float(size) / spacing))
     if points % 2:
         points += 1
-    return min(points, MAX_GRID_POINTS)
+    return points
 
 
 def _parse_grid_points(options: dict[str, Any], box: Any, spacing: float) -> tuple[list[int] | None, dict[str, Any] | None]:
     raw = options.get("grid_points")
+    explicit_axes = [
+        options.get(f"grid_points_{axis}")
+        for axis in ("x", "y", "z")
+    ]
+    derived_default = False
     if isinstance(raw, dict):
         values = [raw.get(axis) for axis in ("x", "y", "z")]
     elif isinstance(raw, list) and len(raw) == 3:
         values = raw
-    elif raw in (None, ""):
+    elif raw in (None, "") and all(
+        value in (None, "") for value in explicit_axes
+    ):
+        derived_default = True
         values = [
             _even_grid_points(box.size_x, spacing),
             _even_grid_points(box.size_y, spacing),
             _even_grid_points(box.size_z, spacing),
         ]
+    elif raw in (None, ""):
+        values = explicit_axes
     else:
-        values = [options.get(f"grid_points_{axis}") for axis in ("x", "y", "z")]
+        values = explicit_axes
+    if derived_default and any(
+        int(value) > MAX_GRID_POINTS for value in values
+    ):
+        return None, _error(
+            "MAPS_GRID_TOO_LARGE",
+            "当前 Box 与 spacing 需要超过 AutoGrid4 每轴 126 的网格点上限。",
+            json.dumps(
+                {
+                    axis: int(value)
+                    for axis, value in zip(("x", "y", "z"), values)
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请减小对应轴的 Box 尺寸或在科学上合理的前提下增大 spacing；DockStart 不会静默截断网格。",
+        )
     parsed: list[int] = []
     for axis, value in zip(("X", "Y", "Z"), values):
         try:
@@ -373,6 +638,452 @@ def _validated_spacing(value: Any) -> tuple[float | None, dict[str, Any] | None]
             "标准 AutoDock4 网格建议使用 0.375 Å。",
         )
     return spacing, None
+
+
+def _canonical_json_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def compute_requested_box_grid_coverage(
+    box: Any,
+    points: Any,
+    spacing: Any,
+) -> dict[str, Any]:
+    """Compute a canonical closed-interval requested-Box coverage contract.
+
+    AutoGrid ``npts`` are axis intervals, so the effective span is exactly
+    ``npts * spacing`` around the shared grid center.  A positive margin means
+    the effective grid extends beyond the requested Box on that side.
+    """
+
+    axes = ("x", "y", "z")
+
+    def box_value(kind: str, axis: str) -> Any:
+        if isinstance(box, Mapping):
+            nested = box.get(kind)
+            if isinstance(nested, Mapping):
+                return nested.get(axis)
+            return box.get(f"{kind}_{axis}")
+        return getattr(box, f"{kind}_{axis}")
+
+    try:
+        center = {
+            axis: float(box_value("center", axis))
+            for axis in axes
+        }
+        requested_size = {
+            axis: float(box_value("size", axis))
+            for axis in axes
+        }
+        if isinstance(points, Mapping):
+            raw_points = [points.get(axis) for axis in axes]
+        elif isinstance(points, (list, tuple)) and len(points) == 3:
+            raw_points = list(points)
+        else:
+            raise ValueError("grid points 必须包含 X/Y/Z 三个轴。")
+        axis_intervals: dict[str, int] = {}
+        for axis, raw_value in zip(axes, raw_points):
+            if isinstance(raw_value, bool):
+                raise ValueError(f"{axis.upper()} 轴 grid points 不能是布尔值。")
+            parsed = int(raw_value)
+            if float(raw_value) != parsed:
+                raise ValueError(f"{axis.upper()} 轴 grid points 必须是整数。")
+            axis_intervals[axis] = parsed
+        parsed_spacing = float(spacing)
+    except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+        return _error(
+            "MAPS_GRID_COVERAGE_GEOMETRY_INVALID",
+            "无法读取请求 Box 或 AutoGrid 网格几何。",
+            str(exc),
+            "请使用有限的 Box 参数、正 spacing 和三个轴的偶数 grid points。",
+        )
+
+    numeric_values = [
+        *center.values(),
+        *requested_size.values(),
+        parsed_spacing,
+    ]
+    if (
+        not all(math.isfinite(value) for value in numeric_values)
+        or any(value <= 0 for value in requested_size.values())
+        or parsed_spacing <= 0
+        or any(
+            value < 2
+            or value > MAX_GRID_POINTS
+            or value % 2
+            for value in axis_intervals.values()
+        )
+    ):
+        return _error(
+            "MAPS_GRID_COVERAGE_GEOMETRY_INVALID",
+            "请求 Box 与 AutoGrid 网格几何无效。",
+            json.dumps(
+                {
+                    "center": center,
+                    "requested_size": requested_size,
+                    "spacing": parsed_spacing,
+                    "axis_intervals": axis_intervals,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "Box 中心必须是有限数，Box 尺寸和 spacing 必须为正数，grid points 必须是 2–126 的偶数。",
+        )
+
+    effective_size = {
+        axis: axis_intervals[axis] * parsed_spacing
+        for axis in axes
+    }
+    requested_bounds = {
+        "min": {
+            axis: center[axis] - requested_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + requested_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    effective_bounds = {
+        "min": {
+            axis: center[axis] - effective_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + effective_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    axis_coverage: dict[str, dict[str, Any]] = {}
+    for axis in axes:
+        lower_margin = (
+            requested_bounds["min"][axis]
+            - effective_bounds["min"][axis]
+        )
+        upper_margin = (
+            effective_bounds["max"][axis]
+            - requested_bounds["max"][axis]
+        )
+        minimum_margin = min(lower_margin, upper_margin)
+        axis_coverage[axis] = {
+            "lower_margin_angstrom": lower_margin,
+            "upper_margin_angstrom": upper_margin,
+            "minimum_margin_angstrom": minimum_margin,
+            "covers_requested_interval": (
+                lower_margin >= -GRID_GEOMETRY_TOLERANCE_ANGSTROM
+                and upper_margin >= -GRID_GEOMETRY_TOLERANCE_ANGSTROM
+            ),
+        }
+
+    coverage = {
+        "method": REQUESTED_BOX_GRID_COVERAGE_METHOD,
+        "interval_semantics": "closed",
+        "tolerance_angstrom": GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+        "box_center_angstrom": center,
+        "requested_box_size_angstrom": requested_size,
+        "requested_box_bounds_angstrom": requested_bounds,
+        "effective_grid_spacing_angstrom": parsed_spacing,
+        "effective_grid_axis_intervals": axis_intervals,
+        "effective_grid_size_angstrom": effective_size,
+        "effective_grid_bounds_angstrom": effective_bounds,
+        "axis_coverage": axis_coverage,
+        "covers_requested_box": all(
+            item["covers_requested_interval"]
+            for item in axis_coverage.values()
+        ),
+    }
+    coverage_sha256 = _canonical_json_sha256(coverage)
+    return {
+        "ok": True,
+        "coverage": coverage,
+        "coverage_sha256": coverage_sha256,
+        "canonical_sha256": coverage_sha256,
+        "error": None,
+    }
+
+
+def _read_ad4zn_marker_coordinates(path: Path) -> dict[str, Any]:
+    """Read the exact ZN/TZ markers from the PDBQT bytes AutoGrid will use."""
+
+    markers: dict[str, list[dict[str, Any]]] = {"ZN": [], "TZ": []}
+    digest = hashlib.sha256()
+    size_bytes = 0
+    try:
+        with path.open("rb") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                digest.update(raw_line)
+                size_bytes += len(raw_line)
+                line = raw_line.decode("utf-8", errors="replace")
+                if line[:6].strip().upper() not in {"ATOM", "HETATM"}:
+                    continue
+                parts = line.split()
+                atom_type = (
+                    _canonical_atom_type(parts[-1])
+                    if parts
+                    else ""
+                )
+                marker_type = (
+                    "ZN"
+                    if atom_type == "Zn"
+                    else "TZ"
+                    if atom_type == "TZ"
+                    else ""
+                )
+                if not marker_type:
+                    continue
+                try:
+                    coordinate = {
+                        "x": float(line[30:38]),
+                        "y": float(line[38:46]),
+                        "z": float(line[46:54]),
+                    }
+                except (TypeError, ValueError) as exc:
+                    return _error(
+                        "AD4ZN_ZN_TZ_COORDINATE_INVALID",
+                        "AD4Zn TZ 受体中的 ZN/TZ 坐标无法解析。",
+                        (
+                            f"path={path}; line={line_number}; "
+                            f"atom_type={marker_type}; error={exc}"
+                        ),
+                        "请重新生成包含标准定宽三维坐标的 TZ 受体。",
+                    )
+                if not all(
+                    math.isfinite(value)
+                    for value in coordinate.values()
+                ):
+                    return _error(
+                        "AD4ZN_ZN_TZ_COORDINATE_INVALID",
+                        "AD4Zn TZ 受体中的 ZN/TZ 坐标必须是有限数。",
+                        (
+                            f"path={path}; line={line_number}; "
+                            f"atom_type={marker_type}; "
+                            f"coordinate={coordinate}"
+                        ),
+                        "请重新生成 TZ 受体。",
+                    )
+                markers[marker_type].append(
+                    {
+                        "atom_type": marker_type,
+                        "line_number": line_number,
+                        "serial": line[6:11].strip(),
+                        "atom_name": line[12:16].strip(),
+                        "coordinate_angstrom": coordinate,
+                    }
+                )
+    except OSError as exc:
+        return _error(
+            "AD4ZN_ZN_TZ_COORDINATE_READ_ERROR",
+            "无法读取 AD4Zn TZ 受体中的 ZN/TZ 坐标。",
+            str(exc),
+            "请确认 TZ 受体仍存在且可读。",
+        )
+
+    counts = {key: len(values) for key, values in markers.items()}
+    if counts != {"ZN": 1, "TZ": 1}:
+        return _error(
+            "AD4ZN_ZN_TZ_COUNT_INVALID",
+            "AD4Zn maps 输入必须恰好包含一个 ZN 和一个 TZ。",
+            json.dumps(
+                {
+                    "path": str(path),
+                    "counts": counts,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请重新生成单 Zn 位点的 TZ 受体后再生成 maps。",
+        )
+    return {
+        "ok": True,
+        "receptor": {
+            "size_bytes": size_bytes,
+            "sha256": digest.hexdigest(),
+        },
+        "markers": {
+            key: values[0]
+            for key, values in markers.items()
+        },
+        "error": None,
+    }
+
+
+def compute_ad4zn_box_coverage(
+    receptor_path: Path,
+    box: Any,
+    points: list[int],
+    spacing: float,
+) -> dict[str, Any]:
+    """Build a reproducible closed-interval ZN/TZ coverage audit."""
+
+    marker_result = _read_ad4zn_marker_coordinates(receptor_path)
+    if not marker_result.get("ok"):
+        return marker_result
+    axes = ("x", "y", "z")
+    try:
+        center = {
+            axis: float(
+                box.get(f"center_{axis}")
+                if isinstance(box, dict)
+                else getattr(box, f"center_{axis}")
+            )
+            for axis in axes
+        }
+        requested_size = {
+            axis: float(
+                box.get(f"size_{axis}")
+                if isinstance(box, dict)
+                else getattr(box, f"size_{axis}")
+            )
+            for axis in axes
+        }
+        raw_axis_intervals = {
+            axis: value
+            for axis, value in zip(axes, points)
+        }
+        axis_intervals = {
+            axis: int(value)
+            for axis, value in raw_axis_intervals.items()
+        }
+        parsed_spacing = float(spacing)
+    except (AttributeError, TypeError, ValueError) as exc:
+        return _error(
+            "AD4ZN_BOX_COVERAGE_GEOMETRY_INVALID",
+            "无法读取 AD4Zn 的 Box 或 AutoGrid 网格几何。",
+            str(exc),
+            "请重新设置 Box、spacing 和三个轴的 grid points。",
+        )
+    numeric_values = [
+        *center.values(),
+        *requested_size.values(),
+        parsed_spacing,
+    ]
+    if (
+        len(points) != 3
+        or not all(math.isfinite(value) for value in numeric_values)
+        or any(value <= 0 for value in requested_size.values())
+        or parsed_spacing <= 0
+        or any(
+            value < 2
+            or value > MAX_GRID_POINTS
+            or value % 2
+            for value in axis_intervals.values()
+        )
+        or any(
+            isinstance(raw_axis_intervals[axis], bool)
+            or float(raw_axis_intervals[axis])
+            != axis_intervals[axis]
+            for axis in axes
+        )
+    ):
+        return _error(
+            "AD4ZN_BOX_COVERAGE_GEOMETRY_INVALID",
+            "AD4Zn 的 Box 与 AutoGrid 网格几何无效。",
+            json.dumps(
+                {
+                    "center": center,
+                    "requested_size": requested_size,
+                    "spacing": parsed_spacing,
+                    "axis_intervals": axis_intervals,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "请使用有限的 Box 参数、正 spacing 和合法的偶数 grid points。",
+        )
+
+    effective_size = {
+        axis: axis_intervals[axis] * parsed_spacing
+        for axis in axes
+    }
+    requested_bounds = {
+        "min": {
+            axis: center[axis] - requested_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + requested_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    effective_bounds = {
+        "min": {
+            axis: center[axis] - effective_size[axis] / 2.0
+            for axis in axes
+        },
+        "max": {
+            axis: center[axis] + effective_size[axis] / 2.0
+            for axis in axes
+        },
+    }
+    marker_audit: dict[str, dict[str, Any]] = {}
+    for marker_type in ("ZN", "TZ"):
+        marker = copy.deepcopy(marker_result["markers"][marker_type])
+        coordinate = marker["coordinate_angstrom"]
+        requested_margin = {
+            axis: min(
+                coordinate[axis] - requested_bounds["min"][axis],
+                requested_bounds["max"][axis] - coordinate[axis],
+            )
+            for axis in axes
+        }
+        effective_margin = {
+            axis: min(
+                coordinate[axis] - effective_bounds["min"][axis],
+                effective_bounds["max"][axis] - coordinate[axis],
+            )
+            for axis in axes
+        }
+        marker.update(
+            {
+                "requested_box_margin_angstrom": requested_margin,
+                "effective_grid_margin_angstrom": effective_margin,
+                "inside_requested_box": all(
+                    value >= -BOX_COVERAGE_EPSILON_ANGSTROM
+                    for value in requested_margin.values()
+                ),
+                "inside_effective_grid": all(
+                    value >= -BOX_COVERAGE_EPSILON_ANGSTROM
+                    for value in effective_margin.values()
+                ),
+            }
+        )
+        marker_audit[marker_type] = marker
+
+    coverage = {
+        "method": AD4ZN_BOX_COVERAGE_METHOD,
+        "interval_semantics": "closed",
+        "epsilon_angstrom": BOX_COVERAGE_EPSILON_ANGSTROM,
+        "receptor": copy.deepcopy(marker_result["receptor"]),
+        "box_center_angstrom": center,
+        "requested_box_size_angstrom": requested_size,
+        "requested_box_bounds_angstrom": requested_bounds,
+        "effective_grid_spacing_angstrom": parsed_spacing,
+        "effective_grid_axis_intervals": axis_intervals,
+        "effective_grid_size_angstrom": effective_size,
+        "effective_grid_bounds_angstrom": effective_bounds,
+        "markers": marker_audit,
+        "all_zn_tz_inside_requested_box": all(
+            marker["inside_requested_box"]
+            for marker in marker_audit.values()
+        ),
+        "all_zn_tz_inside_effective_grid": all(
+            marker["inside_effective_grid"]
+            for marker in marker_audit.values()
+        ),
+    }
+    return {
+        "ok": True,
+        "box_coverage": coverage,
+        "box_coverage_sha256": _canonical_json_sha256(coverage),
+        "error": None,
+    }
 
 
 def _next_map_set_id(root: Path, *, protocol_id: str = "ad4_maps") -> str:
@@ -530,11 +1241,10 @@ def get_maps_defaults(project_dir: str) -> dict[str, Any]:
     if ligand_type_error:
         return ligand_type_error
     spacing = DEFAULT_SPACING
-    points = [
-        _even_grid_points(project.box.size_x, spacing),
-        _even_grid_points(project.box.size_y, spacing),
-        _even_grid_points(project.box.size_z, spacing),
-    ]
+    points, points_error = _parse_grid_points({}, project.box, spacing)
+    if points_error:
+        return points_error
+    assert points is not None
     return {
         "ok": True,
         "project_dir": str(root),
@@ -653,6 +1363,20 @@ def _activate_map_set(project: Any, manifest_relative: str, manifest: dict[str, 
             "map_set_id": manifest["map_set_id"],
             "status": manifest["status"],
             "updated_at": _now_iso(),
+            **(
+                {
+                    "box_coverage_sha256": str(
+                        (
+                            manifest.get("ad4zn")
+                            if isinstance(manifest.get("ad4zn"), dict)
+                            else {}
+                        ).get("box_coverage_sha256")
+                        or ""
+                    )
+                }
+                if protocol_id == AD4ZN_PROTOCOL_ID
+                else {}
+            ),
         }
     )
     project.preserved_data[state_key] = state
@@ -837,6 +1561,98 @@ def generate_maps(
     if points_error:
         return points_error
     assert points is not None
+    requested_grid_coverage: dict[str, Any] | None = None
+    requested_grid_coverage_sha256 = ""
+    if is_hydrated:
+        coverage_result = compute_requested_box_grid_coverage(
+            project.box,
+            points,
+            spacing,
+        )
+        if not coverage_result.get("ok"):
+            return coverage_result
+        requested_grid_coverage = coverage_result["coverage"]
+        requested_grid_coverage_sha256 = str(
+            coverage_result["coverage_sha256"]
+        )
+        if not requested_grid_coverage["covers_requested_box"]:
+            uncovered_axes = [
+                axis.upper()
+                for axis, record in requested_grid_coverage[
+                    "axis_coverage"
+                ].items()
+                if not record["covers_requested_interval"]
+            ]
+            return _error(
+                "HYDRATED_GRID_UNDER_COVERS_REQUESTED_BOX",
+                "实际 AutoGrid 网格没有完整覆盖当前请求的对接 Box，已阻止生成水合 maps。",
+                json.dumps(
+                    {
+                        "uncovered_axes": uncovered_axes,
+                        "coverage": requested_grid_coverage,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "请增大对应轴的 grid points 或 spacing，直到 npts × spacing 覆盖整个请求 Box。",
+            )
+    box_coverage: dict[str, Any] | None = None
+    box_coverage_sha256 = ""
+    ad4zn_source_receptor_sha256 = ""
+    if is_ad4zn:
+        coverage_result = compute_ad4zn_box_coverage(
+            receptor_path,
+            project.box,
+            points,
+            spacing,
+        )
+        if not coverage_result.get("ok"):
+            return coverage_result
+        box_coverage = coverage_result["box_coverage"]
+        box_coverage_sha256 = str(
+            coverage_result["box_coverage_sha256"]
+        )
+        ad4zn_source_receptor_sha256 = str(
+            box_coverage["receptor"]["sha256"]
+        )
+        if not box_coverage["all_zn_tz_inside_requested_box"]:
+            outside = [
+                marker_type
+                for marker_type, marker in box_coverage["markers"].items()
+                if not marker["inside_requested_box"]
+            ]
+            return _error(
+                "AD4ZN_ZN_TZ_OUTSIDE_REQUESTED_BOX",
+                "ZN/TZ 未同时位于当前请求的对接 Box 内，已阻止生成 maps。",
+                json.dumps(
+                    {
+                        "outside_markers": outside,
+                        "box_coverage": box_coverage,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "请调整 Box，使 ZN 与 TZ 均位于三个轴的闭区间内。",
+            )
+        if not box_coverage["all_zn_tz_inside_effective_grid"]:
+            outside = [
+                marker_type
+                for marker_type, marker in box_coverage["markers"].items()
+                if not marker["inside_effective_grid"]
+            ]
+            return _error(
+                "AD4ZN_ZN_TZ_OUTSIDE_EFFECTIVE_GRID",
+                "ZN/TZ 未同时位于 npts × spacing 形成的实际 AutoGrid 网格内，已阻止生成 maps。",
+                json.dumps(
+                    {
+                        "outside_markers": outside,
+                        "box_coverage": box_coverage,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "请增大对应轴的 grid points 或 spacing，并确认实际网格仍覆盖目标口袋。",
+            )
 
     parameter_source: Path | None = None
     parameter_value = (
@@ -895,12 +1711,35 @@ def generate_maps(
             detection.raw_error,
             "请在工具路径设置中配置外部 autogrid4.exe；DockStart 不会在安装包中内置 GPL 工具。",
         )
-    if is_ad4zn and not _autogrid_supports_ad4zn(detection.version):
+    if not autogrid_version_supported(detection.version, protocol_id):
+        minimum_version = _autogrid_version_label(protocol_id)
+        error_code = (
+            "AD4ZN_AUTOGRID_VERSION_UNSUPPORTED"
+            if is_ad4zn
+            else "HYDRATED_AUTOGRID_VERSION_UNSUPPORTED"
+            if is_hydrated
+            else "AUTOGRID_VERSION_UNSUPPORTED"
+        )
+        protocol_label = (
+            "AD4Zn beta"
+            if is_ad4zn
+            else "实验性水合 AD4"
+            if is_hydrated
+            else "标准 AutoDock4 maps"
+        )
         return _error(
-            "AD4ZN_AUTOGRID_VERSION_UNSUPPORTED",
-            "AD4Zn beta 需要 AutoGrid 4.2.7 或更高版本。",
-            f"detected={detection.version or 'unknown'}; required>=4.2.7",
-            "官方说明 4.2.6 与 4.2.7 的 nbp_r_eps 行为不同；请配置 ADFR Suite 提供的 AutoGrid 4.2.7.x。",
+            error_code,
+            f"{protocol_label}需要 AutoGrid {minimum_version} 或更高版本。",
+            (
+                f"detected={detection.version or 'unknown'}; "
+                f"required>={minimum_version}"
+            ),
+            (
+                "官方说明 4.2.6 与 4.2.7 的 nbp_r_eps 行为不同；"
+                "请配置 ADFR Suite 提供的 AutoGrid 4.2.7.x。"
+                if is_ad4zn
+                else f"请配置可明确识别为 {minimum_version} 或更高版本的 AutoGrid4。"
+            ),
         )
 
     map_set_id = _next_map_set_id(root, protocol_id=protocol_id)
@@ -916,8 +1755,69 @@ def generate_maps(
         ligand_snapshot = inputs_dir / "ligand.pdbqt"
         shutil.copyfile(receptor_path, receptor_snapshot)
         shutil.copyfile(ligand_path, ligand_snapshot)
+        if is_ad4zn:
+            snapshot_coverage_result = compute_ad4zn_box_coverage(
+                receptor_snapshot,
+                project.box,
+                points,
+                spacing,
+            )
+            snapshot_coverage_sha256 = str(
+                snapshot_coverage_result.get("box_coverage_sha256")
+                or ""
+            )
+            if (
+                not snapshot_coverage_result.get("ok")
+                or snapshot_coverage_sha256 != box_coverage_sha256
+            ):
+                error = (
+                    snapshot_coverage_result.get("error")
+                    if isinstance(
+                        snapshot_coverage_result.get("error"),
+                        dict,
+                    )
+                    else {}
+                )
+                failure = _error(
+                    "AD4ZN_TZ_RECEPTOR_CHANGED_DURING_MAPS_PREPARATION",
+                    "复制 TZ 受体时 ZN/TZ 坐标或文件字节发生变化，已阻止启动 AutoGrid。",
+                    (
+                        str(error.get("raw_error") or "")
+                        + (
+                            (
+                                f"; source_coverage={box_coverage_sha256}; "
+                                "snapshot_coverage="
+                                f"{snapshot_coverage_sha256 or 'invalid'}"
+                            )
+                            if box_coverage_sha256
+                            != snapshot_coverage_sha256
+                            else ""
+                        )
+                    ).strip("; "),
+                    "请停止同时修改受体文件，重新生成 TZ 受体后再生成 maps。",
+                )
+                _write_manifest(
+                    set_dir / "manifest.json",
+                    {
+                        "schema_version": 1,
+                        "map_set_id": map_set_id,
+                        "protocol_id": AD4ZN_PROTOCOL_ID,
+                        "source": "generated",
+                        "status": "failed",
+                        "created_at": created_at,
+                        "finished_at": _now_iso(),
+                        "error": copy.deepcopy(failure["error"]),
+                    },
+                )
+                return failure | {
+                    "map_set_id": map_set_id,
+                    "manifest_file": manifest_relative,
+                }
+            box_coverage = snapshot_coverage_result["box_coverage"]
+            box_coverage_sha256 = snapshot_coverage_sha256
         parameter_relative = ""
         parameter_snapshot: dict[str, Any] | None = None
+        parameter_target: Path | None = None
         if parameter_source is not None:
             parameter_target = inputs_dir / (
                 "AD4Zn.dat" if is_ad4zn else "parameter_file.dat"
@@ -944,14 +1844,219 @@ def generate_maps(
                 protocol_id=protocol_id,
             ),
         )
+        if is_ad4zn:
+            assert parameter_target is not None
+            recorded_parameter = (
+                ad4zn_status.get("parameter_file")
+                if isinstance(ad4zn_status, dict)
+                and isinstance(ad4zn_status.get("parameter_file"), dict)
+                else {}
+            )
+            parameter_revalidation = _validate_ad4zn_parameter_snapshot(
+                parameter_target,
+                recorded_parameter=recorded_parameter,
+                receptor_snapshot=receptor_snapshot,
+                ligand_snapshot=ligand_snapshot,
+                receptor_types=receptor_types,
+                ligand_types=ligand_types,
+            )
+            if not parameter_revalidation.get("ok"):
+                failure = parameter_revalidation
+                failure_error = (
+                    failure.get("error")
+                    if isinstance(failure.get("error"), dict)
+                    else {}
+                )
+                failed_manifest = {
+                    "schema_version": 1,
+                    "map_set_id": map_set_id,
+                    "protocol_id": AD4ZN_PROTOCOL_ID,
+                    "stability": "beta",
+                    "source": "generated",
+                    "status": "failed",
+                    "created_at": created_at,
+                    "finished_at": _now_iso(),
+                    "receptor": _snapshot(
+                        receptor_snapshot,
+                        Path(
+                            "maps",
+                            map_set_id,
+                            "inputs",
+                            receptor_snapshot.name,
+                        ).as_posix(),
+                    ),
+                    "ligand": _snapshot(
+                        ligand_snapshot,
+                        Path(
+                            "maps",
+                            map_set_id,
+                            "inputs",
+                            ligand_snapshot.name,
+                        ).as_posix(),
+                    ),
+                    "parameter_file": parameter_snapshot,
+                    "gpf": _snapshot(
+                        gpf_path,
+                        Path(
+                            "maps",
+                            map_set_id,
+                            "receptor.gpf",
+                        ).as_posix(),
+                    ),
+                    "validation": {
+                        "complete": False,
+                        "missing_files": [],
+                        "issues": [
+                            str(
+                                failure_error.get("message")
+                                or failure_error.get("code")
+                                or "AD4Zn.dat 快照复核失败。"
+                            )
+                        ],
+                    },
+                    "error": copy.deepcopy(failure_error),
+                }
+                _write_manifest(set_dir / "manifest.json", failed_manifest)
+                return failure | {
+                    "map_set_id": map_set_id,
+                    "manifest_file": manifest_relative,
+                    "manifest": failed_manifest,
+                }
+            strict_parameter = parameter_revalidation[
+                "parameter_validation"
+            ]
+            assert parameter_snapshot is not None
+            parameter_snapshot.update(
+                {
+                    "canonical_sha256": strict_parameter[
+                        "canonical_sha256"
+                    ],
+                    "reference_sha256": strict_parameter[
+                        "reference_sha256"
+                    ],
+                    "reference_hash_basis": strict_parameter[
+                        "reference_hash_basis"
+                    ],
+                    "matches_reference_sha256": True,
+                    "supported_profile_id": strict_parameter[
+                        "supported_profile_id"
+                    ],
+                    "license_id": strict_parameter["license_id"],
+                    "atom_types": copy.deepcopy(
+                        strict_parameter["atom_types"]
+                    ),
+                    "atom_type_table_sha256": strict_parameter[
+                        "atom_type_table_sha256"
+                    ],
+                    "required_atom_types": copy.deepcopy(
+                        parameter_revalidation["required_atom_types"]
+                    ),
+                }
+            )
         run_impl = runner or autogrid_adapter.run
-        result = run_impl(
-            detection.path,
-            gpf_path.name,
-            "autogrid.glg",
-            set_dir,
-            timeout_seconds=1800,
-        )
+        try:
+            result = run_impl(
+                detection.path,
+                gpf_path.name,
+                "autogrid.glg",
+                set_dir,
+                timeout_seconds=1800,
+            )
+        except KeyboardInterrupt as exc:
+            interrupted_manifest = {
+                "schema_version": 1,
+                "map_set_id": map_set_id,
+                "protocol_id": protocol_id,
+                "stability": (
+                    "beta"
+                    if is_ad4zn
+                    else "experimental"
+                    if is_hydrated
+                    else "stable"
+                ),
+                "source": "generated",
+                "status": "interrupted",
+                "created_at": created_at,
+                "finished_at": _now_iso(),
+                "receptor": {
+                    **_snapshot(
+                        receptor_snapshot,
+                        Path(
+                            "maps",
+                            map_set_id,
+                            "inputs",
+                            receptor_snapshot.name,
+                        ).as_posix(),
+                    ),
+                    "source_relative_path": Path(
+                        receptor_relative
+                    ).as_posix(),
+                },
+                "ligand": {
+                    **_snapshot(
+                        ligand_snapshot,
+                        Path(
+                            "maps",
+                            map_set_id,
+                            "inputs",
+                            "ligand.pdbqt",
+                        ).as_posix(),
+                    ),
+                    "source_relative_path": Path(
+                        ligand_relative
+                    ).as_posix(),
+                },
+                "parameter_file": parameter_snapshot,
+                "gpf": _snapshot(
+                    gpf_path,
+                    Path(
+                        "maps",
+                        map_set_id,
+                        "receptor.gpf",
+                    ).as_posix(),
+                ),
+                "autogrid": {
+                    "path": detection.path,
+                    "version": detection.version,
+                    "source": detection.source,
+                    "sha256": (
+                        _sha256(Path(detection.path))
+                        if Path(detection.path).is_file()
+                        else ""
+                    ),
+                    "command": [
+                        detection.path,
+                        "-p",
+                        gpf_path.name,
+                        "-l",
+                        "autogrid.glg",
+                    ],
+                    "exit_code": None,
+                },
+                "validation": {
+                    "complete": False,
+                    "missing_files": [],
+                    "issues": [
+                        (
+                            "AutoGrid4 runner 在返回结果前被中断；"
+                            "目录内文件仅作为未发布审计证据保留。"
+                        )
+                    ],
+                },
+                "error": {
+                    "code": "AUTOGRID_RUN_INTERRUPTED",
+                    "message": "AutoGrid4 maps 生成被中断。",
+                    "raw_error": str(exc),
+                    "suggestion": (
+                        "请保留该非 active 记录，并重新生成新的 maps。"
+                    ),
+                },
+            }
+            _write_manifest(
+                set_dir / "manifest.json",
+                interrupted_manifest,
+            )
+            raise
         atomic_write_text(set_dir / "stdout.txt", str(result.get("stdout") or ""))
         atomic_write_text(set_dir / "stderr.txt", str(result.get("stderr") or result.get("error") or ""))
         log_path = set_dir / "autogrid.glg"
@@ -998,10 +2103,46 @@ def generate_maps(
             "status": "ready" if ready else "failed",
             "created_at": created_at,
             "finished_at": _now_iso(),
+            **(
+                {
+                    "box": {
+                        "center": {
+                            "x": center[0],
+                            "y": center[1],
+                            "z": center[2],
+                        },
+                        "size": {
+                            "x": project.box.size_x,
+                            "y": project.box.size_y,
+                            "z": project.box.size_z,
+                        },
+                    },
+                    "grid_coverage": copy.deepcopy(
+                        requested_grid_coverage
+                    ),
+                    "grid_coverage_sha256": (
+                        requested_grid_coverage_sha256
+                    ),
+                }
+                if is_hydrated
+                else {}
+            ),
             "receptor": {
-                **_snapshot(receptor_snapshot, Path("maps", map_set_id, "inputs", "receptor.pdbqt").as_posix()),
+                **_snapshot(
+                    receptor_snapshot,
+                    Path(
+                        "maps",
+                        map_set_id,
+                        "inputs",
+                        receptor_snapshot.name,
+                    ).as_posix(),
+                ),
                 "source_relative_path": Path(receptor_relative).as_posix(),
-                "source_sha256": _sha256(receptor_path),
+                "source_sha256": (
+                    ad4zn_source_receptor_sha256
+                    if is_ad4zn
+                    else _sha256(receptor_path)
+                ),
                 **(
                     {
                         "original_source_relative_path": Path(
@@ -1027,6 +2168,18 @@ def generate_maps(
             },
             "grid": {
                 "center": {"x": center[0], "y": center[1], "z": center[2]},
+                "requested_box": {
+                    "center": {
+                        "x": center[0],
+                        "y": center[1],
+                        "z": center[2],
+                    },
+                    "size": {
+                        "x": project.box.size_x,
+                        "y": project.box.size_y,
+                        "z": project.box.size_z,
+                    },
+                },
                 "grid_points": {"x": points[0], "y": points[1], "z": points[2]},
                 "spacing": spacing,
                 "actual_size": {"x": actual_size[0], "y": actual_size[1], "z": actual_size[2]},
@@ -1093,6 +2246,8 @@ def generate_maps(
                         if isinstance(ad4zn_status, dict)
                         else {}
                     ),
+                    "box_coverage": copy.deepcopy(box_coverage),
+                    "box_coverage_sha256": box_coverage_sha256,
                     "scientific_scope": {
                         "zinc_only": True,
                         "multinuclear_metal_supported": False,
@@ -1294,6 +2449,8 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
         return spacing_error
     assert validated_points is not None and validated_spacing is not None
 
+    ad4zn_prepared_path: Path | None = None
+    ad4zn_frozen_receptor_path: Path | None = None
     receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
     if receptor_error:
         return receptor_error
@@ -1471,8 +2628,12 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
     protocol_id = _active_protocol_id(project)
     is_ad4zn = protocol_id == AD4ZN_PROTOCOL_ID
     state_key = "ad4zn" if is_ad4zn else "ad4_maps"
-    record = project.preserved_data.get(state_key)
-    manifest_relative = str(record.get("active_manifest") or "") if isinstance(record, dict) else ""
+    active_record = project.preserved_data.get(state_key)
+    manifest_relative = (
+        str(active_record.get("active_manifest") or "")
+        if isinstance(active_record, dict)
+        else ""
+    )
     if not manifest_relative:
         return _error(
             "MAPS_NOT_PREPARED",
@@ -1494,6 +2655,30 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
         issues.append(
             f"manifest 协议为 {manifest.get('protocol_id') or '未记录'}，"
             f"与当前 {expected_protocol_id} 不一致。"
+        )
+    autogrid_record = (
+        manifest.get("autogrid")
+        if isinstance(manifest.get("autogrid"), dict)
+        else {}
+    )
+    if (
+        (
+            is_ad4zn
+            or str(manifest.get("source") or "") == "generated"
+        )
+        and not autogrid_version_supported(
+            str(autogrid_record.get("version") or ""),
+            expected_protocol_id,
+        )
+    ):
+        minimum_version = _autogrid_version_label(expected_protocol_id)
+        issues.append(
+            (
+                "AD4Zn maps"
+                if is_ad4zn
+                else "标准 AD4 maps"
+            )
+            + f" 未绑定可解析的 AutoGrid {minimum_version}+ 生成版本。"
         )
     files = (manifest.get("maps") or {}).get("files") if isinstance(manifest.get("maps"), dict) else []
     if not isinstance(files, list) or not files:
@@ -1567,15 +2752,6 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
                     "AD4Zn GPF 缺少专用参数："
                     + ", ".join(missing_gpf_lines)
                 )
-        autogrid_record = (
-            manifest.get("autogrid")
-            if isinstance(manifest.get("autogrid"), dict)
-            else {}
-        )
-        if not _autogrid_supports_ad4zn(
-            str(autogrid_record.get("version") or "")
-        ):
-            issues.append("AD4Zn maps 未绑定 AutoGrid 4.2.7+。")
         log_summary = (
             autogrid_record.get("log_summary")
             if isinstance(autogrid_record.get("log_summary"), dict)
@@ -1592,6 +2768,38 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
             if isinstance(manifest.get("receptor"), dict)
             else {}
         )
+        frozen_relative = str(
+            receptor_manifest.get("relative_path") or ""
+        )
+        frozen_path = _contained_project_path(root, frozen_relative)
+        expected_frozen_sha256 = str(
+            receptor_manifest.get("sha256") or ""
+        ).lower()
+        try:
+            expected_frozen_size = int(
+                receptor_manifest.get("size_bytes")
+            )
+        except (TypeError, ValueError):
+            expected_frozen_size = -1
+        if (
+            frozen_path is None
+            or not frozen_path.is_file()
+            or frozen_path.stat().st_size <= 0
+        ):
+            issues.append(
+                "AD4Zn maps 冻结的 TZ 受体快照缺失或路径不安全。"
+            )
+        elif (
+            expected_frozen_size <= 0
+            or frozen_path.stat().st_size != expected_frozen_size
+            or not SHA256_PATTERN.fullmatch(expected_frozen_sha256)
+            or _sha256(frozen_path) != expected_frozen_sha256
+        ):
+            issues.append(
+                "AD4Zn maps 冻结的 TZ 受体快照大小或 SHA256 不匹配。"
+            )
+        else:
+            ad4zn_frozen_receptor_path = frozen_path
         expected_original = str(
             receptor_manifest.get("original_source_sha256") or ""
         ).lower()
@@ -1620,6 +2828,15 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
             root,
             str(prepared.get("relative_path") or ""),
         )
+        if prepared_path is None or not prepared_path.is_file():
+            prepared_path = _contained_project_path(
+                root,
+                str(
+                    receptor_manifest.get("source_relative_path") or ""
+                ),
+            )
+        if prepared_path is not None and prepared_path.is_file():
+            ad4zn_prepared_path = prepared_path
         expected_prepared = str(receptor_manifest.get("source_sha256") or "").lower()
         if (
             prepared_path is None
@@ -1702,6 +2919,168 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
                 issues.append(f"当前 Box 的 {label} 与 maps 网格不一致。")
         except (TypeError, ValueError):
             issues.append(f"maps manifest 缺少有效的 {label}。")
+    if is_ad4zn:
+        manifest_ad4zn = (
+            manifest.get("ad4zn")
+            if isinstance(manifest.get("ad4zn"), dict)
+            else {}
+        )
+        frozen_coverage = (
+            manifest_ad4zn.get("box_coverage")
+            if isinstance(manifest_ad4zn.get("box_coverage"), dict)
+            else {}
+        )
+        frozen_coverage_sha256 = str(
+            manifest_ad4zn.get("box_coverage_sha256") or ""
+        ).lower()
+        active_coverage_sha256 = (
+            str(active_record.get("box_coverage_sha256") or "").lower()
+            if isinstance(active_record, dict)
+            else ""
+        )
+        if not frozen_coverage:
+            issues.append("AD4Zn manifest 缺少 ZN/TZ Box 覆盖记录。")
+        else:
+            try:
+                observed_frozen_sha256 = _canonical_json_sha256(
+                    frozen_coverage
+                )
+            except (TypeError, ValueError) as exc:
+                observed_frozen_sha256 = ""
+                issues.append(
+                    "AD4Zn manifest 的 ZN/TZ Box 覆盖记录无法规范化："
+                    + str(exc)
+                )
+            if (
+                not SHA256_PATTERN.fullmatch(frozen_coverage_sha256)
+                or observed_frozen_sha256 != frozen_coverage_sha256
+            ):
+                issues.append(
+                    "AD4Zn manifest 的 ZN/TZ Box 覆盖记录摘要不匹配。"
+                )
+            if (
+                not SHA256_PATTERN.fullmatch(active_coverage_sha256)
+                or active_coverage_sha256 != frozen_coverage_sha256
+            ):
+                issues.append(
+                    "项目活动 AD4Zn 记录与 maps 的 Box 覆盖摘要不一致。"
+                )
+
+        requested_box = (
+            grid.get("requested_box")
+            if isinstance(grid.get("requested_box"), dict)
+            else {}
+        )
+        requested_center = (
+            requested_box.get("center")
+            if isinstance(requested_box.get("center"), dict)
+            else {}
+        )
+        requested_size = (
+            requested_box.get("size")
+            if isinstance(requested_box.get("size"), dict)
+            else {}
+        )
+        grid_points = (
+            grid.get("grid_points")
+            if isinstance(grid.get("grid_points"), dict)
+            else {}
+        )
+        coverage_box = {
+            **{
+                f"center_{axis}": requested_center.get(axis)
+                for axis in ("x", "y", "z")
+            },
+            **{
+                f"size_{axis}": requested_size.get(axis)
+                for axis in ("x", "y", "z")
+            },
+        }
+        for axis in ("x", "y", "z"):
+            try:
+                if not math.isclose(
+                    float(requested_center.get(axis)),
+                    float(center.get(axis)),
+                    rel_tol=0.0,
+                    abs_tol=GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+                ):
+                    issues.append(
+                        "AD4Zn 请求 Box 与实际 AutoGrid 网格的"
+                        f" {axis.upper()} 轴中心不一致。"
+                    )
+            except (TypeError, ValueError):
+                issues.append(
+                    "AD4Zn manifest 缺少请求 Box 的"
+                    f" {axis.upper()} 轴中心。"
+                )
+        coverage_sources = (
+            ("当前 TZ 受体", ad4zn_prepared_path),
+            ("冻结 TZ 受体", ad4zn_frozen_receptor_path),
+        )
+        for source_label, source_path in coverage_sources:
+            if source_path is None:
+                issues.append(
+                    f"无法从{source_label}重算 ZN/TZ Box 覆盖。"
+                )
+                continue
+            observed_coverage = compute_ad4zn_box_coverage(
+                source_path,
+                coverage_box,
+                [
+                    grid_points.get("x"),
+                    grid_points.get("y"),
+                    grid_points.get("z"),
+                ],
+                grid.get("spacing"),
+            )
+            if not observed_coverage.get("ok"):
+                error = observed_coverage.get("error") or {}
+                issues.append(
+                    f"{source_label}的 ZN/TZ Box 覆盖重算失败："
+                    + str(
+                        error.get("message")
+                        or error.get("code")
+                        or "未知错误"
+                    )
+                )
+                continue
+            current_coverage = observed_coverage["box_coverage"]
+            if not current_coverage[
+                "all_zn_tz_inside_requested_box"
+            ]:
+                issues.append(
+                    f"{source_label}中的 ZN/TZ 不完全位于请求 Box 内。"
+                )
+            if not current_coverage[
+                "all_zn_tz_inside_effective_grid"
+            ]:
+                issues.append(
+                    f"{source_label}中的 ZN/TZ 不完全位于实际 AutoGrid 网格内。"
+                )
+            if frozen_coverage and current_coverage != frozen_coverage:
+                issues.append(
+                    f"{source_label}重算的 ZN/TZ Box 覆盖与 manifest 不一致。"
+                )
+            observed_size = current_coverage[
+                "effective_grid_size_angstrom"
+            ]
+            for axis in ("x", "y", "z"):
+                try:
+                    if not math.isclose(
+                        float(observed_size[axis]),
+                        float(actual_size.get(axis)),
+                        rel_tol=0.0,
+                        abs_tol=GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+                    ):
+                        issues.append(
+                            "AD4Zn manifest 的 actual_size 不等于"
+                            f" {axis.upper()} 轴 npts × spacing。"
+                        )
+                except (KeyError, TypeError, ValueError):
+                    issues.append(
+                        "AD4Zn manifest 缺少可验证的实际网格"
+                        f" {axis.upper()} 轴尺寸。"
+                    )
     maps_prefix = str((manifest.get("maps") or {}).get("prefix") or "")
     prefix_path = _contained_project_path(root, maps_prefix)
     if prefix_path is None:

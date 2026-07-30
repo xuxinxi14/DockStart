@@ -1,0 +1,195 @@
+{
+  "schema_version": 2,
+  "fixture_id": "flexible_mmcif_1h4w_external",
+  "pdb_id": "1H4W",
+  "description": "External public-project-API acceptance gate for schema-v2 mmCIF identity, explicit global receptor controls, real BEN ligand preparation, flexible Vina docking, movement analysis, and report export.",
+  "distributed_with_dockstart": false,
+  "sources": {
+    "receptor": {
+      "provider": "RCSB Protein Data Bank",
+      "url": "https://files.rcsb.org/download/1H4W.cif",
+      "format": "PDBx/mmCIF",
+      "size_bytes": 252676,
+      "sha256": "5fa1772dc76ac72c8f974898a3f2e193621f2e6fadc5541463761ab5fea1042a",
+      "retrieved_for_manifest": "2026-07-29"
+    },
+    "ligand": {
+      "provider": "RCSB ModelServer",
+      "url": "https://models.rcsb.org/v1/1h4w/ligand?label_asym_id=B&auth_seq_id=250&encoding=sdf",
+      "format": "SDF",
+      "entry_id": "1h4w",
+      "label_asym_id": "B",
+      "auth_asym_id": "A",
+      "auth_seq_id": 250,
+      "component_id": "BEN",
+      "model_server_version": "0.9.13",
+      "content_identity": {
+        "algorithm": "normalize_crlf_and_cr_to_lf_then_first_molblock_through_m_end_sha256_v1",
+        "size_bytes": 895,
+        "sha256": "74fce81d1a3c5b74c56178280a3940038ebd90212e2096017052da8a10087259"
+      },
+      "stable_properties": {
+        "model_server_result.server_version": "0.9.13",
+        "model_server_result.query_name": "ligand",
+        "model_server_result.source_id": "pdb-bcif",
+        "model_server_result.entry_id": "1h4w",
+        "model_server_params.name": "atom_site",
+        "model_server_params.value": "{\"label_asym_id\":\"B\",\"auth_seq_id\":250}",
+        "model_server_stats.element_count": "9"
+      },
+      "allowed_dynamic_properties": [
+        "model_server_result.job_id",
+        "model_server_result.datetime_utc",
+        "model_server_stats.io_time_ms",
+        "model_server_stats.parse_time_ms",
+        "model_server_stats.create_model_time_ms",
+        "model_server_stats.query_time_ms",
+        "model_server_stats.encode_time_ms"
+      ],
+      "observed_raw_response": {
+        "size_bytes": 1545,
+        "sha256": "b6aedbde693a7d18e2359413f9f22ac2e2dd416b83e175b0a7fbd660838ebe61",
+        "role": "request_specific_provenance_not_a_portable_identity"
+      },
+      "retrieved_for_manifest": "2026-07-29"
+    }
+  },
+  "expected": {
+    "tools": {
+      "python": "3.11.15",
+      "meeko": "0.7.1",
+      "rdkit": "2026.3.3",
+      "gemmi": "0.7.5",
+      "vina": "1.2.7"
+    },
+    "identity": {
+      "schema_version": 2,
+      "source_sha256": "5fa1772dc76ac72c8f974898a3f2e193621f2e6fadc5541463761ab5fea1042a",
+      "identity_contract_sha256": "db250c5568d83eca4215f4b9ae8cc34c423090cf87c1f3592c9233656117435f",
+      "coordinate_identity_sha256": "e8806a390a159221faa9f7c6488385666b06365b4305de76f5245a995ec56296",
+      "polymer_residue_count": 224,
+      "nonpolymer_residue_count": 127,
+      "polymer_atom_count": 1758,
+      "nonpolymer_atom_count": 135,
+      "coordinate_atom_count": 1893,
+      "model": {
+        "id": "1",
+        "count": 1,
+        "selection_policy": "only_model_required"
+      },
+      "bridge_sha256": "89cb10e1b612ea146a6cd33b080af18bd524cf3c08556c79c88871910266bf18",
+      "bridge_verification_sha256": "9e9039bc95d0ab982bd14a91f041165209a59cc80cec37de4d8df210b4c25d68"
+    },
+    "ligand_preparation": {
+      "method": "rdkit_meeko",
+      "sha256": "d8ca98db3a55ebf5408566e21b424c0bd0819a97acbe3d870f7a95edf2008b39"
+    },
+    "receptor_controls": {
+      "schema_version": 1,
+      "allow_bad_res": false,
+      "alternate_locations": {
+        "A:27": "A",
+        "A:28": "A",
+        "A:122": "B",
+        "A:128": "A",
+        "A:192": "A",
+        "A:224": "A"
+      },
+      "template_assignments": {
+        "A:191": "CYX",
+        "A:220": "CYX"
+      },
+      "deleted_residues": [
+        {
+          "selector": "A:250",
+          "expected_component_id": "BEN",
+          "reason": "co_crystal_ligand"
+        }
+      ],
+      "control_sha256": "b1aa77c3562bde1bc9bdb4066930f02f5e9794d70ed640dd9753c27ff2d25783"
+    },
+    "flexible_preparation": {
+      "selections": [
+        "A:192",
+        "A:221:A"
+      ],
+      "selection_sha256": "32c7b58f8d7a62606313b763566bf0391f4bc372757cba80b0d0d707b4de45d2",
+      "atom_partition": {
+        "schema_version": 1,
+        "authority": "receptor_json.monomers[*].is_flexres_atom",
+        "rigid_atom_count": 2437,
+        "flex_atom_count": 20,
+        "total_atom_count": 2457,
+        "overlap_atom_count": 0,
+        "missing_atom_count": 0,
+        "extra_atom_count": 0,
+        "excluded_monomers": [],
+        "coordinate_tolerance_angstrom": 0.0011,
+        "partition_sha256": "82ecd9f2fb5367cc8b3eefbcaacd2b4da0e18d08d5436b51527f1c10371679dc"
+      },
+      "output_sha256": {
+        "rigid_pdbqt": "e4bf2247b076607cf289dde48fed2f3aa67f2db2dbbc1cd4d13031c1287be2f1",
+        "flex_pdbqt": "9ca11807fb38caa70bd72512cd0b69e97d7d67024aac88d2e21c2197de4043ff",
+        "receptor_json": "087e7d2dcefb4a0d4d0f0e71f53e5ce35053756fe3b855d77c0e763503c3a230"
+      }
+    },
+    "box": {
+      "center_x": 50.2305,
+      "center_y": 36.4895,
+      "center_z": 39.3095,
+      "size_x": 14.25,
+      "size_y": 17.25,
+      "size_z": 15.0
+    },
+    "vina": {
+      "scoring": "vina",
+      "exhaustiveness": 8,
+      "max_evals": 0,
+      "num_modes": 9,
+      "min_rmsd": 1.0,
+      "energy_range": 4.0,
+      "spacing": 0.375,
+      "no_refine": false,
+      "force_even_voxels": false,
+      "verbosity": 1,
+      "cpu": 1,
+      "seed": 1042026
+    },
+    "run": {
+      "minimum_mode_count": 1,
+      "output_normalization": {
+        "method": "torsdof_flexible_residue_or_endmdl_nul_padding_v3",
+        "recognized_padding_blocks": 4,
+        "recognized_padding_lengths": [
+          20,
+          20,
+          20,
+          20
+        ],
+        "nul_bytes_removed": 80,
+        "policy": "On platforms where Vina does not emit the anomaly, status=not_required with zero control bytes is accepted. If normalization occurs, only the four manifest-observed TORSDOF-to-first-BEGIN_RES NUL runs are accepted."
+      },
+      "report_required_phrases": [
+        "Docking score",
+        "A:192",
+        "A:221:A"
+      ]
+    },
+    "movement": {
+      "schema_id": "dockstart.flexible_movement.v1",
+      "flexible_residue_count": 2,
+      "residues": [
+        "A:192",
+        "A:221:A"
+      ]
+    }
+  },
+  "acceptance_policy": {
+    "network_or_download_used": false,
+    "temporary_project_only": true,
+    "synthetic_outputs_forbidden": true,
+    "meeko_failure_is_blocking": true,
+    "vina_failure_is_blocking": true,
+    "movement_failure_is_blocking": true
+  }
+}

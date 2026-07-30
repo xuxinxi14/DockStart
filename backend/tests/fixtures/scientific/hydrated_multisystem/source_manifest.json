@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "fixture_id": "hydrated_multisystem_rcsb_external",
+  "distribution": "metadata_only",
+  "contains_upstream_structure_files": false,
+  "contains_parameter_files": false,
+  "contains_maps_or_outputs": false,
+  "contains_executables": false,
+  "purpose": "通过 DockStart 当前公开项目 API 对 2BYS 与 2ZJU 执行受体/配体准备、水合配体、AutoGrid、Vina、后处理和报告链；下载物与运行产物仅存在于临时目录",
+  "source_policy": {
+    "provider": "RCSB PDB",
+    "download_at_verification_time": true,
+    "receptor_pdb_identity": "exact_wire_size_sha256_v1",
+    "model_server_ligand_sdf_identity": "canonical_scientific_content_v1",
+    "model_server_ligand_sdf_canonicalization": "model_server_sdf_mol_block_lf_v1",
+    "wire_size_sha256_and_final_url_recorded_for_audit": true,
+    "redirects_must_remain_https": true,
+    "maximum_source_size_bytes": 5000000,
+    "license_reference": "https://www.rcsb.org/pages/policies",
+    "no_upstream_bytes_committed": true
+  },
+  "toolchain": {
+    "python": {
+      "version": "3.11.15",
+      "caller_path_and_sha256_required": true
+    },
+    "rdkit": {
+      "version": "2026.03.3",
+      "caller_python_module_path_and_sha256_required": true
+    },
+    "meeko": {
+      "version": "0.7.1",
+      "caller_python_module_path_and_sha256_required": true
+    },
+    "autogrid": {
+      "version": "4.2.7",
+      "caller_path_and_sha256_required": true,
+      "must_be_external": true
+    },
+    "vina": {
+      "version": "1.2.7",
+      "caller_path_and_sha256_required": true,
+      "maps_capability_required": true
+    }
+  },
+  "protocol": {
+    "protocol_id": "hydrated_ad4_experimental",
+    "project_api_chain": [
+      "create_project",
+      "import_receptor_raw_file",
+      "import_ligand_raw_file",
+      "prepare_receptor_pdbqt",
+      "prepare_ligand_pdbqt",
+      "update_box_params",
+      "update_vina_params",
+      "prepare_hydrated_ligand",
+      "generate_hydrated_maps",
+      "get_hydrated_run_preflight",
+      "prepare_hydrated_run",
+      "execute_prepared_vina_run",
+      "analyze_vina_run_results",
+      "load_hydrated_results",
+      "export_markdown_report"
+    ],
+    "grid": {
+      "spacing": 0.375,
+      "grid_points": {
+        "x": 54,
+        "y": 54,
+        "z": 54
+      },
+      "actual_size_angstrom": {
+        "x": 20.25,
+        "y": 20.25,
+        "z": 20.25
+      },
+      "requested_size_angstrom": {
+        "x": 20.0,
+        "y": 20.0,
+        "z": 20.0
+      },
+      "minimum_margin_angstrom": 0.125,
+      "coverage_required": true
+    },
+    "vina": {
+      "scoring": "ad4",
+      "exhaustiveness": 8,
+      "num_modes": 9,
+      "energy_range": 4,
+      "cpu": 4,
+      "seed": 20260730,
+      "verbosity": 1,
+      "allowed_continuous_mode_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    "postprocess": {
+      "raw_water_count_equals_prepared_water_count_times_modes": true,
+      "retained_equals_strong_plus_weak": true,
+      "raw_equals_retained_plus_displaced": true,
+      "raw_affinity_must_remain_unchanged": true
+    },
+    "report": {
+      "required_phrases": [
+        "# DockStart 实验性水合 AD4 对接报告",
+        "## 冻结 Box 与实际网格覆盖",
+        "水分子过滤只用于结构解释，不会产生或替换 affinity。",
+        "处理后评分未计算",
+        "不用于虚拟筛选",
+        "不支持跨配体、跨评分函数或跨协议直接比较分值",
+        "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+      ],
+      "run_and_project_report_bytes_must_match": true,
+      "run_and_project_scores_bytes_must_match": true
+    },
+    "diagnostic_policy": {
+      "best_affinity_is_non_gating": true,
+      "reference_hashes_are_non_gating_across_platforms": true,
+      "pose_rmsd_is_known_negative_diagnostic_only": true
+    }
+  },
+  "systems": {
+    "2BYS": {
+      "scientific_classification": "engineering_chain_acceptance_only_known_pose_quality_non_positive",
+      "receptor_preparation": {
+        "protocol": "meeko_receptor_controls",
+        "decision_scope": "reviewed_engineering_chain_choice_not_scientific_optimum",
+        "receptor_controls_canonicalization": "json_utf8_sort_keys_compact_v1",
+        "receptor_controls_sha256": "6d06874e1e585c0dffcd15741b5e8829d3d3f0445e948808e82a493912e522a8",
+        "receptor_controls": {
+          "schema_version": 1,
+          "allow_bad_res": false,
+          "alternate_locations": {
+            "A:105": "A",
+            "A:161": "A",
+            "A:186": "A",
+            "A:193": "A",
+            "A:202": "A",
+            "A:38": "A",
+            "A:59": "A",
+            "A:74": "A",
+            "A:81": "A",
+            "A:97": "A",
+            "B:7": "A",
+            "B:70": "A",
+            "B:153": "A",
+            "B:186": "A",
+            "B:207": "A",
+            "B:59": "A",
+            "B:97": "A",
+            "C:105": "A",
+            "C:162": "A",
+            "C:186": "A",
+            "C:59": "A",
+            "C:70": "A",
+            "C:74": "A",
+            "C:97": "A",
+            "D:105": "A",
+            "D:153": "A",
+            "D:161": "A",
+            "D:186": "A",
+            "D:189": "A",
+            "D:207": "A",
+            "D:27": "A",
+            "D:59": "A",
+            "D:77": "A",
+            "D:97": "A",
+            "E:105": "A",
+            "E:207": "A",
+            "E:59": "A",
+            "F:105": "A",
+            "F:161": "A",
+            "F:159": "A",
+            "F:193": "A",
+            "F:202": "A",
+            "F:38": "A",
+            "F:74": "A",
+            "F:97": "A",
+            "G:105": "A",
+            "G:161": "A",
+            "G:186": "A",
+            "G:202": "A",
+            "G:207": "A",
+            "G:59": "A",
+            "G:7": "A",
+            "G:97": "A",
+            "H:186": "A",
+            "H:207": "A",
+            "H:38": "A",
+            "H:59": "A",
+            "H:74": "A",
+            "H:97": "A",
+            "I:105": "A",
+            "I:161": "A",
+            "I:207": "A",
+            "I:27": "A",
+            "I:59": "A",
+            "I:97": "A",
+            "J:105": "A",
+            "J:207": "A",
+            "J:59": "A",
+            "J:97": "A"
+          },
+          "template_assignments": {},
+          "deleted_residues": [
+            {
+              "selector": "A:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "B:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "C:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "D:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "E:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "F:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "G:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "H:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "I:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "J:301",
+              "expected_component_id": "LOB",
+              "reason": "co_crystal_ligand"
+            }
+          ]
+        }
+      },
+      "receptor_source": {
+        "url": "https://files.rcsb.org/download/2BYS.pdb",
+        "file_name": "2BYS.pdb",
+        "size_bytes": 1649484,
+        "sha256": "14721f05b346205c9f73c981c0ddd6bd382fc63a19e07736c846e82ae3b9ea08"
+      },
+      "ligand_source": {
+        "url": "https://models.rcsb.org/v1/2BYS/ligand?auth_asym_id=A&auth_seq_id=301&encoding=sdf",
+        "file_name": "2BYS_A_301_LOB.sdf",
+        "canonicalization": "model_server_sdf_mol_block_lf_v1",
+        "canonical_size_bytes": 2412,
+        "canonical_sha256": "8c635031ce8d24534cf53f9e166886137bdf168cc7012e71b3835a485ab9d76c",
+        "component_id": "LOB",
+        "auth_asym_id": "A",
+        "auth_seq_id": 301
+      },
+      "box": {
+        "center_x": -7.313,
+        "center_y": 24.212,
+        "center_z": 3.13,
+        "size_x": 20.0,
+        "size_y": 20.0,
+        "size_z": 20.0
+      },
+      "hydrated_ligand": {
+        "water_count": 6,
+        "atom_types": [
+          "A",
+          "C",
+          "HD",
+          "NA",
+          "OA",
+          "W"
+        ]
+      },
+      "diagnostics": {
+        "best_affinity_reference_kcal_mol": -4.406,
+        "best_affinity_gate": false,
+        "pose_rmsd_reference_angstrom": 12.76,
+        "pose_rmsd_classification": "known_pose_quality_non_positive",
+        "pose_rmsd_gate": false,
+        "previous_external_altloc_probe_water_map_sha256": "79cb8f2747eb25d5efec1fc515dd93775f64d93a93d05f5e93d12f3bdd172408",
+        "previous_external_altloc_probe_hydrated_manifest_sha256": "eba3de24210316cc4f99520152e675200241a90bda12e1ceb660db02c13eca62",
+        "previous_postprocess_reference": {
+          "raw_water_count": 54,
+          "strong_water_count": 0,
+          "weak_water_count": 1,
+          "displaced_water_count": 53
+        },
+        "cross_platform_gate": false,
+        "note": "这些值来自曾使用额外 altloc 参数的探索性探针，不是当前公开受体准备 API 的字节或科学成功 oracle。"
+      }
+    },
+    "2ZJU": {
+      "scientific_classification": "engineering_chain_acceptance_only_known_pose_quality_non_positive",
+      "receptor_preparation": {
+        "protocol": "meeko_receptor_controls",
+        "decision_scope": "reviewed_engineering_chain_choice_not_scientific_optimum",
+        "receptor_controls_canonicalization": "json_utf8_sort_keys_compact_v1",
+        "receptor_controls_sha256": "13494b49ce2a01a1680bc41445544d720bed32a9865583dc82384d1238b13ed9",
+        "receptor_controls": {
+          "schema_version": 1,
+          "allow_bad_res": false,
+          "alternate_locations": {
+            "A:120": "A",
+            "C:12": "A",
+            "D:120": "A",
+            "E:120": "A"
+          },
+          "template_assignments": {},
+          "deleted_residues": [
+            {
+              "selector": "A:301",
+              "expected_component_id": "IM4",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "C:301",
+              "expected_component_id": "IM4",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "D:301",
+              "expected_component_id": "IM4",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "D:302",
+              "expected_component_id": "IM4",
+              "reason": "co_crystal_ligand"
+            },
+            {
+              "selector": "E:301",
+              "expected_component_id": "IM4",
+              "reason": "co_crystal_ligand"
+            }
+          ]
+        }
+      },
+      "receptor_source": {
+        "url": "https://files.rcsb.org/download/2ZJU.pdb",
+        "file_name": "2ZJU.pdb",
+        "size_bytes": 768366,
+        "sha256": "f57daf824e3efb34bd2c4f6b91003200672109f2f4fadd3ceebe36bb340c37aa"
+      },
+      "ligand_source": {
+        "url": "https://models.rcsb.org/v1/2ZJU/ligand?auth_asym_id=A&auth_seq_id=301&encoding=sdf",
+        "file_name": "2ZJU_A_301_IM4.sdf",
+        "canonicalization": "model_server_sdf_mol_block_lf_v1",
+        "canonical_size_bytes": 1654,
+        "canonical_sha256": "9f1301be36b2d68edd498dc46416797ce56f3f34151b9f6a470e85e053401e6f",
+        "component_id": "IM4",
+        "auth_asym_id": "A",
+        "auth_seq_id": 301
+      },
+      "box": {
+        "center_x": 29.356,
+        "center_y": -27.247,
+        "center_z": -28.98,
+        "size_x": 20.0,
+        "size_y": 20.0,
+        "size_z": 20.0
+      },
+      "hydrated_ligand": {
+        "water_count": 7,
+        "atom_types": [
+          "A",
+          "C",
+          "Cl",
+          "HD",
+          "N",
+          "NA",
+          "OA",
+          "W"
+        ],
+        "canonical_chlorine_type": "Cl",
+        "legacy_chlorine_type_forbidden": "CL",
+        "required_chlorine_map": "receptor.Cl.map",
+        "legacy_chlorine_map_forbidden": "receptor.CL.map"
+      },
+      "diagnostics": {
+        "best_affinity_reference_kcal_mol": -7.273,
+        "best_affinity_gate": false,
+        "pose_rmsd_reference_angstrom": 6.422,
+        "pose_rmsd_classification": "known_pose_quality_non_positive",
+        "pose_rmsd_gate": false,
+        "previous_external_altloc_probe_water_map_sha256": "41555fad037036cc4e3ace7e551f617b4b04de87200dd4f78a3e7d66935bce4d",
+        "previous_external_altloc_probe_hydrated_manifest_sha256": "9c7789ce106b698fa8e55742b549510dac60dc7cb3062099e5d9871fa2e50afa",
+        "previous_postprocess_reference": {
+          "raw_water_count": 63,
+          "strong_water_count": 15,
+          "weak_water_count": 6,
+          "displaced_water_count": 42
+        },
+        "cross_platform_gate": false,
+        "note": "这些值来自曾使用额外 altloc 参数的探索性探针，不是当前公开受体准备 API 的字节或科学成功 oracle。"
+      }
+    }
+  }
+}

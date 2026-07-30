@@ -1018,6 +1018,18 @@ class VinaEvaluationModeTests(unittest.TestCase):
             self.assertAlmostEqual(metadata["primary_score_kcal_mol"], -7.25)
             self.assertAlmostEqual(metadata["score_change_kcal_mol"], -0.75)
             self.assertTrue(metadata["comparison_available"])
+            self.assertEqual(
+                metadata["output_normalization"]["status"],
+                "not_required",
+            )
+            self.assertFalse(
+                (
+                    project_dir
+                    / "runs"
+                    / prepared["run_id"]
+                    / "optimized.vina_raw.pdbqt"
+                ).exists()
+            )
             files = get_run_files_status(str(project_dir), prepared["run_id"])
             files_by_key = {item["key"]: item for item in files["files"]}
             self.assertTrue(files_by_key["baseline_log"]["exists"])
@@ -1068,6 +1080,10 @@ class VinaEvaluationModeTests(unittest.TestCase):
             self.assertIn("## 6. 姿势位移", report["report_text"])
             self.assertIn("未对齐重原子 RMSD", report["report_text"])
             self.assertIn("## 7. 分阶段运行记录", report["report_text"])
+            self.assertEqual(
+                report["report_text"].count("Vina 输出标准化"),
+                1,
+            )
             self.assertNotIn("Mode 1", report["report_text"])
             baseline_log = project_dir / "runs" / prepared["run_id"] / "baseline_log.txt"
             baseline_log.write_text(

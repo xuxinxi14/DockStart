@@ -9,6 +9,7 @@ scientific assumptions and the process boundary independently testable.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -36,6 +37,10 @@ MEEKO_BAD_RESIDUE_SUMMARY_PATTERN = re.compile(
     r"Template matching failed for:\s*\[(.*?)\]",
     re.DOTALL,
 )
+MEEKO_CONTROL_TOKEN_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9_+-]{0,7}$")
+MEEKO_DELETION_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION = 1
+MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION = "json_utf8_sort_keys_compact_v1"
 
 
 class ProtocolValidationError(ValueError):
@@ -507,6 +512,392 @@ def _normalize_altloc_choices(
     return normalized
 
 
+def _canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _normalize_control_selector_mapping(
+    raw: Any,
+    *,
+    field_name: str,
+    value_label: str,
+    value_normalizer: Callable[[Any, FlexibleResidueSelector], str],
+) -> dict[str, str]:
+    if not isinstance(raw, Mapping):
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_CONTROL_MAPPING",
+            "受体控制合同字段无效",
+            f"{field_name} 必须是 selector 到 {value_label} 的对象映射。",
+            "请使用结构化 JSON 对象，不要传入字符串、参数数组或自由命令行。",
+        )
+    normalized: dict[str, str] = {}
+    original_by_selector: dict[str, str] = {}
+    for raw_selector, raw_value in raw.items():
+        selector = parse_flexible_residue(str(raw_selector))
+        canonical = selector.canonical
+        if canonical in normalized:
+            raise _validation_error(
+                "DUPLICATE_MEEKO_RECEPTOR_CONTROL_SELECTOR",
+                "受体控制合同含重复残基",
+                f"{field_name} 中的 {raw_selector!r} 与 "
+                f"{original_by_selector[canonical]!r} 指向同一残基 {canonical}。",
+                "每个规范化残基在同一控制字段中只能出现一次。",
+            )
+        normalized[canonical] = value_normalizer(raw_value, selector)
+        original_by_selector[canonical] = str(raw_selector)
+    return {key: normalized[key] for key in sorted(normalized)}
+
+
+def _normalize_control_altloc(
+    raw_value: Any,
+    selector: FlexibleResidueSelector,
+) -> str:
+    value = str(raw_value).strip().upper()
+    if len(value) != 1 or not value.isalnum():
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_ALTLOC",
+            "受体替代构象控制无效",
+            f"残基 {selector.canonical} 的 altloc {raw_value!r} 不是单个字母或数字。",
+            "请明确选择原始结构中实际存在的单字符 altloc ID。",
+        )
+    return value
+
+
+def _normalize_control_template(
+    raw_value: Any,
+    selector: FlexibleResidueSelector,
+) -> str:
+    value = str(raw_value).strip().upper()
+    if MEEKO_CONTROL_TOKEN_PATTERN.fullmatch(value) is None:
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_TEMPLATE",
+            "受体残基模板控制无效",
+            f"残基 {selector.canonical} 的模板名 {raw_value!r} 无效。",
+            "请使用已审阅的 Meeko 模板标识，例如 CYX、HID、HIE 或 HIP。",
+        )
+    return value
+
+
+def _normalize_deleted_residue_controls(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes, bytearray)):
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_DELETION_LIST",
+            "受体删除控制字段无效",
+            "deleted_residues 必须是结构化对象列表。",
+            "每项都必须明确 selector、expected_component_id 和 reason。",
+        )
+    normalized: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+    required = {"selector", "expected_component_id", "reason"}
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise _validation_error(
+                "INVALID_MEEKO_RECEPTOR_DELETION",
+                "受体删除控制项无效",
+                f"deleted_residues[{index}] 不是对象。",
+                "请为每个待删除对象提供明确的残基身份、预期组分和删除理由。",
+            )
+        unknown = sorted(str(key) for key in set(item) - required)
+        missing = sorted(required - set(item))
+        if unknown or missing:
+            detail_parts: list[str] = []
+            if unknown:
+                detail_parts.append(f"未知字段：{', '.join(unknown)}")
+            if missing:
+                detail_parts.append(f"缺少字段：{', '.join(missing)}")
+            raise _validation_error(
+                "INVALID_MEEKO_RECEPTOR_DELETION",
+                "受体删除控制项字段不完整",
+                f"deleted_residues[{index}] 未通过严格字段校验。",
+                "每项只能包含 selector、expected_component_id 和 reason。",
+                detail="；".join(detail_parts),
+            )
+        selector = parse_flexible_residue(str(item["selector"]))
+        canonical = selector.canonical
+        if canonical in seen:
+            raise _validation_error(
+                "DUPLICATE_MEEKO_RECEPTOR_CONTROL_SELECTOR",
+                "受体控制合同含重复删除对象",
+                f"deleted_residues[{index}] 与 {seen[canonical]} "
+                f"指向同一残基 {canonical}。",
+                "同一残基只能声明一次删除。",
+            )
+        component = str(item["expected_component_id"]).strip().upper()
+        if MEEKO_CONTROL_TOKEN_PATTERN.fullmatch(component) is None:
+            raise _validation_error(
+                "INVALID_MEEKO_RECEPTOR_COMPONENT_ID",
+                "待删除组分标识无效",
+                f"{canonical} 的 expected_component_id {item['expected_component_id']!r} 无效。",
+                "请填写原始结构中实际记录的组分 ID，例如 BEN。",
+            )
+        reason = str(item["reason"]).strip().lower()
+        if MEEKO_DELETION_REASON_PATTERN.fullmatch(reason) is None:
+            raise _validation_error(
+                "INVALID_MEEKO_RECEPTOR_DELETION_REASON",
+                "受体删除理由无效",
+                f"{canonical} 的 reason {item['reason']!r} 无效。",
+                "请使用稳定的机器可读标识，例如 co_crystal_ligand。",
+            )
+        normalized.append(
+            {
+                "selector": canonical,
+                "expected_component_id": component,
+                "reason": reason,
+            }
+        )
+        seen[canonical] = f"deleted_residues[{index}]"
+    return sorted(normalized, key=lambda item: item["selector"])
+
+
+def _validate_normalized_receptor_controls(
+    controls: Mapping[str, Any],
+    *,
+    structure_path: str | Path,
+    flexible_selections: Iterable[str],
+) -> None:
+    _, available = _load_receptor_residues(Path(structure_path))
+    alternate_locations = controls["alternate_locations"]
+    template_assignments = controls["template_assignments"]
+    deleted_residues = controls["deleted_residues"]
+    deleted_selectors = {str(item["selector"]) for item in deleted_residues}
+
+    conflicts = sorted(
+        deleted_selectors
+        & (set(alternate_locations) | set(template_assignments))
+    )
+    selected_flexible = {
+        parse_flexible_residue(value).canonical for value in flexible_selections
+    }
+    conflicts.extend(sorted(deleted_selectors & selected_flexible))
+    if conflicts:
+        raise _validation_error(
+            "MEEKO_RECEPTOR_CONTROL_CONFLICT",
+            "受体控制合同含冲突操作",
+            "同一残基不能在被删除的同时选择 altloc、指定模板或设为柔性侧链。",
+            "请保留一个明确、可执行的受体处理决定。",
+            detail=json.dumps(sorted(set(conflicts)), ensure_ascii=False),
+        )
+
+    for canonical, altloc in alternate_locations.items():
+        selector = parse_flexible_residue(canonical)
+        residue = available.get(selector.key)
+        if residue is None:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_CONTROL_SELECTOR_NOT_FOUND",
+                "受体控制残基不存在",
+                f"原始结构中没有找到 alternate_locations 的 {canonical}。",
+                "请核对链 ID、残基编号和插入码。",
+            )
+        if altloc not in residue.altlocs:
+            raise _validation_error(
+                "ALTLOC_NOT_FOUND",
+                "所选替代构象不存在",
+                f"{canonical} 不包含 altloc {altloc}。",
+                f"可用 altloc：{', '.join(sorted(residue.altlocs)) or '无'}。",
+            )
+
+    for canonical in template_assignments:
+        selector = parse_flexible_residue(canonical)
+        residue = available.get(selector.key)
+        if residue is None:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_CONTROL_SELECTOR_NOT_FOUND",
+                "受体控制残基不存在",
+                f"原始结构中没有找到 template_assignments 的 {canonical}。",
+                "请核对链 ID、残基编号和插入码。",
+            )
+        if residue.record_types != {"ATOM"}:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_TEMPLATE_NOT_POLYMER",
+                "模板指定对象不是聚合物残基",
+                f"{canonical}（{residue.residue_name}）不是单纯的 ATOM 聚合物记录。",
+                "模板覆盖只用于经过审阅的聚合物残基；非聚合物对象应单独决定是否保留。",
+            )
+
+    for item in deleted_residues:
+        canonical = item["selector"]
+        selector = parse_flexible_residue(canonical)
+        residue = available.get(selector.key)
+        if residue is None:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_CONTROL_SELECTOR_NOT_FOUND",
+                "待删除受体对象不存在",
+                f"原始结构中没有找到 deleted_residues 的 {canonical}。",
+                "请核对链 ID、残基编号和插入码；DockStart 不会忽略未知删除项。",
+            )
+        if residue.residue_name != item["expected_component_id"]:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_COMPONENT_MISMATCH",
+                "待删除对象身份与合同不一致",
+                f"{canonical} 的实际组分是 {residue.residue_name}，"
+                f"合同预期为 {item['expected_component_id']}。",
+                "请重新审阅原始结构；DockStart 不会删除身份不一致的对象。",
+            )
+        if residue.record_types != {"HETATM"}:
+            raise _validation_error(
+                "MEEKO_RECEPTOR_DELETE_NOT_NONPOLYMER",
+                "拒绝删除聚合物残基",
+                f"{canonical}（{residue.residue_name}）不是单纯的 HETATM 非聚合物记录。",
+                "请修正删除合同；复杂受体控制不会删除 ATOM 聚合物残基。",
+            )
+
+
+def normalize_meeko_receptor_controls(
+    controls: Mapping[str, Any],
+    *,
+    structure_path: str | Path | None = None,
+    flexible_selections: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Normalize a closed, reproducible ``mk_prepare_receptor`` control contract.
+
+    No command fragments are accepted.  Every supported Meeko switch is
+    derived from typed residue controls, and ``allow_bad_res`` is fixed to
+    ``False`` so a complex receptor contract can never silently discard an
+    unreviewed residue.
+    """
+
+    if not isinstance(controls, Mapping):
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_CONTROLS",
+            "受体控制合同无效",
+            "receptor_controls 必须是结构化对象。",
+            "请传入 schema_version、alternate_locations、template_assignments 和 deleted_residues。",
+        )
+    allowed = {
+        "schema_version",
+        "allow_bad_res",
+        "alternate_locations",
+        "template_assignments",
+        "deleted_residues",
+    }
+    unknown = sorted(str(key) for key in set(controls) - allowed)
+    if unknown:
+        raise _validation_error(
+            "UNKNOWN_MEEKO_RECEPTOR_CONTROL",
+            "受体控制合同含未知字段",
+            f"未知字段：{', '.join(unknown)}。",
+            "不接受 argv、extra_args 或其他自由命令行；请只使用已审计的结构化字段。",
+        )
+    schema_version = controls.get("schema_version")
+    if (
+        isinstance(schema_version, bool)
+        or not isinstance(schema_version, int)
+        or schema_version != MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION
+    ):
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_CONTROLS_SCHEMA",
+            "受体控制合同版本无效",
+            f"schema_version 必须是 {MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION}。",
+            "请迁移或重新生成受体控制合同，不要猜测未知版本语义。",
+        )
+    allow_bad_res = controls.get("allow_bad_res", False)
+    if not isinstance(allow_bad_res, bool):
+        raise _validation_error(
+            "INVALID_MEEKO_RECEPTOR_ALLOW_BAD_RES",
+            "allow_bad_res 类型无效",
+            "allow_bad_res 必须是布尔值 false。",
+            "复杂受体合同不允许使用字符串或数字代替布尔值。",
+        )
+    if allow_bad_res:
+        raise _validation_error(
+            "MEEKO_RECEPTOR_ALLOW_BAD_RES_FORBIDDEN",
+            "复杂受体合同禁止静默删除坏残基",
+            "receptor_controls 明确要求 allow_bad_res=false。",
+            "请修复无法匹配模板的残基，或通过显式 set_template/delete_residues 记录每项决定。",
+        )
+
+    alternate_locations = _normalize_control_selector_mapping(
+        controls.get("alternate_locations", {}),
+        field_name="alternate_locations",
+        value_label="altloc",
+        value_normalizer=_normalize_control_altloc,
+    )
+    template_assignments = _normalize_control_selector_mapping(
+        controls.get("template_assignments", {}),
+        field_name="template_assignments",
+        value_label="Meeko 模板",
+        value_normalizer=_normalize_control_template,
+    )
+    deleted_residues = _normalize_deleted_residue_controls(
+        controls.get("deleted_residues", [])
+    )
+    normalized: dict[str, Any] = {
+        "schema_version": MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
+        "allow_bad_res": False,
+        "alternate_locations": alternate_locations,
+        "template_assignments": template_assignments,
+        "deleted_residues": deleted_residues,
+    }
+    if structure_path is not None:
+        _validate_normalized_receptor_controls(
+            normalized,
+            structure_path=structure_path,
+            flexible_selections=flexible_selections,
+        )
+    return normalized
+
+
+def _legacy_receptor_controls(
+    *,
+    resolved_altlocs: Mapping[str, str] | None,
+    allow_bad_res: bool,
+) -> dict[str, Any]:
+    choices = _normalize_altloc_choices(resolved_altlocs)
+    alternate_locations = {
+        FlexibleResidueSelector(*key).canonical: value
+        for key, value in sorted(choices.items())
+    }
+    return {
+        "schema_version": MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
+        "allow_bad_res": bool(allow_bad_res),
+        "alternate_locations": alternate_locations,
+        "template_assignments": {},
+        "deleted_residues": [],
+    }
+
+
+def meeko_receptor_control_arguments(
+    controls: Mapping[str, Any],
+) -> list[str]:
+    """Translate an already-normalized receptor control contract to argv.
+
+    The caller must obtain ``controls`` from
+    :func:`normalize_meeko_receptor_controls`.  Keeping this translation
+    public lets rigid and flexible receptor preparation share the same closed
+    schema instead of accepting free-form Meeko arguments.
+    """
+
+    arguments: list[str] = []
+    alternate_locations = controls.get("alternate_locations", {})
+    if alternate_locations:
+        wanted_altloc = ",".join(
+            f"{parse_flexible_residue(selector).meeko_id}={altloc}"
+            for selector, altloc in alternate_locations.items()
+        )
+        arguments.extend(["--wanted_altloc", wanted_altloc])
+    template_assignments = controls.get("template_assignments", {})
+    if template_assignments:
+        set_template = ",".join(
+            f"{parse_flexible_residue(selector).meeko_id}={template}"
+            for selector, template in template_assignments.items()
+        )
+        arguments.extend(["--set_template", set_template])
+    deleted_residues = controls.get("deleted_residues", [])
+    if deleted_residues:
+        delete_residues = ",".join(
+            parse_flexible_residue(item["selector"]).meeko_id
+            for item in deleted_residues
+        )
+        arguments.extend(["--delete_residues", delete_residues])
+    return arguments
+
+
 def validate_flexible_residues(
     structure_path: str | Path,
     selections: Iterable[str],
@@ -586,6 +977,13 @@ def validate_flexible_residues(
                 "柔性残基存在未决替代构象",
                 f"{selector.canonical} 包含 altloc：{', '.join(sorted(residue.altlocs))}。",
                 "请先明确选择一个替代构象，再生成柔性受体。",
+                detail=json.dumps(
+                    {
+                        "selector": selector.canonical,
+                        "altlocs": sorted(residue.altlocs),
+                    },
+                    ensure_ascii=False,
+                ),
             )
         if chosen_altloc and chosen_altloc not in residue.altlocs:
             raise _validation_error(
@@ -635,6 +1033,7 @@ def build_meeko_receptor_flex_plan(
     selections: Iterable[str],
     *,
     resolved_altlocs: Mapping[str, str] | None = None,
+    receptor_controls: Mapping[str, Any] | None = None,
     max_residues: int = 8,
     allow_bad_res: bool = False,
     acknowledged_bad_residues: Iterable[str] | None = None,
@@ -643,10 +1042,48 @@ def build_meeko_receptor_flex_plan(
 
     python_path = _validate_python_executable(python_executable)
     source_path = Path(structure_path)
+    selection_values = list(selections)
+    structured_controls = receptor_controls is not None
+    if structured_controls and resolved_altlocs:
+        raise _validation_error(
+            "MEEKO_RECEPTOR_ALTLOC_SOURCE_CONFLICT",
+            "替代构象控制来源冲突",
+            "使用 receptor_controls 时不能再同时传入 resolved_altlocs。",
+            "请只保留 receptor_controls.alternate_locations 这一份可冻结的结构化决定。",
+        )
+    if structured_controls and allow_bad_res:
+        raise _validation_error(
+            "MEEKO_RECEPTOR_ALLOW_BAD_RES_FORBIDDEN",
+            "复杂受体合同禁止静默删除坏残基",
+            "receptor_controls 存在时 allow_bad_res 必须保持 false。",
+            "请修复坏残基，或使用显式 set_template/delete_residues 记录每项决定。",
+        )
+    if structured_controls and list(acknowledged_bad_residues or ()):
+        raise _validation_error(
+            "MEEKO_RECEPTOR_BAD_RES_ACKNOWLEDGEMENT_FORBIDDEN",
+            "复杂受体合同不接受坏残基删除确认",
+            "receptor_controls 不使用 acknowledged_bad_residues。",
+            "请通过显式模板指定或显式删除合同处理每个受体对象。",
+        )
+    if structured_controls:
+        normalized_controls = normalize_meeko_receptor_controls(
+            receptor_controls,
+            structure_path=source_path,
+            flexible_selections=selection_values,
+        )
+        effective_altlocs: Mapping[str, str] | None = normalized_controls[
+            "alternate_locations"
+        ]
+    else:
+        normalized_controls = _legacy_receptor_controls(
+            resolved_altlocs=resolved_altlocs,
+            allow_bad_res=allow_bad_res,
+        )
+        effective_altlocs = resolved_altlocs
     validation = validate_flexible_residues(
         source_path,
-        selections,
-        resolved_altlocs=resolved_altlocs,
+        selection_values,
+        resolved_altlocs=effective_altlocs,
         max_residues=max_residues,
     )
     acknowledged = _normalize_bad_residue_acknowledgements(
@@ -661,18 +1098,22 @@ def build_meeko_receptor_flex_plan(
         "-m",
         "meeko.cli.mk_prepare_receptor",
     ]
-    if validation["source_format"] == "pdb":
-        command.extend(["--read_pdb", str(source_path)])
-        requires_prody = False
-    else:
-        command.extend(["--read_with_prody", str(source_path)])
-        requires_prody = True
+    if validation["source_format"] != "pdb":
+        raise _validation_error(
+            "FLEX_MMCIF_VERIFIED_BRIDGE_REQUIRED",
+            "mmCIF 必须先生成并验证 PDB 身份桥接",
+            "Meeko 柔性受体准备只读取已经通过身份合同验证的 PDB，不会调用 ProDy 读取 mmCIF。",
+            "请通过项目级柔性受体流程生成 Gemmi 桥接并完成作者/标签残基身份校验。",
+        )
+    command.extend(["--read_pdb", str(source_path)])
     command.extend(["--output_basename", str(basename), "--write_pdbqt", "--write_json"])
     if allow_bad_res:
         command.append("--allow_bad_res")
     for residue_id in validation["meeko_flexres"]:
         command.extend(["--flexres", residue_id])
-    if validation["wanted_altlocs"]:
+    if structured_controls:
+        command.extend(meeko_receptor_control_arguments(normalized_controls))
+    elif validation["wanted_altlocs"]:
         command.extend(["--wanted_altloc", ",".join(validation["wanted_altlocs"])])
 
     outputs = {
@@ -684,17 +1125,30 @@ def build_meeko_receptor_flex_plan(
         "柔性侧链会显著扩大搜索空间；应使用少量、具有明确依据的口袋残基。",
         "执行后必须同时验证 rigid PDBQT、flex PDBQT 和 receptor JSON 三个输出。",
     ]
-    if requires_prody:
-        warnings.append("Meeko 直接读取 mmCIF 需要可用的 ProDy；否则应先通过审计的转换流程生成 PDB。")
     return {
         "protocol": "flexible_sidechains",
         "argv": command,
         "selected_residues": validation["residues"],
         "outputs": outputs,
-        "requires_prody": requires_prody,
+        "requires_prody": False,
+        "receptor_controls_mode": (
+            "structured_contract" if structured_controls else "legacy_compatibility"
+        ),
+        "receptor_controls": normalized_controls,
+        "receptor_controls_sha256": _canonical_json_sha256(normalized_controls),
+        "receptor_controls_fingerprint": {
+            "algorithm": "sha256",
+            "canonicalization": MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
+            "sha256": _canonical_json_sha256(normalized_controls),
+        },
         "scientific_review": {
             "allow_bad_res": allow_bad_res,
             "acknowledged_bad_residues": acknowledged,
+            "receptor_controls_mode": (
+                "structured_contract"
+                if structured_controls
+                else "legacy_compatibility"
+            ),
         },
         "warnings": warnings,
     }
@@ -1306,6 +1760,493 @@ def _validate_generated_output(path: Path, key: str) -> dict[str, Any]:
     return {"path": str(path), "size_bytes": size}
 
 
+def _partition_atom_key(
+    chain: str,
+    residue_number: int,
+    insertion_code: str,
+    residue_name: str,
+    atom_name: str,
+) -> tuple[str, int, str, str, str]:
+    return (
+        str(chain).strip(),
+        int(residue_number),
+        str(insertion_code).strip().upper(),
+        str(residue_name).strip().upper(),
+        str(atom_name).strip(),
+    )
+
+
+def _parse_flex_residue_boundary(
+    line: str,
+    *,
+    keyword: str,
+    line_number: int,
+    label: str,
+) -> tuple[str, FlexibleResidueSelector]:
+    fields = line.strip().split()
+    if not fields or fields[0] != keyword or len(fields) not in {3, 4}:
+        raise _validation_error(
+            "FLEX_PARTITION_BOUNDARY_INVALID",
+            "柔性受体残基边界无效",
+            f"{label} 第 {line_number} 行不是规范的 {keyword} 记录。",
+            "请检查 Meeko 输出；DockStart 不会猜测柔性残基身份。",
+            detail=line,
+        )
+    residue_name = fields[1].strip().upper()
+    if MEEKO_CONTROL_TOKEN_PATTERN.fullmatch(residue_name) is None:
+        raise _validation_error(
+            "FLEX_PARTITION_BOUNDARY_INVALID",
+            "柔性受体残基边界无效",
+            f"{label} 第 {line_number} 行的残基名 {fields[1]!r} 无效。",
+            "请检查 Meeko 输出；DockStart 不会猜测柔性残基身份。",
+        )
+    chain = fields[2] if len(fields) == 4 else ""
+    residue_token = fields[3] if len(fields) == 4 else fields[2]
+    residue_match = re.fullmatch(r"(?P<number>-?\d+)(?P<icode>[A-Za-z0-9]?)", residue_token)
+    if residue_match is None:
+        raise _validation_error(
+            "FLEX_PARTITION_BOUNDARY_INVALID",
+            "柔性受体残基边界无效",
+            f"{label} 第 {line_number} 行的残基编号 {residue_token!r} 无效。",
+            "请检查 Meeko 输出；插入码必须紧跟残基编号且最多一个字符。",
+        )
+    selector_text = (
+        f"{chain}:{residue_match.group('number')}"
+        f"{residue_match.group('icode')}"
+    )
+    try:
+        selector = parse_flexible_residue(selector_text)
+    except ProtocolValidationError as exc:
+        raise _validation_error(
+            "FLEX_PARTITION_BOUNDARY_INVALID",
+            "柔性受体残基边界无效",
+            f"{label} 第 {line_number} 行无法解析为安全的残基身份。",
+            "请检查 Meeko 输出；DockStart 不会猜测柔性残基身份。",
+            detail=exc.message,
+        ) from exc
+    return residue_name, selector
+
+
+def _parse_partition_pdbqt(path: Path, label: str) -> dict[tuple[str, int, str, str, str], list[float]]:
+    text = _read_text_file(path, max_bytes=MAX_STRUCTURE_BYTES, label=label)
+    atoms: dict[tuple[str, int, str, str, str], list[float]] = {}
+    active_boundary: tuple[str, FlexibleResidueSelector] | None = None
+    active_boundary_atom_count = 0
+    completed_boundaries: set[tuple[str, tuple[str, int, str]]] = set()
+    saw_boundary = False
+    atoms_outside_boundaries: list[int] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("BEGIN_RES"):
+            boundary = _parse_flex_residue_boundary(
+                stripped,
+                keyword="BEGIN_RES",
+                line_number=line_number,
+                label=label,
+            )
+            if active_boundary is not None:
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_NESTED",
+                    "柔性受体残基边界发生嵌套",
+                    f"{label} 第 {line_number} 行在上一个 BEGIN_RES 尚未结束时再次开始残基。",
+                    "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                )
+            boundary_key = (boundary[0], boundary[1].key)
+            if boundary_key in completed_boundaries:
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_DUPLICATE",
+                    "柔性受体残基边界重复",
+                    f"{label} 第 {line_number} 行重复开始 "
+                    f"{boundary[0]} {boundary[1].canonical}。",
+                    "每个柔性残基只能有一组 BEGIN_RES/END_RES 边界。",
+                )
+            active_boundary = boundary
+            active_boundary_atom_count = 0
+            saw_boundary = True
+            continue
+        if stripped.startswith("END_RES"):
+            boundary = _parse_flex_residue_boundary(
+                stripped,
+                keyword="END_RES",
+                line_number=line_number,
+                label=label,
+            )
+            if active_boundary is None:
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_UNMATCHED",
+                    "柔性受体残基结束边界没有起点",
+                    f"{label} 第 {line_number} 行出现没有对应 BEGIN_RES 的 END_RES。",
+                    "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                )
+            if boundary != active_boundary:
+                expected_name, expected_selector = active_boundary
+                actual_name, actual_selector = boundary
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_MISMATCH",
+                    "柔性受体残基边界身份不一致",
+                    f"{label} 第 {line_number} 行结束的是 "
+                    f"{actual_name} {actual_selector.canonical}，"
+                    f"但当前开始边界是 {expected_name} {expected_selector.canonical}。",
+                    "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                )
+            if active_boundary_atom_count <= 0:
+                expected_name, expected_selector = active_boundary
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_EMPTY",
+                    "柔性受体残基边界为空",
+                    f"{label} 的 {expected_name} {expected_selector.canonical} "
+                    "在 BEGIN_RES/END_RES 之间没有原子。",
+                    "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                )
+            completed_boundaries.add(
+                (active_boundary[0], active_boundary[1].key)
+            )
+            active_boundary = None
+            active_boundary_atom_count = 0
+            continue
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if active_boundary is None:
+            atoms_outside_boundaries.append(line_number)
+        if len(line) < 54:
+            raise _validation_error(
+                "FLEX_PARTITION_PDBQT_TRUNCATED",
+                "柔性受体原子划分无法验证",
+                f"{label} 第 {line_number} 行的 PDBQT 原子字段不完整。",
+                "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+            )
+        try:
+            residue_number = int(line[22:26].strip())
+            coordinates = [
+                float(line[30:38]),
+                float(line[38:46]),
+                float(line[46:54]),
+            ]
+        except ValueError as exc:
+            raise _validation_error(
+                "FLEX_PARTITION_PDBQT_NUMERIC_INVALID",
+                "柔性受体原子划分无法验证",
+                f"{label} 第 {line_number} 行含无效残基号或坐标。",
+                "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                detail=str(exc),
+            ) from exc
+        if not all(math.isfinite(value) for value in coordinates):
+            raise _validation_error(
+                "FLEX_PARTITION_PDBQT_NUMERIC_INVALID",
+                "柔性受体原子划分无法验证",
+                f"{label} 第 {line_number} 行含非有限坐标。",
+                "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+            )
+        chain = line[21:22].strip()
+        insertion_code = line[26:27].strip().upper()
+        residue_name = line[17:20].strip().upper()
+        if active_boundary is not None:
+            boundary_name, boundary_selector = active_boundary
+            identity_conflicts: dict[str, Any] = {}
+            if residue_name != boundary_name:
+                identity_conflicts["residue_name"] = {
+                    "atom": residue_name,
+                    "boundary": boundary_name,
+                }
+            if chain != boundary_selector.chain:
+                identity_conflicts["chain"] = {
+                    "atom": chain,
+                    "boundary": boundary_selector.chain,
+                }
+            if residue_number != boundary_selector.residue_number:
+                identity_conflicts["residue_number"] = {
+                    "atom": residue_number,
+                    "boundary": boundary_selector.residue_number,
+                }
+            if (
+                insertion_code
+                and insertion_code != boundary_selector.insertion_code
+            ):
+                identity_conflicts["insertion_code"] = {
+                    "atom": insertion_code,
+                    "boundary": boundary_selector.insertion_code,
+                }
+            if identity_conflicts:
+                raise _validation_error(
+                    "FLEX_PARTITION_BOUNDARY_ATOM_CONFLICT",
+                    "柔性受体原子身份与残基边界冲突",
+                    f"{label} 第 {line_number} 行的 ATOM/HETATM 身份与当前 "
+                    f"{boundary_name} {boundary_selector.canonical} 不一致。",
+                    "请检查 Meeko 输出；DockStart 不会用边界覆盖冲突的原子身份。",
+                    detail=json.dumps(identity_conflicts, ensure_ascii=False),
+                )
+            insertion_code = boundary_selector.insertion_code
+            active_boundary_atom_count += 1
+        key = _partition_atom_key(
+            chain,
+            residue_number,
+            insertion_code,
+            residue_name,
+            line[12:16],
+        )
+        if key in atoms:
+            raise _validation_error(
+                "FLEX_PARTITION_OUTPUT_DUPLICATE_ATOM",
+                "柔性受体输出含重复原子",
+                f"{label} 中原子身份 {key!r} 出现多次。",
+                "请检查 Meeko 输入与输出；DockStart 未发布本次三件套。",
+            )
+        atoms[key] = coordinates
+    if active_boundary is not None:
+        residue_name, selector = active_boundary
+        raise _validation_error(
+            "FLEX_PARTITION_BOUNDARY_UNTERMINATED",
+            "柔性受体残基边界没有结束",
+            f"{label} 的 {residue_name} {selector.canonical} 缺少 END_RES。",
+            "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+        )
+    if saw_boundary and atoms_outside_boundaries:
+        raise _validation_error(
+            "FLEX_PARTITION_ATOM_OUTSIDE_BOUNDARY",
+            "柔性受体含边界外原子",
+            f"{label} 使用 BEGIN_RES/END_RES，但仍有原子位于任何残基边界之外。",
+            "请检查 Meeko 输出；DockStart 不会混合有边界和无边界的柔性原子。",
+            detail=json.dumps(atoms_outside_boundaries[:20]),
+        )
+    if not atoms:
+        raise _validation_error(
+            "FLEX_PARTITION_OUTPUT_ATOMS_MISSING",
+            "柔性受体输出没有可验证原子",
+            f"{label} 中没有 ATOM/HETATM 原子。",
+            "请检查 Meeko stderr；DockStart 未发布本次三件套。",
+        )
+    return atoms
+
+
+def _parse_receptor_json_partition(
+    path: Path,
+) -> tuple[
+    dict[tuple[str, int, str, str, str], list[float]],
+    dict[tuple[str, int, str, str, str], list[float]],
+    list[str],
+]:
+    text = _read_text_file(path, max_bytes=MAX_METADATA_BYTES, label="Meeko receptor JSON")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _validation_error(
+            "FLEX_PARTITION_JSON_INVALID",
+            "Meeko receptor JSON 无法用于原子划分",
+            "receptor JSON 不是有效 JSON。",
+            "请检查 Meeko stderr；DockStart 未发布本次三件套。",
+            detail=str(exc),
+        ) from exc
+    monomers = payload.get("monomers") if isinstance(payload, Mapping) else None
+    if not isinstance(monomers, Mapping) or not monomers:
+        raise _validation_error(
+            "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+            "Meeko receptor JSON 缺少原子划分证据",
+            "receptor JSON 没有非空 monomers 映射，无法证明 rigid/flex 原子划分。",
+            "请使用支持逐原子 is_flexres_atom 记录的 Meeko 版本。",
+        )
+
+    expected_rigid: dict[tuple[str, int, str, str, str], list[float]] = {}
+    expected_flex: dict[tuple[str, int, str, str, str], list[float]] = {}
+    excluded_monomers: list[str] = []
+    for monomer_id, raw_monomer in monomers.items():
+        if not isinstance(raw_monomer, Mapping):
+            raise _validation_error(
+                "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                "Meeko receptor JSON 缺少原子划分证据",
+                f"monomer {monomer_id!r} 不是对象。",
+                "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+            )
+        setup = raw_monomer.get("molsetup")
+        atoms = setup.get("atoms") if isinstance(setup, Mapping) else None
+        flex_flags = raw_monomer.get("is_flexres_atom")
+        if setup is None and flex_flags is None:
+            excluded_monomers.append(str(monomer_id))
+            continue
+        if not isinstance(atoms, list) or not isinstance(flex_flags, list):
+            raise _validation_error(
+                "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                "Meeko receptor JSON 缺少原子划分证据",
+                f"monomer {monomer_id!r} 缺少 molsetup.atoms 或 is_flexres_atom。",
+                "请使用支持逐原子划分记录的 Meeko 版本。",
+            )
+        for raw_atom in atoms:
+            if not isinstance(raw_atom, Mapping):
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子记录无效",
+                    f"monomer {monomer_id!r} 含非对象原子记录。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            if raw_atom.get("is_ignore") is True:
+                continue
+            index = raw_atom.get("index")
+            if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index < len(flex_flags)):
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子索引无效",
+                    f"monomer {monomer_id!r} 含无法映射到 is_flexres_atom 的原子索引 {index!r}。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            if not isinstance(flex_flags[index], bool):
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子划分标记无效",
+                    f"monomer {monomer_id!r} 的 is_flexres_atom[{index}] 不是布尔值。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            pdbinfo = raw_atom.get("pdbinfo")
+            coordinates = raw_atom.get("coord")
+            if (
+                not isinstance(pdbinfo, list)
+                or len(pdbinfo) < 5
+                or not isinstance(coordinates, list)
+                or len(coordinates) != 3
+            ):
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子身份不完整",
+                    f"monomer {monomer_id!r} 的原子 {index} 缺少 pdbinfo 或三维坐标。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            try:
+                residue_number = int(pdbinfo[2])
+                normalized_coordinates = [float(value) for value in coordinates]
+            except (TypeError, ValueError) as exc:
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子身份无效",
+                    f"monomer {monomer_id!r} 的原子 {index} 含无效残基号或坐标。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                    detail=str(exc),
+                ) from exc
+            if not all(math.isfinite(value) for value in normalized_coordinates):
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_SCHEMA_UNSUPPORTED",
+                    "Meeko receptor JSON 原子坐标无效",
+                    f"monomer {monomer_id!r} 的原子 {index} 含非有限坐标。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            key = _partition_atom_key(
+                str(pdbinfo[4]),
+                residue_number,
+                str(pdbinfo[3]),
+                str(pdbinfo[1]),
+                str(pdbinfo[0]),
+            )
+            target = expected_flex if flex_flags[index] else expected_rigid
+            other = expected_rigid if flex_flags[index] else expected_flex
+            if key in target or key in other:
+                raise _validation_error(
+                    "FLEX_PARTITION_JSON_DUPLICATE_ATOM",
+                    "Meeko receptor JSON 含重复原子身份",
+                    f"receptor JSON 中原子身份 {key!r} 重复或同时属于 rigid/flex。",
+                    "请检查 Meeko receptor JSON；DockStart 未发布本次三件套。",
+                )
+            target[key] = normalized_coordinates
+    if not expected_rigid or not expected_flex:
+        raise _validation_error(
+            "FLEX_PARTITION_JSON_EMPTY_SIDE",
+            "Meeko receptor JSON 的 rigid/flex 划分不完整",
+            "receptor JSON 没有同时记录至少一个 rigid 原子和一个 flex 原子。",
+            "请检查柔性残基选择和 Meeko 输出；DockStart 未发布本次三件套。",
+        )
+    return expected_rigid, expected_flex, sorted(excluded_monomers)
+
+
+def validate_meeko_receptor_atom_partition(
+    rigid_pdbqt: str | Path,
+    flex_pdbqt: str | Path,
+    receptor_json: str | Path,
+    *,
+    coordinate_tolerance: float = 0.0011,
+) -> dict[str, Any]:
+    """Prove that Meeko JSON partitions every published atom exactly once."""
+
+    if coordinate_tolerance <= 0 or not math.isfinite(coordinate_tolerance):
+        raise ValueError("coordinate_tolerance must be a positive finite number")
+    rigid_path = Path(rigid_pdbqt)
+    flex_path = Path(flex_pdbqt)
+    json_path = Path(receptor_json)
+    actual_rigid = _parse_partition_pdbqt(rigid_path, "rigid PDBQT")
+    actual_flex = _parse_partition_pdbqt(flex_path, "flex PDBQT")
+    expected_rigid, expected_flex, excluded_monomers = (
+        _parse_receptor_json_partition(json_path)
+    )
+
+    overlap = sorted(set(actual_rigid) & set(actual_flex))
+    if overlap:
+        raise _validation_error(
+            "FLEX_PARTITION_OUTPUT_OVERLAP",
+            "rigid 与 flex PDBQT 含重复原子",
+            "至少一个原子同时出现在 rigid 与 flex PDBQT。",
+            "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+            detail=json.dumps(overlap[:20], ensure_ascii=False),
+        )
+
+    def compare(
+        label: str,
+        expected: Mapping[tuple[str, int, str, str, str], list[float]],
+        actual: Mapping[tuple[str, int, str, str, str], list[float]],
+    ) -> None:
+        missing = sorted(set(expected) - set(actual))
+        extra = sorted(set(actual) - set(expected))
+        if missing or extra:
+            raise _validation_error(
+                "FLEX_PARTITION_ATOM_SET_MISMATCH",
+                "柔性受体原子划分与 receptor JSON 不一致",
+                f"{label} 的原子集合存在缺失或多余记录。",
+                "请检查 Meeko 版本与输出；DockStart 未发布本次三件套。",
+                detail=json.dumps(
+                    {"missing": missing[:20], "extra": extra[:20]},
+                    ensure_ascii=False,
+                ),
+            )
+        changed: list[dict[str, Any]] = []
+        for key in sorted(expected):
+            deltas = [
+                abs(float(left) - float(right))
+                for left, right in zip(expected[key], actual[key], strict=True)
+            ]
+            if any(delta > coordinate_tolerance for delta in deltas):
+                changed.append({"atom": key, "deltas": deltas})
+        if changed:
+            raise _validation_error(
+                "FLEX_PARTITION_COORDINATE_MISMATCH",
+                "柔性受体原子坐标与 receptor JSON 不一致",
+                f"{label} 至少一个原子的坐标超出 PDBQT 舍入误差。",
+                "请检查 Meeko 输出；DockStart 未发布本次三件套。",
+                detail=json.dumps(changed[:20], ensure_ascii=False),
+            )
+
+    compare("rigid PDBQT", expected_rigid, actual_rigid)
+    compare("flex PDBQT", expected_flex, actual_flex)
+    evidence = {
+        "schema_version": 1,
+        "authority": "receptor_json.monomers[*].is_flexres_atom",
+        "rigid_atom_count": len(actual_rigid),
+        "flex_atom_count": len(actual_flex),
+        "total_atom_count": len(actual_rigid) + len(actual_flex),
+        "overlap_atom_count": 0,
+        "missing_atom_count": 0,
+        "extra_atom_count": 0,
+        "excluded_monomers": excluded_monomers,
+        "coordinate_tolerance_angstrom": coordinate_tolerance,
+    }
+    evidence["partition_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                **evidence,
+                "rigid_atoms": sorted(actual_rigid),
+                "flex_atoms": sorted(actual_flex),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return evidence
+
+
 def _cleanup_staged_outputs(paths: Iterable[Path]) -> None:
     for path in paths:
         try:
@@ -1315,6 +2256,56 @@ def _cleanup_staged_outputs(paths: Iterable[Path]) -> None:
                 path.rmdir()
         except OSError:
             pass
+
+
+def _validated_plan_receptor_controls(
+    plan: Mapping[str, Any],
+) -> tuple[dict[str, Any], str, dict[str, str]]:
+    raw_controls = plan.get("receptor_controls")
+    recorded_sha256 = str(plan.get("receptor_controls_sha256") or "").lower()
+    raw_fingerprint = plan.get("receptor_controls_fingerprint")
+    if not isinstance(raw_controls, Mapping):
+        raise _validation_error(
+            "INVALID_EXECUTION_PLAN_RECEPTOR_CONTROLS",
+            "柔性受体执行计划缺少控制合同",
+            "执行计划没有可冻结的 receptor_controls。",
+            "请重新调用 DockStart 计划构造器，不要手工拼接 Meeko argv。",
+        )
+    controls = json.loads(
+        json.dumps(raw_controls, ensure_ascii=False, sort_keys=True)
+    )
+    actual_sha256 = _canonical_json_sha256(controls)
+    if recorded_sha256 != actual_sha256:
+        raise _validation_error(
+            "RECEPTOR_CONTROLS_FINGERPRINT_MISMATCH",
+            "柔性受体控制合同指纹不一致",
+            "执行计划中的 receptor_controls 与记录的 SHA256 不匹配。",
+            "请丢弃被修改的计划并重新生成。",
+        )
+    if not isinstance(raw_fingerprint, Mapping):
+        raise _validation_error(
+            "INVALID_EXECUTION_PLAN_RECEPTOR_CONTROLS",
+            "柔性受体执行计划缺少控制指纹",
+            "执行计划没有结构化 receptor_controls_fingerprint。",
+            "请重新调用 DockStart 计划构造器。",
+        )
+    fingerprint = {
+        "algorithm": str(raw_fingerprint.get("algorithm") or ""),
+        "canonicalization": str(raw_fingerprint.get("canonicalization") or ""),
+        "sha256": str(raw_fingerprint.get("sha256") or "").lower(),
+    }
+    if fingerprint != {
+        "algorithm": "sha256",
+        "canonicalization": MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
+        "sha256": actual_sha256,
+    }:
+        raise _validation_error(
+            "RECEPTOR_CONTROLS_FINGERPRINT_MISMATCH",
+            "柔性受体控制合同指纹描述不一致",
+            "执行计划中的控制指纹算法、规范化规则或 SHA256 不匹配。",
+            "请丢弃被修改的计划并重新生成。",
+        )
+    return controls, actual_sha256, fingerprint
 
 
 def _execute_staged_plan(
@@ -1354,6 +2345,50 @@ def _execute_staged_plan(
             "请为每项输出设置独立路径。",
         )
 
+    receptor_controls: dict[str, Any] | None = None
+    receptor_controls_sha256 = ""
+    receptor_controls_fingerprint: dict[str, str] | None = None
+    receptor_controls_mode = ""
+    if protocol == "flexible_sidechains":
+        receptor_controls_mode = str(
+            final_plan.get("receptor_controls_mode") or ""
+        )
+        staged_controls_mode = str(
+            staged_plan.get("receptor_controls_mode") or ""
+        )
+        if (
+            receptor_controls_mode
+            not in {"structured_contract", "legacy_compatibility"}
+            or staged_controls_mode != receptor_controls_mode
+        ):
+            raise _validation_error(
+                "RECEPTOR_CONTROLS_MODE_MISMATCH",
+                "柔性受体控制模式不一致",
+                "最终计划与暂存计划没有冻结同一受体控制模式。",
+                "请重新生成执行计划，不要手工修改 plan。",
+            )
+        (
+            receptor_controls,
+            receptor_controls_sha256,
+            receptor_controls_fingerprint,
+        ) = _validated_plan_receptor_controls(final_plan)
+        (
+            staged_controls,
+            staged_controls_sha256,
+            staged_controls_fingerprint,
+        ) = _validated_plan_receptor_controls(staged_plan)
+        if (
+            staged_controls != receptor_controls
+            or staged_controls_sha256 != receptor_controls_sha256
+            or staged_controls_fingerprint != receptor_controls_fingerprint
+        ):
+            raise _validation_error(
+                "STAGED_RECEPTOR_CONTROLS_MISMATCH",
+                "暂存计划与最终受体控制合同不一致",
+                "暂存计划没有使用与最终计划完全相同的规范化 receptor_controls。",
+                "请重新生成执行计划；DockStart 未运行 Meeko。",
+            )
+
     record_path = _prepare_record_directory(record_dir)
     execution_cwd = _validate_execution_cwd(cwd, record_path)
     argv = [str(value) for value in staged_plan.get("argv", [])]
@@ -1383,7 +2418,12 @@ def _execute_staged_plan(
         "declared_outputs": {key: str(path) for key, path in final_outputs.items()},
         "published_outputs": {},
         "output_validation": {},
+        "atom_partition": None,
         "scientific_review": {},
+        "receptor_controls": receptor_controls,
+        "receptor_controls_sha256": receptor_controls_sha256,
+        "receptor_controls_fingerprint": receptor_controls_fingerprint,
+        "receptor_controls_mode": receptor_controls_mode,
         "error": None,
     }
 
@@ -1466,6 +2506,7 @@ def _execute_staged_plan(
                 "allow_bad_res": allow_bad_res,
                 "acknowledged_bad_residues": acknowledged,
                 "detected_bad_residues": bad_residues,
+                "receptor_controls_mode": receptor_controls_mode,
             }
             if exit_code != 0 and bad_residues:
                 raise _validation_error(
@@ -1517,6 +2558,13 @@ def _execute_staged_plan(
 
         for key, staged_path in staged_outputs.items():
             output_validation[key] = _validate_generated_output(staged_path, key)
+        atom_partition = None
+        if protocol == "flexible_sidechains":
+            atom_partition = validate_meeko_receptor_atom_partition(
+                staged_outputs["rigid_pdbqt"],
+                staged_outputs["flex_pdbqt"],
+                staged_outputs["receptor_json"],
+            )
 
         payload.update(
             {
@@ -1525,6 +2573,7 @@ def _execute_staged_plan(
                 "stdout": stdout_text,
                 "stderr": stderr_text,
                 "output_validation": output_validation,
+                "atom_partition": atom_partition,
             }
         )
         _write_execution_record_checked(record_path, payload)
@@ -1630,6 +2679,7 @@ def execute_meeko_receptor_flex(
     *,
     record_dir: str | Path,
     resolved_altlocs: Mapping[str, str] | None = None,
+    receptor_controls: Mapping[str, Any] | None = None,
     max_residues: int = 8,
     allow_bad_res: bool = False,
     acknowledged_bad_residues: Iterable[str] | None = None,
@@ -1649,6 +2699,7 @@ def execute_meeko_receptor_flex(
         final_basename,
         selection_values,
         resolved_altlocs=resolved_altlocs,
+        receptor_controls=receptor_controls,
         max_residues=max_residues,
         allow_bad_res=allow_bad_res,
         acknowledged_bad_residues=acknowledged_values,
@@ -1661,6 +2712,7 @@ def execute_meeko_receptor_flex(
         staged_basename,
         selection_values,
         resolved_altlocs=resolved_altlocs,
+        receptor_controls=receptor_controls,
         max_residues=max_residues,
         allow_bad_res=allow_bad_res,
         acknowledged_bad_residues=acknowledged_values,

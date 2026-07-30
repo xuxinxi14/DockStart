@@ -480,7 +480,12 @@ def _validate_hydrated_pdbqt(path: Path, project_root: Path) -> dict[str, Any]:
         if not fields:
             continue
         atom_count += 1
-        atom_type = fields[-1].upper()
+        atom_type = autogrid.canonical_atom_type(fields[-1])
+        if atom_type not in autogrid.STANDARD_NON_METAL_TYPES | {"W"}:
+            raise ValueError(
+                "水合 PDBQT 含有当前水合 AD4 协议未支持的原子类型："
+                f"{atom_type or '<empty>'}。"
+            )
         atom_types.add(atom_type)
         if atom_type == "W":
             water_count += 1
@@ -720,6 +725,152 @@ def _grid_geometry(grid: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_hydrated_grid_coverage_contract(
+    manifest: Mapping[str, Any],
+    *,
+    expected_box: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Recompute and verify the modern hydrated requested-Box contract."""
+
+    grid = (
+        manifest.get("grid")
+        if isinstance(manifest.get("grid"), Mapping)
+        else {}
+    )
+    stored_coverage = (
+        manifest.get("grid_coverage")
+        if isinstance(manifest.get("grid_coverage"), Mapping)
+        else None
+    )
+    stored_sha256 = str(
+        manifest.get("grid_coverage_sha256") or ""
+    ).lower()
+    manifest_box = (
+        manifest.get("box")
+        if isinstance(manifest.get("box"), Mapping)
+        else {}
+    )
+    box = expected_box if isinstance(expected_box, Mapping) else manifest_box
+    if (
+        stored_coverage is None
+        or not autogrid.SHA256_PATTERN.fullmatch(stored_sha256)
+        or not manifest_box
+        or not isinstance(box, Mapping)
+        or not box
+    ):
+        return (
+            None,
+            "水合 maps 缺少现代请求 Box/实际网格覆盖记录；旧 maps 必须重新生成。",
+        )
+
+    def nested_value(
+        record: Mapping[str, Any],
+        kind: str,
+        axis: str,
+    ) -> float:
+        nested = (
+            record.get(kind)
+            if isinstance(record.get(kind), Mapping)
+            else {}
+        )
+        return float(nested[axis])
+
+    try:
+        if manifest_box and any(
+            not math.isclose(
+                nested_value(manifest_box, kind, axis),
+                nested_value(box, kind, axis),
+                rel_tol=0.0,
+                abs_tol=autogrid.GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            )
+            for kind in ("center", "size")
+            for axis in ("x", "y", "z")
+        ):
+            return None, "水合 maps 的请求 Box 与预期 Box 不一致。"
+        requested_box = (
+            grid.get("requested_box")
+            if isinstance(grid.get("requested_box"), Mapping)
+            else {}
+        )
+        grid_center = (
+            grid.get("center")
+            if isinstance(grid.get("center"), Mapping)
+            else {}
+        )
+        grid_points = (
+            grid.get("grid_points")
+            if isinstance(grid.get("grid_points"), Mapping)
+            else {}
+        )
+        actual_size = (
+            grid.get("actual_size")
+            if isinstance(grid.get("actual_size"), Mapping)
+            else {}
+        )
+        if any(
+            not math.isclose(
+                nested_value(requested_box, kind, axis),
+                nested_value(box, kind, axis),
+                rel_tol=0.0,
+                abs_tol=autogrid.GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            )
+            for kind in ("center", "size")
+            for axis in ("x", "y", "z")
+        ):
+            return None, "水合 maps 的 grid.requested_box 与冻结 Box 不一致。"
+        if any(
+            not math.isclose(
+                float(grid_center[axis]),
+                nested_value(box, "center", axis),
+                rel_tol=0.0,
+                abs_tol=autogrid.GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            )
+            for axis in ("x", "y", "z")
+        ):
+            return None, "水合 maps 的实际网格中心与请求 Box 中心不一致。"
+        points = [grid_points[axis] for axis in ("x", "y", "z")]
+        spacing = grid["spacing"]
+        recomputed = autogrid.compute_requested_box_grid_coverage(
+            box,
+            points,
+            spacing,
+        )
+        if not recomputed.get("ok"):
+            error = (
+                recomputed.get("error")
+                if isinstance(recomputed.get("error"), Mapping)
+                else {}
+            )
+            return None, str(
+                error.get("message")
+                or "水合 maps 的请求 Box/实际网格覆盖无法重算。"
+            )
+        coverage = recomputed["coverage"]
+        coverage_sha256 = str(recomputed["coverage_sha256"]).lower()
+        if (
+            coverage != dict(stored_coverage)
+            or coverage_sha256 != stored_sha256
+        ):
+            return None, "水合 maps 的覆盖记录或规范 SHA256 与重算结果不一致。"
+        if coverage.get("covers_requested_box") is not True:
+            return None, "实际 AutoGrid 网格没有完整覆盖请求 Box。"
+        effective_size = coverage["effective_grid_size_angstrom"]
+        for axis in ("x", "y", "z"):
+            if not math.isclose(
+                float(actual_size[axis]),
+                float(effective_size[axis]),
+                rel_tol=0.0,
+                abs_tol=autogrid.GRID_GEOMETRY_TOLERANCE_ANGSTROM,
+            ):
+                return (
+                    None,
+                    "水合 maps 的 actual_size 与 npts × spacing 不一致。",
+                )
+    except (KeyError, TypeError, ValueError) as exc:
+        return None, f"水合 maps 的 Box/网格覆盖几何无效：{exc}"
+    return copy.deepcopy(coverage), ""
+
+
 def _detect_autogrid_snapshot() -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     settings = load_settings()
     detection = autogrid_adapter.detect(settings.tool_paths.autogrid4)
@@ -729,6 +880,24 @@ def _detect_autogrid_snapshot() -> tuple[dict[str, Any] | None, dict[str, Any] |
             detection.message or "未检测到 AutoGrid4。",
             raw_error=str(detection.raw_error or ""),
             suggestion="请配置外部 AutoGrid4；DockStart 不会在安装包中内置该工具。",
+        )
+    if not autogrid.autogrid_version_supported(
+        str(detection.version or ""),
+        PROTOCOL_ID,
+    ):
+        minimum_version = ".".join(
+            str(part) for part in autogrid.minimum_autogrid_version(PROTOCOL_ID)
+        )
+        return None, _structured_error(
+            "HYDRATED_AUTOGRID_VERSION_UNSUPPORTED",
+            f"实验性水合 AD4 maps 需要 AutoGrid {minimum_version} 或更高版本。",
+            raw_error=(
+                f"detected={detection.version or 'unknown'}; "
+                f"required>={minimum_version}"
+            ),
+            suggestion=(
+                f"请配置可明确识别为 {minimum_version} 或更高版本的 AutoGrid4。"
+            ),
         )
     try:
         executable = _stable_external_file_snapshot(
@@ -770,6 +939,7 @@ def _maps_status_defaults(project: Any) -> dict[str, Any]:
         "maps_manifest": None,
         "maps_issues": [],
         "maps": None,
+        "grid_coverage": None,
     }
 
 
@@ -947,6 +1117,28 @@ def _inspect_active_maps(
         current_box, box_error = _box_snapshot(project)
         if box_error or current_box != manifest.get("box"):
             issues.append("当前 Box 与 maps 绑定记录不一致。")
+        coverage, coverage_issue = (
+            _validate_hydrated_grid_coverage_contract(
+                manifest,
+                expected_box=current_box,
+            )
+            if box_error is None and current_box is not None
+            else (None, "当前 Box 无法用于重算水合 maps 覆盖。")
+        )
+        if coverage_issue:
+            issues.append(coverage_issue)
+        state = project.preserved_data.get(PROJECT_STATE_KEY)
+        active_pointer = (
+            state.get("active_maps_manifest")
+            if isinstance(state, Mapping)
+            and isinstance(state.get("active_maps_manifest"), Mapping)
+            else {}
+        )
+        if (
+            str(active_pointer.get("grid_coverage_sha256") or "").lower()
+            != str(manifest.get("grid_coverage_sha256") or "").lower()
+        ):
+            issues.append("项目活动指针与水合 maps 的覆盖摘要不一致。")
 
         recorded_ligand = (
             manifest.get("hydrated_ligand")
@@ -997,6 +1189,8 @@ def _inspect_active_maps(
             if isinstance(manifest.get("base_maps_manifest"), Mapping)
             else {}
         )
+        base_tool: Mapping[str, Any] = {}
+        base_manifest: Mapping[str, Any] = {}
         base_path, _, base_issue = _record_integrity_issue(
             project_root,
             base_record,
@@ -1016,8 +1210,23 @@ def _inspect_active_maps(
                     or base_manifest.get("status") != "ready"
                 ):
                     issues.append("基础 maps manifest 的协议、编号或状态无效。")
+                elif isinstance(base_manifest.get("autogrid"), Mapping):
+                    base_tool = base_manifest["autogrid"]
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 issues.append(f"基础 maps manifest 无法解析：{exc}")
+        if base_manifest:
+            base_coverage, base_coverage_issue = (
+                _validate_hydrated_grid_coverage_contract(
+                    base_manifest,
+                    expected_box=current_box,
+                )
+                if current_box is not None
+                else (None, "当前 Box 无法用于重算基础 maps 覆盖。")
+            )
+            if base_coverage_issue:
+                issues.append("基础 " + base_coverage_issue)
+            elif coverage is not None and base_coverage != coverage:
+                issues.append("基础 maps 与活动水合 maps 的覆盖记录不一致。")
 
         recorded_tool = (
             manifest.get("autogrid")
@@ -1034,6 +1243,25 @@ def _inspect_active_maps(
             or not str(recorded_tool.get("source") or "")
         ):
             issues.append("maps 缺少完整的 AutoGrid4 生成工具记录。")
+        if not autogrid.autogrid_version_supported(
+            str(recorded_tool.get("version") or ""),
+            PROTOCOL_ID,
+        ):
+            issues.append("水合 maps 未绑定可解析的 AutoGrid 4.2.6+ 生成版本。")
+        if base_tool:
+            if not autogrid.autogrid_version_supported(
+                str(base_tool.get("version") or ""),
+                PROTOCOL_ID,
+            ):
+                issues.append(
+                    "水合基础 maps 未绑定可解析的 AutoGrid 4.2.6+ 生成版本。"
+                )
+            if any(
+                str(base_tool.get(key) or "")
+                != str(recorded_tool.get(key) or "")
+                for key in ("path", "sha256", "version", "source")
+            ):
+                issues.append("水合 maps 与基础 maps 的 AutoGrid4 生成记录不一致。")
 
         maps_record = (
             manifest.get("maps")
@@ -1046,19 +1274,51 @@ def _inspect_active_maps(
         autogrid_ligand_types = maps_record.get(
             "autogrid_ligand_atom_types"
         )
+        canonical_hydrated_ligand_types = (
+            autogrid.canonical_atom_types(hydrated_ligand_types)
+            if isinstance(hydrated_ligand_types, list)
+            else []
+        )
+        canonical_autogrid_ligand_types = (
+            autogrid.canonical_atom_types(autogrid_ligand_types)
+            if isinstance(autogrid_ligand_types, list)
+            else []
+        )
         if (
             not isinstance(hydrated_ligand_types, list)
-            or "W" not in hydrated_ligand_types
-            or len(set(str(item) for item in hydrated_ligand_types))
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in (
+                    hydrated_ligand_types
+                    if isinstance(hydrated_ligand_types, list)
+                    else []
+                )
+            )
+            or len(canonical_hydrated_ligand_types)
             != len(hydrated_ligand_types)
             or not isinstance(autogrid_ligand_types, list)
-            or "W" in autogrid_ligand_types
-            or not {"OA", "HD"}.issubset(
-                {str(item) for item in autogrid_ligand_types}
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in (
+                    autogrid_ligand_types
+                    if isinstance(autogrid_ligand_types, list)
+                    else []
+                )
             )
+            or len(canonical_autogrid_ligand_types)
+            != len(autogrid_ligand_types)
+            or not set(canonical_hydrated_ligand_types).issubset(
+                autogrid.STANDARD_NON_METAL_TYPES | {"W"}
+            )
+            or not set(canonical_autogrid_ligand_types).issubset(
+                autogrid.STANDARD_NON_METAL_TYPES
+            )
+            or "W" not in canonical_hydrated_ligand_types
+            or "W" in canonical_autogrid_ligand_types
+            or not {"OA", "HD"}.issubset(set(canonical_autogrid_ligand_types))
             or not (
-                {str(item) for item in hydrated_ligand_types} - {"W"}
-            ).issubset({str(item) for item in autogrid_ligand_types})
+                set(canonical_hydrated_ligand_types) - {"W"}
+            ).issubset(set(canonical_autogrid_ligand_types))
         ):
             issues.append("水合配体原子类型与 AutoGrid 基础类型记录无效。")
         if (
@@ -1245,6 +1505,12 @@ def _inspect_active_maps(
                 manifest.get("maps")
                 if manifest is not None and not issues
                 and isinstance(manifest.get("maps"), Mapping)
+                else None
+            ),
+            "grid_coverage": (
+                copy.deepcopy(manifest.get("grid_coverage"))
+                if manifest is not None and not issues
+                and isinstance(manifest.get("grid_coverage"), Mapping)
                 else None
             ),
         }
@@ -1500,6 +1766,90 @@ def _existing_hydrated_map_sets(project_root: Path) -> set[str]:
     return names
 
 
+def _recover_incomplete_hydrated_map_sets(
+    project_root: Path,
+    map_set_ids: set[str],
+    *,
+    active_manifest_relative: str,
+) -> list[str]:
+    recovered: list[str] = []
+    normalized_active = Path(
+        str(active_manifest_relative or "")
+    ).as_posix()
+    for map_set_id in sorted(map_set_ids):
+        set_dir = _safe_project_path(
+            project_root,
+            Path("maps", map_set_id),
+            allow_missing=False,
+        )
+        manifest_path = set_dir / HYDRATED_MAPS_MANIFEST_NAME
+        manifest_relative = _relative_path(manifest_path, project_root)
+        if manifest_path.exists() or manifest_relative == normalized_active:
+            continue
+
+        base_manifest = set_dir / "manifest.json"
+        base_record: dict[str, Any] = {}
+        if base_manifest.is_file():
+            try:
+                base_record = _stable_project_artifact_snapshot(
+                    project_root,
+                    base_manifest,
+                    label="中断的基础 maps manifest",
+                    maximum_bytes=MAX_MANIFEST_BYTES,
+                )
+            except (
+                OSError,
+                ValueError,
+                RuntimeError,
+                PreparationPathError,
+            ) as exc:
+                base_record = {
+                    "relative_path": _relative_path(
+                        base_manifest,
+                        project_root,
+                    ),
+                    "inspection_error": str(exc),
+                }
+
+        recovered_at = _now_iso()
+        atomic_write_json(
+            manifest_path,
+            {
+                "schema_version": 1,
+                "protocol_id": PROTOCOL_ID,
+                "stability": "experimental",
+                "map_set_id": map_set_id,
+                "project_dir": str(project_root),
+                "status": "interrupted",
+                "created_at": None,
+                "started_at": None,
+                "finished_at": recovered_at,
+                "recovered_at": recovered_at,
+                "source": "recovered_incomplete_record",
+                "base_maps_manifest": base_record,
+                "recovery": {
+                    "status": "recovered_incomplete_record",
+                    "active_at_recovery": False,
+                    "reason": (
+                        "生成进程退出后记录目录缺少 "
+                        f"{HYDRATED_MAPS_MANIFEST_NAME}"
+                    ),
+                },
+                "error": {
+                    "code": "HYDRATED_MAPS_INCOMPLETE_RECORD_RECOVERED",
+                    "message": "检测到未完成的非 active 水合 maps 记录。",
+                    "raw_error": manifest_relative,
+                    "suggestion": (
+                        "该目录仅作为中断审计记录保留；"
+                        "请使用后续新生成并完整校验的 maps。"
+                    ),
+                },
+            },
+        )
+        recovered.append(map_set_id)
+    return recovered
+
+
 def _new_hydrated_map_set(
     project_root: Path,
     before: set[str],
@@ -1651,6 +2001,17 @@ def _validate_generated_base_maps(
         if isinstance(base_manifest.get("grid"), Mapping)
         else {}
     )
+    base_coverage, base_coverage_issue = (
+        _validate_hydrated_grid_coverage_contract(
+            base_manifest,
+            expected_box=box_before,
+        )
+    )
+    if base_coverage_issue or base_coverage is None:
+        raise ValueError(
+            base_coverage_issue
+            or "基础 maps 缺少可复核的请求 Box/实际网格覆盖记录。"
+        )
     grid_center = (
         grid.get("center")
         if isinstance(grid.get("center"), Mapping)
@@ -1672,6 +2033,13 @@ def _validate_generated_base_maps(
         if isinstance(base_manifest.get("autogrid"), Mapping)
         else {}
     )
+    if not autogrid.autogrid_version_supported(
+        str(base_tool.get("version") or ""),
+        PROTOCOL_ID,
+    ):
+        raise ValueError(
+            "基础 maps 未绑定可解析的 AutoGrid 4.2.6+ 生成版本。"
+        )
     if any(
         str(base_tool.get(key) or "") != str(autogrid_before.get(key) or "")
         for key in ("path", "sha256", "version")
@@ -1718,18 +2086,42 @@ def _validate_generated_base_maps(
         raise ValueError("基础 maps 文件清单无效。")
     if "receptor.OA.map" not in required_names or "receptor.HD.map" not in required_names:
         raise ValueError("基础 maps 缺少生成 W.map 所需的 OA 或 HD map。")
+    required_name_list = [str(name) for name in required_names]
+    if (
+        any(not name or Path(name).name != name for name in required_name_list)
+        or len(set(required_name_list)) != len(required_name_list)
+        or any(
+            not isinstance(item, Mapping)
+            or not str(item.get("name") or "")
+            or Path(str(item.get("name") or "")).name
+            != str(item.get("name") or "")
+            for item in file_records
+        )
+    ):
+        raise ValueError("基础 maps 文件清单包含空名称、路径名称或重复必需名称。")
     records_by_name = {
         str(item.get("name") or ""): item
         for item in file_records
-        if isinstance(item, Mapping) and item.get("name")
+        if isinstance(item, Mapping)
     }
-    if set(str(name) for name in required_names) - set(records_by_name):
+    if len(records_by_name) != len(file_records):
+        raise ValueError("基础 maps 文件清单包含重复文件记录。")
+    required_name_set = set(required_name_list)
+    if required_name_set - set(records_by_name):
         raise ValueError("基础 maps 文件清单缺少必需文件记录。")
+    optional_names = set(records_by_name) - required_name_set
+    allowed_optional_names = {"receptor.maps.xyz"}
+    if optional_names - allowed_optional_names:
+        raise ValueError(
+            "基础 maps 文件清单包含未获支持的可选文件："
+            f"{sorted(optional_names - allowed_optional_names)}"
+        )
 
     validated_files: list[dict[str, Any]] = []
+    validated_optional_files: list[tuple[str, Path, dict[str, Any]]] = []
     reference_geometry: dict[str, Any] | None = None
     paths: dict[str, Path] = {}
-    for name in [str(value) for value in required_names]:
+    for name in required_name_list:
         record = records_by_name[name]
         path, actual, issue = _record_integrity_issue(
             project_root,
@@ -1752,6 +2144,17 @@ def _validate_generated_base_maps(
                 raise ValueError(f"基础 map {name} 的几何与其他 map 不一致。")
             validated["geometry"] = geometry
         validated_files.append(validated)
+    for name in sorted(optional_names):
+        record = records_by_name[name]
+        path, actual, issue = _record_integrity_issue(
+            project_root,
+            record,
+            label=f"基础 maps 可选文件 {name}",
+            expected_parent=set_dir,
+        )
+        if issue or path is None or actual is None:
+            raise ValueError(issue or f"基础 maps 可选文件 {name} 不可用。")
+        validated_optional_files.append((name, path, actual))
     if reference_geometry is None or not _same_geometry(
         reference_geometry,
         _grid_geometry(grid),
@@ -1787,6 +2190,15 @@ def _validate_generated_base_maps(
                 name=name,
             )
         )
+    for name, path, actual in validated_optional_files:
+        snapshot = _audit_file_snapshot(project_root, path, name=name)
+        if (
+            snapshot["relative_path"] != actual["relative_path"]
+            or snapshot["size_bytes"] != actual["size_bytes"]
+            or snapshot["sha256"] != actual["sha256"]
+        ):
+            raise RuntimeError(f"基础 maps 可选文件 {name} 在审计冻结前发生变化。")
+        audit_files.append(snapshot)
     log_path = set_dir / "autogrid.glg"
     if "successful completion" not in log_path.read_text(
         encoding="utf-8",
@@ -1797,6 +2209,10 @@ def _validate_generated_base_maps(
         "base_manifest": base_manifest,
         "base_manifest_snapshot": base_snapshot,
         "grid": copy.deepcopy(grid),
+        "grid_coverage": copy.deepcopy(base_coverage),
+        "grid_coverage_sha256": str(
+            base_manifest.get("grid_coverage_sha256") or ""
+        ),
         "geometry": reference_geometry,
         "files": validated_files,
         "ligand_atom_types": copy.deepcopy(
@@ -2354,7 +2770,27 @@ def generate_hydrated_maps(
     with _exclusive_file_lock(maps_lock):
         try:
             existing_sets = _existing_hydrated_map_sets(project_root)
-        except (OSError, ValueError, PreparationPathError) as exc:
+            current_project, current_project_error = _load_project_model(
+                str(project_root)
+            )
+            if current_project_error or current_project is None:
+                raise RuntimeError(
+                    "恢复中断记录前无法重新读取 project.json。"
+                )
+            active_manifest_relative, _ = _maps_pointer_from_project(
+                current_project
+            )
+            _recover_incomplete_hydrated_map_sets(
+                project_root,
+                existing_sets,
+                active_manifest_relative=active_manifest_relative,
+            )
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            PreparationPathError,
+        ) as exc:
             return _structured_error(
                 "HYDRATED_MAPS_DIRECTORY_INVALID",
                 "水合 maps 记录目录不可用。",
@@ -2558,6 +2994,12 @@ def generate_hydrated_maps(
             }
             base_grid = bundle["grid"]
             manifest["grid"] = copy.deepcopy(base_grid)
+            manifest["grid_coverage"] = copy.deepcopy(
+                bundle["grid_coverage"]
+            )
+            manifest["grid_coverage_sha256"] = str(
+                bundle["grid_coverage_sha256"]
+            )
             manifest["resolved_options"] = {
                 "spacing": base_grid.get("spacing"),
                 "grid_points": copy.deepcopy(base_grid.get("grid_points") or {}),
@@ -2680,6 +3122,17 @@ def generate_hydrated_maps(
                 current_box, current_box_error = _box_snapshot(current_project)
                 if current_box_error or current_box != box_before:
                     raise RuntimeError("激活前 Box 已变化。")
+                active_coverage, active_coverage_issue = (
+                    _validate_hydrated_grid_coverage_contract(
+                        manifest,
+                        expected_box=current_box,
+                    )
+                )
+                if active_coverage_issue or active_coverage is None:
+                    raise RuntimeError(
+                        active_coverage_issue
+                        or "激活前无法复核请求 Box/实际网格覆盖记录。"
+                    )
                 if str(current_project.receptor.file or "") != receptor_relative:
                     raise RuntimeError("激活前刚性受体路径已变化。")
                 _, current_receptor = _stable_regular_project_file(
@@ -2819,6 +3272,9 @@ def generate_hydrated_maps(
                 hydrated_state["active_maps_manifest"] = {
                     "path": manifest_relative,
                     "sha256": manifest_sha256,
+                    "grid_coverage_sha256": manifest[
+                        "grid_coverage_sha256"
+                    ],
                 }
                 hydrated_state["updated_at"] = _now_iso()
                 current_project.preserved_data[PROJECT_STATE_KEY] = hydrated_state
@@ -2839,10 +3295,19 @@ def generate_hydrated_maps(
                 "active_maps_manifest": {
                     "path": manifest_relative,
                     "sha256": manifest_sha256,
+                    "grid_coverage_sha256": manifest[
+                        "grid_coverage_sha256"
+                    ],
                 },
                 "maps_prefix": manifest["maps"]["prefix"],
                 "map_files": manifest["maps"]["files"],
                 "water_map": manifest["maps"]["water_map"],
+                "grid_coverage": copy.deepcopy(
+                    manifest["grid_coverage"]
+                ),
+                "grid_coverage_sha256": manifest[
+                    "grid_coverage_sha256"
+                ],
                 "maps_ready": True,
                 "message": "水合 AD4 maps 已生成、校验并保存为独立记录。",
                 "error": None,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -434,6 +435,36 @@ class BackendReliabilityTests(unittest.TestCase):
                     process.stderr.close()
                 if process.returncode != 0:
                     self.fail(stderr_text)
+
+    @unittest.skipUnless(
+        sys.platform == "win32",
+        "Windows byte-lock retry semantics",
+    )
+    def test_windows_byte_lock_retries_until_long_holder_releases(self) -> None:
+        import msvcrt
+
+        attempts = 0
+
+        def locking(_fileno: int, mode: int, length: int) -> None:
+            nonlocal attempts
+            attempts += 1
+            self.assertEqual(mode, msvcrt.LK_NBLCK)
+            self.assertEqual(length, 1)
+            if attempts <= 12:
+                raise OSError(
+                    errno.EDEADLK,
+                    "Resource deadlock avoided",
+                )
+
+        with tempfile.TemporaryFile("w+b") as handle, patch(
+            "msvcrt.locking",
+            side_effect=locking,
+        ), patch("dockstart_core.project.time.sleep") as sleep:
+            project_module._acquire_windows_byte_lock(handle)
+
+        self.assertEqual(attempts, 13)
+        self.assertEqual(sleep.call_count, 12)
+        sleep.assert_called_with(0.05)
 
     def test_superseded_preparation_cannot_publish_candidate(self) -> None:
         started = threading.Event()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -11,8 +12,18 @@ from unittest.mock import patch
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+REPOSITORY_ROOT = BACKEND_ROOT.parent
+MMCIF_IDENTITY_FIXTURE = (
+    BACKEND_ROOT
+    / "tests"
+    / "fixtures"
+    / "scientific"
+    / "flexible_mmcif_identity"
+    / "minimal_identity.cif"
+)
 
 from dockstart_core.flexible_receptor import (  # noqa: E402
+    get_flexible_receptor_identity_context,
     get_flexible_receptor_status,
     prepare_flexible_receptor,
     set_receptor_docking_mode,
@@ -39,6 +50,90 @@ PDBQT_OUTPUT = (
     "ATOM      1  CA  ALA A  42       1.000   2.000   3.000"
     "  1.00 20.00     0.000 C\n"
 )
+
+
+def _partition_pdbqt_atom(
+    serial: int,
+    atom_name: str,
+    *,
+    residue_number: int = 42,
+    insertion_code: str = "",
+    residue_name: str = "ALA",
+    x: float = 1.0,
+    y: float = 2.0,
+    z: float = 3.0,
+) -> str:
+    return (
+        f"ATOM  {serial:5d} {atom_name:^4} {residue_name:>3} A"
+        f"{residue_number:4d}{insertion_code:1}   {x:8.3f}{y:8.3f}{z:8.3f}"
+        "  1.00 20.00     0.000 C\n"
+    )
+
+
+def _write_partition_triplet(
+    basename: Path,
+    *,
+    residue_number: int = 42,
+    insertion_code: str = "",
+    residue_name: str = "ALA",
+    missing_flex: bool = False,
+) -> None:
+    rigid_atom = _partition_pdbqt_atom(
+        1,
+        "N",
+        residue_number=residue_number,
+        insertion_code=insertion_code,
+        residue_name=residue_name,
+    )
+    flex_atom = _partition_pdbqt_atom(
+        2,
+        "CA",
+        residue_number=residue_number,
+        insertion_code=insertion_code,
+        residue_name=residue_name,
+    )
+    Path(str(basename) + "_rigid.pdbqt").write_text(rigid_atom, encoding="utf-8")
+    if not missing_flex:
+        Path(str(basename) + "_flex.pdbqt").write_text(flex_atom, encoding="utf-8")
+    receptor_json = {
+        "monomers": {
+            f"A:{residue_number}{insertion_code}": {
+                "molsetup": {
+                    "atoms": [
+                        {
+                            "index": 0,
+                            "pdbinfo": [
+                                "N",
+                                residue_name,
+                                residue_number,
+                                insertion_code,
+                                "A",
+                            ],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                        {
+                            "index": 1,
+                            "pdbinfo": [
+                                "CA",
+                                residue_name,
+                                residue_number,
+                                insertion_code,
+                                "A",
+                            ],
+                            "coord": [1.0, 2.0, 3.0],
+                            "is_ignore": False,
+                        },
+                    ]
+                },
+                "is_flexres_atom": [False, True],
+            }
+        }
+    }
+    Path(str(basename) + ".json").write_text(
+        json.dumps(receptor_json) + "\n",
+        encoding="utf-8",
+    )
 
 
 class FlexibleReceptorProjectTests(unittest.TestCase):
@@ -68,10 +163,7 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
     def _runner(*, missing_flex: bool = False, mutate: Path | None = None):
         def run(argv: list[str], **kwargs: object) -> SimpleNamespace:
             basename = Path(argv[argv.index("--output_basename") + 1])
-            Path(str(basename) + "_rigid.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
-            if not missing_flex:
-                Path(str(basename) + "_flex.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
-            Path(str(basename) + ".json").write_text("{}\n", encoding="utf-8")
+            _write_partition_triplet(basename, missing_flex=missing_flex)
             if mutate is not None:
                 mutate.write_text(_pdb_atom() + _pdb_atom(2), encoding="utf-8")
             return SimpleNamespace(returncode=0, stdout="prepared", stderr="")
@@ -273,13 +365,164 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
                 prepared["outputs"]["rigid_pdbqt"],
             )
 
-    def test_cif_is_explicitly_rejected_without_audited_bridge(self) -> None:
+    def test_invalid_cif_fails_closed_before_bridge_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project, _ = self._project(Path(temp_dir), suffix=".cif")
             result = validate_flexible_receptor_preparation(str(project), ["A:42"])
 
         self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "FLEX_RECEPTOR_CIF_BRIDGE_UNAVAILABLE")
+        self.assertEqual(result["error"]["code"], "MMCIF_ATOM_SITE_NOT_FOUND")
+
+    def test_mmcif_identity_selection_and_preparation_are_frozen_end_to_end(self) -> None:
+        assisted_python = REPOSITORY_ROOT / "resources" / "python" / "python.exe"
+        if not assisted_python.is_file():
+            self.skipTest("Assisted Python fixture runtime is unavailable")
+
+        python_tool = ToolCheckResult(
+            key="python",
+            name="Python",
+            status="ok",
+            path=str(assisted_python),
+            source="bundled",
+        )
+
+        captured_argv: list[str] = []
+
+        def runner(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            captured_argv[:] = argv
+            basename = Path(argv[argv.index("--output_basename") + 1])
+            _write_partition_triplet(
+                basename,
+                residue_number=10,
+                insertion_code="A",
+                residue_name="SER",
+            )
+            return SimpleNamespace(returncode=0, stdout="prepared", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project, raw = self._project(Path(temp_dir), suffix=".cif")
+            raw.write_bytes(MMCIF_IDENTITY_FIXTURE.read_bytes())
+            with patch(
+                "dockstart_core.flexible_receptor.get_resolved_python",
+                return_value=python_tool,
+            ):
+                context = get_flexible_receptor_identity_context(str(project))
+                validated = validate_flexible_receptor_preparation(
+                    str(project),
+                    ["A:10:A"],
+                    receptor_controls={
+                        "schema_version": 1,
+                        "allow_bad_res": False,
+                        "alternate_locations": {"A:10:A": "B"},
+                        "template_assignments": {},
+                        "deleted_residues": [],
+                    },
+                    expected_selection_context_sha256=str(
+                        context.get("selection_context_sha256") or ""
+                    ),
+                    require_selection_context=True,
+                )
+                prepared = prepare_flexible_receptor(
+                    str(project),
+                    ["A:10:A"],
+                    receptor_controls={
+                        "schema_version": 1,
+                        "allow_bad_res": False,
+                        "alternate_locations": {"A:10:A": "B"},
+                        "template_assignments": {},
+                        "deleted_residues": [],
+                    },
+                    expected_selection_context_sha256=str(
+                        context.get("selection_context_sha256") or ""
+                    ),
+                    runner=runner,
+                )
+
+            self.assertTrue(context["ok"], context)
+            self.assertEqual(context["source_format"], "mmcif")
+            self.assertRegex(context["identity_contract_sha256"], r"^[0-9a-f]{64}$")
+            self.assertTrue((project / context["bridge_file"]).is_file())
+            self.assertTrue(validated["ok"], validated)
+            self.assertEqual(
+                validated["selection_contract"]["selected_residues"][0][
+                    "selected_altloc"
+                ],
+                "B",
+            )
+            self.assertTrue(prepared["ok"], prepared)
+            self.assertIn("--wanted_altloc", captured_argv)
+            self.assertEqual(
+                captured_argv[captured_argv.index("--wanted_altloc") + 1],
+                "A:10A=B",
+            )
+
+            status = get_flexible_receptor_status(str(project))
+            frozen = status["flexible_receptor"]
+            self.assertEqual(frozen["source_format"], "mmcif")
+            self.assertEqual(frozen["resolved_altlocs"], {"A:10:A": "B"})
+            self.assertEqual(
+                frozen["receptor_controls"]["alternate_locations"],
+                {"A:10:A": "B"},
+            )
+            self.assertRegex(
+                frozen["receptor_controls_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
+            self.assertRegex(
+                frozen["atom_partition"]["partition_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
+            identity = frozen["identity"]
+            self.assertEqual(
+                identity["identity_contract_sha256"],
+                context["identity_contract_sha256"],
+            )
+            for key in (
+                "identity_contract_sha256",
+                "selection_sha256",
+                "coordinate_identity_sha256",
+                "preparation_controls_sha256",
+                "bridge_sha256",
+                "bridge_verification_sha256",
+            ):
+                self.assertRegex(identity[key], r"^[0-9a-f]{64}$")
+            controls_path = project / identity["preparation_controls_file"]
+            self.assertTrue(controls_path.is_file())
+            self.assertEqual(
+                identity["artifact_sha256"]["preparation_controls"],
+                hashlib.sha256(controls_path.read_bytes()).hexdigest(),
+            )
+
+            selection_path = project / identity["selection_contract_file"]
+            tampered_selection = json.loads(
+                selection_path.read_text(encoding="utf-8")
+            )
+            tampered_selection["selected_residues"][0]["selected_altloc"] = "A"
+            selection_path.write_text(
+                json.dumps(tampered_selection, ensure_ascii=False, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+            project_json = project / "project.json"
+            payload = json.loads(project_json.read_text(encoding="utf-8"))
+            payload["docking_protocol"]["flexible_receptor"]["identity"][
+                "artifact_sha256"
+            ]["selection_contract"] = hashlib.sha256(
+                selection_path.read_bytes()
+            ).hexdigest()
+            project_json.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            tampered_status = get_flexible_receptor_status(str(project))
+            self.assertFalse(tampered_status["flexible_ready"])
+            self.assertTrue(
+                any(
+                    "选择合同" in issue
+                    for issue in tampered_status["integrity"]["issues"]
+                )
+            )
 
     def test_bad_residues_require_strict_review_then_explicit_matching_confirmation(self) -> None:
         bad_residues = ["A:226", "A:229"]
@@ -292,9 +535,7 @@ class FlexibleReceptorProjectTests(unittest.TestCase):
             if "--allow_bad_res" not in argv:
                 return SimpleNamespace(returncode=1, stdout="", stderr=diagnostics)
             basename = Path(argv[argv.index("--output_basename") + 1])
-            Path(str(basename) + "_rigid.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
-            Path(str(basename) + "_flex.pdbqt").write_text(PDBQT_OUTPUT, encoding="utf-8")
-            Path(str(basename) + ".json").write_text("{}\n", encoding="utf-8")
+            _write_partition_triplet(basename)
             return SimpleNamespace(returncode=0, stdout="prepared", stderr=diagnostics)
 
         with tempfile.TemporaryDirectory() as temp_dir:

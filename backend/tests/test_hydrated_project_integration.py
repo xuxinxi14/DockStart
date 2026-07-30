@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sys
@@ -15,10 +16,18 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from adapters.vina_adapter import ManagedRunResult  # noqa: E402
 from dockstart_core import hydrated  # noqa: E402
+from dockstart_core.autogrid import (  # noqa: E402
+    compute_requested_box_grid_coverage,
+)
 from dockstart_core.hydrated_run import (  # noqa: E402
+    _vina_score_table_numeric_interval,
     build_hydrated_markdown_report,
+    get_hydrated_run_preflight,
     load_hydrated_results,
     prepare_hydrated_run,
+    vina_affinity_serialization_matches,
+    vina_rmsd_serialization_matches,
+    vina_score_table_token_is_canonical,
 )
 from dockstart_core.models import ToolCheckResult  # noqa: E402
 from dockstart_core.project import (  # noqa: E402
@@ -27,9 +36,11 @@ from dockstart_core.project import (  # noqa: E402
     HYDRATED_WATER_FREE_OUTPUT_NAME,
     HYDRATED_WATERS_MANIFEST_NAME,
     _metadata_protocol_id,
+    _hydrated_frozen_grid_coverage,
     _project_report_file,
     _project_scores_file,
     _run_report_filename,
+    analyze_vina_run_results,
     build_markdown_report,
     cancel_vina_run,
     create_project,
@@ -38,6 +49,7 @@ from dockstart_core.project import (  # noqa: E402
     import_receptor_pdbqt,
     recover_project_state,
     update_box_params,
+    update_vina_params,
 )
 from tests import test_hydrated_project_maps as maps_support  # noqa: E402
 
@@ -114,6 +126,20 @@ def _valid_hydrated_output() -> str:
     )
 
 
+def _single_hydrated_output(*, affinity: float = -8.0) -> str:
+    return (
+        "\n".join(
+            _pose(
+                1,
+                affinity,
+                water_serial=10,
+                water_coordinate=(2.0, 3.0, 4.0),
+            )
+        )
+        + "\n"
+    )
+
+
 def _invalid_hydrated_output() -> str:
     return (
         "\n".join(
@@ -129,13 +155,29 @@ def _invalid_hydrated_output() -> str:
     )
 
 
-def _vina_log() -> str:
+def _vina_log(
+    *,
+    verbosity: int = 1,
+    rows: tuple[tuple[int, float, float, float], ...] | None = None,
+) -> str:
+    effective_rows = rows or (
+        (1, -8.0, 0.0, 0.0),
+        (2, -7.5, 0.0, 0.0),
+    )
+    number_format = ".4f" if verbosity == 2 else ".4g"
     return (
         "mode | affinity | dist from best mode\n"
         "     | (kcal/mol) | rmsd l.b.| rmsd u.b.\n"
         "-----+------------+----------+----------\n"
-        "   1       -8.000      0.000      0.000\n"
-        "   2       -7.500      0.000      0.000\n"
+        + "".join(
+            (
+                f"{mode:4d} "
+                f"{format(affinity, number_format):>12} "
+                f"{format(rmsd_lb, number_format):>11} "
+                f"{format(rmsd_ub, number_format):>11}\n"
+            )
+            for mode, affinity, rmsd_lb, rmsd_ub in effective_rows
+        )
     )
 
 
@@ -157,6 +199,173 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         self.autogrid_file.write_bytes(b"autogrid-v1")
         self.vina_file.write_bytes(b"vina-v1.2.7")
         self.project_counter = 0
+
+    def test_affinity_serialization_models_vina_stream_context(self) -> None:
+        self.assertTrue(
+            vina_affinity_serialization_matches(
+                "-12.7",
+                -12.703,
+                verbosity=1,
+            )
+        )
+        self.assertFalse(
+            vina_affinity_serialization_matches(
+                "-8.049",
+                -8.0,
+                verbosity=1,
+            )
+        )
+        for raw_affinity in (-9.999, -9.996):
+            with self.subTest(raw_affinity=raw_affinity):
+                self.assertFalse(
+                    vina_affinity_serialization_matches(
+                        "-10",
+                        raw_affinity,
+                        verbosity=1,
+                    )
+                )
+        self.assertTrue(
+            vina_affinity_serialization_matches(
+                "-12.7030",
+                -12.703,
+                verbosity=2,
+            )
+        )
+        self.assertFalse(
+            vina_affinity_serialization_matches(
+                "-12.7000",
+                -12.705,
+                verbosity=2,
+            )
+        )
+
+    def test_rmsd_serialization_models_vina_stream_context(self) -> None:
+        self.assertTrue(
+            vina_rmsd_serialization_matches(
+                "12.35",
+                12.346,
+                verbosity=1,
+            )
+        )
+        self.assertFalse(
+            vina_rmsd_serialization_matches(
+                "12.34",
+                12.346,
+                verbosity=1,
+            )
+        )
+        self.assertTrue(
+            vina_rmsd_serialization_matches(
+                "12.3456",
+                12.346,
+                verbosity=2,
+            )
+        )
+        self.assertFalse(
+            vina_rmsd_serialization_matches(
+                "12.3500",
+                12.346,
+                verbosity=2,
+            )
+        )
+        self.assertFalse(
+            vina_rmsd_serialization_matches(
+                "10",
+                9.996,
+                verbosity=1,
+            )
+        )
+
+    def test_score_serialization_accepts_values_emitted_by_both_stream_states(
+        self,
+    ) -> None:
+        unrounded_values = (
+            -100.0004,
+            -10.0004,
+            -9.9994,
+            -1.2344,
+            -0.0004,
+            0.0,
+            0.0004,
+            1.2344,
+            9.9994,
+            10.0004,
+            12.3456,
+            99.9994,
+        )
+        for verbosity, log_format in ((1, ".4g"), (2, ".4f")):
+            for unrounded in unrounded_values:
+                with self.subTest(
+                    verbosity=verbosity,
+                    unrounded=unrounded,
+                ):
+                    pdbqt_value = float(format(unrounded, ".3f"))
+                    log_text = format(unrounded, log_format)
+                    self.assertTrue(
+                        vina_rmsd_serialization_matches(
+                            log_text,
+                            pdbqt_value,
+                            verbosity=verbosity,
+                        )
+                    )
+
+    def test_score_table_tokens_require_exact_vina_lexical_format(self) -> None:
+        accepted = (
+            (1, "-12.7"),
+            (1, "0"),
+            (1, "12.35"),
+            (2, "-12.7000"),
+            (2, "0.0000"),
+            (2, "12.3500"),
+        )
+        rejected = (
+            (1, "-12.7000"),
+            (1, "+12.35"),
+            (1, "0012.35"),
+            (1, "0.000"),
+            (2, "-12.7"),
+            (2, "12.35"),
+            (2, "0"),
+        )
+        for verbosity, token in accepted:
+            with self.subTest(kind="accepted", verbosity=verbosity, token=token):
+                self.assertTrue(
+                    vina_score_table_token_is_canonical(
+                        token,
+                        verbosity=verbosity,
+                    )
+                )
+        for verbosity, token in rejected:
+            with self.subTest(kind="rejected", verbosity=verbosity, token=token):
+                self.assertFalse(
+                    vina_score_table_token_is_canonical(
+                        token,
+                        verbosity=verbosity,
+                    )
+                )
+
+    def test_significant_digit_intervals_are_directional_at_powers_of_ten(
+        self,
+    ) -> None:
+        cases = (
+            ("10", (9.9995, 10.005)),
+            ("-10", (-10.005, -9.9995)),
+            ("100", (99.995, 100.05)),
+            ("-100", (-100.05, -99.995)),
+            ("0.0001", (0.000099995, 0.00010005)),
+            ("-0.0001", (-0.00010005, -0.000099995)),
+            ("0", (0.0, 0.0)),
+        )
+        for token, expected in cases:
+            with self.subTest(token=token):
+                actual = _vina_score_table_numeric_interval(
+                    token,
+                    verbosity=1,
+                )
+                self.assertIsNotNone(actual)
+                assert actual is not None
+                self.assertAlmostEqual(actual[0], expected[0], places=12)
+                self.assertAlmostEqual(actual[1], expected[1], places=12)
 
     def _metadata(self) -> dict[str, object]:
         return {
@@ -204,20 +413,26 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
             source="configured",
         )
 
-    def _vina_detection(self) -> ToolCheckResult:
+    def _vina_detection(
+        self,
+        *,
+        version: str = "1.2.7",
+        maps_supported: bool = True,
+    ) -> ToolCheckResult:
         def feature(option: str) -> dict[str, object]:
+            supported = maps_supported if option == "maps" else True
             return {
                 "option": f"--{option}",
-                "status": "supported",
-                "supported": True,
-                "advertised": True,
+                "status": "supported" if supported else "unsupported",
+                "supported": supported,
+                "advertised": supported,
             }
 
         return ToolCheckResult(
             key="vina",
             name="AutoDock Vina",
             status="ok",
-            version="1.2.7",
+            version=version,
             path=str(self.vina_file),
             message="mock Vina",
             source="configured",
@@ -225,7 +440,7 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
                 "status": "ok",
                 "source": "help_advanced",
                 "checked": True,
-                "version": "1.2.7",
+                "version": version,
                 "features": {
                     "maps": feature("maps"),
                     "write_maps": feature("write_maps"),
@@ -259,6 +474,79 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
             json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+    def _rewrite_run_artifact_and_sync_metadata(
+        self,
+        project_dir: Path,
+        run_id: str,
+        artifact_key: str,
+        text: str,
+    ) -> None:
+        metadata = self._metadata_data(project_dir, run_id)
+        artifact = metadata["artifacts"][artifact_key]
+        artifact_path = project_dir / str(artifact["relative_path"])
+        artifact_path.write_text(text, encoding="utf-8")
+        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        artifact["size_bytes"] = artifact_path.stat().st_size
+        artifact["sha256"] = digest
+        metadata["artifact_sha256"][artifact_key] = digest
+        if isinstance(metadata.get("output_sha256"), dict):
+            metadata["output_sha256"][artifact_key] = digest
+        self._write_metadata(project_dir, run_id, metadata)
+
+    def _forge_frozen_grid_coverage(
+        self,
+        project_dir: Path,
+        run_id: str,
+    ) -> None:
+        manifest_path = (
+            project_dir
+            / "runs"
+            / run_id
+            / "inputs"
+            / "maps"
+            / "manifest.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["grid_coverage"]["axis_coverage"]["x"][
+            "minimum_margin_angstrom"
+        ] += 0.25
+        canonical = json.dumps(
+            manifest["grid_coverage"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        coverage_sha256 = hashlib.sha256(canonical).hexdigest()
+        manifest["grid_coverage_sha256"] = coverage_sha256
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest_sha256 = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        manifest_size = manifest_path.stat().st_size
+
+        metadata = self._metadata_data(project_dir, run_id)
+        for record in (
+            metadata["snapshots"]["ad4_maps"]["manifest"],
+            metadata["artifacts"]["hydrated_maps_manifest"],
+        ):
+            record["sha256"] = manifest_sha256
+            record["size_bytes"] = manifest_size
+        metadata["input_sha256"]["maps_manifest"] = manifest_sha256
+        for section in (
+            metadata["snapshots"]["ad4_maps"],
+            metadata["ad4_maps"],
+            metadata["hydrated"],
+        ):
+            section["grid_coverage"] = json.loads(
+                json.dumps(manifest["grid_coverage"])
+            )
+            section["grid_coverage_sha256"] = coverage_sha256
+        self._write_metadata(project_dir, run_id, metadata)
 
     def _autogrid_runner(
         self,
@@ -326,6 +614,10 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
                 ),
                 encoding="ascii",
             )
+        (root / "receptor.maps.xyz").write_text(
+            "0.0 0.0 0.0\n",
+            encoding="ascii",
+        )
         (root / log_file).write_text(
             "Successful Completion\n",
             encoding="utf-8",
@@ -416,7 +708,7 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
                 str(project_dir),
                 {
                     "spacing": 1.0,
-                    "grid_points": {"x": 2, "y": 2, "z": 2},
+                    "grid_points": {"x": 8, "y": 8, "z": 8},
                 },
                 runner=self._autogrid_runner,
             )
@@ -443,7 +735,9 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         project_dir: Path,
         run_id: str,
         *,
+        log_text: str | None = None,
         output_text: str | None = None,
+        output_bytes: bytes | None = None,
         started: Mock | None = None,
     ) -> dict[str, object]:
         def fake_run(
@@ -456,17 +750,28 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         ) -> ManagedRunResult:
             if started is not None:
                 started(command)
-            log_text = _vina_log()
-            Path(stdout_path).write_text(log_text, encoding="utf-8")
-            Path(stderr_path).write_text("", encoding="utf-8")
-            Path(log_path).write_text(log_text, encoding="utf-8")
-            output_path = Path(cwd) / command[command.index("--out") + 1]
-            output_path.write_text(
-                output_text
-                if output_text is not None
-                else _valid_hydrated_output(),
+            effective_log_text = (
+                log_text if log_text is not None else _vina_log()
+            )
+            Path(stdout_path).write_text(
+                effective_log_text,
                 encoding="utf-8",
             )
+            Path(stderr_path).write_text("", encoding="utf-8")
+            Path(log_path).write_text(
+                effective_log_text,
+                encoding="utf-8",
+            )
+            output_path = Path(cwd) / command[command.index("--out") + 1]
+            if output_bytes is not None:
+                output_path.write_bytes(output_bytes)
+            else:
+                output_path.write_text(
+                    output_text
+                    if output_text is not None
+                    else _valid_hydrated_output(),
+                    encoding="utf-8",
+                )
             return ManagedRunResult(pid=4242, exit_code=0)
 
         with (
@@ -498,6 +803,203 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         self.assertEqual(
             _run_report_filename(metadata),
             "hydrated_docking_report.md",
+        )
+
+    def test_frozen_grid_accepts_six_decimal_actual_size(self) -> None:
+        box = {
+            "center_x": 1.0,
+            "center_y": 2.0,
+            "center_z": 3.0,
+            "size_x": 7.999999,
+            "size_y": 7.999999,
+            "size_z": 7.999999,
+        }
+        spacing = 0.3333333
+        points = [24, 24, 24]
+        computed = compute_requested_box_grid_coverage(
+            box,
+            points,
+            spacing,
+        )
+        self.assertTrue(computed["ok"], computed)
+        manifest = {
+            "box": {
+                "center": {"x": 1.0, "y": 2.0, "z": 3.0},
+                "size": {
+                    "x": 7.999999,
+                    "y": 7.999999,
+                    "z": 7.999999,
+                },
+            },
+            "grid": {
+                "center": {"x": 1.0, "y": 2.0, "z": 3.0},
+                "requested_box": {
+                    "center": {"x": 1.0, "y": 2.0, "z": 3.0},
+                    "size": {
+                        "x": 7.999999,
+                        "y": 7.999999,
+                        "z": 7.999999,
+                    },
+                },
+                "spacing": spacing,
+                "grid_points": {"x": 24, "y": 24, "z": 24},
+                "actual_size": {
+                    "x": 7.999999,
+                    "y": 7.999999,
+                    "z": 7.999999,
+                },
+            },
+            "grid_coverage": computed["coverage"],
+            "grid_coverage_sha256": computed["coverage_sha256"],
+        }
+
+        verified, issue = _hydrated_frozen_grid_coverage(
+            manifest,
+            expected_box=box,
+            expected_grid=manifest["grid"],
+        )
+
+        self.assertEqual(issue, "")
+        self.assertEqual(verified, computed["coverage"])
+
+        outside_tolerance = json.loads(json.dumps(manifest))
+        outside_tolerance["grid"]["actual_size"]["x"] += 0.000002
+        _verified, issue = _hydrated_frozen_grid_coverage(
+            outside_tolerance,
+            expected_box=box,
+            expected_grid=outside_tolerance["grid"],
+        )
+        self.assertIn("实际网格尺寸", issue)
+
+    def test_preflight_rejects_old_vina_and_missing_maps_capability(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        cases = (
+            (
+                self._vina_detection(version="1.1.2"),
+                "HYDRATED_VINA_VERSION_UNSUPPORTED",
+            ),
+            (
+                self._vina_detection(maps_supported=False),
+                "HYDRATED_VINA_MAPS_CAPABILITY_MISSING",
+            ),
+        )
+
+        for detection, expected_code in cases:
+            with self.subTest(expected_code=expected_code), patch(
+                "dockstart_core.hydrated_run.vina_adapter.detect",
+                return_value=detection,
+            ):
+                preflight = get_hydrated_run_preflight(str(project_dir))
+
+            self.assertFalse(preflight["ok"], preflight)
+            self.assertEqual(preflight["error"]["code"], expected_code)
+
+    def test_active_hydrated_maps_version_gate_reaches_status_and_run(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        project_payload = self._project_data(project_dir)
+        pointer = project_payload["hydrated_docking"]["active_maps_manifest"]
+        manifest_path = project_dir / pointer["path"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["autogrid"]["version"] = "4.2.5"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        pointer["sha256"] = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        (project_dir / "project.json").write_text(
+            json.dumps(project_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        status = hydrated.get_status(str(project_dir))
+        self.assertFalse(status["maps_ready"], status)
+        self.assertIn(
+            "AutoGrid 4.2.6+",
+            "；".join(status["maps_issues"]),
+        )
+        with patch(
+            "dockstart_core.hydrated_run.vina_adapter.detect",
+            return_value=self._vina_detection(),
+        ):
+            preflight = get_hydrated_run_preflight(str(project_dir))
+        self.assertFalse(preflight["ok"], preflight)
+        self.assertEqual(
+            preflight["error"]["code"],
+            "HYDRATED_AUTOGRID_VERSION_UNSUPPORTED",
+        )
+
+    def test_historical_atom_type_case_is_canonicalized_through_execution(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        project_payload = self._project_data(project_dir)
+        pointer = project_payload["hydrated_docking"]["active_maps_manifest"]
+        manifest_path = project_dir / pointer["path"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        maps = manifest["maps"]
+        maps["ligand_atom_types"] = [
+            str(item).lower() for item in maps["ligand_atom_types"]
+        ]
+        maps["autogrid_ligand_atom_types"] = [
+            str(item).lower()
+            for item in maps["autogrid_ligand_atom_types"]
+        ]
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        pointer["sha256"] = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        (project_dir / "project.json").write_text(
+            json.dumps(project_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        status = hydrated.get_status(str(project_dir))
+        self.assertTrue(status["maps_ready"], status)
+        prepared = self._prepare_run(project_dir)
+        executed = self._execute(
+            project_dir,
+            str(prepared["run_id"]),
+        )
+
+        self.assertTrue(executed["ok"], executed)
+        self.assertEqual(executed["metadata"]["status"], "finished")
+
+    def test_canonical_atom_type_duplicates_in_manifest_fail_closed(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        project_payload = self._project_data(project_dir)
+        pointer = project_payload["hydrated_docking"]["active_maps_manifest"]
+        manifest_path = project_dir / pointer["path"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["maps"]["ligand_atom_types"].append("c")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        pointer["sha256"] = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        (project_dir / "project.json").write_text(
+            json.dumps(project_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        status = hydrated.get_status(str(project_dir))
+
+        self.assertFalse(status["maps_ready"], status)
+        self.assertIn(
+            "原子类型",
+            "；".join(status["maps_issues"]),
         )
 
     def test_prepare_freezes_active_hydrated_ligand_and_final_maps(
@@ -557,6 +1059,15 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
             metadata["hydrated"]["maps_manifest_snapshot"],
             f"runs/{run_id}/inputs/maps/manifest.json",
         )
+        self.assertTrue(
+            metadata["hydrated"]["grid_coverage"][
+                "covers_requested_box"
+            ]
+        )
+        self.assertEqual(
+            metadata["hydrated"]["grid_coverage_sha256"],
+            metadata["ad4_maps"]["grid_coverage_sha256"],
+        )
 
     def test_execute_generates_raw_retained_water_free_and_manifest(
         self,
@@ -606,6 +1117,59 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
             (run_root / HYDRATED_WATER_FREE_OUTPUT_NAME).read_text(
                 encoding="utf-8"
             ),
+        )
+
+    def test_hydrated_postprocess_uses_normalized_output_and_keeps_vina_bytes(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        source = _valid_hydrated_output().encode("utf-8")
+        padded = source.replace(
+            b"TORSDOF 1\nENDMDL",
+            b"TORSDOF 1\r\n" + (b"\x00" * 47) + b"\r\nENDMDL",
+        )
+        self.assertEqual(padded.count(b"\x00"), 94)
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            output_bytes=padded,
+        )
+
+        self.assertTrue(executed["ok"], executed)
+        run_root = project_dir / "runs" / run_id
+        self.assertEqual(
+            (run_root / "out.vina_raw.pdbqt").read_bytes(),
+            padded,
+        )
+        self.assertNotIn(b"\x00", (run_root / "out.pdbqt").read_bytes())
+        self.assertTrue(
+            (run_root / HYDRATED_RETAINED_OUTPUT_NAME).is_file()
+        )
+        normalization = executed["metadata"]["output_normalization"]
+        self.assertEqual(normalization["status"], "normalized")
+        self.assertEqual(normalization["nul_bytes_removed"], 94)
+        self.assertEqual(normalization["recognized_padding_blocks"], 2)
+        self.assertEqual(
+            executed["metadata"]["hydrated_postprocess"]["status"],
+            "finished",
+        )
+        report = build_hydrated_markdown_report(str(project_dir), run_id)
+        self.assertTrue(report["ok"], report)
+        self.assertIn("out.vina_raw.pdbqt", report["report_text"])
+        self.assertIn(
+            normalization["source_sha256"],
+            report["report_text"],
+        )
+        self.assertIn(
+            normalization["normalized_sha256"],
+            report["report_text"],
+        )
+        self.assertEqual(
+            report["report_text"].count("输出标准化"),
+            1,
         )
 
     def test_postprocess_failure_is_terminal_and_keeps_raw_output(
@@ -697,6 +1261,55 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
                         "RUN_SNAPSHOT_HASH_MISMATCH",
                     },
                 )
+
+    def test_forged_frozen_grid_coverage_blocks_execution_before_vina(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        self._forge_frozen_grid_coverage(project_dir, run_id)
+        started = Mock()
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            started=started,
+        )
+
+        self.assertFalse(executed["ok"], executed)
+        self.assertEqual(
+            executed["error"]["code"],
+            "RUN_HYDRATED_GRID_COVERAGE_INVALID",
+        )
+        started.assert_not_called()
+
+    def test_forged_frozen_grid_coverage_blocks_results_and_report(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        executed = self._execute(project_dir, run_id)
+        self.assertTrue(executed["ok"], executed)
+        self._forge_frozen_grid_coverage(project_dir, run_id)
+
+        results = load_hydrated_results(str(project_dir), run_id)
+        report = build_hydrated_markdown_report(
+            str(project_dir),
+            run_id,
+        )
+
+        self.assertFalse(results["ok"], results)
+        self.assertEqual(
+            results["error"]["code"],
+            "RUN_HYDRATED_POST_GRID_COVERAGE_INVALID",
+        )
+        self.assertFalse(report["ok"], report)
+        self.assertEqual(
+            report["error"]["code"],
+            "RUN_HYDRATED_POST_GRID_COVERAGE_INVALID",
+        )
 
     def test_ligand_manifest_tampering_during_or_after_run_is_rejected(
         self,
@@ -859,6 +1472,11 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         )
 
         self.assertTrue(report["ok"], report)
+        self.assertIn(
+            "冻结 Box 与实际网格覆盖",
+            report["report_text"],
+        )
+        self.assertIn("闭区间覆盖复核：通过", report["report_text"])
         self.assertIn("Raw AD4 affinity", report["report_text"])
         self.assertIn("处理后评分未计算", report["report_text"])
         self.assertIn("| 1 | -8.0 | 1 | 0 | 0 |", report["report_text"])
@@ -867,6 +1485,563 @@ class HydratedProjectIntegrationTests(unittest.TestCase):
         self.assertEqual(
             generic_report["report_text"],
             report["report_text"],
+        )
+
+    def test_results_accept_energy_range_output_prefix_and_keep_full_log_csv(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        updated = update_vina_params(
+            str(project_dir),
+            {"energy_range": 0.01},
+        )
+        self.assertTrue(updated["ok"], updated)
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            rows=(
+                (1, -10.87, 0.0, 0.0),
+                (2, -10.8, 0.5, 0.8),
+            )
+        )
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+            output_text=_single_hydrated_output(affinity=-10.869),
+        )
+        self.assertTrue(executed["ok"], executed)
+
+        before_analysis = load_hydrated_results(
+            str(project_dir),
+            run_id,
+        )
+        self.assertTrue(before_analysis["ok"], before_analysis)
+        self.assertEqual(
+            [item["mode"] for item in before_analysis["scores"]],
+            [1],
+        )
+        self.assertEqual(
+            before_analysis["provenance"]["result_table_validation"][
+                "status"
+            ],
+            "proven_truncated",
+        )
+
+        analyzed = analyze_vina_run_results(str(project_dir), run_id)
+        self.assertTrue(analyzed["ok"], analyzed)
+        self.assertEqual(
+            [item["mode"] for item in analyzed["scores"]],
+            [1],
+        )
+        csv_lines = (
+            project_dir / "runs" / run_id / "scores.csv"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(csv_lines), 3)
+        self.assertTrue(csv_lines[1].startswith("1,"))
+        self.assertTrue(csv_lines[2].startswith("2,"))
+
+        after_analysis = load_hydrated_results(str(project_dir), run_id)
+        self.assertTrue(after_analysis["ok"], after_analysis)
+        self.assertEqual(
+            [item["mode"] for item in after_analysis["scores"]],
+            [1],
+        )
+        self.assertEqual(
+            after_analysis["score_source"],
+            "verified_scores_csv",
+        )
+
+    def test_results_reject_impossible_power_of_ten_energy_truncation(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        updated = update_vina_params(
+            str(project_dir),
+            {"energy_range": 0.003},
+        )
+        self.assertTrue(updated["ok"], updated)
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=_vina_log(
+                rows=(
+                    (1, -10.0, 0.0, 0.0),
+                    (2, -10.0, 1.0, 2.0),
+                )
+            ),
+            output_text=_single_hydrated_output(affinity=-10.0),
+        )
+        self.assertTrue(executed["ok"], executed)
+
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertFalse(results["ok"], results)
+        self.assertEqual(
+            results["error"]["code"],
+            "HYDRATED_OUTPUT_TRUNCATION_INVALID",
+        )
+
+    def test_unrecorded_scores_csv_cannot_override_frozen_hydrated_log(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        executed = self._execute(project_dir, run_id)
+        self.assertTrue(executed["ok"], executed)
+        unrecorded_scores = project_dir / "runs" / run_id / "scores.csv"
+        unrecorded_scores.write_text(
+            (
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n"
+                "2,-7.5,0.0,0.0\n"
+                "1,-8.0,0.0,0.0\n"
+            ),
+            encoding="utf-8",
+        )
+
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertTrue(results["ok"], results)
+        self.assertEqual(results["score_source"], "verified_frozen_log")
+        self.assertEqual(
+            [item["mode"] for item in results["scores"]],
+            [1, 2],
+        )
+
+    def test_recorded_scores_csv_must_match_full_log_order(self) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        executed = self._execute(project_dir, run_id)
+        self.assertTrue(executed["ok"], executed)
+        analyzed = analyze_vina_run_results(str(project_dir), run_id)
+        self.assertTrue(analyzed["ok"], analyzed)
+        self._rewrite_run_artifact_and_sync_metadata(
+            project_dir,
+            run_id,
+            "scores",
+            (
+                "mode,affinity_kcal_mol,rmsd_lb,rmsd_ub\n"
+                "2,-7.5,0.0,0.0\n"
+                "1,-8.0,0.0,0.0\n"
+            ),
+        )
+
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertFalse(results["ok"], results)
+        self.assertEqual(
+            results["error"]["code"],
+            "HYDRATED_SCORE_MODE_BINDING_MISMATCH",
+        )
+
+    def test_results_reject_impossible_vina_score_table_semantics(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "mode1_nonzero_rmsd",
+                ((1, -8.0, 0.1, 0.2), (2, -7.5, 0.2, 0.3)),
+                {},
+                "HYDRATED_LOG_SCORE_SEMANTICS_INVALID",
+            ),
+            (
+                "negative_rmsd",
+                ((1, -8.0, 0.0, 0.0), (2, -7.5, -0.1, 0.3)),
+                {},
+                "HYDRATED_LOG_SCORE_SEMANTICS_INVALID",
+            ),
+            (
+                "lower_bound_above_upper",
+                ((1, -8.0, 0.0, 0.0), (2, -7.5, 0.4, 0.3)),
+                {},
+                "HYDRATED_LOG_SCORE_SEMANTICS_INVALID",
+            ),
+            (
+                "affinity_order",
+                ((1, -8.0, 0.0, 0.0), (2, -8.5, 0.2, 0.3)),
+                {},
+                "HYDRATED_LOG_SCORE_SEMANTICS_INVALID",
+            ),
+            (
+                "more_than_num_modes",
+                ((1, -8.0, 0.0, 0.0), (2, -7.5, 0.2, 0.3)),
+                {"num_modes": 1},
+                "HYDRATED_LOG_MODE_SEQUENCE_INVALID",
+            ),
+        )
+        for name, rows, vina_updates, expected_code in cases:
+            with self.subTest(name=name):
+                project_dir = self._create_ready_project()
+                if vina_updates:
+                    updated = update_vina_params(
+                        str(project_dir),
+                        vina_updates,
+                    )
+                    self.assertTrue(updated["ok"], updated)
+                prepared = self._prepare_run(project_dir)
+                run_id = str(prepared["run_id"])
+                executed = self._execute(
+                    project_dir,
+                    run_id,
+                    log_text=_vina_log(rows=rows),
+                )
+                self.assertTrue(executed["ok"], executed)
+
+                results = load_hydrated_results(str(project_dir), run_id)
+
+                self.assertFalse(results["ok"], results)
+                self.assertEqual(results["error"]["code"], expected_code)
+
+    def test_results_reject_impossible_pdbqt_result_semantics(self) -> None:
+        cases = (
+            (
+                "affinity_order",
+                _vina_log(
+                    rows=(
+                        (1, -10.0, 0.0, 0.0),
+                        (2, -10.0, 1.0, 2.0),
+                    )
+                ),
+                _valid_hydrated_output()
+                .replace(
+                    "REMARK VINA RESULT: -8.000 0.000 0.000",
+                    "REMARK VINA RESULT: -10.000 0.000 0.000",
+                    1,
+                )
+                .replace(
+                    "REMARK VINA RESULT: -7.500 0.000 0.000",
+                    "REMARK VINA RESULT: -10.004 1.000 2.000",
+                    1,
+                ),
+            ),
+            (
+                "rmsd_bounds",
+                _vina_log(
+                    rows=(
+                        (1, -8.0, 0.0, 0.0),
+                        (2, -7.5, 10.0, 10.0),
+                    )
+                ),
+                _valid_hydrated_output().replace(
+                    "REMARK VINA RESULT: -7.500 0.000 0.000",
+                    "REMARK VINA RESULT: -7.500 10.004 10.000",
+                    1,
+                ),
+            ),
+        )
+        for name, log_text, output_text in cases:
+            with self.subTest(name=name):
+                project_dir = self._create_ready_project()
+                prepared = self._prepare_run(project_dir)
+                run_id = str(prepared["run_id"])
+                executed = self._execute(
+                    project_dir,
+                    run_id,
+                    log_text=log_text,
+                    output_text=output_text,
+                )
+                self.assertTrue(executed["ok"], executed)
+
+                results = load_hydrated_results(str(project_dir), run_id)
+
+                self.assertFalse(results["ok"], results)
+                self.assertEqual(
+                    results["error"]["code"],
+                    "HYDRATED_PDBQT_RESULT_SEMANTICS_INVALID",
+                )
+
+    def test_results_accept_log_rounding_and_keep_raw_pdbqt_affinity(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            rows=(
+                (1, -12.7, 0.0, 0.0),
+                (2, -12.0, 0.0, 0.0),
+            )
+        )
+        output_text = (
+            _valid_hydrated_output()
+            .replace(
+                "REMARK VINA RESULT: -8.000",
+                "REMARK VINA RESULT: -12.703",
+                1,
+            )
+            .replace(
+                "REMARK VINA RESULT: -7.500",
+                "REMARK VINA RESULT: -12.000",
+                1,
+            )
+        )
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+            output_text=output_text,
+        )
+        self.assertTrue(executed["ok"], executed)
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertTrue(results["ok"], results)
+        self.assertEqual(
+            results["modes"][0]["raw_affinity_kcal_mol"],
+            -12.703,
+        )
+        waters_manifest = json.loads(
+            (
+                project_dir
+                / "runs"
+                / run_id
+                / HYDRATED_WATERS_MANIFEST_NAME
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            waters_manifest["poses"][0]["raw_affinity"],
+            -12.703,
+        )
+
+    def test_results_accept_verbosity_one_rmsd_significant_digit_rounding(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            rows=(
+                (1, -8.0, 0.0, 0.0),
+                (2, -7.5, 12.35, 13.67),
+            )
+        )
+        output_text = _valid_hydrated_output().replace(
+            "REMARK VINA RESULT: -7.500 0.000 0.000",
+            "REMARK VINA RESULT: -7.500 12.346 13.666",
+            1,
+        )
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+            output_text=output_text,
+        )
+        self.assertTrue(executed["ok"], executed)
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertTrue(results["ok"], results)
+        self.assertEqual(results["modes"][1]["rmsd_lb"], 12.35)
+        self.assertEqual(results["modes"][1]["rmsd_ub"], 13.67)
+
+    def test_results_accept_verbosity_two_rmsd_fixed_decimal_rounding(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        updated = update_vina_params(
+            str(project_dir),
+            {"verbosity": 2},
+        )
+        self.assertTrue(updated["ok"], updated)
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            verbosity=2,
+            rows=(
+                (1, -8.0, 0.0, 0.0),
+                (2, -7.5, 12.3456, 13.6656),
+            )
+        )
+        output_text = _valid_hydrated_output().replace(
+            "REMARK VINA RESULT: -7.500 0.000 0.000",
+            "REMARK VINA RESULT: -7.500 12.346 13.666",
+            1,
+        )
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+            output_text=output_text,
+        )
+        self.assertTrue(executed["ok"], executed)
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertTrue(results["ok"], results)
+        self.assertEqual(results["modes"][1]["rmsd_lb"], 12.3456)
+        self.assertEqual(results["modes"][1]["rmsd_ub"], 13.6656)
+
+    def test_results_reject_log_only_tamper_even_when_serialization_is_reachable(
+        self,
+    ) -> None:
+        cases = (
+            {
+                "verbosity": 1,
+                "original_row": (
+                    "   2         -7.5       0.123       0.123"
+                ),
+                "tampered_row": (
+                    "   2         -7.5      0.1231       0.123"
+                ),
+                "output_result": (
+                    "REMARK VINA RESULT: -7.500 0.123 0.123"
+                ),
+            },
+            {
+                "verbosity": 2,
+                "original_row": (
+                    "   2      -7.5000     12.3456     13.6656"
+                ),
+                "tampered_row": (
+                    "   2      -7.5000     12.3457     13.6656"
+                ),
+                "output_result": (
+                    "REMARK VINA RESULT: -7.500 12.346 13.666"
+                ),
+            },
+        )
+        for case in cases:
+            with self.subTest(verbosity=case["verbosity"]):
+                project_dir = self._create_ready_project()
+                if case["verbosity"] == 2:
+                    updated = update_vina_params(
+                        str(project_dir),
+                        {"verbosity": 2},
+                    )
+                    self.assertTrue(updated["ok"], updated)
+                prepared = self._prepare_run(project_dir)
+                run_id = str(prepared["run_id"])
+                original_log = _vina_log(
+                    verbosity=int(case["verbosity"]),
+                    rows=(
+                        (1, -8.0, 0.0, 0.0),
+                        (
+                            2,
+                            -7.5,
+                            (
+                                0.123
+                                if case["verbosity"] == 1
+                                else 12.3456
+                            ),
+                            (
+                                0.123
+                                if case["verbosity"] == 1
+                                else 13.6656
+                            ),
+                        ),
+                    ),
+                )
+                self.assertIn(str(case["original_row"]), original_log)
+                output_text = _valid_hydrated_output().replace(
+                    "REMARK VINA RESULT: -7.500 0.000 0.000",
+                    str(case["output_result"]),
+                    1,
+                )
+                executed = self._execute(
+                    project_dir,
+                    run_id,
+                    log_text=original_log,
+                    output_text=output_text,
+                )
+                self.assertTrue(executed["ok"], executed)
+                before = load_hydrated_results(str(project_dir), run_id)
+                self.assertTrue(before["ok"], before)
+
+                tampered_log = original_log.replace(
+                    str(case["original_row"]),
+                    str(case["tampered_row"]),
+                    1,
+                )
+                self._rewrite_run_artifact_and_sync_metadata(
+                    project_dir,
+                    run_id,
+                    "log",
+                    tampered_log,
+                )
+                after = load_hydrated_results(str(project_dir), run_id)
+
+                self.assertFalse(after["ok"], after)
+                self.assertEqual(
+                    after["error"]["code"],
+                    "HYDRATED_PROVENANCE_VINA_STDOUT_LOG_MISMATCH",
+                )
+
+    def test_results_reject_affinity_not_matching_vina_significant_digits(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            rows=(
+                (1, -8.049, 0.0, 0.0),
+                (2, -7.5, 0.0, 0.0),
+            )
+        )
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+        )
+        self.assertTrue(executed["ok"], executed)
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertFalse(results["ok"], results)
+        self.assertEqual(
+            results["error"]["code"],
+            "HYDRATED_SCORE_RECORD_MISMATCH",
+        )
+
+    def test_results_use_fixed_four_decimals_for_verbosity_two(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        updated = update_vina_params(
+            str(project_dir),
+            {"verbosity": 2},
+        )
+        self.assertTrue(updated["ok"], updated)
+        prepared = self._prepare_run(project_dir)
+        run_id = str(prepared["run_id"])
+        log_text = _vina_log(
+            verbosity=2,
+            rows=(
+                (1, -12.7, 0.0, 0.0),
+                (2, -12.0, 0.0, 0.0),
+            ),
+        )
+        output_text = (
+            _valid_hydrated_output()
+            .replace(
+                "REMARK VINA RESULT: -8.000",
+                "REMARK VINA RESULT: -12.705",
+                1,
+            )
+            .replace(
+                "REMARK VINA RESULT: -7.500",
+                "REMARK VINA RESULT: -12.000",
+                1,
+            )
+        )
+
+        executed = self._execute(
+            project_dir,
+            run_id,
+            log_text=log_text,
+            output_text=output_text,
+        )
+        self.assertTrue(executed["ok"], executed)
+        results = load_hydrated_results(str(project_dir), run_id)
+
+        self.assertFalse(results["ok"], results)
+        self.assertEqual(
+            results["error"]["code"],
+            "HYDRATED_SCORE_RECORD_MISMATCH",
         )
 
 

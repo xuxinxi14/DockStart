@@ -365,6 +365,72 @@ print(json.dumps(payload, ensure_ascii=True))
 detect_capabilities = detect_meeko_capabilities
 
 
+def receptor_cif_bridge_only_script_text() -> str:
+    """Return a Gemmi-only mmCIF -> PDB bridge helper.
+
+    This helper deliberately stops before importing Meeko.  The caller must
+    first build an identity contract from the source mmCIF and then verify the
+    generated PDB against that contract.  Keeping bridge generation separate
+    ensures Meeko never receives an unverified conversion and never falls back
+    to its optional ProDy reader.
+    """
+
+    return r'''
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+def fail(message: str, detail: str = "") -> int:
+    print(message, file=sys.stderr)
+    if detail:
+        print(detail, file=sys.stderr)
+    return 2
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        return fail("mmCIF 桥接需要输入 mmCIF 与输出 PDB 两个路径。")
+    source = Path(sys.argv[1])
+    destination = Path(sys.argv[2])
+    if not source.is_file() or source.stat().st_size <= 0:
+        return fail("mmCIF 受体文件不存在或为空。", str(source))
+    if destination.exists():
+        return fail("桥接输出已经存在，拒绝覆盖。", str(destination))
+    try:
+        import gemmi
+    except Exception as exc:
+        return fail(
+            "当前准备 Python 缺少 Gemmi，无法生成受审计的 PDB 桥接。",
+            f"{type(exc).__name__}: {exc}",
+        )
+    try:
+        structure = gemmi.read_structure(str(source))
+        models = list(structure)
+        if len(models) != 1:
+            raise RuntimeError(
+                f"mmCIF 包含 {len(models)} 个模型；DockStart 不会自动选择模型。"
+            )
+        if sum(len(residue) for chain in models[0] for residue in chain) <= 0:
+            raise RuntimeError("mmCIF 的唯一模型中没有原子。")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        structure.write_pdb(str(destination))
+        if not destination.is_file() or destination.stat().st_size <= 0:
+            raise RuntimeError("Gemmi 没有生成非空 PDB。")
+    except Exception as exc:
+        return fail(
+            "Gemmi 无法生成待验证的 mmCIF→PDB 桥接。",
+            f"{type(exc).__name__}: {exc}",
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
 def receptor_cif_bridge_script_text() -> str:
     """Return the audited Gemmi -> PDB -> Meeko receptor helper.
 

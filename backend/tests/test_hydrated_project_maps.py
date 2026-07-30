@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import sys
@@ -7,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
@@ -170,6 +171,49 @@ class HydratedProjectMapsTests(unittest.TestCase):
         self.meeko_module.write_bytes(b"meeko-v1")
         self.autogrid_file.write_bytes(b"autogrid-v1")
 
+    def test_hydrated_pdbqt_records_canonical_autogrid_atom_type_case(
+        self,
+    ) -> None:
+        candidate = self.base / "hydrated_halogen.pdbqt"
+        candidate.write_text(
+            "".join(
+                [
+                    "ROOT\n",
+                    _atom_line(1, "C1", 0.0, 0.0, 0.0, "C"),
+                    _atom_line(2, "CL1", 1.0, 0.0, 0.0, "CL"),
+                    _atom_line(3, "BR1", 2.0, 0.0, 0.0, "BR"),
+                    _atom_line(4, "SI1", 3.0, 0.0, 0.0, "SI"),
+                    _atom_line(5, "WAT", 4.0, 0.0, 0.0, "W"),
+                    "ENDROOT\n",
+                    "TORSDOF 0\n",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = hydrated._validate_hydrated_pdbqt(candidate, self.base)
+
+        self.assertEqual(result["atom_types"], ["Br", "C", "Cl", "Si", "W"])
+
+    def test_hydrated_pdbqt_rejects_unknown_atom_type(self) -> None:
+        candidate = self.base / "hydrated_unknown.pdbqt"
+        candidate.write_text(
+            "".join(
+                [
+                    "ROOT\n",
+                    _atom_line(1, "C1", 0.0, 0.0, 0.0, "C"),
+                    _atom_line(2, "XX1", 1.0, 0.0, 0.0, "Xx"),
+                    _atom_line(3, "WAT", 2.0, 0.0, 0.0, "W"),
+                    "ENDROOT\n",
+                    "TORSDOF 0\n",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "未支持的原子类型"):
+            hydrated._validate_hydrated_pdbqt(candidate, self.base)
+
     def _tools(self) -> dict:
         return {
             "python": {
@@ -193,12 +237,16 @@ class HydratedProjectMapsTests(unittest.TestCase):
             },
         }
 
-    def _autogrid_detection(self) -> ToolCheckResult:
+    def _autogrid_detection(
+        self,
+        *,
+        version: str = "4.2.7",
+    ) -> ToolCheckResult:
         return ToolCheckResult(
             key="autogrid4",
             name="AutoGrid4",
             status="ok",
-            version="4.2.7",
+            version=version,
             path=str(self.autogrid_file),
             message="已检测到 AutoGrid4。",
             source="configured",
@@ -348,6 +396,10 @@ class HydratedProjectMapsTests(unittest.TestCase):
                     ),
                     encoding="ascii",
                 )
+            (root / "receptor.maps.xyz").write_text(
+                "0.0 0.0 0.0\n",
+                encoding="ascii",
+            )
             (root / log_file).write_text(
                 "Successful Completion\n",
                 encoding="utf-8",
@@ -385,7 +437,7 @@ class HydratedProjectMapsTests(unittest.TestCase):
                 str(project_dir),
                 {
                     "spacing": 1.0,
-                    "grid_points": {"x": 2, "y": 2, "z": 2},
+                    "grid_points": {"x": 8, "y": 8, "z": 8},
                 },
                 runner=runner or self._runner(),
             )
@@ -417,6 +469,11 @@ class HydratedProjectMapsTests(unittest.TestCase):
             manifest["hydrated_ligand"]["sha256"],
         )
         self.assertIn("receptor.W.map", manifest["maps"]["required_files"])
+        self.assertTrue(manifest["grid_coverage"]["covers_requested_box"])
+        self.assertRegex(
+            manifest["grid_coverage_sha256"],
+            r"^[0-9a-f]{64}$",
+        )
         self.assertIn("W", manifest["maps"]["ligand_atom_types"])
         self.assertNotIn(
             "W",
@@ -435,6 +492,26 @@ class HydratedProjectMapsTests(unittest.TestCase):
                 not Path(str(item["relative_path"])).is_absolute()
                 for item in manifest["maps"]["files"]
             )
+        )
+        base_manifest = json.loads(
+            (
+                project_dir
+                / manifest["base_maps_manifest"]["relative_path"]
+            ).read_text(encoding="utf-8")
+        )
+        base_file_names = {
+            str(item["name"])
+            for item in base_manifest["maps"]["files"]
+        }
+        active_file_names = {
+            str(item["name"])
+            for item in manifest["maps"]["files"]
+        }
+        self.assertIn("receptor.maps.xyz", base_file_names)
+        self.assertNotIn("receptor.maps.xyz", active_file_names)
+        self.assertEqual(
+            set(base_manifest["maps"]["required_files"]),
+            active_file_names - {"receptor.W.map"},
         )
         water_path = project_dir / manifest["maps"]["water_map"]["relative_path"]
         parsed_water = parse_autogrid_map(water_path)
@@ -462,6 +539,10 @@ class HydratedProjectMapsTests(unittest.TestCase):
         self.assertEqual(
             state["active_maps_manifest"],
             generated["active_maps_manifest"],
+        )
+        self.assertEqual(
+            state["active_maps_manifest"]["grid_coverage_sha256"],
+            manifest["grid_coverage_sha256"],
         )
         status = self._status(project_dir)
         self.assertTrue(status["preparation_ready"])
@@ -500,6 +581,57 @@ class HydratedProjectMapsTests(unittest.TestCase):
         self.assertEqual(
             flexible["error"]["code"],
             "HYDRATED_MAPS_RIGID_RECEPTOR_REQUIRED",
+        )
+
+    def test_public_generation_enforces_autogrid_426_minimum(
+        self,
+    ) -> None:
+        for version in ("4.2.5", "unknown"):
+            with self.subTest(version=version):
+                project_dir = self._create_ready_project()
+                runner = Mock(side_effect=self._runner())
+                with patch(
+                    "dockstart_core.hydrated.autogrid_adapter.detect",
+                    return_value=self._autogrid_detection(version=version),
+                ):
+                    result = hydrated.generate_hydrated_maps(
+                        str(project_dir),
+                        {
+                            "spacing": 1.0,
+                            "grid_points": {"x": 8, "y": 8, "z": 8},
+                        },
+                        runner=runner,
+                    )
+
+                self.assertFalse(result["ok"], result)
+                self.assertEqual(
+                    result["error"]["code"],
+                    "HYDRATED_AUTOGRID_VERSION_UNSUPPORTED",
+                )
+                self.assertIn("required>=4.2.6", result["error"]["raw_error"])
+                runner.assert_not_called()
+                self.assertNotIn(
+                    "active_maps_manifest",
+                    self._project_data(project_dir)["hydrated_docking"],
+                )
+
+        accepted_project = self._create_ready_project()
+        with patch(
+            "dockstart_core.hydrated.autogrid_adapter.detect",
+            return_value=self._autogrid_detection(version="4.2.6"),
+        ):
+            accepted = hydrated.generate_hydrated_maps(
+                str(accepted_project),
+                {
+                    "spacing": 1.0,
+                    "grid_points": {"x": 8, "y": 8, "z": 8},
+                },
+                runner=self._runner(),
+            )
+        self.assertTrue(accepted["ok"], accepted)
+        self.assertEqual(
+            accepted["manifest"]["autogrid"]["version"],
+            "4.2.6",
         )
 
     def test_geometry_failure_keeps_audit_and_previous_pointer(self) -> None:
@@ -643,7 +775,55 @@ class HydratedProjectMapsTests(unittest.TestCase):
                 status = self._status(project_dir)
                 self.assertEqual(status["maps_status"], "invalid", status)
                 self.assertFalse(status["maps_ready"])
-                self.assertTrue(status["maps_issues"])
+            self.assertTrue(status["maps_issues"])
+
+    def test_status_recomputes_coverage_after_synchronized_tampering(
+        self,
+    ) -> None:
+        project_dir = self._create_ready_project()
+        generated = self._generate(project_dir)
+        self.assertTrue(generated["ok"], generated)
+        manifest_path = project_dir / generated["manifest_file"]
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["grid_coverage"]["axis_coverage"]["x"][
+            "minimum_margin_angstrom"
+        ] += 0.5
+        canonical = json.dumps(
+            manifest["grid_coverage"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        forged_coverage_sha256 = hashlib.sha256(canonical).hexdigest()
+        manifest["grid_coverage_sha256"] = forged_coverage_sha256
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        project_payload = self._project_data(project_dir)
+        active_pointer = project_payload["hydrated_docking"][
+            "active_maps_manifest"
+        ]
+        active_pointer["sha256"] = hashlib.sha256(
+            manifest_path.read_bytes()
+        ).hexdigest()
+        active_pointer["grid_coverage_sha256"] = (
+            forged_coverage_sha256
+        )
+        (project_dir / "project.json").write_text(
+            json.dumps(project_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        status = self._status(project_dir)
+
+        self.assertEqual(status["maps_status"], "invalid", status)
+        self.assertFalse(status["maps_ready"])
+        self.assertIn(
+            "覆盖记录或规范 SHA256 与重算结果不一致",
+            "；".join(status["maps_issues"]),
+        )
 
     def test_status_does_not_require_generation_tool_after_publication(
         self,

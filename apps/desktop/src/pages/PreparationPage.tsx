@@ -4,12 +4,17 @@ import { CheckCircle, FileArrowUp, FolderOpen, Info, Wrench } from "@phosphor-ic
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import MacrocycleBondSelector from "../components/MacrocycleBondSelector";
 import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
 import type {
   DockStartProject,
+  MacrocyclePreparationEvidence,
+  MacrocycleReviewOptions,
+  MacrocycleSelection,
+  MacrocycleStatusResponse,
   PreparationResult,
   PreparationStatusResponse,
   PreparationTarget,
@@ -25,29 +30,23 @@ import {
   waitForBackgroundTask,
   type BackgroundTaskStatus,
 } from "../utils/backgroundTasks";
+import {
+  buildReviewedMacrocyclePreparationOptions,
+  createMacrocycleApi,
+  defaultMacrocycleReviewOptions,
+  extractMacrocyclePreparationEvidence,
+  normalizeMacrocycleReviewOptions,
+  selectionFromMacrocycleStatus,
+} from "../utils/macrocyclePreparation";
 
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
 
 type PreparationMode = "existing" | "raw";
-type MacrocyclePreparationMode = "standard" | "auto" | "rigid";
+type MacrocyclePreparationMode = "standard" | "reviewed";
 
-type MacrocyclePreparationState = {
-  mode: MacrocyclePreparationMode;
-  minRingSize: number;
-  doubleBondPenalty: number;
-  allowAromaticBreaks: boolean;
-  keepChordedRings: boolean;
-  keepEquivalentRings: boolean;
-};
-
-const defaultMacrocyclePreparation: MacrocyclePreparationState = {
-  mode: "standard",
-  minRingSize: 7,
-  doubleBondPenalty: 50,
-  allowAromaticBreaks: false,
-  keepChordedRings: false,
-  keepEquivalentRings: false,
-};
+const macrocycleApi = createMacrocycleApi(
+  (command, args) => invoke<string>(command, args),
+);
 
 type PreparationPageProps = {
   project: DockStartProject;
@@ -181,7 +180,14 @@ export default function PreparationPage({
   const [isBusy, setIsBusy] = useState(false);
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
-  const [macrocyclePreparation, setMacrocyclePreparation] = useState<MacrocyclePreparationState>(defaultMacrocyclePreparation);
+  const [macrocycleMode, setMacrocycleMode] = useState<MacrocyclePreparationMode>("standard");
+  const [macrocycleOptions, setMacrocycleOptions] = useState<MacrocycleReviewOptions>(
+    defaultMacrocycleReviewOptions,
+  );
+  const [macrocycleStatus, setMacrocycleStatus] = useState<MacrocycleStatusResponse | null>(null);
+  const [macrocycleSelection, setMacrocycleSelection] = useState<MacrocycleSelection>(null);
+  const [macrocycleEvidence, setMacrocycleEvidence] = useState<MacrocyclePreparationEvidence | null>(null);
+  const [isMacrocycleBusy, setIsMacrocycleBusy] = useState(false);
   const [mode, setMode] = useState<PreparationMode>(
     initialProject.receptor.raw_file
       || initialProject.ligand.raw_file
@@ -197,7 +203,9 @@ export default function PreparationPage({
   const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const macrocycleRequestRef = useRef(0);
   const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
+  const rawLigandIdentityRef = useRef(`${initialProject.project_dir}|${initialProject.ligand.raw_file}`);
 
   useEffect(() => {
     const nextIdentity = `${initialProject.receptor.file}|${initialProject.ligand.file}`;
@@ -208,6 +216,15 @@ export default function PreparationPage({
         receptor: previousReceptor !== initialProject.receptor.file ? revision.receptor + 1 : revision.receptor,
         ligand: previousLigand !== initialProject.ligand.file ? revision.ligand + 1 : revision.ligand,
       }));
+    }
+    const nextRawLigandIdentity = `${initialProject.project_dir}|${initialProject.ligand.raw_file}`;
+    if (rawLigandIdentityRef.current !== nextRawLigandIdentity) {
+      rawLigandIdentityRef.current = nextRawLigandIdentity;
+      macrocycleRequestRef.current += 1;
+      setMacrocycleStatus(null);
+      setMacrocycleSelection(null);
+      setMacrocycleEvidence(null);
+      setMacrocycleMode("standard");
     }
     setProject(initialProject);
   }, [initialProject]);
@@ -349,6 +366,183 @@ export default function PreparationPage({
     void reloadStatus();
   }, [reloadStatus]);
 
+  const applyMacrocycleStatus = useCallback((
+    next: MacrocycleStatusResponse,
+    fallbackMessage: string,
+    selection?: MacrocycleSelection,
+  ) => {
+    if (!mountedRef.current) return;
+    setMacrocycleStatus(next);
+    if (next.ok) {
+      setMacrocycleSelection(selection ?? selectionFromMacrocycleStatus(next));
+      if (next.project) {
+        setProject(next.project);
+        onProjectChange(next.project);
+      }
+    }
+    setMessage(next.message || next.error?.message || fallbackMessage);
+    setRawError(next.error?.raw_error || "");
+  }, [onProjectChange]);
+
+  const refreshMacrocycleStatus = useCallback(async () => {
+    const requestId = ++macrocycleRequestRef.current;
+    try {
+      const next = await macrocycleApi.getStatus(project.project_dir);
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMacrocycleStatus(next);
+      if (next.ok) setMacrocycleSelection(selectionFromMacrocycleStatus(next));
+    } catch (error) {
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMacrocycleStatus(null);
+      setMacrocycleSelection(null);
+      setRawError(error instanceof Error ? error.message : String(error));
+    }
+  }, [project.project_dir, project.ligand.raw_file]);
+
+  useEffect(() => {
+    void refreshMacrocycleStatus();
+  }, [refreshMacrocycleStatus]);
+
+  const resetMacrocycleConfirmation = useCallback(async (
+    fallbackMessage = "大环确认已撤销。",
+    selectionAfterReset: MacrocycleSelection = macrocycleSelection,
+  ) => {
+    const requestId = ++macrocycleRequestRef.current;
+    setIsMacrocycleBusy(true);
+    setMacrocycleStatus((current) => current
+      ? { ...current, state: "reviewed", can_prepare: false, confirmation: null }
+      : current);
+    try {
+      const next = await macrocycleApi.resetConfirmation(project.project_dir);
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      applyMacrocycleStatus(next, fallbackMessage, selectionAfterReset);
+    } catch (error) {
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMessage("无法撤销大环确认。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current && requestId === macrocycleRequestRef.current) {
+        setIsMacrocycleBusy(false);
+      }
+    }
+  }, [applyMacrocycleStatus, macrocycleSelection, project.project_dir]);
+
+  const invalidateMacrocycleConfirmation = useCallback((
+    nextSelection: MacrocycleSelection,
+    fallbackMessage: string,
+  ) => {
+    setMacrocycleSelection(nextSelection);
+    if (macrocycleStatus?.confirmation?.valid) {
+      void resetMacrocycleConfirmation(fallbackMessage, nextSelection);
+    }
+  }, [macrocycleStatus?.confirmation?.valid, resetMacrocycleConfirmation]);
+
+  const changeMacrocycleMode = (nextMode: MacrocyclePreparationMode) => {
+    setMacrocycleMode(nextMode);
+    if (nextMode === "standard") {
+      invalidateMacrocycleConfirmation(null, "已切换到标准准备；大环确认已撤销。");
+    }
+  };
+
+  const changeMacrocycleOptions = (nextOptions: MacrocycleReviewOptions) => {
+    const normalized = normalizeMacrocycleReviewOptions(nextOptions);
+    setMacrocycleOptions(normalized);
+    invalidateMacrocycleConfirmation(
+      macrocycleSelection?.kind === "candidate" ? macrocycleSelection : null,
+      "分析参数已变化；原大环确认已撤销。",
+    );
+  };
+
+  const reviewMacrocycle = async () => {
+    const requestId = ++macrocycleRequestRef.current;
+    setIsMacrocycleBusy(true);
+    setRawError("");
+    setMessage("正在分析大环断环候选。");
+    try {
+      const next = await macrocycleApi.review(project.project_dir, macrocycleOptions);
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      applyMacrocycleStatus(next, "大环候选分析完成。");
+    } catch (error) {
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMessage("无法分析大环断环候选。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current && requestId === macrocycleRequestRef.current) {
+        setIsMacrocycleBusy(false);
+      }
+    }
+  };
+
+  const confirmMacrocycleCandidate = async () => {
+    const reviewId = macrocycleStatus?.review?.review_id || "";
+    const candidateId = macrocycleSelection?.kind === "candidate"
+      ? macrocycleSelection.candidateId
+      : "";
+    if (!reviewId || !candidateId) return;
+    const requestId = ++macrocycleRequestRef.current;
+    setIsMacrocycleBusy(true);
+    setRawError("");
+    try {
+      const next = await macrocycleApi.confirmCandidate(
+        project.project_dir,
+        reviewId,
+        candidateId,
+      );
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      applyMacrocycleStatus(
+        next,
+        "断环组合已确认。",
+        { kind: "candidate", candidateId },
+      );
+    } catch (error) {
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMessage("无法确认断环组合。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current && requestId === macrocycleRequestRef.current) {
+        setIsMacrocycleBusy(false);
+      }
+    }
+  };
+
+  const confirmRigidMacrocycle = async () => {
+    const reviewId = macrocycleStatus?.review?.review_id || "";
+    if (!reviewId) return;
+    const requestId = ++macrocycleRequestRef.current;
+    setIsMacrocycleBusy(true);
+    setRawError("");
+    try {
+      const next = await macrocycleApi.confirmRigid(project.project_dir, reviewId);
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      applyMacrocycleStatus(next, "刚性大环已确认。", { kind: "rigid" });
+    } catch (error) {
+      if (!mountedRef.current || requestId !== macrocycleRequestRef.current) return;
+      setMessage("无法确认刚性大环。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current && requestId === macrocycleRequestRef.current) {
+        setIsMacrocycleBusy(false);
+      }
+    }
+  };
+
+  const selectMacrocycleCandidate = (candidateId: string) => {
+    invalidateMacrocycleConfirmation(
+      { kind: "candidate", candidateId },
+      "断环组合已变化；原大环确认已撤销。",
+    );
+  };
+
+  const restoreDefaultMacrocycleCandidate = () => {
+    const candidateId = macrocycleStatus?.review?.recommended_candidate_id || "";
+    if (candidateId) {
+      invalidateMacrocycleConfirmation(
+        { kind: "candidate", candidateId },
+        "已恢复 Meeko 默认组合；原大环确认已撤销。",
+      );
+    }
+  };
+
   const checkConversionTools = async () => {
     setIsCheckingTools(true);
     setRawError("");
@@ -395,9 +589,22 @@ export default function PreparationPage({
   };
 
   const prepareTarget = async (target: PreparationTarget) => {
+    const reviewedMacrocycleOptions = target === "ligand" && macrocycleMode === "reviewed"
+      ? buildReviewedMacrocyclePreparationOptions(
+          macrocycleStatus,
+          macrocycleSelection,
+          macrocycleOptions,
+        )
+      : undefined;
+    if (target === "ligand" && macrocycleMode === "reviewed" && !reviewedMacrocycleOptions) {
+      setMessage("请先分析并确认当前大环处理方案。");
+      setRawError("");
+      return;
+    }
     setPendingTarget(target);
     setIsBusy(true);
     setRawError("");
+    if (target === "ligand") setMacrocycleEvidence(null);
     activeTaskAbortRef.current?.abort();
     const controller = new AbortController();
     let taskId = "";
@@ -407,19 +614,7 @@ export default function PreparationPage({
         project.project_dir,
         target,
         target === "receptor" ? overwriteReceptor : overwriteLigand,
-        target === "ligand" && macrocyclePreparation.mode !== "standard"
-          ? {
-              protocol: "meeko_macrocycle",
-              macrocycle: {
-                mode: macrocyclePreparation.mode,
-                min_ring_size: macrocyclePreparation.minRingSize,
-                double_bond_penalty: macrocyclePreparation.doubleBondPenalty,
-                allow_aromatic_breaks: macrocyclePreparation.allowAromaticBreaks,
-                keep_chorded_rings: macrocyclePreparation.keepChordedRings,
-                keep_equivalent_rings: macrocyclePreparation.keepEquivalentRings,
-              },
-            }
-          : undefined,
+        reviewedMacrocycleOptions ?? undefined,
       );
       taskId = started.task_id;
       if (!mountedRef.current) return;
@@ -487,19 +682,68 @@ export default function PreparationPage({
   const ligandPrep: PreparationResult | undefined = preparation?.ligand;
   const files = response?.files;
   const readyForBox = files?.receptor_prepared?.status === "ok" && files?.ligand_prepared?.status === "ok";
-  const interactionBusy = Boolean(pendingTarget || activeTask?.status === "queued" || activeTask?.status === "running");
+  const reviewedMacrocyclePreparationOptions = buildReviewedMacrocyclePreparationOptions(
+    macrocycleStatus,
+    macrocycleSelection,
+    macrocycleOptions,
+  );
+  const interactionBusy = Boolean(
+    isMacrocycleBusy
+    || pendingTarget
+    || activeTask?.status === "queued"
+    || activeTask?.status === "running",
+  );
   const loadingTarget = pendingTarget ?? (
     activeTask?.target === "receptor" || activeTask?.target === "ligand"
       ? activeTask.target
       : null
   );
-  const loadingTitle = isCheckingTools
+  const loadingTitle = isMacrocycleBusy
+    ? "正在处理大环审查"
+    : isCheckingTools
     ? "正在检查转换工具"
     : loadingTarget === "receptor"
       ? "正在转换受体"
       : loadingTarget === "ligand"
         ? "正在转换配体"
         : "";
+
+  useEffect(() => {
+    const prepId = ligandPrep?.prep_id || "";
+    if (
+      ligandPrep?.method !== "meeko_macrocycle"
+      || ligandPrep.status !== "finished"
+      || !prepId
+    ) {
+      if (ligandPrep?.method !== "meeko_macrocycle") setMacrocycleEvidence(null);
+      return;
+    }
+    let disposed = false;
+    const loadEvidence = async () => {
+      try {
+        const rawPayload = await invoke<string>("load_preparation_metadata", {
+          projectDir: project.project_dir,
+          target: "ligand",
+          prepId,
+        });
+        const parsed = JSON.parse(rawPayload) as {
+          ok?: boolean;
+          metadata?: unknown;
+          error?: { message?: string; raw_error?: string };
+        };
+        if (disposed || !mountedRef.current) return;
+        if (parsed.ok) {
+          setMacrocycleEvidence(extractMacrocyclePreparationEvidence(parsed.metadata));
+        }
+      } catch {
+        if (!disposed && mountedRef.current) setMacrocycleEvidence(null);
+      }
+    };
+    void loadEvidence();
+    return () => {
+      disposed = true;
+    };
+  }, [ligandPrep?.method, ligandPrep?.prep_id, ligandPrep?.status, project.project_dir]);
 
   const renderStructureRow = (target: PreparationTarget, prep: PreparationResult | undefined) => {
     const isReceptor = target === "receptor";
@@ -510,6 +754,11 @@ export default function PreparationPage({
     const projectRawFile = isReceptor ? project.receptor.raw_file : project.ligand.raw_file;
     const rawReady = rawFile?.status === "ok";
     const isReady = preparedFile?.status === "ok";
+    const macrocyclePreparationBlocked = (
+      !isReceptor
+      && macrocycleMode === "reviewed"
+      && !reviewedMacrocyclePreparationOptions
+    );
     const displayFile = isReady
       ? fileLine(preparedFile, projectFile)
       : mode === "raw"
@@ -680,8 +929,16 @@ export default function PreparationPage({
                 />
                 覆盖已有 PDBQT
               </label>
-              <ActionButton variant="primary" disabled={interactionBusy || !rawReady} onClick={() => void prepareTarget(target)}>
-                {isReceptor ? "转换受体为 PDBQT" : "转换配体为 PDBQT"}
+              <ActionButton
+                variant="primary"
+                disabled={interactionBusy || !rawReady || macrocyclePreparationBlocked}
+                onClick={() => void prepareTarget(target)}
+              >
+                {isReceptor
+                  ? "转换受体为 PDBQT"
+                  : macrocyclePreparationBlocked
+                    ? "先确认大环方案"
+                    : "转换配体为 PDBQT"}
               </ActionButton>
             </>
           )}
@@ -707,7 +964,9 @@ export default function PreparationPage({
       <OperationLoadingDialog
         open={isCheckingTools || interactionBusy}
         title={loadingTitle || "正在处理结构转换"}
-        message={isCheckingTools
+        message={isMacrocycleBusy
+          ? message || "正在更新大环审查记录。"
+          : isCheckingTools
           ? "正在检测 Python、RDKit 与 Meeko。"
           : activeTask?.progress.message || message || "结构转换任务正在本机运行。"}
         detail="转换完成后仍需人工检查结构与化学状态。"
@@ -752,93 +1011,24 @@ export default function PreparationPage({
           {mode === "raw" ? (
             <>
               <AdvancedDetails className="preparation-macrocycle-panel" summary="高级：Meeko 大环配体准备">
-                <div className="preparation-macrocycle-intro">
-                  <div>
-                    <strong>只影响下一次配体转换</strong>
-                    <p>标准准备保持现有行为；只有明确选择大环模式时才会启用专用参数，并写入准备快照。</p>
-                  </div>
-                  <label>
-                    <span>准备策略</span>
-                    <select
-                      disabled={interactionBusy}
-                      value={macrocyclePreparation.mode}
-                      onChange={(event) => setMacrocyclePreparation((current) => ({
-                        ...current,
-                        mode: event.target.value as MacrocyclePreparationMode,
-                      }))}
-                    >
-                      <option value="standard">标准准备（默认）</option>
-                      <option value="auto">大环自动断环</option>
-                      <option value="rigid">大环保持刚性</option>
-                    </select>
-                  </label>
-                </div>
-                {macrocyclePreparation.mode !== "standard" ? (
-                  <div className="preparation-macrocycle-settings">
-                    <label>
-                      <span>最小环尺寸</span>
-                      <input
-                        type="number"
-                        min={3}
-                        max={33}
-                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
-                        value={macrocyclePreparation.minRingSize}
-                        onChange={(event) => setMacrocyclePreparation((current) => ({
-                          ...current,
-                          minRingSize: Math.max(3, Math.min(33, Number(event.target.value) || 7)),
-                        }))}
-                      />
-                    </label>
-                    <label>
-                      <span>双键断裂惩罚</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={1000}
-                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
-                        value={macrocyclePreparation.doubleBondPenalty}
-                        onChange={(event) => setMacrocyclePreparation((current) => ({
-                          ...current,
-                          doubleBondPenalty: Math.max(0, Math.min(1000, Number(event.target.value) || 0)),
-                        }))}
-                      />
-                    </label>
-                    <label className="checkbox-row compact">
-                      <input
-                        type="checkbox"
-                        checked={macrocyclePreparation.allowAromaticBreaks}
-                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
-                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, allowAromaticBreaks: event.target.checked }))}
-                      />
-                      允许芳香型 A 原子断环
-                    </label>
-                    <label className="checkbox-row compact">
-                      <input
-                        type="checkbox"
-                        checked={macrocyclePreparation.keepChordedRings}
-                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
-                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, keepChordedRings: event.target.checked }))}
-                      />
-                      保留弦环候选
-                    </label>
-                    <label className="checkbox-row compact">
-                      <input
-                        type="checkbox"
-                        checked={macrocyclePreparation.keepEquivalentRings}
-                        disabled={interactionBusy || macrocyclePreparation.mode === "rigid"}
-                        onChange={(event) => setMacrocyclePreparation((current) => ({ ...current, keepEquivalentRings: event.target.checked }))}
-                      />
-                      保留等价环候选
-                    </label>
-                  </div>
-                ) : null}
-                <p className="preparation-macrocycle-note">
-                  {macrocyclePreparation.mode === "rigid"
-                    ? "刚性大环不会搜索环构象，结果依赖输入构象。"
-                    : macrocyclePreparation.mode === "auto"
-                      ? "输出仍需检查断环位置、G* 伪原子与闭环拓扑；已有 PDBQT 时请勾选配体覆盖。"
-                      : "在线下载后的自动转换继续使用标准模式，不会被这里的高级选项静默改变。"}
-                </p>
+                <MacrocycleBondSelector
+                  projectDir={project.project_dir}
+                  mode={macrocycleMode}
+                  status={macrocycleStatus}
+                  options={macrocycleOptions}
+                  selection={macrocycleSelection}
+                  evidence={macrocycleEvidence}
+                  rawReady={files?.ligand_raw?.status === "ok"}
+                  busy={interactionBusy}
+                  onModeChange={changeMacrocycleMode}
+                  onOptionsChange={changeMacrocycleOptions}
+                  onReview={() => void reviewMacrocycle()}
+                  onSelectCandidate={selectMacrocycleCandidate}
+                  onRestoreDefault={restoreDefaultMacrocycleCandidate}
+                  onConfirmCandidate={() => void confirmMacrocycleCandidate()}
+                  onConfirmRigid={() => void confirmRigidMacrocycle()}
+                  onResetConfirmation={() => void resetMacrocycleConfirmation()}
+                />
               </AdvancedDetails>
 
               <div className="preparation-source-strip">
