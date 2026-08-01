@@ -45,6 +45,10 @@ class MacrocycleBACE1VerifierContractTests(unittest.TestCase):
         self.assertEqual(manifest["schema_version"], 2)
         self.assertEqual(manifest["fixture_id"], "macrocycle_bace1")
         self.assertEqual(
+            manifest["expected"]["toolchain"]["vina_binary"]["sha256"],
+            "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
+        )
+        self.assertEqual(
             set(manifest["files"]),
             set(self.verify.REQUIRED_FIXTURE_FILES),
         )
@@ -418,6 +422,45 @@ class MacrocycleBACE1VerifierContractTests(unittest.TestCase):
                 )
             finally:
                 outside.unlink(missing_ok=True)
+
+    def test_output_path_is_reserved_and_published_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "evidence.json"
+            reservation = self.verify._prepare_output_path(str(output))
+            self.assertTrue(output.is_file())
+            self.assertEqual(
+                hashlib.sha256(output.read_bytes()).hexdigest(),
+                reservation[1],
+            )
+
+            published = self.verify._write_result(
+                *reservation,
+                {"ok": True, "value": 0},
+            )
+            self.assertEqual(published, output)
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                {"ok": True, "value": 0},
+            )
+
+    def test_changed_output_reservation_is_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "evidence.json"
+            reservation = self.verify._prepare_output_path(str(output))
+            output.write_text("changed\n", encoding="utf-8")
+            with self.assertRaises(
+                self.verify.MacrocycleAcceptanceError
+            ) as raised:
+                self.verify._write_result(
+                    *reservation,
+                    {"ok": True},
+                )
+            self.assertEqual(
+                raised.exception.code,
+                "MACROCYCLE_BACE1_OUTPUT_RESERVATION_CHANGED",
+            )
+            self.verify._release_output_reservation(*reservation)
+            self.assertTrue(output.is_file())
 
     def test_cli_exposes_no_skip_or_synthetic_success_switch(self) -> None:
         parser = self.verify._parser()

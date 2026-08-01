@@ -1518,7 +1518,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 0;
   overflow: hidden;
-  border: 1px solid var(--ds-on-dark-border-default);
+  border: 1px solid var(--ds-border-default);
   border-radius: 7px;
 }
 
@@ -1527,8 +1527,8 @@
   gap: 5px;
   min-width: 0;
   padding: 12px 14px;
-  border-right: 1px solid var(--ds-on-dark-border-subtle);
-  border-bottom: 1px solid var(--ds-on-dark-border-subtle);
+  border-right: 1px solid var(--ds-border-subtle);
+  border-bottom: 1px solid var(--ds-border-subtle);
 }
 
 .result-run-file-grid > div:nth-child(2n) {
@@ -1542,13 +1542,13 @@
 }
 
 .result-run-file-grid dt {
-  color: var(--ds-text-on-dark-muted);
+  color: var(--ds-text-muted);
   font-size: 11px;
 }
 
 .result-run-file-grid dd {
   overflow-wrap: anywhere;
-  color: var(--ds-text-on-dark);
+  color: var(--ds-text-primary);
   font-size: 12px;
 }
 

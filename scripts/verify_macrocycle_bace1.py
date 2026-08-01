@@ -553,6 +553,20 @@ def _verify_tools(
             details={"detection": detection.to_dict()},
         )
     _assert_equal(detection.version, tool_versions.get("vina"), "Vina version")
+    vina_binary = _require_mapping(
+        tool_versions.get("vina_binary"),
+        "expected.toolchain.vina_binary",
+    )
+    _assert_equal(
+        vina_path.stat().st_size,
+        vina_binary.get("size_bytes"),
+        "Vina binary size",
+    )
+    _assert_equal(
+        _sha256(vina_path),
+        vina_binary.get("sha256"),
+        "Vina binary SHA256",
+    )
     return {
         "python": {
             "path": str(python_path),
@@ -1302,6 +1316,134 @@ def _validate_formal_attribution(
     }
 
 
+def _validate_vina_execution_identity(
+    metadata: Mapping[str, Any],
+    vina_path: Path,
+    expected_tool: Mapping[str, Any],
+    expected_command: Sequence[str],
+) -> dict[str, Any]:
+    expected_sha = str(expected_tool.get("sha256") or "").lower()
+    expected_size = expected_tool.get("size_bytes")
+    expected_version = str(expected_tool.get("version") or "")
+    _assert_equal(_sha256(vina_path), expected_sha, "post-run Vina SHA256")
+    _assert_equal(
+        vina_path.stat().st_size,
+        expected_size,
+        "post-run Vina size",
+    )
+
+    prepared_tool = _require_mapping(
+        metadata.get("vina_tool"),
+        "run vina_tool",
+    )
+    execution_tool = _require_mapping(
+        metadata.get("execution_vina"),
+        "run execution_vina",
+    )
+    for label, record in (
+        ("prepared Vina", prepared_tool),
+        ("execution Vina", execution_tool),
+    ):
+        _assert_equal(
+            str(record.get("sha256") or "").lower(),
+            expected_sha,
+            f"{label} SHA256",
+        )
+        _assert_equal(record.get("size_bytes"), expected_size, f"{label} size")
+        _assert_equal(
+            str(record.get("version") or ""),
+            expected_version,
+            f"{label} version",
+        )
+    _assert_equal(
+        _normalized_path(str(execution_tool.get("path") or "")),
+        _normalized_path(vina_path),
+        "execution Vina path",
+    )
+
+    command = metadata.get("executed_command")
+    expected_command_list = [str(value) for value in expected_command]
+    _assert_equal(command, expected_command_list, "executed Vina command")
+    if not expected_command_list or _normalized_path(
+        expected_command_list[0]
+    ) != _normalized_path(vina_path):
+        _fail(
+            "MACROCYCLE_BACE1_EXECUTED_COMMAND_INVALID",
+            "The frozen BACE_1 command is not bound to the selected Vina.",
+            details={
+                "command": expected_command_list,
+                "vina_path": str(vina_path),
+            },
+        )
+
+    identity = _require_mapping(
+        metadata.get("process_identity"),
+        "run process_identity",
+    )
+    pid = metadata.get("pid")
+    if (
+        not isinstance(pid, int)
+        or pid <= 0
+        or identity.get("pid") != pid
+        or not str(identity.get("creation_token") or "")
+        or _normalized_path(str(identity.get("executable_path") or ""))
+        != _normalized_path(vina_path)
+    ):
+        _fail(
+            "MACROCYCLE_BACE1_PROCESS_IDENTITY_INVALID",
+            "The completed BACE_1 run lacks a valid fixed-Vina process identity.",
+            details={"pid": pid, "process_identity": dict(identity)},
+        )
+
+    integrity = _require_mapping(
+        metadata.get("vina_binary_integrity"),
+        "run vina_binary_integrity",
+    )
+    for key in ("start_sha256", "end_sha256"):
+        _assert_equal(
+            str(integrity.get(key) or "").lower(),
+            expected_sha,
+            f"execution {key}",
+        )
+    _assert_equal(integrity.get("match"), True, "execution Vina integrity")
+
+    artifacts = _require_mapping(metadata.get("artifacts"), "run artifacts")
+    required = (
+        "vina_binary_prepared",
+        "vina_binary_executed",
+        "vina_binary_observed_after_execution",
+    )
+    binary_artifacts: dict[str, Any] = {}
+    for key in required:
+        record = _require_mapping(artifacts.get(key), f"run artifacts.{key}")
+        _assert_equal(
+            str(record.get("sha256") or "").lower(),
+            expected_sha,
+            f"{key} SHA256",
+        )
+        _assert_equal(record.get("size_bytes"), expected_size, f"{key} size")
+        binary_artifacts[key] = {
+            "size_bytes": record.get("size_bytes"),
+            "sha256": str(record.get("sha256") or "").lower(),
+        }
+    return {
+        "execution_vina": {
+            "path": execution_tool.get("path"),
+            "version": execution_tool.get("version"),
+            "size_bytes": execution_tool.get("size_bytes"),
+            "sha256": str(execution_tool.get("sha256") or "").lower(),
+        },
+        "command": expected_command_list,
+        "process_identity": {
+            "pid": pid,
+            "creation_token": identity.get("creation_token"),
+            "executable_path": identity.get("executable_path"),
+        },
+        "vina_binary_integrity": dict(integrity),
+        "binary_artifacts": binary_artifacts,
+    }
+
+
 def _run_analyze_and_report(
     project_root: Path,
     expected: Mapping[str, Any],
@@ -1309,6 +1451,7 @@ def _run_analyze_and_report(
     review_id: str,
     confirmation_sha256: str,
     vina_path: Path,
+    vina_tool: Mapping[str, Any],
 ) -> dict[str, Any]:
     generated = _require_ok(
         "generate_vina_config",
@@ -1330,6 +1473,18 @@ def _run_analyze_and_report(
             "DockStart returned an invalid run identifier.",
             details={"run_id": run_id},
         )
+    commands = prepared.get("commands")
+    if (
+        not isinstance(commands, list)
+        or len(commands) != 1
+        or not isinstance(commands[0], list)
+    ):
+        _fail(
+            "MACROCYCLE_BACE1_EXECUTION_PLAN_INVALID",
+            "The BACE_1 run did not freeze exactly one Vina command.",
+            details={"commands": commands},
+        )
+    command = [str(value) for value in commands[0]]
     prepared_metadata = (
         prepared.get("metadata")
         if isinstance(prepared.get("metadata"), Mapping)
@@ -1372,6 +1527,12 @@ def _run_analyze_and_report(
         expected,
         review_id=review_id,
         confirmation_sha256=confirmation_sha256,
+    )
+    execution_identity = _validate_vina_execution_identity(
+        metadata,
+        vina_path,
+        vina_tool,
+        command,
     )
     analyzed = _require_ok(
         "analyze_vina_run_results",
@@ -1450,21 +1611,55 @@ def _run_analyze_and_report(
         if isinstance(metadata.get("snapshots"), Mapping)
         else {}
     )
+    frozen_inputs = (
+        raw_snapshots.get("inputs")
+        if isinstance(raw_snapshots.get("inputs"), Mapping)
+        else {}
+    )
+    input_sha256 = (
+        analyzed_metadata.get("input_sha256")
+        if isinstance(analyzed_metadata.get("input_sha256"), Mapping)
+        else metadata.get("input_sha256")
+        if isinstance(metadata.get("input_sha256"), Mapping)
+        else {}
+    )
     for key in ("receptor", "ligand"):
         record = (
-            raw_snapshots.get(key)
-            if isinstance(raw_snapshots.get(key), Mapping)
+            frozen_inputs.get(key)
+            if isinstance(frozen_inputs.get(key), Mapping)
             else {}
         )
         relative = record.get("relative_path") or record.get("path")
-        if relative:
-            input_snapshots[key] = _snapshot(
-                project_root,
-                relative,
-                f"frozen run {key} input",
+        if not relative:
+            _fail(
+                "MACROCYCLE_BACE1_RUN_INPUT_SNAPSHOT_MISSING",
+                f"The frozen BACE_1 run has no {key} input snapshot.",
+                details={"snapshots": dict(raw_snapshots)},
             )
+        actual = _snapshot(
+            project_root,
+            relative,
+            f"frozen run {key} input",
+        )
+        _assert_equal(
+            actual["size_bytes"],
+            record.get("size_bytes"),
+            f"frozen {key} input size",
+        )
+        _assert_equal(
+            actual["sha256"],
+            record.get("sha256"),
+            f"frozen {key} input SHA256",
+        )
+        _assert_equal(
+            actual["sha256"],
+            input_sha256.get(key),
+            f"recorded {key} input SHA256",
+        )
+        input_snapshots[key] = actual
     return {
         "run_id": run_id,
+        "command": command,
         "status": metadata.get("status"),
         "mode_count": len(scores),
         "modes": [row["mode"] for row in scores],
@@ -1487,6 +1682,7 @@ def _run_analyze_and_report(
             ),
         },
         "input_snapshots": input_snapshots,
+        "execution_identity": execution_identity,
         "ligand_preparation_snapshot": ligand_preparation_snapshot,
         "prepared_attribution": prepared_attribution,
         "finished_attribution": attribution,
@@ -2234,6 +2430,10 @@ def verify_macrocycle_bace1(
                 review_id=review_id,
                 confirmation_sha256=confirmation_sha256,
                 vina_path=vina_path,
+                vina_tool=_require_mapping(
+                    tool_evidence.get("vina"),
+                    "configured toolchain.vina",
+                ),
             ),
         )
         export_evidence = _execute_step(
@@ -2419,7 +2619,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_result(path_value: str, payload: Mapping[str, Any]) -> Path:
+def _prepare_output_path(path_value: str) -> tuple[Path, str]:
     path = Path(path_value).expanduser().resolve()
     if path.exists():
         _fail(
@@ -2433,26 +2633,117 @@ def _write_result(path_value: str, payload: Mapping[str, Any]) -> Path:
             "The evidence JSON parent directory does not exist.",
             details={"path": str(path)},
         )
+    reservation = json.dumps(
+        {
+            "status": "dockstart_verification_in_progress",
+            "pid": os.getpid(),
+            "token": hashlib.sha256(os.urandom(32)).hexdigest(),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    ) + "\n"
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(reservation)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except FileExistsError:
+        _fail(
+            "MACROCYCLE_BACE1_OUTPUT_EXISTS",
+            "The requested evidence JSON already exists.",
+            details={"path": str(path)},
+        )
+    except OSError as exc:
+        _fail(
+            "MACROCYCLE_BACE1_OUTPUT_NOT_WRITABLE",
+            "The evidence JSON parent directory is not writable.",
+            details={
+                "path": str(path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+    return path, hashlib.sha256(reservation.encode("utf-8")).hexdigest()
+
+
+def _release_output_reservation(path: Path, reservation_sha256: str) -> None:
+    try:
+        if path.is_file() and _sha256(path) == reservation_sha256:
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _write_result(
+    path: Path,
+    reservation_sha256: str,
+    payload: Mapping[str, Any],
+) -> Path:
+    if not path.is_file() or _sha256(path) != reservation_sha256:
+        _fail(
+            "MACROCYCLE_BACE1_OUTPUT_RESERVATION_CHANGED",
+            "The reserved evidence JSON changed during verification.",
+            details={"path": str(path)},
+        )
     serialized = json.dumps(
         dict(payload),
         ensure_ascii=False,
         indent=2,
         sort_keys=True,
     ) + "\n"
-    path.write_text(serialized, encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if _sha256(path) != reservation_sha256:
+            _fail(
+                "MACROCYCLE_BACE1_OUTPUT_RESERVATION_CHANGED",
+                "The reserved evidence JSON changed during verification.",
+                details={"path": str(path)},
+            )
+        os.replace(temporary_path, path)
+        temporary_path = None
+    except OSError as exc:
+        _fail(
+            "MACROCYCLE_BACE1_OUTPUT_WRITE_FAILED",
+            "The evidence JSON could not be written safely.",
+            details={
+                "path": str(path),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     return path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    evidence_reservation: tuple[Path, str] | None = None
     try:
+        if args.output:
+            evidence_reservation = _prepare_output_path(args.output)
         result = verify_macrocycle_bace1(
             fixture_root=args.fixture_root,
             python_executable=args.python,
             vina_executable=args.vina,
         )
-        if args.output:
-            evidence_path = _write_result(args.output, result)
+        if evidence_reservation is not None:
+            evidence_path = _write_result(*evidence_reservation, result)
+            evidence_reservation = None
             result = {
                 **result,
                 "evidence_json": {
@@ -2474,6 +2765,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "steps": exc.steps,
         }
         exit_code = 1
+    finally:
+        if evidence_reservation is not None:
+            _release_output_reservation(*evidence_reservation)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))

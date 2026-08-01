@@ -190,6 +190,77 @@ class VinaEvaluation1IEPVerifierContractTests(unittest.TestCase):
             finally:
                 outside.unlink(missing_ok=True)
 
+    def test_execution_identity_rejects_runtime_binary_drift(self) -> None:
+        vina = REPOSITORY_ROOT / "resources" / "vina" / "vina.exe"
+        oracle = self.manifest["tool"]
+        command = [str(vina), "--config", "run.conf", "--score_only"]
+        identity = {
+            "pid": 321,
+            "creation_token": "fixed-process-token",
+            "executable_path": str(vina),
+        }
+        snapshot = {
+            "size_bytes": oracle["size_bytes"],
+            "sha256": oracle["sha256"],
+        }
+        metadata = {
+            "status": "finished",
+            "exit_code": 0,
+            "pid": 321,
+            "process_identity": identity,
+            "executed_command": command,
+            "vina_tool": {
+                "path": str(vina),
+                "version": oracle["version"],
+                **snapshot,
+            },
+            "execution_vina": {
+                "path": str(vina),
+                "version": oracle["version"],
+                **snapshot,
+            },
+            "vina_binary_integrity": {
+                "start_sha256": oracle["sha256"],
+                "end_sha256": oracle["sha256"],
+                "match": True,
+            },
+            "artifacts": {
+                key: dict(snapshot)
+                for key in (
+                    "vina_binary_prepared",
+                    "vina_binary_executed",
+                    "vina_binary_observed_after_execution",
+                )
+            },
+        }
+        accepted = self.module._assert_execution_vina_identity(
+            metadata,
+            self.manifest,
+            vina,
+            [command],
+            label="score_only",
+        )
+        self.assertEqual(
+            accepted["execution_vina"]["sha256"],
+            oracle["sha256"],
+        )
+
+        metadata["vina_binary_integrity"]["end_sha256"] = "0" * 64
+        with self.assertRaises(
+            self.module.VinaEvaluationAcceptanceError
+        ) as context:
+            self.module._assert_execution_vina_identity(
+                metadata,
+                self.manifest,
+                vina,
+                [command],
+                label="score_only",
+            )
+        self.assertEqual(
+            context.exception.code,
+            "VINA_EVALUATION_ORACLE_MISMATCH",
+        )
+
     def test_full_verifier_restores_environment_and_removes_projects(self) -> None:
         settings_variable = self.module.SETTINGS_ENV_VAR
         resource_variable = self.module.RESOURCE_DIR_ENV_VAR

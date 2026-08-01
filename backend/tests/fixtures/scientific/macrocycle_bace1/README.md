@@ -18,7 +18,8 @@ The output path is optional and must not already exist. The command never
 reuses a historical DockStart project or temporary output. It creates a fresh
 project and verifies the following public-API chain:
 
-1. exact fixture identities and configured Python/RDKit/Meeko/Vina versions;
+1. exact fixture identities, configured Python/RDKit/Meeko versions, and the
+   fixed Vina 1.2.7 executable size/SHA-256;
 2. standard ligand preparation refuses the macrocycle with
    `MACROCYCLE_REVIEW_REQUIRED` and publishes no prepared ligand;
 3. a fresh review reproduces all seven candidate identifiers and the fixed
@@ -28,7 +29,8 @@ project and verifies the following public-API chain:
    `G*` glue pseudo-atoms, and cross-binds the review, confirmation, contract,
    frozen input, worker evidence, and published PDBQT;
 6. real receptor preparation, the official box, and the full acceptance
-   parameters feed a real Vina run;
+   parameters feed a real Vina run whose command, PID identity, execution-time
+   Vina hashes, and frozen receptor/ligand snapshots are cross-checked;
 7. run metadata attributes the ligand preparation as `formal_reviewed`, and
    DockStart emits scores plus a Markdown report;
 8. the real `mk_export` path writes `poses.sdf`; and
@@ -47,4 +49,3 @@ topology and total formal charge after docking export. It does **not** claim
 scientific pose recovery. The fixture does not contain an independently
 validated same-coordinate-frame crystal-pose atom mapping, so the verifier
 does not apply an alignment, invent a reference mapping, or gate on RMSD.
-

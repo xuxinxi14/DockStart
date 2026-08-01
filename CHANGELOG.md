@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.13.1
+
+- Repackaged the current scientific workflow baseline for hands-on GUI acceptance; this remains a local candidate and is not a public Release.
+- Added external-verifier evidence hardening for Vina evaluation modes and the BACE_1 macrocycle workflow, including execution-time tool and frozen-input identity checks.
+- Corrected light-theme contrast in the result run-file grid and added a current-worktree manual GUI acceptance checklist.
+
 ## v0.13.0
 
 - Added audited `score_only` and two-stage `local_only` workflows, pose-context attestations, quantitative before/after comparisons, and advanced Vina parameter capability gates.

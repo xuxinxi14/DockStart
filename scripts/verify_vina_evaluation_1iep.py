@@ -398,6 +398,304 @@ def _verify_vina(
     }
 
 
+def _same_existing_file(left: str | Path, right: str | Path) -> bool:
+    """Compare executable paths without trusting textual path equality."""
+
+    try:
+        return os.path.samefile(Path(left), Path(right))
+    except (OSError, ValueError, TypeError):
+        try:
+            return os.path.normcase(str(Path(left).resolve())) == os.path.normcase(
+                str(Path(right).resolve())
+            )
+        except (OSError, ValueError, TypeError):
+            return False
+
+
+def _assert_process_record(
+    record: Mapping[str, Any],
+    expected_command: Sequence[str],
+    vina_path: Path,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    command = record.get("command")
+    if not isinstance(command, list):
+        command = record.get("executed_command")
+    identity = record.get("process_identity")
+    pid = record.get("pid")
+    executable = (
+        identity.get("executable_path")
+        if isinstance(identity, Mapping)
+        else None
+    )
+    valid = bool(
+        isinstance(command, list)
+        and [str(value) for value in command]
+        == [str(value) for value in expected_command]
+        and command
+        and _same_existing_file(str(command[0]), vina_path)
+        and isinstance(pid, int)
+        and pid > 0
+        and isinstance(identity, Mapping)
+        and identity.get("pid") == pid
+        and bool(str(identity.get("creation_token") or ""))
+        and executable
+        and _same_existing_file(str(executable), vina_path)
+    )
+    if not valid:
+        _fail(
+            "VINA_EVALUATION_EXECUTION_PROCESS_INVALID",
+            f"{label} is not bound to the fixed Vina process and command.",
+            details={
+                "label": label,
+                "expected_command": [str(value) for value in expected_command],
+                "recorded_command": command,
+                "pid": pid,
+                "process_identity": dict(identity)
+                if isinstance(identity, Mapping)
+                else identity,
+                "expected_vina": str(vina_path),
+            },
+        )
+    return {
+        "pid": pid,
+        "creation_token": identity.get("creation_token"),
+        "executable_path": str(executable),
+        "command": [str(value) for value in command],
+    }
+
+
+def _assert_execution_vina_identity(
+    metadata: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    vina_path: Path,
+    expected_commands: Sequence[Sequence[str]],
+    *,
+    label: str,
+) -> dict[str, Any]:
+    """Bind every completed stage to the manifest-pinned Vina executable."""
+
+    expected_tool = manifest.get("tool")
+    if not isinstance(expected_tool, Mapping):
+        _fail(
+            "VINA_EVALUATION_MANIFEST_INVALID",
+            "The Vina execution oracle is missing.",
+        )
+    expected_sha = str(expected_tool.get("sha256") or "").lower()
+    expected_size = expected_tool.get("size_bytes")
+    expected_version = str(expected_tool.get("version") or "")
+    _assert_equal(_sha256(vina_path), expected_sha, f"{label} current Vina SHA256")
+    _assert_equal(
+        vina_path.stat().st_size,
+        expected_size,
+        f"{label} current Vina size",
+    )
+
+    prepared_tool = metadata.get("vina_tool")
+    execution_tool = metadata.get("execution_vina")
+    if not isinstance(prepared_tool, Mapping) or not isinstance(
+        execution_tool,
+        Mapping,
+    ):
+        _fail(
+            "VINA_EVALUATION_EXECUTION_TOOL_MISSING",
+            f"{label} has no complete prepared/execution Vina provenance.",
+        )
+    for stage_name, tool in (
+        ("prepared", prepared_tool),
+        ("execution", execution_tool),
+    ):
+        _assert_equal(
+            str(tool.get("sha256") or "").lower(),
+            expected_sha,
+            f"{label} {stage_name} Vina SHA256",
+        )
+        _assert_equal(
+            tool.get("size_bytes"),
+            expected_size,
+            f"{label} {stage_name} Vina size",
+        )
+        _assert_equal(
+            str(tool.get("version") or ""),
+            expected_version,
+            f"{label} {stage_name} Vina version",
+        )
+    if not _same_existing_file(str(execution_tool.get("path") or ""), vina_path):
+        _fail(
+            "VINA_EVALUATION_EXECUTION_TOOL_PATH_MISMATCH",
+            f"{label} execution Vina path does not identify the fixed executable.",
+            details={
+                "recorded": execution_tool.get("path"),
+                "expected": str(vina_path),
+            },
+        )
+
+    commands = [[str(value) for value in command] for command in expected_commands]
+    recorded_commands = metadata.get("executed_commands")
+    if len(commands) == 1:
+        _assert_equal(
+            metadata.get("executed_command"),
+            commands[0],
+            f"{label} executed command",
+        )
+    else:
+        _assert_equal(
+            recorded_commands,
+            commands,
+            f"{label} executed command sequence",
+        )
+        _assert_equal(
+            metadata.get("executed_command"),
+            commands[-1],
+            f"{label} final executed command",
+        )
+    for index, command in enumerate(commands, start=1):
+        if not command or not _same_existing_file(command[0], vina_path):
+            _fail(
+                "VINA_EVALUATION_EXECUTED_COMMAND_TOOL_MISMATCH",
+                f"{label} command {index} does not invoke the fixed Vina.",
+                details={"command": command, "expected_vina": str(vina_path)},
+            )
+
+    artifacts = metadata.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        _fail(
+            "VINA_EVALUATION_EXECUTION_ARTIFACTS_MISSING",
+            f"{label} has no execution artifact evidence.",
+        )
+    if len(commands) == 1:
+        required_binary_artifacts = {
+            "vina_binary_prepared",
+            "vina_binary_executed",
+            "vina_binary_observed_after_execution",
+        }
+    else:
+        required_binary_artifacts = {
+            "vina_binary_prepared",
+            "vina_baseline_start",
+            "vina_baseline_end",
+            "vina_local_start",
+            "vina_local_end",
+        }
+    binary_artifacts: dict[str, dict[str, Any]] = {}
+    for key in sorted(required_binary_artifacts):
+        snapshot = artifacts.get(key)
+        if not isinstance(snapshot, Mapping):
+            _fail(
+                "VINA_EVALUATION_EXECUTION_ARTIFACTS_MISSING",
+                f"{label} is missing {key}.",
+                details={"available": sorted(str(value) for value in artifacts)},
+            )
+        _assert_equal(
+            str(snapshot.get("sha256") or "").lower(),
+            expected_sha,
+            f"{label} {key} SHA256",
+        )
+        _assert_equal(
+            snapshot.get("size_bytes"),
+            expected_size,
+            f"{label} {key} size",
+        )
+        binary_artifacts[key] = {
+            "size_bytes": snapshot.get("size_bytes"),
+            "sha256": str(snapshot.get("sha256") or "").lower(),
+        }
+
+    process_records: list[dict[str, Any]] = []
+    integrity_records: list[dict[str, Any]] = []
+    if len(commands) == 1:
+        integrity = metadata.get("vina_binary_integrity")
+        if not isinstance(integrity, Mapping):
+            _fail(
+                "VINA_EVALUATION_EXECUTION_INTEGRITY_MISSING",
+                f"{label} has no execution-time Vina integrity record.",
+            )
+        for key in ("start_sha256", "end_sha256"):
+            _assert_equal(
+                str(integrity.get(key) or "").lower(),
+                expected_sha,
+                f"{label} {key}",
+            )
+        _assert_equal(integrity.get("match"), True, f"{label} Vina integrity")
+        process_records.append(
+            _assert_process_record(
+                metadata,
+                commands[0],
+                vina_path,
+                label=f"{label} process",
+            )
+        )
+        integrity_records.append(dict(integrity))
+    else:
+        phases = metadata.get("execution_phases")
+        if not isinstance(phases, Mapping):
+            _fail(
+                "VINA_EVALUATION_EXECUTION_PHASES_MISSING",
+                f"{label} has no two-stage execution evidence.",
+            )
+        for phase_id, command in zip(
+            ("input_score", "local_optimization"),
+            commands,
+            strict=True,
+        ):
+            phase = phases.get(phase_id)
+            if not isinstance(phase, Mapping):
+                _fail(
+                    "VINA_EVALUATION_EXECUTION_PHASES_MISSING",
+                    f"{label} is missing the {phase_id} phase.",
+                )
+            _assert_equal(
+                phase.get("status"),
+                "finished",
+                f"{label} {phase_id} status",
+            )
+            _assert_equal(
+                phase.get("exit_code"),
+                0,
+                f"{label} {phase_id} exit code",
+            )
+            integrity = phase.get("vina_binary_integrity")
+            if not isinstance(integrity, Mapping):
+                _fail(
+                    "VINA_EVALUATION_EXECUTION_INTEGRITY_MISSING",
+                    f"{label} {phase_id} has no Vina integrity record.",
+                )
+            for key in ("initial_sha256", "start_sha256", "end_sha256"):
+                _assert_equal(
+                    str(integrity.get(key) or "").lower(),
+                    expected_sha,
+                    f"{label} {phase_id} {key}",
+                )
+            _assert_equal(
+                integrity.get("match"),
+                True,
+                f"{label} {phase_id} Vina integrity",
+            )
+            process_records.append(
+                _assert_process_record(
+                    phase,
+                    command,
+                    vina_path,
+                    label=f"{label} {phase_id} process",
+                )
+            )
+            integrity_records.append(dict(integrity))
+
+    return {
+        "execution_vina": {
+            "path": str(execution_tool.get("path") or ""),
+            "version": execution_tool.get("version"),
+            "size_bytes": execution_tool.get("size_bytes"),
+            "sha256": str(execution_tool.get("sha256") or "").lower(),
+        },
+        "commands": commands,
+        "processes": process_records,
+        "integrity": integrity_records,
+        "binary_artifacts": binary_artifacts,
+    }
+
+
 def _project_artifact(
     project_root: Path,
     relative_value: Any,
@@ -694,6 +992,7 @@ def _verify_global_dock(
     ligand_path: Path,
     protocol: Mapping[str, Any],
     manifest: Mapping[str, Any],
+    vina_path: Path,
 ) -> dict[str, Any]:
     project_root, prepared, generated_config = _prepare_project(
         work_root,
@@ -872,18 +1171,12 @@ def _verify_global_dock(
         metadata_relative,
         "global docking metadata",
     )
-    tool = final_metadata.get("vina_tool")
-    if not isinstance(tool, Mapping):
-        _fail(
-            "VINA_EVALUATION_DOCK_TOOL_PROVENANCE_MISSING",
-            "Global docking metadata has no Vina tool provenance.",
-        )
-    _assert_equal(
-        tool.get("sha256"),
-        manifest.get("tool", {}).get("sha256")
-        if isinstance(manifest.get("tool"), Mapping)
-        else None,
-        "global docking Vina SHA256",
+    execution_identity = _assert_execution_vina_identity(
+        final_metadata,
+        manifest,
+        vina_path,
+        [command],
+        label="global docking",
     )
 
     artifacts = {
@@ -934,6 +1227,7 @@ def _verify_global_dock(
         "command": list(command),
         "status": final_metadata.get("status"),
         "exit_code": final_metadata.get("exit_code"),
+        "execution_identity": execution_identity,
         "advanced_parameters": {
             key: frozen_vina.get(key)
             for key in (
@@ -963,6 +1257,7 @@ def _verify_score_only(
     ligand_path: Path,
     protocol: Mapping[str, Any],
     manifest: Mapping[str, Any],
+    vina_path: Path,
 ) -> dict[str, Any]:
     project_root, prepared, generated_config = _prepare_project(
         work_root,
@@ -1133,18 +1428,12 @@ def _verify_score_only(
         metadata_relative,
         "score_only metadata",
     )
-    tool = final_metadata.get("vina_tool")
-    if not isinstance(tool, Mapping):
-        _fail(
-            "VINA_EVALUATION_SCORE_TOOL_PROVENANCE_MISSING",
-            "score_only metadata has no Vina tool provenance.",
-        )
-    _assert_equal(
-        tool.get("sha256"),
-        manifest.get("tool", {}).get("sha256")
-        if isinstance(manifest.get("tool"), Mapping)
-        else None,
-        "score_only Vina SHA256",
+    execution_identity = _assert_execution_vina_identity(
+        final_metadata,
+        manifest,
+        vina_path,
+        [command],
+        label="score_only",
     )
 
     artifacts = {
@@ -1194,6 +1483,7 @@ def _verify_score_only(
         "command": list(command),
         "status": final_metadata.get("status"),
         "exit_code": final_metadata.get("exit_code"),
+        "execution_identity": execution_identity,
         "primary_score_kcal_mol": score,
         "output_pose_generated": False,
         "pose_file": evaluation.get("pose_file"),
@@ -1212,6 +1502,7 @@ def _verify_local_only(
     ligand_path: Path,
     protocol: Mapping[str, Any],
     manifest: Mapping[str, Any],
+    vina_path: Path,
 ) -> dict[str, Any]:
     project_root, prepared, generated_config = _prepare_project(
         work_root,
@@ -1465,18 +1756,12 @@ def _verify_local_only(
         metadata_relative,
         "local_only metadata",
     )
-    tool = final_metadata.get("vina_tool")
-    if not isinstance(tool, Mapping):
-        _fail(
-            "VINA_EVALUATION_LOCAL_TOOL_PROVENANCE_MISSING",
-            "local_only metadata has no Vina tool provenance.",
-        )
-    _assert_equal(
-        tool.get("sha256"),
-        manifest.get("tool", {}).get("sha256")
-        if isinstance(manifest.get("tool"), Mapping)
-        else None,
-        "local_only Vina SHA256",
+    execution_identity = _assert_execution_vina_identity(
+        final_metadata,
+        manifest,
+        vina_path,
+        [baseline_command, optimization_command],
+        label="local_only",
     )
     artifacts = {
         "metadata": _artifact_evidence(
@@ -1543,6 +1828,7 @@ def _verify_local_only(
         "commands": [list(baseline_command), list(optimization_command)],
         "status": final_metadata.get("status"),
         "exit_code": final_metadata.get("exit_code"),
+        "execution_identity": execution_identity,
         "input_score_kcal_mol": input_score,
         "optimized_score_kcal_mol": optimized_score,
         "delta_score_kcal_mol": delta_score,
@@ -1641,6 +1927,7 @@ def verify_vina_evaluation_1iep(
                 ligand,
                 global_protocol,
                 manifest,
+                vina_path,
             ),
         )
         score_evidence = _execute_step(
@@ -1652,6 +1939,7 @@ def verify_vina_evaluation_1iep(
                 ligand,
                 score_protocol,
                 manifest,
+                vina_path,
             ),
         )
         local_evidence = _execute_step(
@@ -1663,6 +1951,7 @@ def verify_vina_evaluation_1iep(
                 ligand,
                 local_protocol,
                 manifest,
+                vina_path,
             ),
         )
         result_payload = {

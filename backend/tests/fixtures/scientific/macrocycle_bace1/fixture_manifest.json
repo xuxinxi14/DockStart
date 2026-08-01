@@ -60,7 +60,11 @@
       "python": "3.11.15",
       "rdkit": "2026.03.3",
       "meeko": "0.7.1",
-      "vina": "1.2.7"
+      "vina": "1.2.7",
+      "vina_binary": {
+        "size_bytes": 1233920,
+        "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+      }
     },
     "standard_preparation_rejection_code": "MACROCYCLE_REVIEW_REQUIRED",
     "review": {
