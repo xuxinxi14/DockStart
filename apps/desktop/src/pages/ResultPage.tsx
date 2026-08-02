@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer, TrayArrowDown } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Crosshair, FileText, FolderOpen, Gauge, Microscope, Ruler, Timer } from "@phosphor-icons/react";
 import { hydratedApi } from "../api/hydrated";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
@@ -23,7 +23,6 @@ import type {
   VinaEvaluation,
   VinaRunMode,
 } from "../types";
-import { startResultExportTask, waitForBackgroundTask } from "../utils/backgroundTasks";
 import {
   HYDRATED_PROTOCOL_ID,
   isHydratedProtocolId,
@@ -161,6 +160,17 @@ type ReferenceRmsdResult = {
   reference_source_name: string;
   reference_sha256: string;
   calculated_at: string;
+};
+
+type LocalDirectoryResponse = {
+  ok: boolean;
+  directory?: string;
+  message?: string;
+  error?: {
+    message?: string;
+    raw_error?: string;
+    suggestion?: string;
+  };
 };
 
 function metadataReferenceRmsd(metadata: Record<string, unknown> | null): ReferenceRmsdResult | null {
@@ -601,32 +611,29 @@ export default function ResultPage({
     }
   };
 
-  const exportTopologySdf = async () => {
+  const openOutputDirectory = async (target: "result_sdf" | "reports") => {
     setIsBusy(true);
     setMessage("");
     setRawError("");
     try {
-      const statusPayload = JSON.parse(await invoke<string>("get_result_export_status", {
+      const response = JSON.parse(await invoke<string>("open_result_output_directory", {
         projectDir: project.project_dir,
+        target,
         runId,
-      })) as { ok?: boolean; ready?: boolean; message?: string; error?: { message?: string; raw_error?: string } };
-      if (!statusPayload.ok || !statusPayload.ready) {
-        throw new Error(statusPayload.error?.message || statusPayload.message || "当前结果缺少 Meeko 原始拓扑，不能安全导出 SDF。");
+        relativePath: target === "result_sdf" ? resultSdf : null,
+      })) as LocalDirectoryResponse;
+      if (!response.ok) {
+        setMessage(response.error?.message || "无法打开本地目录。");
+        setRawError(
+          [response.error?.raw_error, response.error?.suggestion]
+            .filter(Boolean)
+            .join("\n"),
+        );
+        return;
       }
-      const task = await startResultExportTask(project.project_dir, runId);
-      const completed = await waitForBackgroundTask(task.task_id, (next) => {
-        if (mountedRef.current) setMessage(next.progress.message || "正在通过 Meeko 恢复 SDF…");
-      });
-      const result = completed.result_json
-        ? JSON.parse(completed.result_json) as { ok?: boolean; message?: string; error?: { message?: string; raw_error?: string } }
-        : null;
-      if (completed.status !== "finished" || !result?.ok) {
-        throw new Error(result?.error?.message || completed.error || "SDF 导出失败。");
-      }
-      setMessage(result.message || "SDF 已导出。未根据原子距离猜测键级。");
-      await reloadRunMetadata();
+      setMessage(response.message || "已打开本地目录。");
     } catch (error) {
-      setMessage("无法安全导出拓扑 SDF。");
+      setMessage("无法打开本地目录。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsBusy(false);
@@ -1159,11 +1166,11 @@ export default function ResultPage({
             <small>此值不同于列表中相对 Mode 1 的 RMSD；化学连接不一致时不会强行比较。</small>
           </section> : null}
           <section className="result-rail-actions">
-            {runMode !== "score_only" && !isMultipleLigand ? <ActionButton disabled={isBusy || status !== "finished"} onClick={() => void exportTopologySdf()}>
-              <TrayArrowDown aria-hidden="true" size={17} /> {resultSdf ? "重新导出拓扑 SDF" : "导出拓扑 SDF"}
+            {runMode !== "score_only" && !isMultipleLigand ? <ActionButton disabled={isBusy || !resultSdf} title={resultSdf ? "打开实际导出的拓扑 SDF 所在目录" : "尚未记录可用的拓扑 SDF 输出"} onClick={() => void openOutputDirectory("result_sdf")}>
+              <FolderOpen aria-hidden="true" size={17} /> 打开拓扑 SDF 目录
             </ActionButton> : null}
-            <ActionButton variant="primary" disabled={isEvaluationMode ? !evaluation : !(scores.length || displayedScoresFile)} onClick={() => onOpenReportPage(project, runId)}>
-              <FileText aria-hidden="true" size={17} /> {reportReady ? "查看分析报告" : "生成分析报告"}
+            <ActionButton variant="primary" disabled={isBusy} onClick={() => void openOutputDirectory("reports")}>
+              <FolderOpen aria-hidden="true" size={17} /> 打开报告目录
             </ActionButton>
             <ActionButton onClick={() => void copyOutputPath()}><FolderOpen aria-hidden="true" size={17} /> 复制输出路径</ActionButton>
           </section>

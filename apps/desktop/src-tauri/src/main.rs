@@ -5,7 +5,7 @@ use std::{
     env, fs,
     hash::{Hash, Hasher},
     io::{Read, Seek, SeekFrom},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -32,6 +32,7 @@ const MAX_BACKEND_CACHE_ENTRIES: usize = 128;
 const MAX_BACKEND_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BACKEND_CACHE_ENTRY_BYTES: usize = 20 * 1024 * 1024;
 const INTERACTIVE_STRUCTURE_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
+const MAX_MARKDOWN_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const BACKGROUND_TASK_EVENT: &str = "dockstart-background-task";
 const MAX_CONCURRENT_BACKGROUND_TASKS: usize = 2;
 const MAX_QUEUED_BACKGROUND_TASKS: usize = 32;
@@ -1723,6 +1724,125 @@ async fn get_report_status(project_dir: String, run_id: String) -> String {
 }
 
 #[tauri::command]
+fn open_result_output_directory(
+    project_dir: String,
+    target: String,
+    run_id: Option<String>,
+    relative_path: Option<String>,
+) -> String {
+    let directory = match resolve_result_output_directory(
+        &project_dir,
+        &target,
+        run_id.as_deref(),
+        relative_path.as_deref(),
+    ) {
+        Ok(directory) => directory,
+        Err(error) => {
+            return local_path_error_json(
+                "LOCAL_DIRECTORY_PATH_UNSAFE",
+                "无法打开本地目录。",
+                &error,
+                "请刷新结果；若文件已经移动，请重新生成对应输出。",
+            )
+        }
+    };
+
+    if let Err(error) = launch_local_directory(&directory) {
+        return local_path_error_json(
+            "LOCAL_DIRECTORY_OPEN_FAILED",
+            "无法打开本地目录。",
+            &error,
+            "请确认 Windows 文件资源管理器可用，或复制路径后手动打开。",
+        );
+    }
+
+    serde_json::json!({
+        "ok": true,
+        "directory": directory.to_string_lossy(),
+        "message": if target == "result_sdf" {
+            "已打开拓扑 SDF 所在目录。"
+        } else {
+            "已打开项目报告目录。"
+        },
+        "error": serde_json::Value::Null,
+    })
+    .to_string()
+}
+
+#[tauri::command]
+fn read_project_markdown_report(project_dir: String, relative_path: String) -> String {
+    let report_path = match resolve_project_markdown_report(&project_dir, &relative_path) {
+        Ok(path) => path,
+        Err(error) => {
+            return local_path_error_json(
+                "MARKDOWN_PREVIEW_PATH_UNSAFE",
+                "无法读取 Markdown 报告预览。",
+                &error,
+                "请刷新报告状态；若报告已移动，请重新生成报告。",
+            )
+        }
+    };
+
+    let bytes = match fs::read(&report_path) {
+        Ok(bytes) if bytes.len() as u64 <= MAX_MARKDOWN_PREVIEW_BYTES => bytes,
+        Ok(bytes) => {
+            return local_path_error_json(
+                "MARKDOWN_PREVIEW_TOO_LARGE",
+                "Markdown 报告过大，无法在应用内预览。",
+                &format!("size_bytes={}", bytes.len()),
+                "请从报告目录使用本地 Markdown 阅读器打开该文件。",
+            )
+        }
+        Err(error) => {
+            return local_path_error_json(
+                "MARKDOWN_PREVIEW_READ_FAILED",
+                "读取 Markdown 报告时发生错误。",
+                &error.to_string(),
+                "请确认报告文件可读，或重新生成报告。",
+            )
+        }
+    };
+    let content = match String::from_utf8(bytes) {
+        Ok(content) => content,
+        Err(error) => {
+            return local_path_error_json(
+                "MARKDOWN_PREVIEW_ENCODING_INVALID",
+                "Markdown 报告不是有效的 UTF-8 文本。",
+                &error.to_string(),
+                "请保留原文件用于排查，并重新生成报告。",
+            )
+        }
+    };
+
+    let project_root = match fs::canonicalize(&project_dir) {
+        Ok(path) => path,
+        Err(error) => {
+            return local_path_error_json(
+                "MARKDOWN_PREVIEW_PROJECT_UNAVAILABLE",
+                "项目目录不可访问。",
+                &error.to_string(),
+                "请重新打开项目后再查看报告。",
+            )
+        }
+    };
+    let normalized_relative = report_path
+        .strip_prefix(&project_root)
+        .unwrap_or(&report_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    serde_json::json!({
+        "ok": true,
+        "relative_path": normalized_relative,
+        "size_bytes": content.len(),
+        "content": content,
+        "message": "Markdown 报告已载入只读预览。",
+        "error": serde_json::Value::Null,
+    })
+    .to_string()
+}
+
+#[tauri::command]
 async fn get_viewer_file_status(project_dir: String) -> String {
     match run_backend_module_cached_async(
         "dockstart_core.viewer",
@@ -2712,6 +2832,176 @@ fn screening_argument_error_json(
         },
     })
     .to_string()
+}
+
+fn local_path_error_json(code: &str, message: &str, raw_error: &str, suggestion: &str) -> String {
+    serde_json::json!({
+        "ok": false,
+        "directory": "",
+        "relative_path": "",
+        "content": "",
+        "error": {
+            "code": code,
+            "title": message,
+            "message": message,
+            "raw_error": raw_error,
+            "suggestion": suggestion,
+        },
+    })
+    .to_string()
+}
+
+fn clean_project_relative_path(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if value.trim().is_empty() || path.is_absolute() {
+        return Err("只接受非空的项目内相对路径。".to_string());
+    }
+    if !path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("项目内路径不能包含盘符、根目录、当前目录或上级目录片段。".to_string());
+    }
+    Ok(path)
+}
+
+fn canonical_project_root(project_dir: &str) -> Result<PathBuf, String> {
+    let root = fs::canonicalize(project_dir)
+        .map_err(|error| format!("项目目录不存在或不可访问：{error}"))?;
+    if !root.is_dir() {
+        return Err("项目路径不是目录。".to_string());
+    }
+
+    let marker = root.join("project.json");
+    let marker_metadata = fs::symlink_metadata(&marker)
+        .map_err(|error| format!("项目目录缺少可读取的 project.json：{error}"))?;
+    if marker_metadata.file_type().is_symlink() {
+        return Err("project.json 不能是符号链接。".to_string());
+    }
+    let marker =
+        fs::canonicalize(marker).map_err(|error| format!("project.json 不可访问：{error}"))?;
+    if !marker.starts_with(&root) || !marker.is_file() {
+        return Err("project.json 解析到了项目目录之外，或该路径不是文件。".to_string());
+    }
+    Ok(root)
+}
+
+fn canonical_project_subdirectory(project_root: &Path, name: &str) -> Result<PathBuf, String> {
+    let requested = project_root.join(name);
+    let metadata = fs::symlink_metadata(&requested)
+        .map_err(|error| format!("项目 {name} 目录不存在或不可访问：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("项目 {name} 目录不能是符号链接。"));
+    }
+    let directory = fs::canonicalize(requested)
+        .map_err(|error| format!("项目 {name} 目录不可访问：{error}"))?;
+    if !directory.starts_with(project_root) || !directory.is_dir() {
+        return Err(format!(
+            "项目 {name} 目录解析到了项目目录之外，或该路径不是目录。"
+        ));
+    }
+    Ok(directory)
+}
+
+fn resolve_result_output_directory(
+    project_dir: &str,
+    target: &str,
+    run_id: Option<&str>,
+    relative_path: Option<&str>,
+) -> Result<PathBuf, String> {
+    let project_root = canonical_project_root(project_dir)?;
+    match target {
+        "reports" => canonical_project_subdirectory(&project_root, "reports"),
+        "result_sdf" => {
+            let run_id = run_id.ok_or_else(|| "打开拓扑 SDF 目录需要 run_id。".to_string())?;
+            let run_directory = validate_run_directory(project_dir, run_id)?;
+            let exports_root = canonical_project_subdirectory(&run_directory, "exports")?;
+            let relative = clean_project_relative_path(
+                relative_path.ok_or_else(|| "尚未记录拓扑 SDF 输出文件。".to_string())?,
+            )?;
+            let requested = project_root.join(relative);
+            let requested_metadata = fs::symlink_metadata(&requested)
+                .map_err(|error| format!("拓扑 SDF 文件不存在或不可访问：{error}"))?;
+            if requested_metadata.file_type().is_symlink() {
+                return Err("拓扑 SDF 文件不能是符号链接。".to_string());
+            }
+            let output_file = fs::canonicalize(requested)
+                .map_err(|error| format!("拓扑 SDF 文件不可访问：{error}"))?;
+            let is_sdf = output_file
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("sdf"));
+            if !output_file.starts_with(&exports_root) || !output_file.is_file() || !is_sdf {
+                return Err(
+                    "拓扑 SDF 必须是当前 run 的 exports 目录内已存在的 .sdf 文件。".to_string(),
+                );
+            }
+            output_file
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| "无法解析拓扑 SDF 的父目录。".to_string())
+        }
+        _ => Err(format!("不支持的本地目录目标：{target}")),
+    }
+}
+
+fn resolve_project_markdown_report(
+    project_dir: &str,
+    relative_path: &str,
+) -> Result<PathBuf, String> {
+    let project_root = canonical_project_root(project_dir)?;
+    let reports_root = canonical_project_subdirectory(&project_root, "reports")?;
+    let relative = clean_project_relative_path(relative_path)?;
+    let requested = project_root.join(relative);
+    let requested_metadata = fs::symlink_metadata(&requested)
+        .map_err(|error| format!("Markdown 报告不存在或不可访问：{error}"))?;
+    if requested_metadata.file_type().is_symlink() {
+        return Err("Markdown 报告不能是符号链接。".to_string());
+    }
+    if requested_metadata.len() > MAX_MARKDOWN_PREVIEW_BYTES {
+        return Err(format!(
+            "Markdown 报告超过应用内预览上限：{} bytes。",
+            requested_metadata.len()
+        ));
+    }
+    let report =
+        fs::canonicalize(requested).map_err(|error| format!("Markdown 报告不可访问：{error}"))?;
+    let is_markdown = report
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("md"));
+    if !report.starts_with(&reports_root) || !report.is_file() || !is_markdown {
+        return Err("报告预览只允许读取项目 reports 目录内已存在的 .md 文件。".to_string());
+    }
+    Ok(report)
+}
+
+#[cfg(windows)]
+fn launch_local_directory(directory: &Path) -> Result<(), String> {
+    Command::new("explorer.exe")
+        .arg(directory)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("启动 Windows 文件资源管理器失败：{error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn launch_local_directory(directory: &Path) -> Result<(), String> {
+    Command::new("open")
+        .arg(directory)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("启动 Finder 失败：{error}"))
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn launch_local_directory(directory: &Path) -> Result<(), String> {
+    Command::new("xdg-open")
+        .arg(directory)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("启动文件管理器失败：{error}"))
 }
 
 fn validate_run_directory(project_dir: &str, run_id: &str) -> Result<PathBuf, String> {
@@ -5337,6 +5627,8 @@ fn main() {
             export_markdown_report,
             export_multiple_ligand_markdown_report,
             get_report_status,
+            open_result_output_directory,
+            read_project_markdown_report,
             get_viewer_file_status,
             load_structure_for_viewer,
             list_docking_poses,
@@ -6416,6 +6708,64 @@ mod tests {
         let validated = validate_run_directory(&test_root.to_string_lossy(), "run_001").unwrap();
         assert_eq!(validated, fs::canonicalize(&run_dir).unwrap());
         assert!(validate_run_directory(&test_root.to_string_lossy(), "../run_001").is_err());
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn local_report_and_result_directories_stay_inside_the_project() {
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-local-directory-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let reports_dir = test_root.join("reports");
+        let export_dir = test_root
+            .join("runs")
+            .join("run_001")
+            .join("exports")
+            .join("sdf_001");
+        fs::create_dir_all(&reports_dir).unwrap();
+        fs::create_dir_all(&export_dir).unwrap();
+        fs::write(test_root.join("project.json"), b"{}").unwrap();
+        fs::write(reports_dir.join("docking_report.md"), b"# report\n").unwrap();
+        fs::write(export_dir.join("poses.sdf"), b"$$$$\n").unwrap();
+
+        let project_text = test_root.to_string_lossy();
+        let reports =
+            resolve_result_output_directory(&project_text, "reports", None, None).unwrap();
+        assert_eq!(reports, fs::canonicalize(&reports_dir).unwrap());
+
+        let sdf_directory = resolve_result_output_directory(
+            &project_text,
+            "result_sdf",
+            Some("run_001"),
+            Some("runs/run_001/exports/sdf_001/poses.sdf"),
+        )
+        .unwrap();
+        assert_eq!(sdf_directory, fs::canonicalize(&export_dir).unwrap());
+
+        let report =
+            resolve_project_markdown_report(&project_text, "reports/docking_report.md").unwrap();
+        assert_eq!(
+            report,
+            fs::canonicalize(reports_dir.join("docking_report.md")).unwrap()
+        );
+        assert!(resolve_project_markdown_report(&project_text, "../outside.md").is_err());
+        assert!(resolve_result_output_directory(
+            &project_text,
+            "result_sdf",
+            Some("run_001"),
+            Some("runs/run_001/metadata.json"),
+        )
+        .is_err());
+        assert!(resolve_result_output_directory(
+            &project_text,
+            "result_sdf",
+            Some("../run_001"),
+            Some("runs/run_001/exports/sdf_001/poses.sdf"),
+        )
+        .is_err());
+
         let _ = fs::remove_dir_all(test_root);
     }
 

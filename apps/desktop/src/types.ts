@@ -1132,6 +1132,8 @@ export type PreparationStatus =
 export type PreparationTarget = "receptor" | "ligand";
 export type PreparationMethod =
   | "meeko"
+  | "meeko_receptor_controls"
+  | "meeko_allow_bad_res_reviewed"
   | "rdkit_meeko"
   | "meeko_macrocycle"
   | "external_manual";
@@ -1163,6 +1165,7 @@ export type PreparationResult = {
     message?: string;
     raw_error?: string;
     suggestion?: string;
+    bad_residues?: string[];
   } | null;
   warnings: string[];
 };
@@ -2054,6 +2057,7 @@ export type PreparationStatusResponse = {
     message: string;
     raw_error: string;
     suggestion: string;
+    bad_residues?: string[];
   };
 };
 

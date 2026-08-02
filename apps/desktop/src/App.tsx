@@ -223,6 +223,9 @@ export default function App() {
     }
     const navigationProject =
       projectOverride === undefined ? currentProject : projectOverride;
+    if (destination === "home" && !navigationProject) {
+      destination = "project-create";
+    }
     if (
       destination === "run-prepare"
       && navigationProject
@@ -247,6 +250,10 @@ export default function App() {
     setProjectTaskIntent("dock");
     currentPageRef.current = "project-create";
     setCurrentPage("project-create");
+  }, []);
+
+  const acknowledgeOpenProjectRequest = useCallback(() => {
+    setOpenProjectRequestKey(0);
   }, []);
 
   function renderPage() {
@@ -283,10 +290,12 @@ export default function App() {
     if (currentPage === "project-create") {
       return (
         <ProjectCreatePage
+          backLabel={currentProject ? "返回当前项目" : "返回帮助"}
           openExistingRequestKey={openProjectRequestKey}
+          onOpenExistingRequestHandled={acknowledgeOpenProjectRequest}
           startMode={projectStartMode}
           taskIntent={projectTaskIntent}
-          onBack={() => navigateTo("home")}
+          onBack={() => navigateTo(currentProject ? "home" : "help")}
           onStartModeChange={setProjectStartMode}
           onTaskIntentChange={setProjectTaskIntent}
           onCreated={(project, nextPage = "structure-fetch", runId = "") => {
@@ -311,7 +320,7 @@ export default function App() {
           onProjectChange={commitProject}
           onOpenImportPdbqt={(project) => {
             commitProject(project);
-            navigateTo("import-pdbqt");
+            navigateTo("preparation");
           }}
           onOpenPreparation={(project) => {
             commitProject(project);
@@ -327,10 +336,6 @@ export default function App() {
           project={currentProject}
           onBack={() => navigateTo("structure-fetch")}
           onProjectChange={commitProject}
-          onOpenImportPdbqt={(project) => {
-            commitProject(project);
-            navigateTo("import-pdbqt");
-          }}
           onOpenBoxSetup={(project) => {
             commitProject(project);
             navigateTo("run-prepare", undefined, project);

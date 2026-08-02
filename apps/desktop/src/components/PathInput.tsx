@@ -93,6 +93,7 @@ export default function PathInput({
     <div className="path-input-group form-field">
       <div className="path-input" data-layout="form-row">
         <input
+          autoComplete="off"
           aria-describedby={describedBy}
           aria-label={ariaLabel}
           className="path-input-field"
@@ -103,6 +104,7 @@ export default function PathInput({
             onChange(event.target.value);
           }}
           placeholder={placeholder}
+          spellCheck={false}
           type="text"
           value={value}
         />

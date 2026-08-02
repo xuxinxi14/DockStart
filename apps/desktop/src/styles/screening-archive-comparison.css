@@ -215,6 +215,7 @@
 }
 
 .screening-comparison-protocol-differences > summary {
+  text-align: center;
   color: var(--ds-text-secondary);
   padding: 9px 12px;
   font-size: 11px;

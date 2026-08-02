@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CheckCircle, FileArrowUp, FolderOpen, Info, Wrench } from "@phosphor-icons/react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { CheckCircle, FileArrowUp, Info, Wrench } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import MacrocycleBondSelector from "../components/MacrocycleBondSelector";
-import { BodyGrid, MainPanel, ModeTabs, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
@@ -38,10 +39,10 @@ import {
   normalizeMacrocycleReviewOptions,
   selectionFromMacrocycleStatus,
 } from "../utils/macrocyclePreparation";
+import { structureInputKind } from "../utils/structureInput";
 
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
 
-type PreparationMode = "existing" | "raw";
 type MacrocyclePreparationMode = "standard" | "reviewed";
 
 const macrocycleApi = createMacrocycleApi(
@@ -51,7 +52,6 @@ const macrocycleApi = createMacrocycleApi(
 type PreparationPageProps = {
   project: DockStartProject;
   onBack: () => void;
-  onOpenImportPdbqt: (project: DockStartProject) => void;
   onOpenBoxSetup: (project: DockStartProject) => void;
   onProjectChange: (project: DockStartProject) => void;
 };
@@ -169,7 +169,6 @@ function FactValue({ children, source }: { children: ReactNode; source: string }
 export default function PreparationPage({
   project: initialProject,
   onBack,
-  onOpenImportPdbqt,
   onOpenBoxSetup,
   onProjectChange,
 }: PreparationPageProps) {
@@ -180,6 +179,7 @@ export default function PreparationPage({
   const [isBusy, setIsBusy] = useState(false);
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
+  const [badResidueReviewConfirmed, setBadResidueReviewConfirmed] = useState(false);
   const [macrocycleMode, setMacrocycleMode] = useState<MacrocyclePreparationMode>("standard");
   const [macrocycleOptions, setMacrocycleOptions] = useState<MacrocycleReviewOptions>(
     defaultMacrocycleReviewOptions,
@@ -188,13 +188,6 @@ export default function PreparationPage({
   const [macrocycleSelection, setMacrocycleSelection] = useState<MacrocycleSelection>(null);
   const [macrocycleEvidence, setMacrocycleEvidence] = useState<MacrocyclePreparationEvidence | null>(null);
   const [isMacrocycleBusy, setIsMacrocycleBusy] = useState(false);
-  const [mode, setMode] = useState<PreparationMode>(
-    initialProject.receptor.raw_file
-      || initialProject.ligand.raw_file
-      || !(initialProject.receptor.file && initialProject.ligand.file)
-      ? "raw"
-      : "existing",
-  );
   const [previewRevision, setPreviewRevision] = useState<Record<PreparationTarget, number>>({ receptor: 0, ligand: 0 });
   const [previewRequested, setPreviewRequested] = useState<Record<PreparationTarget, boolean>>({ receptor: false, ligand: false });
   const [tools, setTools] = useState<PreparationStatusResponse["tools"]>();
@@ -263,6 +256,7 @@ export default function PreparationPage({
       }
       setMessage(next.message ?? next.error?.message ?? fallbackMessage);
       setRawError(next.error?.raw_error ?? "");
+      if (completedTarget === "receptor") setBadResidueReviewConfirmed(false);
     },
     [onProjectChange],
   );
@@ -361,6 +355,64 @@ export default function PreparationPage({
       if (mountedRef.current) setIsBusy(false);
     }
   }, [applyResponse, project.project_dir]);
+
+  const pickStructureFile = useCallback(async (target: PreparationTarget) => {
+    const isReceptor = target === "receptor";
+    setMessage("");
+    setRawError("");
+    try {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: isReceptor ? "选择受体结构" : "选择配体结构",
+        filters: [{
+          name: isReceptor ? "受体结构" : "配体结构",
+          extensions: isReceptor ? ["pdbqt", "pdb", "cif"] : ["pdbqt", "sdf", "mol"],
+        }],
+      });
+      const sourcePath = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
+      if (!sourcePath) return;
+      const kind = structureInputKind(sourcePath, target);
+      if (kind === "unsupported") {
+        setMessage(isReceptor
+          ? "受体格式不受支持。请选择 PDBQT、PDB 或 CIF。"
+          : "配体格式不受支持。请选择 PDBQT、SDF 或 MOL。");
+        return;
+      }
+      setIsBusy(true);
+      const command = target === "receptor"
+        ? kind === "pdbqt" ? "import_receptor_pdbqt" : "import_receptor_raw_file"
+        : kind === "pdbqt" ? "import_ligand_pdbqt" : "import_ligand_raw_file";
+      const rawPayload = await invoke<string>(command, {
+        projectDir: project.project_dir,
+        sourcePath,
+      });
+      const parsed = JSON.parse(rawPayload) as {
+        ok?: boolean;
+        project?: DockStartProject | null;
+        message?: string;
+        error?: { message?: string; raw_error?: string };
+      };
+      if (!parsed.ok || !parsed.project) {
+        setMessage(parsed.error?.message || `${isReceptor ? "受体" : "配体"}导入失败。`);
+        setRawError(parsed.error?.raw_error || "");
+        return;
+      }
+      setProject(parsed.project);
+      onProjectChange(parsed.project);
+      if (target === "receptor") setBadResidueReviewConfirmed(false);
+      setPreviewRequested((current) => ({ ...current, [target]: false }));
+      setMessage(kind === "pdbqt"
+        ? `${isReceptor ? "受体" : "配体"} PDBQT 已导入，可直接预览。`
+        : `${isReceptor ? "受体" : "配体"}原始结构已导入，请检查后转换为 PDBQT。`);
+      await reloadStatus();
+    } catch (error) {
+      setMessage(`无法导入${isReceptor ? "受体" : "配体"}结构。`);
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current) setIsBusy(false);
+    }
+  }, [onProjectChange, project.project_dir, reloadStatus]);
 
   useEffect(() => {
     void reloadStatus();
@@ -601,6 +653,17 @@ export default function PreparationPage({
       setRawError("");
       return;
     }
+    const detectedBadResidues = target === "receptor"
+      ? response?.preparation?.receptor.error?.bad_residues ?? []
+      : [];
+    const reviewedBadResidueOptions = target === "receptor"
+      && detectedBadResidues.length > 0
+      && badResidueReviewConfirmed
+      ? {
+          protocol: "meeko_allow_bad_res_reviewed",
+          acknowledged_bad_residues: detectedBadResidues,
+        }
+      : undefined;
     setPendingTarget(target);
     setIsBusy(true);
     setRawError("");
@@ -614,7 +677,7 @@ export default function PreparationPage({
         project.project_dir,
         target,
         target === "receptor" ? overwriteReceptor : overwriteLigand,
-        reviewedMacrocycleOptions ?? undefined,
+        reviewedBadResidueOptions ?? reviewedMacrocycleOptions ?? undefined,
       );
       taskId = started.task_id;
       if (!mountedRef.current) return;
@@ -761,10 +824,8 @@ export default function PreparationPage({
     );
     const displayFile = isReady
       ? fileLine(preparedFile, projectFile)
-      : mode === "raw"
-        ? fileLine(rawFile, projectRawFile)
-        : fileLine(preparedFile, projectFile);
-    const fileName = displayFile.split(/[\\/]/).filter(Boolean).pop() || "尚未选择 PDBQT";
+      : fileLine(rawFile, projectRawFile);
+    const fileName = displayFile.split(/[\\/]/).filter(Boolean).pop() || "尚未选择结构";
     const preparedSize = preparedFile?.size ?? 0;
     const shouldLoadPreview = isReady && previewRequested[target];
     const review: StructureReviewPayload | undefined = response?.structure_review;
@@ -792,6 +853,9 @@ export default function PreparationPage({
     const receptorPartialCharge = factNumber(receptorPdbqtFacts, "partial_charge_sum");
     const receptorActiveTorsions = factNumber(receptorPdbqtFacts, "active_torsions");
     const receptorRepresentations = factArray(receptorFacts.representations);
+    const badResidues = isReceptor
+      ? prep?.error?.bad_residues ?? response?.error?.bad_residues ?? []
+      : [];
 
     return (
       <article className="preparation-target-row">
@@ -896,8 +960,8 @@ export default function PreparationPage({
               </>
             ) : (
               <>
-                <strong>{mode === "raw" ? "等待转换为 PDBQT" : "等待导入 PDBQT"}</strong>
-                <span>准备好 PDBQT 后即可查看结构。</span>
+                <strong>{rawReady ? "等待转换为 PDBQT" : "等待导入结构"}</strong>
+                <span>{rawReady ? "完成转换后即可查看 PDBQT。" : "PDBQT 可直接预览，原始结构需要先转换。"}</span>
               </>
             )}
           </div>
@@ -912,14 +976,10 @@ export default function PreparationPage({
             </div>
           </div>
 
-          {mode === "existing" ? (
-            <>
-              <ActionButton variant="primary" disabled={interactionBusy} onClick={() => onOpenImportPdbqt(project)}>
-                <FolderOpen aria-hidden="true" size={16} /> 选择文件
-              </ActionButton>
-              <ActionButton disabled={interactionBusy || isBusy} onClick={() => void reloadStatus()}>刷新文件状态</ActionButton>
-            </>
-          ) : (
+          <ActionButton variant="primary" disabled={interactionBusy} onClick={() => void pickStructureFile(target)}>
+            {displayFile ? "更改结构文件" : "选择结构文件"}
+          </ActionButton>
+          {rawReady ? (
             <>
               <label className="checkbox-row compact">
                 <input
@@ -927,21 +987,43 @@ export default function PreparationPage({
                   checked={isReceptor ? overwriteReceptor : overwriteLigand}
                   onChange={(event) => (isReceptor ? setOverwriteReceptor(event.target.checked) : setOverwriteLigand(event.target.checked))}
                 />
-                覆盖已有 PDBQT
+                {isReady ? "从原始文件重新转换" : "覆盖已有 PDBQT"}
               </label>
+              {badResidues.length ? (
+                <div className="preparation-bad-residue-review" role="group" aria-label="不完整残基确认">
+                  <strong>需确认 {badResidues.length} 个不完整残基</strong>
+                  <div className="preparation-bad-residue-list">
+                    {badResidues.map((residue) => <code key={residue}>{residue}</code>)}
+                  </div>
+                  <label className="checkbox-row compact">
+                    <input
+                      type="checkbox"
+                      checked={badResidueReviewConfirmed}
+                      onChange={(event) => setBadResidueReviewConfirmed(event.target.checked)}
+                    />
+                    已检查并同意本次转换忽略这些残基
+                  </label>
+                </div>
+              ) : null}
               <ActionButton
                 variant="primary"
-                disabled={interactionBusy || !rawReady || macrocyclePreparationBlocked}
+                disabled={
+                  interactionBusy
+                  || !rawReady
+                  || macrocyclePreparationBlocked
+                  || (badResidues.length > 0 && !badResidueReviewConfirmed)
+                  || (isReady && !(isReceptor ? overwriteReceptor : overwriteLigand))
+                }
                 onClick={() => void prepareTarget(target)}
               >
                 {isReceptor
-                  ? "转换受体为 PDBQT"
+                  ? badResidues.length ? "确认并重新转换" : "转换受体为 PDBQT"
                   : macrocyclePreparationBlocked
                     ? "先确认大环方案"
                     : "转换配体为 PDBQT"}
               </ActionButton>
             </>
-          )}
+          ) : null}
 
           <AdvancedDetails className="preparation-target-details" summary="查看详情">
             <dl className="meta-list">
@@ -981,24 +1063,12 @@ export default function PreparationPage({
         actions={(
           <>
             <ActionButton variant="primary" onClick={onBack}>在线搜索并下载</ActionButton>
-            <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入已有 PDBQT</ActionButton>
             {activeTask?.status === "queued" ? (
               <ActionButton onClick={() => void cancelQueuedPreparation()}>取消排队</ActionButton>
             ) : null}
             <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新状态"}</ActionButton>
           </>
         )}
-      />
-
-      <ModeTabs
-        id="preparation-mode-tabs"
-        label="PDBQT 输入方式"
-        active={mode}
-        onChange={setMode}
-        options={[
-          { id: "existing", label: "直接导入已有 PDBQT" },
-          { id: "raw", label: "PDB/CIF + SDF/MOL（准备并转换）" },
-        ]}
       />
 
       <BodyGrid className="preparation-workspace-layout">
@@ -1008,43 +1078,34 @@ export default function PreparationPage({
             {renderStructureRow("ligand", ligandPrep)}
           </div>
 
-          {mode === "raw" ? (
-            <>
-              <AdvancedDetails className="preparation-macrocycle-panel" summary="高级：Meeko 大环配体准备">
-                <MacrocycleBondSelector
-                  projectDir={project.project_dir}
-                  mode={macrocycleMode}
-                  status={macrocycleStatus}
-                  options={macrocycleOptions}
-                  selection={macrocycleSelection}
-                  evidence={macrocycleEvidence}
-                  rawReady={files?.ligand_raw?.status === "ok"}
-                  busy={interactionBusy}
-                  onModeChange={changeMacrocycleMode}
-                  onOptionsChange={changeMacrocycleOptions}
-                  onReview={() => void reviewMacrocycle()}
-                  onSelectCandidate={selectMacrocycleCandidate}
-                  onRestoreDefault={restoreDefaultMacrocycleCandidate}
-                  onConfirmCandidate={() => void confirmMacrocycleCandidate()}
-                  onConfirmRigid={() => void confirmRigidMacrocycle()}
-                  onResetConfirmation={() => void resetMacrocycleConfirmation()}
-                />
-              </AdvancedDetails>
+          <AdvancedDetails className="preparation-macrocycle-panel" summary="高级：Meeko 大环配体准备">
+            <MacrocycleBondSelector
+              projectDir={project.project_dir}
+              mode={macrocycleMode}
+              status={macrocycleStatus}
+              options={macrocycleOptions}
+              selection={macrocycleSelection}
+              evidence={macrocycleEvidence}
+              rawReady={files?.ligand_raw?.status === "ok"}
+              busy={interactionBusy}
+              onModeChange={changeMacrocycleMode}
+              onOptionsChange={changeMacrocycleOptions}
+              onReview={() => void reviewMacrocycle()}
+              onSelectCandidate={selectMacrocycleCandidate}
+              onRestoreDefault={restoreDefaultMacrocycleCandidate}
+              onConfirmCandidate={() => void confirmMacrocycleCandidate()}
+              onConfirmRigid={() => void confirmRigidMacrocycle()}
+              onResetConfirmation={() => void resetMacrocycleConfirmation()}
+            />
+          </AdvancedDetails>
 
-              <div className="preparation-source-strip">
-                <div>
-                  <Wrench aria-hidden="true" size={18} />
-                  <span>还没有原始文件？可在线搜索，也可在获取页从电脑导入。转换会自动检查 Python、RDKit 与 Meeko。</span>
-                </div>
-                <ActionButton variant="primary" onClick={onBack}>获取或导入原始结构</ActionButton>
-              </div>
-            </>
-          ) : (
-            <button className="preparation-drop-zone" type="button" onClick={() => onOpenImportPdbqt(project)}>
-              <FileArrowUp aria-hidden="true" size={20} />
-              <span>选择受体与配体 PDBQT；导入后会复制到当前项目。</span>
-            </button>
-          )}
+          <div className="preparation-source-strip">
+            <div>
+              <Wrench aria-hidden="true" size={18} />
+              <span>每个文件按实际格式处理：PDBQT 直接使用，PDB/CIF 或 SDF/MOL 提供转换。</span>
+            </div>
+            <ActionButton variant="primary" onClick={onBack}>在线搜索结构</ActionButton>
+          </div>
 
           <div className="preparation-feedback">
             <ScientificDisclaimer kind="preparation" />
@@ -1065,8 +1126,8 @@ export default function PreparationPage({
         <RightRail className="preparation-context-rail">
           <RightRailSection title="当前输入">
             <dl className="mode-context-list">
-              <div><dt>受体</dt><dd>{mode === "raw" ? files?.receptor_raw?.path || project.receptor.raw_file || "未选择" : files?.receptor_prepared?.path || "未选择"}</dd></div>
-              <div><dt>配体</dt><dd>{mode === "raw" ? files?.ligand_raw?.path || project.ligand.raw_file || "未选择" : files?.ligand_prepared?.path || "未选择"}</dd></div>
+              <div><dt>受体</dt><dd>{files?.receptor_prepared?.path || files?.receptor_raw?.path || project.receptor.file || project.receptor.raw_file || "未选择"}</dd></div>
+              <div><dt>配体</dt><dd>{files?.ligand_prepared?.path || files?.ligand_raw?.path || project.ligand.file || project.ligand.raw_file || "未选择"}</dd></div>
             </dl>
           </RightRailSection>
 
@@ -1078,9 +1139,7 @@ export default function PreparationPage({
           </RightRailSection>
 
           <RightRailSection title="工具状态">
-            {mode === "existing" ? (
-              <p>直接导入 PDBQT 不需要 RDKit / Meeko。</p>
-            ) : (
+            {files?.receptor_raw?.status === "ok" || files?.ligand_raw?.status === "ok" ? (
               <>
                 <p className="preparation-profile-hint">
                   Assisted Stable 随附 RDKit / Meeko；Basic Stable 默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
@@ -1090,7 +1149,7 @@ export default function PreparationPage({
                   {isCheckingTools ? "检测中…" : "检查转换工具"}
                 </ActionButton>
                 {tools ? (
-                  <AdvancedDetails summary="查看检测详情">
+                  <AdvancedDetails className="preparation-tool-details" summary="查看检测详情">
                     <dl className="mode-context-list">
                       <div><dt>Python</dt><dd>{statusLabel(tools.python?.status)} · {toolVersion(tools.python)}</dd></div>
                       <div><dt>RDKit</dt><dd>{statusLabel(tools.rdkit?.status)} · {capabilityLine(tools.rdkit, "sdf_inline_read")}</dd></div>
@@ -1099,7 +1158,7 @@ export default function PreparationPage({
                   </AdvancedDetails>
                 ) : null}
               </>
-            )}
+            ) : <p>当前 PDBQT 可直接使用，不需要 RDKit / Meeko。</p>}
           </RightRailSection>
 
           <RightRailSection title="下一步">

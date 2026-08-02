@@ -133,7 +133,7 @@
 
 .help-route-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -233,91 +233,117 @@
 
 .help-route-card > button:hover { color: var(--ds-text-strong); }
 
-.help-pose-task {
+.help-task-guide-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.2fr);
-  gap: 16px;
-  align-items: center;
-  border: 1px solid var(--ds-border-subtle);
-  border-radius: 9px;
-  background: var(--ds-surface-raised);
-  padding: 14px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.help-pose-task-copy {
+.help-task-guide-card {
   display: grid;
-  gap: 4px;
-}
-
-.help-pose-task-copy > span {
-  color: var(--ds-accent);
-  font-size: 10px;
-  font-weight: 760;
-  letter-spacing: 0.055em;
-}
-
-.help-pose-task-copy h2,
-.help-pose-task-copy p {
-  margin: 0;
-}
-
-.help-pose-task-copy h2 {
-  color: var(--ds-text-strong);
-  font-size: 16px;
-}
-
-.help-pose-task-copy p {
-  color: var(--ds-text-secondary);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.help-pose-task-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.help-pose-task-actions button {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 9px;
-  align-items: center;
+  grid-template-rows: auto auto 1fr auto auto;
+  gap: 11px;
   min-width: 0;
   border: 1px solid var(--ds-border-default);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--ds-bg-panel-soft);
+  padding: 14px;
+}
+
+.help-task-guide-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.help-task-guide-card header > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
   color: var(--ds-accent);
-  cursor: pointer;
-  padding: 10px 11px;
-  text-align: left;
 }
 
-.help-pose-task-actions button:hover {
-  border-color: var(--ds-accent-border);
-  background: var(--ds-surface-hover);
-}
-
-.help-pose-task-actions button:focus-visible {
-  outline: 2px solid var(--ds-focus-outline);
-  outline-offset: 2px;
-}
-
-.help-pose-task-actions button > span {
+.help-task-guide-card header > div {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.help-pose-task-actions strong {
-  color: var(--ds-text-strong);
-  font-size: 12px;
+.help-task-guide-card header span {
+  color: var(--ds-accent);
+  font-size: 9px;
+  font-weight: 720;
+  line-height: 1.35;
 }
 
-.help-pose-task-actions small {
+.help-task-guide-card h3,
+.help-task-guide-card p,
+.help-task-guide-card dl {
+  margin: 0;
+}
+
+.help-task-guide-card h3 {
+  color: var(--ds-text-strong);
+  font-size: 14px;
+}
+
+.help-task-guide-card > p,
+.help-task-guide-card dd,
+.help-task-guide-boundary {
   color: var(--ds-text-secondary);
   font-size: 10px;
-  line-height: 1.4;
+  line-height: 1.5;
+}
+
+.help-task-guide-card dl {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.help-task-guide-card dl > div {
+  display: grid;
+  gap: 2px;
+}
+
+.help-task-guide-card dt {
+  color: var(--ds-text-muted);
+  font-size: 9px;
+  font-weight: 720;
+}
+
+.help-task-guide-card dd {
+  margin: 0;
+}
+
+.help-task-guide-boundary {
+  display: block;
+  border-top: 1px solid var(--ds-border-subtle);
+  padding-top: 9px;
+}
+
+.help-task-guide-card > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 7px;
+  background: var(--ds-surface-raised);
+  color: var(--ds-accent);
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.help-task-guide-card > button:hover {
+  border-color: var(--ds-accent-border);
+  background: var(--ds-surface-hover);
+}
+
+.help-task-guide-card > button:focus-visible {
+  outline: 2px solid var(--ds-focus-outline);
+  outline-offset: 2px;
 }
 
 .help-route-card > button:focus-visible,
@@ -423,9 +449,10 @@
 .help-accordion details + details { border-top: 1px solid var(--ds-border-subtle); }
 
 .help-accordion summary {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
   padding: 13px 14px;
   color: var(--ds-text-primary);
@@ -433,6 +460,7 @@
   font-weight: 690;
   cursor: pointer;
   list-style: none;
+  text-align: center;
 }
 
 .help-accordion summary::-webkit-details-marker { display: none; }
@@ -440,7 +468,7 @@
 .help-accordion summary > span svg { color: var(--ds-accent); }
 .help-accordion details[open] summary { background: var(--ds-surface-hover); }
 .help-accordion details[open] summary > svg { transform: rotate(90deg); }
-.help-accordion summary > svg { color: var(--ds-text-muted); transition: transform 120ms ease; }
+.help-accordion summary > svg { position: absolute; right: 14px; color: var(--ds-text-muted); transition: transform 120ms ease; }
 .help-accordion details > p { margin: 0; border-top: 1px solid var(--ds-border-subtle); padding: 12px 42px 14px; color: var(--ds-text-secondary); font-size: 12px; line-height: 1.6; }
 
 .help-center-rail {
@@ -527,7 +555,7 @@
 
 @media (max-width: 1180px) {
   .help-center-layout { grid-template-columns: minmax(0, 1fr) 270px; }
-  .help-pose-task { grid-template-columns: 1fr; }
+  .help-task-guide-grid { grid-template-columns: 1fr; }
   .help-route-grid { grid-template-columns: 1fr; }
   .help-route-card { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: start; }
   .help-route-card > .status-badge { align-self: center; }
@@ -544,7 +572,6 @@
 }
 
 @media (max-width: 680px) {
-  .help-pose-task-actions { grid-template-columns: 1fr; }
   .help-feature-grid,
   .help-reliability-grid { grid-template-columns: 1fr; }
   .help-section-heading { align-items: flex-start; flex-direction: column; }

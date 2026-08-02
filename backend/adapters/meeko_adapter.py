@@ -578,6 +578,167 @@ if __name__ == "__main__":
 '''
 
 
+def receptor_pdb_order_bridge_script_text() -> str:
+    """Return a narrow PDB record-order repair followed by Meeko preparation.
+
+    Some upstream PDB fixtures contain an otherwise intact atom record moved
+    away from the rest of its residue.  Meeko correctly rejects that as an
+    interrupted residue.  This helper only proceeds when stable atom-serial
+    ordering is unambiguous, restores residue contiguity, and preserves every
+    ATOM/HETATM record byte-for-byte.  It never renumbers or deletes atoms.
+    """
+
+    return r'''
+from __future__ import annotations
+
+import sys
+from collections import Counter
+from pathlib import Path
+
+
+def fail(message: str, detail: str = "") -> int:
+    print(message, file=sys.stderr)
+    if detail:
+        print(detail, file=sys.stderr)
+    return 2
+
+
+def atom_records(lines: list[bytes]) -> tuple[list[int], list[tuple[int, int, bytes]]]:
+    indexes: list[int] = []
+    records: list[tuple[int, int, bytes]] = []
+    for index, line in enumerate(lines):
+        if not (line.startswith(b"ATOM  ") or line.startswith(b"HETATM")):
+            continue
+        if len(line) < 27:
+            raise RuntimeError(f"第 {index + 1} 行不是完整的 PDB 坐标记录。")
+        serial_field = line[6:11].strip()
+        if not serial_field or not serial_field.isdigit():
+            raise RuntimeError(
+                f"第 {index + 1} 行原子序号无法安全解析：{serial_field!r}。"
+            )
+        indexes.append(index)
+        records.append((int(serial_field), index, line))
+    if not records:
+        raise RuntimeError("PDB 中没有 ATOM/HETATM 坐标记录。")
+    serials = [record[0] for record in records]
+    if len(set(serials)) != len(serials):
+        raise RuntimeError("PDB 含有重复原子序号，不能自动调整记录顺序。")
+    return indexes, records
+
+
+def residue_key(line: bytes) -> bytes:
+    return line[21:27]
+
+
+def residue_label(value: bytes) -> str:
+    chain = value[0:1].decode("ascii", errors="replace").strip() or "_"
+    number = value[1:5].decode("ascii", errors="replace").strip()
+    insertion = value[5:6].decode("ascii", errors="replace").strip()
+    return f"{chain}:{number}{insertion}"
+
+
+def interrupted_residues(records: list[tuple[int, int, bytes]]) -> set[bytes]:
+    seen: set[bytes] = set()
+    interrupted: set[bytes] = set()
+    previous: bytes | None = None
+    for _, _, line in records:
+        current = residue_key(line)
+        if current != previous:
+            if current in seen:
+                interrupted.add(current)
+            seen.add(current)
+            previous = current
+    return interrupted
+
+
+def normalize(source: Path, destination: Path) -> tuple[int, set[bytes]]:
+    if not source.is_file() or source.stat().st_size <= 0:
+        raise RuntimeError(f"PDB 受体文件不存在或为空：{source}")
+    if destination.exists():
+        raise RuntimeError(f"记录顺序修复输出已经存在，拒绝覆盖：{destination}")
+    payload = source.read_bytes()
+    lines = payload.splitlines(keepends=True)
+    if any(line.startswith((b"MODEL ", b"ENDMDL")) for line in lines):
+        raise RuntimeError("多模型 PDB 不会自动调整原子记录顺序，请先明确保留目标模型。")
+
+    indexes, records = atom_records(lines)
+    original_interrupted = interrupted_residues(records)
+    ordered = sorted(records, key=lambda item: (item[0], item[1]))
+    if [item[0] for item in records] == [item[0] for item in ordered]:
+        raise RuntimeError("PDB 原子序号已经有序，不需要记录顺序修复。")
+    if not original_interrupted:
+        raise RuntimeError("原子序号无序，但未检测到中断残基；拒绝自动改写。")
+    remaining_interrupted = interrupted_residues(ordered)
+    if remaining_interrupted:
+        labels = ", ".join(
+            residue_label(value) for value in sorted(remaining_interrupted)
+        )
+        raise RuntimeError(f"按原子序号排序后仍存在中断残基：{labels}")
+    if Counter(item[2] for item in records) != Counter(item[2] for item in ordered):
+        raise RuntimeError("记录顺序修复未能保持全部 ATOM/HETATM 原始字节。")
+
+    normalized = list(lines)
+    for destination_index, (_, _, record_line) in zip(indexes, ordered, strict=True):
+        normalized[destination_index] = record_line
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"".join(normalized))
+    return len(records), original_interrupted
+
+
+def run_meeko(pdb_path: Path, output_stem: Path, extra_arguments: list[str]) -> int:
+    from meeko.cli import mk_prepare_receptor
+
+    original_argv = sys.argv
+    sys.argv = [
+        "mk_prepare_receptor",
+        "--read_pdb",
+        str(pdb_path),
+        "-o",
+        str(output_stem),
+        "-p",
+        *extra_arguments,
+    ]
+    try:
+        result = mk_prepare_receptor.main()
+        return int(result or 0)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 1
+    finally:
+        sys.argv = original_argv
+
+
+def main() -> int:
+    if len(sys.argv) < 4:
+        return fail(
+            "PDB 记录顺序修复需要输入 PDB、中间 PDB 和输出文件名前缀。"
+        )
+    source = Path(sys.argv[1])
+    intermediate = Path(sys.argv[2])
+    output_stem = Path(sys.argv[3])
+    try:
+        atom_count, residues = normalize(source, intermediate)
+    except Exception as exc:
+        return fail(
+            "PDB 中断残基无法通过保守的原子记录重排修复。",
+            f"{type(exc).__name__}: {exc}",
+        )
+
+    labels = ", ".join(
+        residue_label(value) for value in sorted(residues)
+    )
+    print(
+        "已生成受审计的 PDB 记录顺序中间文件："
+        f"{intermediate}（{atom_count} 个原子记录；恢复连续残基：{labels}）。",
+        file=sys.stdout,
+    )
+    return run_meeko(intermediate, output_stem, sys.argv[4:])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
 def build_module_command(python_executable: str, module: str, arguments: list[str]) -> list[str]:
     """Build the only supported Meeko module command shape.
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -123,6 +124,20 @@ def _receptor_with_altloc() -> str:
     )
 
 
+def _receptor_with_interrupted_residue_order() -> str:
+    return "".join(
+        (
+            "REMARK displaced atom record\n",
+            _pdb_atom(4, "CB", "SER", "A", 2, x=4.0),
+            _pdb_atom(1, "N", "ALA", "A", 1, x=1.0),
+            _pdb_atom(2, "CA", "ALA", "A", 1, x=2.0),
+            _pdb_atom(3, "N", "SER", "A", 2, x=3.0),
+            _pdb_atom(5, "OG", "SER", "A", 2, x=5.0),
+            "TER\n",
+        )
+    )
+
+
 def _reviewed_receptor_options() -> dict[str, object]:
     return {
         "protocol": "meeko_receptor_controls",
@@ -168,6 +183,107 @@ class ReceptorPreparationTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertIn("--read_pdb", result["command"])
         self.assertNotIn("-i", result["command"])
+
+    def test_interrupted_residue_records_use_audited_order_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.pdb",
+                content=_receptor_with_interrupted_residue_order(),
+            )
+            with patch(
+                "dockstart_core.preparation.get_preparation_tool_status",
+                return_value=_tool_status(),
+            ):
+                result = build_receptor_preparation_command_or_script(
+                    str(project_dir),
+                    overwrite=False,
+                )
+
+            self.assertTrue(result["ok"], result)
+            self.assertIn("prepare_receptor_pdb_order_meeko.py", result["script_file"])
+            self.assertIn("receptor_ordered.pdb", result["intermediate_input_file"])
+            self.assertEqual(result["command"][4], str(source))
+            self.assertTrue(result["pdb_coordinate_order_repair"]["required"])
+            self.assertEqual(
+                result["pdb_coordinate_order_repair"]["interrupted_residues"],
+                ["A:2"],
+            )
+            self.assertFalse(result["pdb_coordinate_order_repair"]["deletes_atoms"])
+            self.assertFalse(result["pdb_coordinate_order_repair"]["renumbers_atoms"])
+
+    def test_order_bridge_preserves_atom_records_and_runs_meeko(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.pdb"
+            intermediate = root / "ordered.pdb"
+            output_stem = root / "candidate_receptor"
+            source.write_text(
+                _receptor_with_interrupted_residue_order(),
+                encoding="utf-8",
+            )
+            script = root / "bridge.py"
+            script.write_text(
+                meeko_adapter.receptor_pdb_order_bridge_script_text(),
+                encoding="utf-8",
+            )
+            fake_module = root / "fake" / "meeko" / "cli"
+            fake_module.mkdir(parents=True)
+            (fake_module.parent / "__init__.py").write_text("", encoding="utf-8")
+            (fake_module / "__init__.py").write_text("", encoding="utf-8")
+            (fake_module / "mk_prepare_receptor.py").write_text(
+                """
+import sys
+from pathlib import Path
+
+def main():
+    source = Path(sys.argv[sys.argv.index('--read_pdb') + 1])
+    output_stem = Path(sys.argv[sys.argv.index('-o') + 1])
+    output_stem.with_suffix('.pdbqt').write_bytes(source.read_bytes())
+    return 0
+""".lstrip(),
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(root / "fake")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    str(source),
+                    str(intermediate),
+                    str(output_stem),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            source_atoms = sorted(
+                line
+                for line in source.read_bytes().splitlines(keepends=True)
+                if line.startswith((b"ATOM  ", b"HETATM"))
+            )
+            ordered_lines = intermediate.read_bytes().splitlines(keepends=True)
+            ordered_atoms = [
+                line
+                for line in ordered_lines
+                if line.startswith((b"ATOM  ", b"HETATM"))
+            ]
+            self.assertEqual(sorted(ordered_atoms), source_atoms)
+            self.assertEqual(
+                [int(line[6:11]) for line in ordered_atoms],
+                [1, 2, 3, 4, 5],
+            )
+            self.assertEqual(
+                output_stem.with_suffix(".pdbqt").read_bytes(),
+                intermediate.read_bytes(),
+            )
 
     def test_build_receptor_command_uses_reviewed_altloc_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -591,6 +707,73 @@ class ReceptorPreparationTests(unittest.TestCase):
             updated["preparation"]["receptor"]["error"]["raw_error"],
         )
         self.assertIsNotNone(updated["preparation"]["receptor"]["finished_at"])
+
+    def test_strict_template_failure_requires_reviewed_bad_residue_confirmation(self) -> None:
+        diagnostic = (
+            "No template matched for residue_key='A:226'\n"
+            "No template matched for residue_key='A:315'\n"
+            "- Template matching failed for: ['A:226', 'A:315']\n"
+        )
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=diagnostic)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(project_dir, "raw/receptor.pdb")
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                result = prepare_receptor_pdbqt(str(project_dir))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED")
+        self.assertEqual(result["error"]["bad_residues"], ["A:226", "A:315"])
+
+    def test_reviewed_bad_residue_retry_publishes_only_when_detected_list_matches(self) -> None:
+        diagnostic = (
+            "No template matched for residue_key='A:226'\n"
+            "No template matched for residue_key='A:315'\n"
+            "- Template matching failed for: ['A:226', 'A:315'] Ignored due to allow_bad_res.\n"
+        )
+        captured_command: list[str] = []
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            captured_command.extend(command)
+            output_stem = Path(command[command.index("-o") + 1])
+            output_stem.with_suffix(".pdbqt").write_text(
+                "REMARK reviewed incomplete receptor\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="written", stderr=diagnostic)
+
+        options = {
+            "protocol": "meeko_allow_bad_res_reviewed",
+            "acknowledged_bad_residues": ["A:226", "A:315"],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(project_dir, "raw/receptor.pdb")
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                result = prepare_receptor_pdbqt(str(project_dir), options=options)
+            metadata = json.loads(
+                (project_dir / result["metadata_file"]).read_text(encoding="utf-8")
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertIn("--allow_bad_res", captured_command)
+        self.assertEqual(metadata["method"], "meeko_allow_bad_res_reviewed")
+        self.assertTrue(metadata["bad_residue_review"]["lists_match"])
+        self.assertEqual(
+            metadata["bad_residue_review"]["detected_bad_residues"],
+            ["A:226", "A:315"],
+        )
 
     def test_changed_raw_content_rejects_candidate_and_preserves_previous_output(self) -> None:
         raw_path: Path | None = None

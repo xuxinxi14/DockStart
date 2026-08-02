@@ -8,7 +8,6 @@ import {
   Cube,
   Database,
   FileText,
-  Flask,
   FolderOpen,
   Play,
   ShieldCheck,
@@ -18,7 +17,13 @@ import {
 import ActionButton from "../components/ActionButton";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import StatusBadge from "../components/StatusBadge";
-import { appVersion, type NavigateHandler, type PageId, type StartMode } from "../navigation/pages";
+import {
+  appVersion,
+  type NavigateHandler,
+  type PageId,
+  type ProjectTaskIntent,
+  type StartMode,
+} from "../navigation/pages";
 import type { DockStartProject } from "../types";
 
 type HelpPageProps = {
@@ -39,23 +44,13 @@ type StartRoute = {
 
 const startRoutes: StartRoute[] = [
   {
-    mode: "basic",
-    icon: Database,
-    eyebrow: "BASIC STABLE",
-    title: "已有 PDBQT（直接使用）",
-    description: "直接导入受体与配体 PDBQT，再选择全局对接、当前姿势评分或局部优化。",
-    requirement: "随附 Vina · 不需要 RDKit / Meeko",
-    action: "从 PDBQT 开始",
-    tone: "ok",
-  },
-  {
     mode: "assisted",
-    icon: Flask,
-    eyebrow: "ASSISTED STABLE",
-    title: "PDB/CIF + SDF/MOL（准备并转换）",
-    description: "可在线搜索并下载，也可从电脑导入原始结构，再准备并转换为 PDBQT。",
-    requirement: "随附 Python 3.11 · RDKit · Meeko",
-    action: "选择结构来源",
+    icon: Database,
+    eyebrow: "结构输入",
+    title: "导入受体与配体结构",
+    description: "受体和配体可分别选择 PDBQT 或原始结构；DockStart 会按每个文件的实际格式直接使用或提供转换。",
+    requirement: "PDBQT 可直接使用 · 原始结构转换需要 RDKit / Meeko",
+    action: "选择结构文件",
     tone: "info",
   },
   {
@@ -67,6 +62,58 @@ const startRoutes: StartRoute[] = [
     requirement: "仅用于软件操作演示，不用于科研结论",
     action: "打开示例入口",
     tone: "muted",
+  },
+];
+
+type TaskGuide = {
+  intent: ProjectTaskIntent;
+  icon: typeof Cube;
+  eyebrow: string;
+  title: string;
+  summary: string;
+  suitable: string;
+  input: string;
+  output: string;
+  boundary: string;
+  action: string;
+};
+
+const taskGuides: TaskGuide[] = [
+  {
+    intent: "dock",
+    icon: Cube,
+    eyebrow: "还不知道配体应如何放置",
+    title: "全局对接",
+    summary: "在指定 Box 内搜索配体的位置、方向和可旋转键构象。",
+    suitable: "常规小分子对接，或尚无可信结合姿势",
+    input: "受体与配体 PDBQT；配体无需预先放入结合位点",
+    output: "多个候选 Mode、评分与相对 RMSD",
+    boundary: "“全局”指 Box 内搜索，不代表自动扫描整颗蛋白。",
+    action: "开始全局对接",
+  },
+  {
+    intent: "score_only",
+    icon: ChartBar,
+    eyebrow: "已有可信姿势，只需要评价",
+    title: "姿势评分",
+    summary: "保持输入坐标不变，只计算当前姿势的评分与能量项。",
+    suitable: "共晶配体、已有对接 Mode 或其他软件生成的姿势",
+    input: "受体与配体处在同一坐标系，配体已位于待评价位置",
+    output: "当前姿势的单次评分与能量项；不生成新 Mode",
+    boundary: "不会搜索其他结合方向或判断当前姿势是否最优。",
+    action: "评价当前姿势",
+  },
+  {
+    intent: "local_only",
+    icon: Crosshair,
+    eyebrow: "已有可信姿势，需要附近微调",
+    title: "局部优化",
+    summary: "从输入姿势附近调整位置、方向和构象，不搜索新位点。",
+    suitable: "消除局部碰撞，或进一步调整已定位的配体姿势",
+    input: "受体与配体处在同一坐标系，配体已位于目标口袋",
+    output: "优化后 PDBQT，以及优化前后的评分和几何变化",
+    boundary: "只能改进当前位置附近的姿势，不能替代全局对接。",
+    action: "优化当前姿势",
   },
 ];
 
@@ -143,35 +190,45 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             </div>
           </section>
 
-          <section className="help-pose-task" aria-labelledby="help-pose-task-title">
-            <div className="help-pose-task-copy">
-              <span>已有受体中的配体姿势</span>
-              <h2 id="help-pose-task-title">评价或局部优化当前姿势</h2>
-              <p>受体与配体必须处在同一坐标系；这两项任务从输入姿势开始，不会搜索新的结合位点。</p>
+          <section className="help-center-section help-task-guide" aria-labelledby="help-task-guide-title">
+            <div className="help-section-heading">
+              <div>
+                <span>本次任务</span>
+                <h2 id="help-task-guide-title">三种任务分别解决什么问题？</h2>
+              </div>
+              <p>先判断是否已有可信的配体姿势，再选择计算任务。</p>
             </div>
-            <div className="help-pose-task-actions">
-              <button
-                type="button"
-                onClick={() => onNavigate("project-create", {
-                  startMode: "basic",
-                  taskIntent: "score_only",
-                })}
-              >
-                <ChartBar aria-hidden="true" size={18} />
-                <span><strong>姿势评分</strong><small>保留输入坐标并计算能量项</small></span>
-                <ArrowRight aria-hidden="true" size={15} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onNavigate("project-create", {
-                  startMode: "basic",
-                  taskIntent: "local_only",
-                })}
-              >
-                <Crosshair aria-hidden="true" size={18} />
-                <span><strong>局部优化</strong><small>从当前姿势附近进行优化</small></span>
-                <ArrowRight aria-hidden="true" size={15} />
-              </button>
+            <div className="help-task-guide-grid">
+              {taskGuides.map((task) => {
+                const Icon = task.icon;
+                return (
+                  <article className="help-task-guide-card" key={task.intent}>
+                    <header>
+                      <Icon aria-hidden="true" size={20} />
+                      <div>
+                        <span>{task.eyebrow}</span>
+                        <h3>{task.title}</h3>
+                      </div>
+                    </header>
+                    <p>{task.summary}</p>
+                    <dl>
+                      <div><dt>适合</dt><dd>{task.suitable}</dd></div>
+                      <div><dt>输入前提</dt><dd>{task.input}</dd></div>
+                      <div><dt>结果</dt><dd>{task.output}</dd></div>
+                    </dl>
+                    <small className="help-task-guide-boundary">{task.boundary}</small>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate("project-create", {
+                        startMode: "basic",
+                        taskIntent: task.intent,
+                      })}
+                    >
+                      {task.action} <ArrowRight aria-hidden="true" size={15} />
+                    </button>
+                  </article>
+                );
+              })}
             </div>
           </section>
 
@@ -252,39 +309,39 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
           <section className="help-center-section help-troubleshooting" aria-labelledby="help-trouble-title">
             <div className="help-section-heading">
               <div>
-                <span>故障排查</span>
-                <h2 id="help-trouble-title">先按问题类型定位</h2>
+                <span>帮助</span>
+                <h2 id="help-trouble-title">常见问题</h2>
               </div>
-              <ActionButton variant="text" onClick={() => onNavigate("toolchain-status")}>打开安装后自检</ActionButton>
+              <ActionButton variant="text" onClick={() => onNavigate("toolchain-status")}>安装自检</ActionButton>
             </div>
             <div className="help-accordion">
               <details>
                 <summary><span><Wrench aria-hidden="true" size={18} />工具或格式准备不可用</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>先在工具链页重新检测。Basic 只需要 Vina 和已有 PDBQT；Assisted 才需要 Python、RDKit 与 Meeko。MOL2/SMILES 暂不支持自动准备。</p>
+                <p>在工具链页重新检测。已有 PDBQT 只需 Vina；转换 PDB、CIF、SDF 或 MOL 还需 Python、RDKit 与 Meeko。</p>
               </details>
               <details>
                 <summary><span><Cube aria-hidden="true" size={18} />Box 看不到、太远或太大</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>先点击“定位到受体”，再用“适应视图”复核。该按钮只移动中心；尺寸仍需根据已知位点和研究目的设置。</p>
+                <p>点击“定位到受体”，再用“适应视图”复核；Box 尺寸仍需自行设置。</p>
               </details>
               <details>
                 <summary><span><Play aria-hidden="true" size={18} />Vina 无法开始或运行中断</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>运行前检查会集中列出阻塞项。若任务中断，请保留 run 目录，查看 stdout、stderr、log.txt 和 metadata.json，不要只重新覆盖运行。</p>
+                <p>按运行前检查处理阻塞项；中断后请查看 run 目录中的日志与 metadata.json。</p>
               </details>
               <details>
                 <summary><span><ChartBar aria-hidden="true" size={18} />完成后没有评分或报告</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>单配体请确认运行状态为 finished，并先检查 log.txt。全局对接还应生成 out.pdbqt 与 scores.csv；当前姿势评分生成 evaluation.json；局部优化另生成 optimized.pdbqt。批量任务结束或安全取消后，可在配体结果工作区生成整批实验记录。</p>
+                <p>确认运行状态为 finished，并检查 log.txt、scores.csv 或 evaluation.json 是否存在。</p>
               </details>
               <details>
                 <summary><span><ChartBar aria-hidden="true" size={18} />历史筛选无法打开</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>损坏归档会保留在历史列表中并显示原因，但不能打开详情或 3D 构象。旧归档缺少输出哈希时可只读查看，界面会提示“未完全验证”。归档不能恢复为活动队列或修改。</p>
+                <p>损坏归档只能查看错误原因；缺少输出哈希的旧归档仅支持只读查看。</p>
               </details>
               <details>
                 <summary><span><ChartBar aria-hidden="true" size={18} />两个历史批次为什么没有差值</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>请恰好选择两个不同的有效归档：先选的是基线，后选的是对照。DockStart 只按冻结配体输入的 SHA256 匹配；协议不同、同批出现重复 SHA256、任一侧未成功或评分与排名无效时只显示原记录，不计算“对照－基线”差值。比较不会修改项目或归档。</p>
+                <p>请选择两个不同的有效归档。只有输入 SHA256 可匹配且评分有效时才计算差值。</p>
               </details>
               <details>
                 <summary><span><FileText aria-hidden="true" size={18} />如何分享一条历史筛选记录</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>在“历史归档”中点击“导出 ZIP”。ZIP 包含只读归档和逐文件 SHA256 清单，不包含 Vina 或活动队列，也不能直接恢复运行。为保护已有文件，GUI 不执行覆盖；保存位置已被占用时请重新导出并选择新文件名。已有记录可能含本机绝对路径，导出不会自动匿名化；对外发送前请先检查。</p>
+                <p>在“历史归档”中导出 ZIP。分享前请检查记录中的本机路径和文件内容。</p>
               </details>
             </div>
           </section>

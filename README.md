@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.13.1-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.13.5-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,9 +31,9 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码与本地 Windows 候选包版本为 **v0.13.1**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
+> 当前源码与本地 Windows 候选包版本为 **v0.13.5**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
 
-> v0.13.1 候选包包含“多配体共同对接”、AD4Zn 和水合 AD4 的独立实验协议入口；它们仍分别标记为 Experimental/Beta，不属于默认稳定流程。多配体共同对接要求 AutoDock Vina 1.2.0 或更高版本，只接受恰好两个已经准备好的 PDBQT 配体、刚性受体、全局对接和 Vina/Vinardo 评分。它与“多个配体分别运行”的串行批量筛选是两种不同协议，不能用批筛结果语义解释。
+> v0.13.5 候选包包含“多配体共同对接”、AD4Zn 和水合 AD4 的独立实验协议入口；它们仍分别标记为 Experimental/Beta，不属于默认稳定流程。多配体共同对接要求 AutoDock Vina 1.2.0 或更高版本，只接受恰好两个已经准备好的 PDBQT 配体、刚性受体、全局对接和 Vina/Vinardo 评分。它与“多个配体分别运行”的串行批量筛选是两种不同协议，不能用批筛结果语义解释。
 
 ## 为什么使用 DockStart
 
@@ -91,7 +91,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 
 高级用户可在对接工作台切换到独立的 **AutoDock4（maps）** 协议，生成或导入 affinity maps 后运行。该协议的 scores 与报告独立保存，不能与 Vina/Vinardo 分值直接比较。AutoGrid4 需要用户自行安装并在设置页配置。
 
-> 当前源码工作树另已接入 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。源码首版只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。该增量尚未修改版本号或重新打包。
+> v0.13.5 候选包已接入 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。首版只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。
 
 > 当前源码工作树还接入了显式标记的 **AD4Zn beta**。它不是新的 Vina 评分函数，而是先为符合条件的三配位 Zn 受体生成 TZ 几何伪原子，再使用用户提供的 `AD4Zn.dat` 和 AutoGrid4 4.2.7+ 生成专用 maps，最后由 Vina 以 `--maps ... --scoring ad4` 运行。协议只适用于单核 Zn 位点，不自动泛化到多核位点或 Mg、Fe、Ca 等其他金属；没有生成 TZ、缺少参数文件或 AutoGrid 版本不满足时均阻止运行，不降级为标准 AD4。`AD4Zn.dat` 文件自身声明 GPL-2.0-or-later，DockStart 不随仓库或安装包内置、也不自动下载；用户明确选择后，应用会为可复现性复制到项目并记录本机来源路径、SHA256、许可证 ID、受支持参数配置和固定上游参考。分享含该副本的项目时，分享者需要自行履行相应 GPL 再分发义务。该源码增量尚未修改版本号、重新打包或进入正式 Release。
 
@@ -137,7 +137,7 @@ Box 的“定位到受体”只使用受体原子坐标范围的几何中心，�
 - 快速定位到受体坐标范围中心，并恢复进入页面时的参数；
 - 调整 Box 线宽、XYZ 坐标轴显示与轴间距；
 - 设置基础 Vina 参数，以及源码未发布的评估上限、构象最小间距、网格间距、日志详细程度、网格评分精修、偶数体素开关和仅评分模式的显式未结合态参考能量；串行批量全局对接继承前六项适用高级参数，不继承显式未结合态参考能量；
-- 源码未发布增量可为 Vina/Vinardo 生成、导入、校验和复用预计算 maps；maps 模式明确标记为刚性单配体全局对接与 `grid-only / no-refine` 语义；
+- 可为 Vina/Vinardo 生成、导入、校验和复用预计算 maps；maps 模式明确标记为刚性单配体全局对接与 `grid-only / no-refine` 语义；
 - 源码未发布的 AD4Zn beta 可对满足三受体配位与开放四面体方向条件的 Zn 位点生成 TZ，使用外部 AutoGrid4 4.2.7+ 与用户提供的 `AD4Zn.dat` 生成专用 maps；
 - 源码未发布的多配体共同对接实验协议可让恰好两个已准备 PDBQT 在同一次 Vina/Vinardo 全局搜索中联合运行；它不自动替代串行批量筛选；
 - 执行运行前检查、任务进度显示和取消操作。

@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-当前 v0.13.1 Windows 本地候选工程保留两个隔离 profile。Basic Stable 随附 AutoDock Vina 与精简后端 Python，面向已经准备好 receptor/ligand PDBQT 的用户。Assisted Stable 额外随附独立、可替换的 CPython 3.11 + RDKit 2026.3.3 + Meeko 0.7.1 固定工具链，允许离线从 PDB/CIF + SDF/MOL 尝试准备 PDBQT。独立 AutoDock4 maps 协议继续可用；AutoGrid4 因 GPL 分发边界只作为用户自行安装的外部工具检测和调用，不进入 Basic/Assisted 安装包。用户配置的兼容 Python 对 preparation 仍然优先；自动准备结果必须人工检查。
+当前 v0.13.5 Windows 本地候选工程保留两个隔离 profile。Basic Stable 随附 AutoDock Vina 与精简后端 Python，面向已经准备好 receptor/ligand PDBQT 的用户。Assisted Stable 额外随附独立、可替换的 CPython 3.11 + RDKit 2026.3.3 + Meeko 0.7.1 固定工具链，允许离线从 PDB/CIF + SDF/MOL 尝试准备 PDBQT。项目创建与格式转换页面按受体和配体各自的真实文件格式处理输入，支持 PDBQT 与原始结构混合导入；Meeko 严格模式发现不完整残基时，必须先显示并确认完整清单，才允许受审计地忽略并重试。独立 AutoDock4 maps 协议继续可用；AutoGrid4 因 GPL 分发边界只作为用户自行安装的外部工具检测和调用，不进入 Basic/Assisted 安装包。用户配置的兼容 Python 对 preparation 仍然优先；自动准备结果必须人工检查。
 
 本项目不是新的分子对接算法，也不修改 AutoDock Vina 的打分函数或搜索算法。项目重点是：
 

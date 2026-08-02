@@ -82,6 +82,38 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
+    const shell = document.querySelector(".dockstart-shell");
+    if (!(shell instanceof HTMLElement)) return;
+
+    const removeNativeTitles = (root: ParentNode) => {
+      if (root instanceof HTMLElement) root.removeAttribute("title");
+      root.querySelectorAll<HTMLElement>("[title]").forEach((element) => {
+        element.removeAttribute("title");
+      });
+    };
+
+    removeNativeTitles(shell);
+    const observer = new MutationObserver((records) => {
+      records.forEach((record) => {
+        if (record.type === "attributes" && record.target instanceof HTMLElement) {
+          record.target.removeAttribute("title");
+          return;
+        }
+        record.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) removeNativeTitles(node);
+        });
+      });
+    });
+    observer.observe(shell, {
+      attributeFilter: ["title"],
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
     window.localStorage.setItem("dockstart-theme", theme);

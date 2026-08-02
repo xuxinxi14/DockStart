@@ -1,14 +1,14 @@
 {
   "name": "dockstart-desktop",
   "private": true,
-  "version": "0.13.1",
+  "version": "0.13.5",
   "author": "XinXi Xu",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
-    "test:frontend:async": "node --test tests/pageOperationScope.test.ts tests/backgroundProjectRefresh.test.ts tests/vinaForm.test.ts tests/vinaTask.test.ts tests/vinaMaps.test.ts tests/hydratedApi.test.ts tests/hydratedAd4Page.test.ts tests/runExecutionPlan.test.ts tests/screeningResults.test.ts tests/screeningLigandImport.test.ts tests/screeningArchiveComparison.test.ts tests/screeningVina.test.ts tests/screeningArchiveExport.test.ts tests/multipleLigandSelection.test.ts tests/macrocyclePreparation.test.ts",
+    "test:frontend:async": "node --test tests/pageOperationScope.test.ts tests/backgroundProjectRefresh.test.ts tests/vinaForm.test.ts tests/vinaTask.test.ts tests/vinaMaps.test.ts tests/hydratedApi.test.ts tests/hydratedAd4Page.test.ts tests/runExecutionPlan.test.ts tests/screeningResults.test.ts tests/screeningLigandImport.test.ts tests/screeningArchiveComparison.test.ts tests/screeningVina.test.ts tests/screeningArchiveExport.test.ts tests/multipleLigandSelection.test.ts tests/macrocyclePreparation.test.ts tests/sidebarNavigationState.test.ts",
     "prepare:basic-resources": "python ../../scripts/prepare_basic_release_resources.py --repo-root ../..",
     "prepare:assisted-resources": "python ../../scripts/prepare_assisted_release_resources.py --repo-root ../..",
     "build:desktop": "npm run prepare:basic-resources && tauri build --config src-tauri/tauri.basic.conf.json",

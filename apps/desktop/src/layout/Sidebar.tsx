@@ -17,6 +17,7 @@ import type { DockStartProject } from "../types";
 import { appVersion } from "../navigation/pages";
 import { navigationItems, resolveNavigationTarget, type NavigateHandler, type PageId } from "../navigation/pages";
 import type { WorkflowStep } from "../components/WorkflowStepper";
+import { resolveSidebarNavigationState, type SidebarNavigationState } from "../utils/sidebarNavigationState";
 
 type SidebarProps = {
   collapsed?: boolean;
@@ -109,24 +110,7 @@ export default function Sidebar({
     return false;
   }
 
-  function itemState(itemId: PageId, requiresProject?: boolean): "ready" | "blocked" | "idle" {
-    if (requiresProject && !hasProject) {
-      return "blocked";
-    }
-    const matchedStep = workflowSteps.find((step) => step.targetPage === itemId);
-    if (!matchedStep) {
-      return hasProject ? "ready" : "idle";
-    }
-    if (matchedStep.status === "done") {
-      return "ready";
-    }
-    if (matchedStep.status === "blocked" || matchedStep.status === "failed" || matchedStep.status === "warning") {
-      return "blocked";
-    }
-    return "idle";
-  }
-
-  function StateIcon({ state }: { state: "ready" | "blocked" | "idle" }) {
+  function StateIcon({ state }: { state: SidebarNavigationState }) {
     if (state === "ready") return <CheckCircle aria-hidden="true" size={16} weight="fill" />;
     if (state === "blocked") return <WarningCircle aria-hidden="true" size={16} weight="fill" />;
     return <Circle aria-hidden="true" size={16} weight="regular" />;
@@ -152,7 +136,12 @@ export default function Sidebar({
                 const active = isActive(item.id);
                 const requiresProjectBlocked = Boolean(item.requiresProject && !hasProject);
                 const disabled = Boolean(item.disabled);
-                const state = itemState(item.id, item.requiresProject);
+                const state = resolveSidebarNavigationState(
+                  item.id,
+                  hasProject,
+                  Boolean(item.requiresProject),
+                  workflowSteps,
+                );
                 const itemLabel = item.label;
                 return (
                   <button

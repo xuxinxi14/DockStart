@@ -37,7 +37,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.13.1";
+export const appVersion = "0.13.5";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -112,6 +112,9 @@ export function resolveNavigationTarget(item: NavigationItem, hasProject: boolea
  * never send a normal user flow back to the retired screens.
  */
 export function normalizeNavigationPage(page: PageId): PageId {
+  if (page === "import-pdbqt") {
+    return "preparation";
+  }
   if (page === "box-setup" || page === "vina-param" || page === "vina-config") {
     return "run-prepare";
   }

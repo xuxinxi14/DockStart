@@ -1,181 +1,187 @@
-# DockStart v0.9.6 Design QA
-
-## Comparison Target
+**Comparison Target**
 
 - Source visual truth:
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\structure-preparation.png`
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\docking-workbench.png`
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-references\result-analysis.png`
-- Rendered implementation:
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-preparation.png`
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-docking.png`
-  - `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-results.png`
-  - Runtime interaction evidence: `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\qa-results-fresh-mode2.png`
-- Viewport: 1570 x 1002 CSS pixels, device pixel ratio 1.
-- Runtime: real Tauri desktop application rendered by WebView2 at `http://127.0.0.1:1420/`.
-- State:
-  - Preparation: `result_demo_005`, existing-PDBQT and raw-structure modes.
-  - Docking: `result_demo_005`, receptor and ligand loaded, valid 12 x 12 x 12 A box, preflight ready.
-  - Results: fresh `result_demo_005`, `run_001`, modes 1-3 available; modes 2 and 3 loaded successfully during interaction QA.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-facf131a-a11d-44e3-af85-7668c7ffdadf.png` — selected task card, 379 × 162 px.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-f76d1f6d-8dbb-4747-8cd1-bf25f7d1420d.png` — previous help task banner, 1245 × 241 px.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-68ae977e-9db8-4421-af8e-28e66738d5aa.png` — full project creation page, 1743 × 1230 px.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-18d4f1fb-d0fb-43fb-87c3-a1a8acc4bd3e.png` — redundant first-run chooser, 1708 × 1156 px.
+- Browser-rendered implementation:
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\01-help-page.png` — help page viewport.
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\02-help-task-guide.png` — focused help task guide, 968 × 380 px.
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\03-project-create-default.png` — default project creation page, 1600 × 1000 px.
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\04-project-create-pose-score.png` — selected pose-scoring state, 1600 × 1000 px.
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\05-project-create-assisted-pose.png` — assisted/local pose-scoring state, 1600 × 1000 px.
+  - `E:\DockStart\output\playwright\dockstart-startup-ui\06-project-task-picker.png` — focused task picker, 948 × 183 px.
+- Viewport: 1600 × 1000 CSS px, Chrome, dark theme, device scale factor 1, screenshot scale `css`.
+- State: no project loaded; help is the application start page; project navigation opens the consolidated project creation page. Task states checked: global docking, pose scoring, and assisted/local pose scoring.
+- Density normalization: source screenshots use different crops and sizes. Contact sheets preserve each crop's aspect ratio and downsample only for shared visual review; no density-only mismatch was filed.
 
-## Comparison Evidence
+**Full-view Comparison Evidence**
 
-### Full-view comparisons
+- `E:\DockStart\output\playwright\dockstart-startup-ui\comparison-create.png` compares the supplied complete creation-page reference with the browser-rendered consolidated creation page.
+- The implementation intentionally puts “本次任务” before “输入来源”, following the requested scientific information architecture. The lower duplicated “打开已有项目” form is absent; the page-header action remains.
+- The no-project “项目” navigation was exercised from the help page and opened this creation page directly, so the redundant first-run chooser is no longer on the reachable startup path.
 
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-preparation.png`
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-docking.png`
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\compare-results.png`
+**Focused Region Comparison Evidence**
 
-Each comparison places the selected visual target and the rendered implementation in one image. The implementation intentionally applies the user's later all-dark, slightly lighter deep-blue direction across all three workspaces; the first two source images retain their earlier light center surfaces.
+- `E:\DockStart\output\playwright\dockstart-startup-ui\comparison-task-picker.png` shows that the selected radio is now a normal circular control without the former input-like rectangle. The entire card remains the selected-state surface.
+- `E:\DockStart\output\playwright\dockstart-startup-ui\comparison-help.png` shows the former over-wide two-action banner beside the aligned three-task guide. The new section uses the same 20 px content inset and divider rhythm as neighboring help modules.
 
-### Focused region comparisons
+**Findings**
 
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-preparation.png`
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-docking.png`
-- `E:\DockStart\.codex-ui-audit\v0.9.6-implementation\focus-results.png`
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: existing DockStart families, weights, line heights, and hierarchy are retained. Task labels and scientific prerequisites remain readable without truncation at the tested viewport.
+- Spacing and layout rhythm: task/source sections share the main-panel edges, “本次任务” has a full 20 px top inset, and the help task guide aligns with adjacent help sections. Document width equals viewport width (1600 px); no horizontal overflow was detected.
+- Colors and visual tokens: selected, hover, border, rail, and text colors use existing DockStart design tokens. No new palette or competing surface style was introduced.
+- Image quality and asset fidelity: these screens contain no raster product imagery. Existing Phosphor icons are retained; no replacement CSS drawings, emoji, or handcrafted SVG assets were introduced.
+- Copy and content: the three task descriptions now state use case, input prerequisite, result, and scientific boundary. Pose scoring/local optimization explicitly require a positioned ligand in the receptor coordinate system.
 
-The focused comparisons cover typography hierarchy, tab and control spacing, the 3D viewport and Box controls, ranked pose rows, result tabs, the right context rail, status colors, icons, borders, radii, and fixed action placement.
+**Comparison History**
 
-## Findings
+- Initial supplied evidence:
+  - [P1] Global input styling made the radio look like a rectangular text input.
+  - [P2] “本次任务” was visually crowded against the source tabs.
+  - [P2] The lower “打开已有项目” form repeated the header action in every source tab.
+  - [P2] The help task banner did not align with neighboring sections and omitted global docking.
+  - [P1] The no-project dashboard duplicated the complete project creation page and split the startup decision across two screens.
+- Fixes made:
+  - Reset the scoped radio dimensions/background/focus style while keeping card-level keyboard focus.
+  - Reordered the decision flow to task first, input source second, with explicit section spacing.
+  - Removed the shared inline open-project form and retained the single page-header action.
+  - Rebuilt the help area as an aligned three-card guide with scientific prerequisites and output expectations.
+  - Routed no-project home navigation to the complete project creation page while preserving help as the application start page.
+- Post-fix evidence: `comparison-task-picker.png`, `comparison-help.png`, and `comparison-create.png`. No P0/P1/P2 issue was found in the post-fix pass.
 
-- No actionable P0, P1, or P2 difference remains.
-- [P3] The bundled viewer-result demo contains deliberately tiny toy receptor and ligand structures, so the rendered molecules occupy less of the 3D viewport than the illustrative design target. This is expected scientific-data fidelity, not a layout defect; no fake atoms or replacement molecular imagery were added.
-- [P3] Minor text-density and row-height tuning may still be useful after testing with long real-world project and file names. Current controls remain aligned, readable, and free of horizontal overflow at the QA viewport.
+**Primary Interactions Tested**
 
-### Required fidelity surfaces
+- Help page → “创建第一个项目”.
+- Help page → sidebar “项目” → consolidated project creation page.
+- Global docking → pose scoring task selection.
+- Existing PDBQT → assisted source tab while pose scoring is selected.
+- Project creation page → “返回帮助”.
+- Verified exactly one selected radio, zero duplicate inline open-project forms, and no horizontal document overflow.
+- Browser console check: 0 errors, 0 warnings after the Tauri browser audit mock was installed.
 
-- Fonts and typography: existing system CJK font stack retained; title, section, label, metadata, and table hierarchy match the target's industrial console character. No broken wraps or truncated primary actions were observed.
-- Spacing and layout rhythm: the four-workspace shell, central work areas, right rails, lower ledgers, table rows, and fixed docking action bar remain aligned at 1570 x 1002. No horizontal overflow was observed.
-- Colors and visual tokens: the app uses a coherent deep-blue token scale that is intentionally slightly lighter than the all-dark reference. Button blue and link/selection blue are separated, with readable status and disabled states.
-- Image and asset fidelity: the product logo and existing Phosphor icon system are preserved. Molecular imagery is rendered from real project PDBQT content in 3Dmol; no placeholder, CSS-art, emoji, or fabricated scientific image substitutes were introduced.
-- Copy and content: Chinese terminology remains consistent with the DockStart scientific wording rules. The interface continues to state that docking scores do not prove binding or efficacy.
-- Accessibility and interaction: tabs expose selected state, Box bindings expose `aria-pressed`, icon-only viewer controls retain labels, navigation remains keyboard-reachable, and selected/status states do not rely on color alone.
+**Implementation Checklist**
 
-## Comparison History
+- [x] Selected task control has no rectangular input artifact.
+- [x] Task selection has clear top spacing and precedes input-source selection.
+- [x] Duplicate inline open-project form removed from all source tabs.
+- [x] Help section aligned and expanded to explain all three tasks.
+- [x] No-project project entry opens the complete creation page.
+- [x] Frontend production build passes.
+- [x] Browser screenshots and focused comparisons reviewed.
 
-1. [P1] The docking primary action was below the initial viewport.
-   - Fix: converted the run action area into a persistent bottom bar positioned above the status bar.
-   - Post-fix evidence: `qa-docking.png` and `compare-docking.png`.
-2. [P2] Result metadata duplicated the engine name and allowed awkward time text.
-   - Fix: normalized engine/version display, computed elapsed time from run timestamps when needed, and formatted saved time consistently.
-   - Post-fix evidence: `qa-results.png` and `focus-results.png`.
-3. [P2] The result example advertised modes 2 and 3 while its output file contained only one unwrapped pose.
-   - Fix: aligned the example with three explicit `MODEL` / `ENDMDL` blocks and added backend assertions for modes 1-3.
-   - Post-fix evidence: fresh `result_demo_005`; runtime loaded Mode 2 and Mode 3 with no alert or console error.
-4. [P2] The earlier fragmented flow exposed redundant Box, Vina, and result surfaces.
-   - Fix: consolidated the visible navigation into four workspaces, retained legacy route compatibility, made the docking workbench the single visible Box/run surface, and embedded pose analysis in the result page rather than a dialog.
-   - Post-fix evidence: all three final full-view and focused comparisons.
+**Follow-up Polish**
 
-## Primary Interactions Tested
+- None required for this handoff. A narrower-window responsive pass can be included in the later unified UI test cycle.
 
-- Four-item sidebar navigation between Project, Structure Preparation, Docking Workbench, and Results.
-- Preparation mode switch between existing PDBQT and raw-structure preparation; selected tab state and controls updated without errors.
-- Box `size_x` mouse-wheel binding changed 12.0 to 12.1 A; binding `size_y` then cleared the `size_x` binding, confirming single-selection behavior.
-- Fresh result demo creation through the desktop UI.
-- Mode 2 and Mode 3 selection and 3D pose loading from `run_001`.
-- Persistent docking actions, integrated result viewer, result tabs, and absence of the previous pose dialog.
-- Browser/WebView console: `Runtime.exceptionThrown` and error-level `Log.entryAdded` were monitored during the above interactions; no errors were recorded.
+**v0.13.2 Incremental Check**
 
-## Implementation Checklist
+- Source visual truth:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-5a319e69-d293-4e7f-8b27-da0d0ea5f9ab.png` — crowded task heading, 430 × 129 px.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-5734efcd-d833-49c5-b913-29b3af33ea61.png` — redundant input-source sentence.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-5eedfc4b-e05d-41f3-b8e7-d1f247e88743.png` — ligand selection without file-level visibility or controls.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-8e5be943-5551-4f5d-a4a2-9dd8917b4314.png` — oversized tool-details disclosure.
+- Browser-rendered implementation: `E:\DockStart\output\playwright\v0.13.2-ui\project-create-task-spacing.png`, 1728 × 1040 CSS px, Chrome/Playwright CLI, dark theme.
+- Combined comparison: `E:\DockStart\output\playwright\v0.13.2-ui\comparison-task-spacing.png` contains the supplied task-heading crop and the corresponding v0.13.2 region in one review image.
+- The task heading now uses the existing section-title scale with 24 px visual inset above the heading content and 32 px section top padding; the removed source sentence is absent from both DOM snapshot and screenshot.
+- Selected ligand rows use existing surface, border, icon, text-button, and danger-color tokens. Each row exposes a visible file name/path and separate replace/remove actions; the frontend production build validates both PDBQT and SDF/MOL branches.
+- The tool-details disclosure is scoped to the preparation context rail: compact centered summary when collapsed, left-aligned contents when expanded. No global `details` styling was changed.
+- Visual review found no clipping, horizontal overflow, misaligned borders, or competing radius/palette treatment at the tested viewport.
 
-- [x] Apply the approved slightly lighter deep-blue theme globally.
-- [x] Consolidate visible navigation without breaking legacy project routes.
-- [x] Rebuild Structure Preparation, Docking Workbench, and Results around the selected visual targets.
-- [x] Preserve real project data, scientific disclaimers, and existing backend commands.
-- [x] Verify core interactions and fresh multi-pose demo data in the real desktop runtime.
-- [x] Compare source and implementation at full-view and focused-region levels.
+**v0.13.2 Density, Local Output, and Report Preview Check**
 
-## Follow-up Polish
+- Source visual truth:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-8f88d6e4-0902-438c-b332-98f2f781ef8f.png` — structure search density and alignment.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-580c9ac9-7723-4efe-9bce-f48241840bd9.png` — Vina parameter baseline alignment.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-b02c6cb0-f16e-4aeb-acbc-c21593a151d9.png` — Vina maps action density.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-1c7e0959-2159-43ee-9e81-7175e12171cf.png` — redundant task-mode explanation.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-36c60994-e58a-4038-a59e-226f23fea26f.jpg` — native browser title tooltip.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-ff270d53-f79e-4d9c-b8c0-fbbcee45c92a.png` — crowded export badge.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-5f6845c8-6d40-4169-babc-c718aa2a1033.png` — result-side actions.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-5605de6f-bfe2-41ba-8683-78e7e4444a90.png` — report page before Markdown preview.
+- Browser-rendered evidence (Chrome/Playwright CLI, 1728 × 1040 CSS px, dark theme):
+  - `E:\DockStart\output\playwright\v0.13.2-review\01-structure-fetch.png`
+  - `E:\DockStart\output\playwright\v0.13.2-review\02-run-workbench.png`
+  - `E:\DockStart\output\playwright\v0.13.2-review\03-run-parameters.png`
+  - `E:\DockStart\output\playwright\v0.13.2-review\04-report-preview.png`
+  - `E:\DockStart\output\playwright\v0.13.2-review\05-report-preview-focused.png`
+  - `E:\DockStart\output\playwright\v0.13.2-review\06-result-directory-actions.png`
+- Focused implementation evidence:
+  - `07-workspace-modes.png`, `08-vina-maps-actions.png`, `09-vina-parameter-row.png`, `10-result-directory-actions-focused.png`, and `11-report-status-card.png` in the same review directory.
+- Combined source/implementation comparisons:
+  - `comparison-structure.png`, `comparison-workbench.png`, and `comparison-report.png` in the same review directory.
 
-- Revisit compact row density only after collecting screenshots from longer real project names and larger receptor/ligand files.
-- Fine-tune 3D camera defaults later with representative scientific datasets rather than changing the toy demo to make screenshots look fuller.
+**Findings and Verification**
 
-## Final v0.9.6 Corrective Pass
+- Structure source summaries now remain on one compact row; the hidden live-status element no longer occupies a grid cell. Search controls and local-import disclosure rows share a tighter, consistent rhythm for receptor and ligand.
+- Scoring protocol, numeric parameters, and helper rows share one baseline. The maps save and import cards fit their content instead of stretching to the tallest card, while retaining responsive stacking.
+- The task-mode bar contains only the three controls; the far-right explanatory sentence is removed.
+- Runtime DOM contains zero `[title]` attributes before and after a 900 ms hover on the top-right Help action. Its `aria-label` remains `帮助`, so removing the native gray tooltip does not remove the accessible control name.
+- The report status card places the status badge at the far-right vertical center. The result rail exposes “打开拓扑 SDF 目录” and “打开报告目录”. Playwright recorded both commands with the expected project, run, target, and project-relative SDF path.
+- The Rust resolver accepts only the current project's existing `reports` directory or the current run's existing `.sdf` under `exports`; traversal, wrong extensions, symlinks, and missing project markers are rejected.
+- Markdown preview reads only an existing UTF-8 `.md` under the project `reports` directory, limits content to 2 MiB, and renders headings, paragraphs, lists, block quotes, tables, fenced code, emphasis, and inline code through React nodes without HTML injection.
+- The tested page had `clientWidth = scrollWidth = 1728`; browser console reported 0 errors and 0 warnings.
+- `npm run build` passed. Targeted Rust path-boundary test passed: 1 test, 32 filtered out.
 
-- User evidence:
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c033b7a9-d0e6-4a95-a5f9-8e258beff618.png`
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-257fb25a-4cdc-440f-9721-62a1afe454ce.png`
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-6cb049aa-6a6e-4b20-9a6d-83fec6d4d639.png`
-- Rendered implementation evidence:
-  - `E:\DockStart\.codex-ui-audit\v096-dark-custom-titlebar.png`
-  - `E:\DockStart\.codex-ui-audit\v096-light-theme.png`
-  - `E:\DockStart\.codex-ui-audit\contrast-fullscreen-box.png`
-  - `E:\DockStart\.codex-ui-audit\contrast-fullscreen-box-axes-hidden.png`
-- Verified in the real Tauri desktop runtime at 1200 x 800:
-  - native gray title decoration removed and replaced by an integrated draggable command bar;
-  - new DockStart artwork loaded in the application shell;
-  - dark/light theme state persisted through a Tauri rebuild;
-  - sidebar brand and command bar both measured 60 px high;
-  - sidebar footer and workspace status bar shared the same top coordinate;
-  - full-screen Box values and wheel binding stayed synchronized with the normal inspector;
-  - axis visibility toggled in both run and result viewers without runtime errors.
+**Remaining Scope**
 
-## Structure Source Horizontal Workflow Pass
+- No installer was built and no full release suite was run, matching the requested fast visual-review scope.
 
-- User reference:
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-755fbfab-5f6d-4046-a17b-26b4d56631d2.png`
-- Real Tauri implementation:
-  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\accepted-search-results-1000.png`
-  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\accepted-search-results.png`
-- Same-comparison inputs:
-  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\comparison-1000.png`
-  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\comparison.png`
-- Regression evidence:
-  - `E:\DockStart\.codex-ui-audit\structure-fetch-horizontal\navigation-after-pending-search.png`
-- Reference viewport: 978 x 894 pixels.
-- Compact implementation viewport: 1000 x 900 CSS pixels, captured at 150% device scaling.
-- State: the receptor query `1IEP` returned one selectable RCSB result; the receptor workflow is shown before the ligand workflow.
+**v0.13.3 Maps and Structure Heading Check**
 
-### Visible findings and iterations
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-3acbaf3e-9d70-4bf1-ad4a-3092fb59a5f9.png` — requested combined maps constraint/generation module.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c643e7e7-679a-4acb-af6d-b08f2ddbe272.png` — adjacent maps import module.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-a32f98c3-6208-4850-aec6-e9a18d827124.png` — receptor/ligand summary-heading baseline.
+- Browser-rendered evidence (Chrome/Playwright CLI, 1728 × 1040 CSS px, dark theme):
+  - `E:\DockStart\output\playwright\v0.13.3-ui\maps-panel-final.png`
+  - `E:\DockStart\output\playwright\v0.13.3-ui\structure-source-headings.png`
+- Combined source/implementation comparisons:
+  - `E:\DockStart\output\playwright\v0.13.3-ui\comparison-maps.png`
+  - `E:\DockStart\output\playwright\v0.13.3-ui\comparison-structure-headings.png`
+- The maps constraints and save action now form one coherent left module beside the import module. Playwright confirmed both action cards have the same rendered height and the action grid has no horizontal or vertical overflow.
+- Receptor/ligand English step labels and Chinese role titles use a stronger hierarchy while remaining on one row. Both summary bars passed horizontal-overflow checks.
+- `npm run build` passed. No broad backend, Rust, scientific, installation, or release-gate suite was run for this fast candidate.
 
-1. [P1] The former receptor/ligand side-by-side columns compressed search results, metadata, previews, and actions.
-   - Fix: converted the page into two full-width work rows, receptor first and ligand second. Each row now uses a status summary, a wide search/result workspace, and a local import/action area.
-2. [P1] A 981-1070 px viewport could retain the wider internal grid while the card clipped overflow.
-   - Fix: introduced the compact breakpoint at 1120 px, reducing search controls to two columns and stacking candidate list and preview without horizontal clipping.
-3. [P1] Leaving the page while an online search or preview request was unfinished could allow late Tauri responses and delayed 3D callbacks to update an unmounted page.
-   - Fix: added a page operation scope with generation checks before parsing or committing responses; deferred 3D work now also verifies the active generation and connected container.
-4. [P2] Large candidate payloads could make route changes feel blocked by synchronous preview work.
-   - Fix: limited the complete serialized interactive preview response to 2 MiB, enforced a hard network deadline in the short-lived backend process, and used a lighter receptor representation.
-5. [P2] Busy states did not consistently communicate that controls were temporarily unavailable.
-   - Fix: all relevant search, import, selection, overwrite, and management controls now share the row busy state, with `aria-busy`, labelled regions, and live status text.
+**v0.13.4 Unified Structure Input and Layout Check**
 
-### Runtime verification
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-070bc92b-0dc0-4892-a92f-535030376ae2.png` and `codex-clipboard-9e130ea2-e456-4243-87f0-9de412caad71.png` — disclosure summaries before centering.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-7d15343a-9a36-48dc-b537-2f5ea2aab10c.png` — clipped scoring/maps panel.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-0a78663f-f913-4a18-a690-4e859878fc69.png`, `codex-clipboard-393565e4-d031-44ab-9cd0-69d832c61272.png`, and `codex-clipboard-1305b7ed-9164-49ca-872b-27b4e5427e95.png` — duplicated PDBQT/raw input routes.
+- Browser-rendered evidence (Chrome/Playwright CLI, 1728 × 1040 CSS px, dark theme):
+  - `E:\DockStart\output\playwright\v0.13.4-ui\project-create-unified.png`
+  - `E:\DockStart\output\playwright\v0.13.4-ui\preparation-unified.png`
+  - `E:\DockStart\output\playwright\v0.13.4-ui\run-protocol-overflow.png`
+- Combined comparison evidence:
+  - `E:\DockStart\output\playwright\v0.13.4-ui\comparison-unified-input.png`
+  - `E:\DockStart\output\playwright\v0.13.4-ui\comparison-run-protocol.png`
+  - `E:\DockStart\output\playwright\v0.13.4-ui\comparison-disclosures.png`
 
-- At the compact viewport, the 1IEP result, its metadata, `3D 预览`, and `选择并准备` remained visible without horizontal clipping.
-- In the current release-mode desktop build, a receptor search was started and the sidebar `对接工作台` action was invoked 35 ms later.
-- Navigation completed in 378 ms; the process reported `responding: true`.
-- The right-side white assistant bubble visible in QA screenshots belongs to the Codex capture workflow and is not part of DockStart.
+**v0.13.4 Findings and Verification**
 
-### Automated verification
+- Project creation has one structure-input route. Receptor and ligand are classified independently, so PDBQT/raw pairs are accepted without forcing a shared mode.
+- The preparation page no longer has separate direct-PDBQT and conversion tabs. A prepared PDBQT displays ready state and on-demand 3D preview; a raw structure exposes the matching conversion action.
+- Expandable summaries use the existing DockStart surface and text tokens with centered labels; arrows remain independently aligned at the edge where present.
+- Browser-native form history is disabled on project/path inputs. The inspected text inputs reported `autocomplete=off`; radio controls remain unaffected.
+- Run-workbench measurements: document `1728/1728`, scoring/maps card `1080/1080`, and maps panel `1048/1048` for client/scroll widths. No right-side clipping or horizontal overflow remains.
+- The project-create page measured `clientWidth = scrollWidth = 1728`.
+- `npm run build` passed. The focused structure-input classifier test passed (2/2). No broad backend, Rust, scientific, installer-lifecycle, or release-gate suite was run for this fast candidate.
 
-- Frontend production build: passed, 4638 modules.
-- Frontend async lifecycle tests: 4 passed.
-- Backend tests: 375 passed, 7 subtests passed.
-- Rust desktop tests: 18 passed.
+**v0.13.5 Help, Window Controls, and Receptor Recovery Check**
+
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-6c0ffffa-c39b-41e3-86e4-aed6d124b276.png` — two quick-start cards leaving an empty third column.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-f9c98e61-eaf9-43ae-8185-ff05f8c3e7c2.png` — narrow native window controls.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-384ebef8-c076-4e7c-9210-0d70cd37e673.png` — verbose troubleshooting heading.
+- Browser evidence: `E:\DockStart\output\playwright\v0.13.5-ui\help-start-window.png` and `help-common-questions.png`, captured at 1728 × 1080 CSS px in the existing DockStart dark theme.
+- Combined comparisons: `comparison-help-cards.png`, `comparison-window-controls.png`, and `comparison-common-questions.png` in the same directory.
+- The quick-start grid now renders two equal 527 px columns inside a 1064 px content width. The cards fill the row without introducing a third empty track.
+- Minimize, maximize, and close controls each render at 56 × 59 px. Their native `title` attributes are absent, while accessible labels remain.
+- The former troubleshooting heading is now the compact “常见问题 / 安装自检” module. Accordion summaries remain aligned and collapsed by default.
+- Document `clientWidth` and `scrollWidth` both measured 1728 px; no horizontal overflow was introduced.
+- Targeted TypeScript/Vite production build passed. The official `1fpu_receptorH.pdb` recovery flow is covered by backend tests and a real bundled-Meeko conversion, but the recovery card could not be driven through the browser-only Tauri mock in this visual pass.
 
 final result: passed
-
-## Search Candidate Details Pass (2026-07-17)
-
-- User reference: `C:\Users\19701\AppData\Local\Temp\codex-clipboard-d0ae4512-7772-4903-abbb-e97279ccd679.png`.
-- Added a progressive-disclosure action to every RCSB and PubChem candidate card.
-- Expanded RCSB content uses search metadata already present in memory.
-- Expanded PubChem content reuses the candidate SDF preview cache for CID, formula, charge, component count, and related descriptors; no additional blocking page-level process was introduced.
-- Keyboard and screen-reader state is exposed through `aria-expanded` and `aria-controls`.
-- Production frontend build and release-mode no-bundle desktop build passed.
-- Real desktop capture could not be isolated reliably in this run because the current Windows desktop layout overlapped the QA window and WebView accessibility automation exposed no usable element tree. No visual-pass claim is made from the incomplete capture.
-
-final result: blocked
-
-## Narrow Details and Search History Pass (2026-07-18)
-
-- User references:
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-b5365cd2-8b54-4ccb-83b9-754cd6b1dafa.png`
-  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c717ea0b-bc9b-4080-af2a-69974ec512c9.png`
-- Candidate details now use one narrow-column definition list; long fields are stacked and values no longer inherit a two-column squeeze that caused character-by-character wrapping.
-- Native WebView autocomplete is disabled for RCSB/PubChem inputs. The replacement history popover uses DockStart surface, border, text, hover, focus and danger tokens, keeps the two providers separate, and exposes an icon-button delete action per record.
-- Keyboard review: focus stays within two sibling buttons per row, Escape closes the popover, deletion does not trigger a search, and focus outlines use the existing token.
-- Automated verification: TypeScript/Vite production build passed; Rust bridge check passed.
-- A new real-desktop screenshot comparison was not captured because this task explicitly avoided rebuilding/packaging the GUI and no approved browser automation target was available. The layout was checked statically against the supplied narrow references, so no fresh pixel-level visual-pass claim is made.
-
-final result: blocked

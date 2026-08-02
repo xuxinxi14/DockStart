@@ -1162,17 +1162,6 @@ export default function RunPreparePage({
         >
           多配体共同对接 <small>实验性</small>
         </button>
-        <span>
-          {workspaceMode === "batch"
-            ? "多个配体共用受体、Box 与 Vina 参数，按可恢复队列依次运行。"
-            : workspaceMode === "simultaneous"
-              ? "恰好两个配体进入同一次搜索；每个 Mode 只有一个联合评分，不拆分成员贡献。"
-            : isEvaluationMode
-              ? "使用一个受体与一个已定位配体，执行当前姿势评分或局部优化。"
-              : isAd4Maps
-                ? "一个受体与一个配体使用预计算 AutoDock4 maps。"
-                : "一个受体与一个配体执行全局构象搜索。"}
-        </span>
       </nav>
       {multipleLigandIssues.length && workspaceMode !== "simultaneous" ? (
         <p className="run-workspace-mode-availability" role="status">

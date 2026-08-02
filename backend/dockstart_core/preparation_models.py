@@ -10,6 +10,7 @@ PreparationTarget = Literal["receptor", "ligand"]
 PreparationMethod = Literal[
     "meeko",
     "meeko_receptor_controls",
+    "meeko_allow_bad_res_reviewed",
     "rdkit_meeko",
     "meeko_macrocycle",
     "external_manual",
@@ -28,6 +29,7 @@ ALLOWED_PREPARATION_TARGETS: set[str] = {"receptor", "ligand"}
 ALLOWED_PREPARATION_METHODS: set[str] = {
     "meeko",
     "meeko_receptor_controls",
+    "meeko_allow_bad_res_reviewed",
     "rdkit_meeko",
     "meeko_macrocycle",
     "external_manual",

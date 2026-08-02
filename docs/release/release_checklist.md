@@ -1,12 +1,12 @@
 # Release Checklist
 
-DockStart v0.13.1 的目标是交付 Basic Stable、Assisted Stable，以及保持协议隔离的高级与实验性工作流。独立 AutoDock4
+DockStart v0.13.5 的目标是交付 Basic Stable、Assisted Stable，以及保持协议隔离的高级与实验性工作流。独立 AutoDock4
 maps 工作流继续可用，不修改 docking 算法或扩大科学结论能力。
 
 ## Git 与版本
 
 - 当前分支为 `main`，`git status --short` 干净；
-- 以下七处版本均为 `0.13.1`：后端 `__init__.py`、`package.json`、
+- 以下七处版本均为 `0.13.5`：后端 `__init__.py`、`package.json`、
   `package-lock.json`、`Cargo.toml`、`Cargo.lock`、`tauri.conf.json`、`pages.ts`；
 - 本地候选验收不冒充 GitHub Release；只有明确发布时才创建并推送 tag；
 - 安装包、`.release/`、`dist/`、`target/`、runtime 二进制和真实 docking 输出不提交 Git。
@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 
 - NSIS 被真实安装到隔离目录，从安装目录运行完整 Assisted 流程后静默卸载，无安装目录、
   bundled Python 或卸载注册记录残留；
-- MSI/NSIS 文件名只包含当前版本，大小和 SHA256 记录到本轮 `v0.13.1` 构建报告；
+- MSI/NSIS 文件名只包含当前版本，大小和 SHA256 记录到本轮 `v0.13.5` 构建报告；
 - 启动实际桌面端，完成“打开 Assisted 示例 → 准备受体/配体 → 设置 Box/Vina 参数 →
   开始对接 → 查看结果与报告 → 重启再打开”；
 - 验证工具链页默认使用 bundled fallback，显式重检会失效缓存；

@@ -15,13 +15,13 @@ async function runWindowAction(action: "minimize" | "maximize" | "close") {
 export default function WindowControls() {
   return (
     <div className="window-controls" aria-label="窗口控制">
-      <button type="button" title="最小化" aria-label="最小化窗口" onClick={() => void runWindowAction("minimize")}>
+      <button type="button" aria-label="最小化窗口" onClick={() => void runWindowAction("minimize")}>
         <Minus aria-hidden="true" size={16} />
       </button>
-      <button type="button" title="最大化或还原" aria-label="最大化或还原窗口" onClick={() => void runWindowAction("maximize")}>
+      <button type="button" aria-label="最大化或还原窗口" onClick={() => void runWindowAction("maximize")}>
         <Square aria-hidden="true" size={13} />
       </button>
-      <button className="window-close-button" type="button" title="关闭" aria-label="关闭窗口" onClick={() => void runWindowAction("close")}>
+      <button className="window-close-button" type="button" aria-label="关闭窗口" onClick={() => void runWindowAction("close")}>
         <X aria-hidden="true" size={16} />
       </button>
     </div>

@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.13.5
+
+- Added a reviewed Meeko recovery path for receptors with incomplete residues: strict conversion reports the exact residue list, and `--allow_bad_res` is available only after explicit confirmation and list matching at publication.
+- Verified the recovery path with AutoDock Vina's official `1fpu_receptorH.pdb` flexible-docking fixture using the bundled Assisted Meeko runtime.
+- Expanded the two Help quick-start cards to fill the available width, simplified the Common Questions section, and widened the native window controls.
+- Repackaged Basic and Assisted Windows GUI builds as local v0.13.5 test candidates without claiming full release-gate completion.
+
+## v0.13.4
+
+- Unified project creation and structure preparation so receptor and ligand inputs are classified independently as ready PDBQT or raw structures, including mixed-format pairs.
+- Removed the redundant PDBQT-only handoff page from normal navigation; all imported structures now enter the same preparation and 3D review workspace.
+- Centered expandable-section headings, disabled browser-native input history for project/path fields, and corrected scoring-protocol overflow in the run workbench.
+- Repackaged Basic and Assisted Windows GUI builds as local v0.13.4 test candidates without claiming full release-gate completion.
+
+## v0.13.3
+
+- Consolidated Vina/Vinardo precomputed-map constraints and map generation into one aligned module beside map import.
+- Increased the receptor and ligand summary-heading hierarchy for faster scanning on the structure acquisition page.
+- Repackaged Basic and Assisted Windows GUI builds as local v0.13.3 test candidates without claiming full release-gate completion.
+
+## v0.13.2
+
+- Refined the task-first project creation layout, removed redundant source guidance, and added visible per-ligand replace/remove controls for selected PDBQT, SDF, and MOL files.
+- Corrected sidebar workflow-state aggregation so failed or incomplete structure preparation cannot make the docking workbench or Hydrated AD4 entry appear successful.
+- Added an audited, byte-preserving PDB record-order compatibility path for upstream receptor files whose residue atom records are interrupted, including the official AutoDock Vina `1iep_receptorH.pdb` fixture.
+- Tightened the preparation tool-details control and repackaged the Basic and Assisted Windows GUI as local v0.13.2 test candidates without claiming full release-gate completion.
+
 ## v0.13.1
 
 - Repackaged the current scientific workflow baseline for hands-on GUI acceptance; this remains a local candidate and is not a public Release.

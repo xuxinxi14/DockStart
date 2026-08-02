@@ -4,6 +4,7 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import MarkdownPreview from "../components/MarkdownPreview";
 import ReportStatusCard from "../components/ReportStatusCard";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
@@ -24,6 +25,18 @@ type ReportPageProps = {
   runId: string;
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
+};
+
+type MarkdownPreviewResponse = {
+  ok: boolean;
+  relative_path?: string;
+  content?: string;
+  message?: string;
+  error?: {
+    message?: string;
+    raw_error?: string;
+    suggestion?: string;
+  };
 };
 
 const fileStatusText: Record<RunFileStatus["status"], string> = {
@@ -143,6 +156,10 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [previewContent, setPreviewContent] = useState("");
+  const [previewPath, setPreviewPath] = useState("");
+  const [previewError, setPreviewError] = useState("");
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
   const runMode = reportRunMode(metadata, project);
   const isEvaluation = runMode !== "dock";
@@ -229,6 +246,37 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
     [onProjectChange],
   );
 
+  const loadReportPreview = useCallback(async (projectDir: string, relativePath: string) => {
+    setIsPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const rawPayload = await invoke<string>("read_project_markdown_report", {
+        projectDir,
+        relativePath,
+      });
+      const response = JSON.parse(rawPayload) as MarkdownPreviewResponse;
+      if (!response.ok || typeof response.content !== "string") {
+        setPreviewContent("");
+        setPreviewPath(relativePath);
+        setPreviewError(
+          [
+            response.error?.message || "无法读取 Markdown 报告预览。",
+            response.error?.suggestion,
+          ].filter(Boolean).join(" "),
+        );
+        return;
+      }
+      setPreviewContent(response.content);
+      setPreviewPath(response.relative_path || relativePath);
+    } catch (error) {
+      setPreviewContent("");
+      setPreviewPath(relativePath);
+      setPreviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  }, []);
+
   const reloadReportStatus = useCallback(async () => {
     setIsBusy(true);
     try {
@@ -239,6 +287,15 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
       const response = parseProjectResponse(rawPayload);
       const ok = applyResponse(response, "报告状态已刷新。");
       const observedProject = response.project ?? initialProject;
+      const observedReportPath = response.project_report_file
+        || metadataString(response.metadata ?? null, "project_report_file");
+      if (ok && response.report_status === "exported" && observedReportPath) {
+        await loadReportPreview(observedProject.project_dir, observedReportPath);
+      } else {
+        setPreviewContent("");
+        setPreviewPath(observedReportPath);
+        setPreviewError("");
+      }
       const observedMode = reportRunMode(response.metadata ?? null, observedProject);
       const evaluationReady = response.files?.some((file) => file.key === "evaluation" && file.status === "ok");
       if (ok && observedMode === "local_only" && evaluationReady) {
@@ -263,7 +320,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
     } finally {
       setIsBusy(false);
     }
-  }, [applyResponse, initialProject.project_dir, runId]);
+  }, [applyResponse, initialProject.project_dir, loadReportPreview, runId]);
 
   useEffect(() => {
     setEvaluation(null);
@@ -279,12 +336,14 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
         projectDir: project.project_dir,
         runId,
       });
-      applyResponse(
-        parseProjectResponse(rawPayload),
+      const response = parseProjectResponse(rawPayload);
+      const exported = applyResponse(
+        response,
         isMultipleLigand
           ? "多配体共同对接 Markdown 报告已生成。"
           : "Markdown 结果分析报告已生成。",
       );
+      if (exported) await reloadReportStatus();
     } catch (error) {
       setMessage("无法导出 Markdown 实验记录。");
       setRawError(error instanceof Error ? error.message : String(error));
@@ -465,6 +524,19 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                     }`}
                 </ActionButton>
               </div>
+            </SectionCard>
+
+            <SectionCard
+              title="Markdown 阅读预览"
+              description="以安全的只读阅读视图渲染实际保存的报告；不会执行 Markdown 中的 HTML 或脚本。"
+              className="report-markdown-preview-section"
+            >
+              <MarkdownPreview
+                content={previewContent}
+                path={previewPath || displayedProjectReportFile}
+                loading={isPreviewLoading}
+                error={previewError}
+              />
             </SectionCard>
 
             {(reportStatus === "exported" || displayedReportedAt) ? (

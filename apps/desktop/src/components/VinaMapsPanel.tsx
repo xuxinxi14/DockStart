@@ -321,16 +321,6 @@ export default function VinaMapsPanel({
         </div>
       )}
 
-      <div className="vina-maps-semantics" aria-label="预计算 maps 运行限制">
-        <div>
-          <span>grid-only</span>
-          <span>no-refine 等效</span>
-          <span>刚性受体</span>
-          <span>全局对接</span>
-        </div>
-        <p>已保存 maps 模式不实时读取受体计算网格，也不执行最终受体原子精修。</p>
-      </div>
-
       {compatibilityIssues.length ? (
         <div className="vina-maps-compatibility" role="status">
           <WarningCircle aria-hidden="true" size={18} weight="fill" />
@@ -339,21 +329,34 @@ export default function VinaMapsPanel({
       ) : null}
 
       <div className="vina-maps-actions-grid">
-        <section className="vina-maps-action-card">
-          <header>
-            <GridFour aria-hidden="true" size={18} />
-            <div><strong>保存当前网格</strong><small>当前受体 · Box · {currentScoring === "vinardo" ? "Vinardo" : "Vina"}</small></div>
-          </header>
-          <ActionButton
-            variant="primary"
-            disabled={disabled || isBusy || !mapsModeAllowed}
-            onClick={() => void generate()}
-          >
-            生成并启用
-          </ActionButton>
+        <section className="vina-maps-action-card vina-maps-save-card">
+          <div className="vina-maps-semantics" aria-label="预计算 maps 运行限制">
+            <div>
+              <span>grid-only</span>
+              <span>no-refine 等效</span>
+              <span>刚性受体</span>
+              <span>全局对接</span>
+            </div>
+            <p>已保存 maps 模式不实时读取受体计算网格，也不执行最终受体原子精修。</p>
+          </div>
+          <div className="vina-maps-save-action">
+            <header>
+              <GridFour aria-hidden="true" size={18} />
+              <div><strong>保存当前网格</strong><small>当前受体 · Box · {currentScoring === "vinardo" ? "Vinardo" : "Vina"}</small></div>
+            </header>
+            <ActionButton
+              variant="primary"
+              disabled={disabled || isBusy || !mapsModeAllowed}
+              onClick={() => void generate()}
+            >
+              生成并启用
+            </ActionButton>
+          </div>
         </section>
 
-        <section className="vina-maps-action-card vina-maps-import-card">
+        <section
+          className={`vina-maps-action-card vina-maps-import-card ${importKind === "raw_maps" ? "is-raw-import" : ""}`.trim()}
+        >
           <header>
             <FileArrowDown aria-hidden="true" size={18} />
             <div><strong>导入 maps</strong><small>DockStart manifest 或外部 raw maps</small></div>

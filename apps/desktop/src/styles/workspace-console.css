@@ -284,6 +284,7 @@
 .preparation-target-actions .preparation-target-details summary {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   min-height: 36px;
   list-style: none;
@@ -335,11 +336,44 @@
 }
 
 .preparation-macrocycle-panel > summary {
+  justify-content: center;
   min-height: 42px;
   padding: 11px 14px;
   color: var(--ds-text-on-dark);
   font-size: 12px;
   font-weight: 700;
+  text-align: center;
+}
+
+.preparation-bad-residue-review {
+  display: grid;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--ds-warning-on-dark) 45%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ds-warning-on-dark) 8%, var(--ds-on-dark-surface-muted));
+  padding: 10px;
+}
+
+.preparation-bad-residue-review > strong {
+  color: var(--ds-warning-on-dark);
+  font-size: 11px;
+}
+
+.preparation-bad-residue-list {
+  display: flex;
+  max-height: 94px;
+  flex-wrap: wrap;
+  gap: 5px;
+  overflow: auto;
+}
+
+.preparation-bad-residue-list code {
+  border: 1px solid var(--ds-on-dark-border-subtle);
+  border-radius: 999px;
+  background: var(--ds-on-dark-surface);
+  color: var(--ds-text-on-dark-secondary);
+  padding: 2px 6px;
+  font-size: 9px;
 }
 
 .preparation-macrocycle-panel .advanced-details-content {
@@ -715,6 +749,32 @@
   padding: 9px 10px;
   color: var(--ds-text-on-dark-secondary) !important;
   line-height: 1.55;
+}
+
+.preparation-context-rail .preparation-tool-details {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-on-dark-border-default);
+  border-radius: 7px;
+  background: var(--ds-on-dark-surface-muted);
+  padding: 0;
+}
+
+.preparation-context-rail .preparation-tool-details summary {
+  min-height: 0;
+  padding: 9px 12px;
+  color: var(--ds-text-on-dark-accent);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.preparation-context-rail .preparation-tool-details .advanced-details-content {
+  margin: 0;
+  border-top: 1px solid var(--ds-on-dark-border-subtle);
+  padding: 10px 12px;
+  text-align: left;
 }
 
 /* Docking console alignment with selected mock */

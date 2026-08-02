@@ -18,9 +18,11 @@ from adapters import meeko_adapter, rdkit_adapter, vina_adapter
 from dockstart_core.advanced_protocols import (
     MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
     ProtocolValidationError,
+    extract_meeko_bad_residues,
     inspect_meeko_ligand_pdbqt,
     meeko_receptor_control_arguments,
     normalize_meeko_receptor_controls,
+    parse_flexible_residue,
 )
 from dockstart_core.macrocycle import (
     ANALYSIS_VERSION,
@@ -76,6 +78,99 @@ class PreparationPathError(RuntimeError):
 
 class CandidateOutputIntegrityError(RuntimeError):
     """Raised when a validated preparation candidate changes before publication."""
+
+
+def _pdb_coordinate_order_repair_plan(path: Path) -> dict[str, Any]:
+    """Describe a safe, byte-preserving repair for interrupted PDB residues.
+
+    Meeko groups PDB atoms by contiguous residue records.  A record displaced
+    elsewhere in an otherwise serially ordered PDB therefore looks like a
+    second copy of the residue.  Automatic repair is deliberately limited to
+    unique numeric atom serials where stable serial ordering removes every
+    interrupted residue.  The actual repair runs after the preparation claim
+    in an audited helper script; this function only selects that path.
+    """
+
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "required": False,
+        "reason": "",
+        "coordinate_record_count": 0,
+        "interrupted_residues": [],
+        "preserves_coordinate_record_bytes": True,
+        "renumbers_atoms": False,
+        "deletes_atoms": False,
+    }
+    try:
+        lines = path.read_bytes().splitlines(keepends=True)
+    except OSError as exc:
+        result["reason"] = f"read_error:{type(exc).__name__}"
+        return result
+    if any(line.startswith((b"MODEL ", b"ENDMDL")) for line in lines):
+        result["reason"] = "model_records_present"
+        return result
+
+    records: list[tuple[int, int, bytes]] = []
+    for index, line in enumerate(lines):
+        if not (line.startswith(b"ATOM  ") or line.startswith(b"HETATM")):
+            continue
+        if len(line) < 27:
+            result["reason"] = "short_coordinate_record"
+            return result
+        serial_field = line[6:11].strip()
+        if not serial_field or not serial_field.isdigit():
+            result["reason"] = "non_decimal_atom_serial"
+            return result
+        records.append((int(serial_field), index, line))
+    result["coordinate_record_count"] = len(records)
+    if not records:
+        result["reason"] = "no_coordinate_records"
+        return result
+    serials = [item[0] for item in records]
+    if len(set(serials)) != len(serials):
+        result["reason"] = "duplicate_atom_serials"
+        return result
+    ordered = sorted(records, key=lambda item: (item[0], item[1]))
+    if serials == [item[0] for item in ordered]:
+        result["reason"] = "already_ordered"
+        return result
+
+    def interrupted(items: list[tuple[int, int, bytes]]) -> set[bytes]:
+        seen: set[bytes] = set()
+        found: set[bytes] = set()
+        previous: bytes | None = None
+        for _, _, line in items:
+            current = line[21:27]
+            if current != previous:
+                if current in seen:
+                    found.add(current)
+                seen.add(current)
+                previous = current
+        return found
+
+    original_interrupted = interrupted(records)
+    if not original_interrupted:
+        result["reason"] = "unordered_without_interrupted_residue"
+        return result
+    if interrupted(ordered):
+        result["reason"] = "serial_order_does_not_restore_contiguity"
+        return result
+
+    result.update(
+        {
+            "required": True,
+            "reason": "unique_atom_serial_order_restores_residue_contiguity",
+            "interrupted_residues": [
+                (
+                    f"{value[0:1].decode('ascii', errors='replace').strip() or '_'}:"
+                    f"{value[1:5].decode('ascii', errors='replace').strip()}"
+                    f"{value[5:6].decode('ascii', errors='replace').strip()}"
+                )
+                for value in sorted(original_interrupted)
+            ],
+        }
+    )
+    return result
 
 
 def _bounded_preparation_stream(value: str) -> str:
@@ -663,6 +758,10 @@ def _build_preparation_metadata(
         "warnings": warnings or [],
         "error": error,
     }
+    if isinstance(built.get("pdb_coordinate_order_repair"), Mapping):
+        payload["pdb_coordinate_order_repair"] = copy.deepcopy(
+            built["pdb_coordinate_order_repair"],
+        )
     if "protocol" in built:
         payload["protocol"] = str(built.get("protocol") or "")
         payload["options"] = copy.deepcopy(built.get("options", {}))
@@ -695,6 +794,10 @@ def _build_preparation_metadata(
         )
         payload["receptor_controls_canonicalization"] = str(
             built.get("receptor_controls_canonicalization") or "",
+        )
+    if isinstance(built.get("bad_residue_review"), Mapping):
+        payload["bad_residue_review"] = copy.deepcopy(
+            built["bad_residue_review"],
         )
     if "protocol_evidence" in built:
         payload["protocol_evidence"] = copy.deepcopy(built.get("protocol_evidence"))
@@ -1505,6 +1608,39 @@ def _finalize_preparation(
     finished_at = _now_iso()
     candidate_ok = candidate_output_path.is_file() and candidate_output_path.stat().st_size > 0
     protocol_gate_error: dict[str, Any] | None = None
+    detected_bad_residues = (
+        extract_meeko_bad_residues(f"{stdout}\n{stderr}")
+        if target == "receptor"
+        else []
+    )
+    if target == "receptor" and built.get("protocol") == "meeko_allow_bad_res_reviewed":
+        acknowledged_bad_residues = [
+            str(value)
+            for value in built.get("acknowledged_bad_residues", [])
+            if str(value)
+        ]
+        built["bad_residue_review"] = {
+            "allow_bad_res": True,
+            "acknowledged_bad_residues": acknowledged_bad_residues,
+            "acknowledged_bad_residues_sha256": str(
+                built.get("acknowledged_bad_residues_sha256") or ""
+            ),
+            "detected_bad_residues": detected_bad_residues,
+            "lists_match": set(acknowledged_bad_residues)
+            == set(detected_bad_residues),
+        }
+        if exit_code == 0 and set(acknowledged_bad_residues) != set(detected_bad_residues):
+            protocol_gate_error = {
+                "code": "RECEPTOR_BAD_RESIDUE_REVIEW_CHANGED",
+                "message": "实际忽略的不完整残基与用户确认列表不一致，候选输出未发布。",
+                "raw_error": json.dumps(
+                    built["bad_residue_review"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "suggestion": "请重新执行严格转换并审阅最新残基列表。",
+                "bad_residues": detected_bad_residues,
+            }
     if (
         target == "ligand"
         and built.get("protocol") == "meeko_macrocycle"
@@ -1565,6 +1701,28 @@ def _finalize_preparation(
                 "请在“大环配体准备”中选择“受审查的大环准备”，"
                 "分析并确认断环候选或刚性大环。"
             ),
+        }
+    elif (
+        target == "receptor"
+        and not built.get("protocol")
+        and exit_code != 0
+        and detected_bad_residues
+    ):
+        error = {
+            "code": "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED",
+            "message": (
+                f"Meeko 检测到 {len(detected_bad_residues)} 个不完整或无法匹配模板的残基。"
+            ),
+            "raw_error": _preparation_failure_diagnostic(
+                publication_error="",
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=exit_code,
+            ),
+            "suggestion": (
+                "请先检查这些残基；如确认可以忽略，请勾选确认后重新转换。"
+            ),
+            "bad_residues": detected_bad_residues,
         }
 
     with _preparation_target_lock(project_path, target):
@@ -2608,11 +2766,13 @@ def _normalize_receptor_preparation_options(
     *,
     structure_path: str | Path | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Validate the only accepted non-default rigid receptor protocol.
+    """Validate accepted non-default rigid receptor protocols.
 
     The contract intentionally reuses the reviewed flexible-receptor control
-    schema.  It accepts typed residue decisions only; free argv,
-    ``default_altloc`` and ``allow_bad_res`` are not available.
+    schema for typed residue decisions.  A separate reviewed recovery protocol
+    permits ``allow_bad_res`` only after a strict run has returned the exact
+    residue list and the user has acknowledged that same list.  Free argv and
+    ``default_altloc`` remain unavailable.
     """
 
     if options is None or not options:
@@ -2625,15 +2785,57 @@ def _normalize_receptor_preparation_options(
             suggestion="请传入 protocol 和 receptor_controls；不要传入命令行字符串。",
         )
     raw = dict(options)
-    unknown = sorted(set(raw) - {"protocol", "receptor_controls"})
+    protocol = str(raw.get("protocol") or "").strip()
+    allowed_fields = (
+        {"protocol", "acknowledged_bad_residues"}
+        if protocol == "meeko_allow_bad_res_reviewed"
+        else {"protocol", "receptor_controls"}
+    )
+    unknown = sorted(set(raw) - allowed_fields)
     if unknown:
         return None, _error(
             "RECEPTOR_PREPARATION_OPTIONS_UNKNOWN",
             "受体准备选项包含未支持的字段。",
             raw_error=", ".join(str(item) for item in unknown),
-            suggestion="当前只接受 protocol 和 receptor_controls。",
+            suggestion=(
+                "受审查的不完整残基恢复只接受 acknowledged_bad_residues；"
+                "逐残基控制合同只接受 receptor_controls。"
+            ),
         )
-    protocol = str(raw.get("protocol") or "").strip()
+    if protocol == "meeko_allow_bad_res_reviewed":
+        values = raw.get("acknowledged_bad_residues")
+        if not isinstance(values, list) or not values:
+            return None, _error(
+                "RECEPTOR_BAD_RESIDUE_ACKNOWLEDGEMENT_REQUIRED",
+                "尚未确认 Meeko 检测到的不完整残基。",
+                suggestion="请先严格转换，审阅完整残基列表后再确认重试。",
+            )
+        if len(values) > 512:
+            return None, _error(
+                "RECEPTOR_BAD_RESIDUE_ACKNOWLEDGEMENT_TOO_LARGE",
+                "确认的不完整残基数量超过安全上限。",
+                raw_error=str(len(values)),
+                suggestion="请检查输入结构与确认列表是否对应同一受体。",
+            )
+        acknowledged: list[str] = []
+        seen: set[str] = set()
+        try:
+            for value in values:
+                residue_id = parse_flexible_residue(str(value)).meeko_id
+                if residue_id not in seen:
+                    acknowledged.append(residue_id)
+                    seen.add(residue_id)
+        except ProtocolValidationError as exc:
+            return None, _error(
+                exc.code,
+                exc.message,
+                raw_error=exc.detail,
+                suggestion=exc.suggestion,
+            )
+        return {
+            "protocol": "meeko_allow_bad_res_reviewed",
+            "acknowledged_bad_residues": acknowledged,
+        }, None
     if protocol != "meeko_receptor_controls":
         return None, _error(
             "RECEPTOR_PREPARATION_PROTOCOL_INVALID",
@@ -2641,7 +2843,7 @@ def _normalize_receptor_preparation_options(
             raw_error=protocol or "（空）",
             suggestion=(
                 "普通受体准备请省略 options；显式残基决定请使用"
-                " protocol=meeko_receptor_controls。"
+                " protocol=meeko_receptor_controls；不完整残基恢复请先严格运行。"
             ),
         )
     controls = raw.get("receptor_controls")
@@ -2839,7 +3041,10 @@ def build_receptor_preparation_command_or_script(
                 "确认作者/标签编号和替代构象；DockStart 不会把 PDB 选择静默套到 CIF。"
             ),
         )
-    if normalized_options is not None:
+    if (
+        normalized_options is not None
+        and normalized_options.get("protocol") == "meeko_receptor_controls"
+    ):
         normalized_options, options_error = _normalize_receptor_preparation_options(
             normalized_options,
             structure_path=validation["input_path"],
@@ -2861,6 +3066,7 @@ def build_receptor_preparation_command_or_script(
     warnings = list(validation.get("warnings", []))
     script_file = ""
     intermediate_input_file = ""
+    pdb_coordinate_order_repair: dict[str, Any] | None = None
     if is_cif:
         script_path = paths["record_dir"] / "prepare_receptor_cif_gemmi_meeko.py"
         intermediate_path = paths["record_dir"] / "receptor_from_cif.pdb"
@@ -2877,19 +3083,56 @@ def build_receptor_preparation_command_or_script(
         script_file = _relative_path(script_path, project_path)
         intermediate_input_file = _relative_path(intermediate_path, project_path)
     else:
-        command = [
-            python_path,
-            "-I",
-            "-B",
-            "-m",
-            str(validation["receptor_module"]),
-            "--read_pdb",
-            validation["input_path"],
-            "-o",
-            output_stem,
-            "-p",
-        ]
-        if normalized_options is not None:
+        pdb_coordinate_order_repair = _pdb_coordinate_order_repair_plan(
+            Path(validation["input_path"]),
+        )
+        if pdb_coordinate_order_repair.get("required") is True:
+            script_path = paths["record_dir"] / "prepare_receptor_pdb_order_meeko.py"
+            intermediate_path = paths["record_dir"] / "receptor_ordered.pdb"
+            atomic_write_text(
+                script_path,
+                meeko_adapter.receptor_pdb_order_bridge_script_text(),
+            )
+            command = [
+                python_path,
+                "-I",
+                "-B",
+                str(script_path),
+                validation["input_path"],
+                str(intermediate_path),
+                output_stem,
+            ]
+            script_file = _relative_path(script_path, project_path)
+            intermediate_input_file = _relative_path(intermediate_path, project_path)
+            restored = ", ".join(
+                str(value)
+                for value in pdb_coordinate_order_repair.get(
+                    "interrupted_residues",
+                    [],
+                )
+            )
+            warnings.append(
+                "输入 PDB 的同一残基记录被其他残基打断；DockStart 将按唯一原子序号生成"
+                "受审计的中间 PDB，不删除或重编号原子。"
+                + (f" 涉及残基：{restored}。" if restored else "")
+            )
+        else:
+            command = [
+                python_path,
+                "-I",
+                "-B",
+                "-m",
+                str(validation["receptor_module"]),
+                "--read_pdb",
+                validation["input_path"],
+                "-o",
+                output_stem,
+                "-p",
+            ]
+        if (
+            normalized_options is not None
+            and normalized_options.get("protocol") == "meeko_receptor_controls"
+        ):
             controls = normalized_options["receptor_controls"]
             command.extend(meeko_receptor_control_arguments(controls))
             controls_sha256 = _canonical_json_sha256(controls)
@@ -2906,6 +3149,27 @@ def build_receptor_preparation_command_or_script(
             warnings.append(
                 "本次受体准备只采用已显式记录并由 SHA256 绑定的逐残基替代构象、模板和删除决定。"
             )
+        elif (
+            normalized_options is not None
+            and normalized_options.get("protocol") == "meeko_allow_bad_res_reviewed"
+        ):
+            acknowledged = list(
+                normalized_options.get("acknowledged_bad_residues", []),
+            )
+            command.append("--allow_bad_res")
+            acknowledgement_sha256 = _canonical_json_sha256(acknowledged)
+            protocol_fields = {
+                "protocol": "meeko_allow_bad_res_reviewed",
+                "protocol_mode": "reviewed",
+                "options": copy.deepcopy(normalized_options),
+                "allow_bad_res": True,
+                "acknowledged_bad_residues": acknowledged,
+                "acknowledged_bad_residues_sha256": acknowledgement_sha256,
+            }
+            warnings.append(
+                "用户已明确确认由 Meeko 严格模式列出的不完整残基；"
+                "本次准备会忽略这些残基，并在发布前核对实际忽略列表。"
+            )
 
     return {
         **validation,
@@ -2916,6 +3180,7 @@ def build_receptor_preparation_command_or_script(
         "intermediate_input_file": intermediate_input_file,
         "candidate_output_file": _relative_path(candidate_output_path, project_path),
         "candidate_output_path": str(candidate_output_path),
+        "pdb_coordinate_order_repair": pdb_coordinate_order_repair,
         "warnings": warnings,
         "stdout_file": paths["stdout_file"],
         "stderr_file": paths["stderr_file"],
@@ -2938,7 +3203,7 @@ def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: d
         builder = build_receptor_preparation_command_or_script
         method = "meeko"
     else:
-        method = "meeko_receptor_controls"
+        method = str(normalized_options.get("protocol") or "meeko")
 
         def builder(
             nested_project_dir: str,

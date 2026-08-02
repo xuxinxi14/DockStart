@@ -218,11 +218,13 @@
 
 .ad4-maps-card {
   display: grid;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ad4-protocol-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 230px));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
   padding: 14px 15px 0;
 }
@@ -833,6 +835,8 @@
 
 .vina-maps-panel {
   display: grid;
+  min-width: 0;
+  overflow: hidden;
   gap: 12px;
   margin: 14px 15px 15px;
   border: 1px solid var(--ds-border-subtle);
@@ -977,9 +981,8 @@
 .vina-maps-semantics {
   display: grid;
   gap: 6px;
-  border-top: 1px solid var(--ds-border-subtle);
   border-bottom: 1px solid var(--ds-border-subtle);
-  padding: 9px 0;
+  padding: 0 0 9px;
 }
 
 .vina-maps-semantics > div {
@@ -1007,13 +1010,15 @@
 
 .vina-maps-actions-grid {
   display: grid;
-  grid-template-columns: minmax(210px, 0.7fr) minmax(360px, 1.3fr);
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: stretch;
   gap: 9px;
 }
 
 .vina-maps-action-card {
   display: grid;
   align-content: start;
+  align-self: stretch;
   gap: 9px;
   min-width: 0;
   border: 1px solid var(--ds-border-subtle);
@@ -1045,6 +1050,65 @@
 }
 
 .vina-maps-action-card > [data-layout="action-button"] {
+  justify-self: start;
+}
+
+.vina-maps-save-card {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.vina-maps-save-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.vina-maps-save-action > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-brand);
+}
+
+.vina-maps-save-action > header > div {
+  display: grid;
+  gap: 1px;
+}
+
+.vina-maps-save-action > header strong {
+  color: var(--ds-text-strong);
+  font-size: 12px;
+}
+
+.vina-maps-save-action > header small {
+  color: var(--ds-text-muted);
+  font-size: 10px;
+}
+
+.vina-maps-save-action > [data-layout="action-button"] {
+  justify-self: end;
+}
+
+.vina-maps-import-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.vina-maps-import-card > header,
+.vina-maps-import-card .vina-maps-import-kind,
+.vina-maps-import-card .vina-maps-attestation {
+  grid-column: 1 / -1;
+}
+
+.vina-maps-import-card > [data-layout="action-button"] {
+  grid-column: 2;
+  justify-self: end;
+}
+
+.vina-maps-import-card.is-raw-import > [data-layout="action-button"] {
+  grid-column: 1 / -1;
   justify-self: start;
 }
 
@@ -1387,6 +1451,11 @@
   min-width: 0;
 }
 
+.run-vina-fields label {
+  grid-template-rows: auto 40px minmax(14px, auto);
+  align-content: start;
+}
+
 .run-box-field {
   border: 1px solid var(--ds-border-subtle);
   border-radius: 7px;
@@ -1459,9 +1528,11 @@
 .run-box-fields input,
 .run-vina-fields input,
 .run-vina-fields select {
+  box-sizing: border-box;
   width: 100%;
+  height: 40px;
   min-width: 0;
-  min-height: 31px;
+  min-height: 40px;
   padding: 4px 8px;
   font-family: var(--ds-font-mono);
   font-size: 12px;
@@ -1999,7 +2070,9 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 31px;
+  box-sizing: border-box;
+  height: 40px;
+  min-height: 40px;
   border: 1px solid var(--ds-border-default);
   border-radius: 6px;
   background: var(--ds-surface-raised);
@@ -2689,6 +2762,18 @@
   .run-task-mode-summary {
     grid-template-columns: 1fr;
     gap: 3px;
+  }
+
+  .vina-maps-save-action,
+  .vina-maps-import-card {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .vina-maps-save-action > [data-layout="action-button"],
+  .vina-maps-import-card > [data-layout="action-button"] {
+    grid-column: 1;
+    justify-self: start;
   }
 
   .run-cockpit-header,

@@ -7,12 +7,12 @@ type ReportStatusCardProps = {
 
 export default function ReportStatusCard({ status, path }: ReportStatusCardProps) {
   return (
-    <article className="unified-status-card">
-      <div>
+    <article className="unified-status-card report-status-card">
+      <div className="report-status-card-copy">
         <strong>Markdown 报告</strong>
-        <StatusBadge tone={status === "exported" ? "ok" : "warning"}>{status === "exported" ? "已导出" : "待导出"}</StatusBadge>
+        <p>{path || "报告导出后会显示路径。"}</p>
       </div>
-      <p>{path || "报告导出后会显示路径。"}</p>
+      <StatusBadge tone={status === "exported" ? "ok" : "warning"}>{status === "exported" ? "已导出" : "待导出"}</StatusBadge>
     </article>
   );
 }
