@@ -184,4 +184,70 @@
 - Document `clientWidth` and `scrollWidth` both measured 1728 px; no horizontal overflow was introduced.
 - Targeted TypeScript/Vite production build passed. The official `1fpu_receptorH.pdb` recovery flow is covered by backend tests and a real bundled-Meeko conversion, but the recovery card could not be driven through the browser-only Tauri mock in this visual pass.
 
+**v0.13.6 Flexible Receptor Review Check**
+
+- Source reference: `C:\Users\19701\AppData\Local\Temp\codex-clipboard-a63d2344-c184-47c4-bbde-c8b59963c31d.png`, showing raw multi-candidate backend output expanding the page and shifting the result column.
+- Browser-rendered evidence: `E:\DockStart\output\playwright\v0.13.6-ui\flexible-review-fixed.png`, captured at 1280 × 720 CSS px with the official 1FPU `A:315` review state.
+- Combined comparison: `E:\DockStart\output\playwright\v0.13.6-ui\flexible-review-comparison.png`.
+- The structured `FLEX_BAD_RESIDUES_REVIEW_REQUIRED` response now renders a bounded confirmation card instead of a raw-error transcript. The complete 27-residue review list wraps inside the card and remains user-expandable.
+- Document and body `clientWidth`/`scrollWidth` both measured 1280 px. The expanded review preformatted region measured 585/585 px, used `white-space: pre-wrap`, and produced no horizontal document overflow.
+- `A:315` remains a valid selected flexible residue. The 27 unrelated Meeko template mismatches are presented for explicit confirmation, after which preparation may continue with the official `--allow_bad_res` semantics.
+- No actionable P0, P1, or P2 visual findings remain in this state.
+
+**v0.13.7 Flexible Summary and Macrocycle Workflow Check**
+
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-b2d1c700-a264-4a85-b305-55a41bb2a52d.png` — oversized flexible-receptor ready card with duplicated status prose.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-c49374d1-98d6-4986-9ed4-0d6b8cf722f4.png` and `codex-clipboard-15f19ea1-04ef-4eb6-9e71-a6606331e539.png` — disconnected macrocycle failure, settings, and continuation controls.
+- Browser-rendered evidence (Chrome/Playwright CLI, dark theme):
+  - `E:\DockStart\output\playwright\v0.13.7-ui\flexible-panel.png`
+  - `E:\DockStart\output\playwright\v0.13.7-ui\macrocycle-panel-final.png`
+- Combined source/implementation comparisons:
+  - `E:\DockStart\output\playwright\v0.13.7-ui\comparison-flexible.png`
+  - `E:\DockStart\output\playwright\v0.13.7-ui\comparison-macrocycle.png`
+- The flexible-receptor ready state is now a compact aligned summary row containing the preparation ID, selected residue, reviewed-residue count, and mode actions. The redundant sentence and unused card height are removed.
+- Macrocycle preparation is a visible four-step workflow: analyze candidates, select a bond set, confirm the break, and convert PDBQT. The prepared state exposes a direct `设置搜索范围并继续` action in the same module.
+- At the 1728 px viewport, document width measured `1728/1728` and the macrocycle module measured `1030/1030` for client/scroll width. The continuation action was visible and the browser console reported zero errors and zero warnings.
+- No actionable P0, P1, or P2 visual findings remain in the two requested states.
+
+**v0.13.8 Batch Preparation, Macrocycle, and Toolchain Check**
+
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-e4e6e934-5b74-4cda-ade9-e6f37f0ecefe.png` — receptor review controls overflowing a narrow action column.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-eaba7809-3854-4b30-aa2b-088c4f9a608c.png` — one generic ligand shown after a six-ligand import.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-54e6996d-6215-46b8-a39c-0599eef3d8d6.png` — crowded macrocycle settings and unclear selection state.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-9b3e864c-2684-467b-b6a5-8cf217a1fe97.png` — equal-height toolchain columns and unstable expanded details.
+- Browser-rendered evidence (Chrome/Playwright CLI, DockStart dark theme):
+  - `E:\DockStart\output\playwright\v0.13.8-ui\preparation-review-1180.png`
+  - `E:\DockStart\output\playwright\v0.13.8-ui\preparation-batch-1180.png`
+  - `E:\DockStart\output\playwright\v0.13.8-ui\preparation-macrocycle-reviewed-1180.png`
+  - `E:\DockStart\output\playwright\v0.13.8-ui\toolchain-expanded-1180.png`
+- Same-composite source/implementation comparisons reviewed:
+  - `comparison-receptor-review.png`, `comparison-batch-ligands.png`, `comparison-macrocycle.png`, and `comparison-toolchain.png` in `E:\DockStart\output\playwright\v0.13.8-ui`.
+- The structure-review section now spans the preparation panel and measures `911/911` client/scroll width at 1180 px; no controls overlap the right rail.
+- The batch browser exposes all six source identities (`P69`, `P59`, `P55`, `P48`, `P38`, `P33`), switches the 3D candidate without mutating the active project, and distinguishes source records from unique docking snapshots.
+- The macrocycle radio is 16 × 16 px with transparent background and no box shadow. Candidate rows use square internal separators with one left selection marker; the selector measures `853/853` and the document `1180/1180`.
+- The toolchain page has a visible AutoGrid4 configuration action. Its two-column card grid measures `569/569`; expanded bundled-resource details render below the card grid at `569/569`, so card columns and the right rail do not jump or overlap.
+- No actionable P0, P1, or P2 visual findings remain in these tested states.
+
+**v0.13.8 Batch Results, AutoGrid Gate, and Hydrated Navigation Check**
+
+- Source references:
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-f04c2fbb-5223-4947-93c7-cb3f86e94a50.png` — oversized blue checkbox focus rectangle.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-e920661d-01ea-4186-b40f-90b03d77da69.png` and `codex-clipboard-dd0c73c4-ff38-471c-a3ea-c3df147cadf3.png` — blank batch pose viewer and ordinary-run empty result state.
+  - `C:\Users\19701\AppData\Local\Temp\codex-clipboard-cdb0f405-ce03-4690-b99e-41f5cf082164.png` — coupled toolchain card rows with irregular empty space.
+- Browser-rendered evidence (Chrome/Playwright CLI, 1728 × 1050 CSS px, DockStart dark theme):
+  - `E:\DockStart\output\playwright\latest-fixes\batch-checkbox-focus.png`
+  - `E:\DockStart\output\playwright\latest-fixes\batch-results.png`
+  - `E:\DockStart\output\playwright\latest-fixes\batch-pose-modal.png`
+  - `E:\DockStart\output\playwright\latest-fixes\toolchain-layout.png`
+  - `E:\DockStart\output\playwright\latest-fixes\hydrated-autogrid-warning.png`
+  - `E:\DockStart\output\playwright\latest-fixes\hydrated-sidebar-finished.png`
+- Same-input source/implementation comparisons were reviewed for the checkbox, batch empty/result states, pose dialog, and toolchain layout.
+- Focused batch checkboxes now compute to `15 × 15 px`, `box-shadow: none`, and `outline: none`; keyboard focus is carried by the containing row without the oversized blue rectangle.
+- A completed screening opens a dedicated result workspace with completion metrics, frozen protocol, output records, sortable ligand rows, and a working pose dialog. Its Results sidebar entry now resolves to the green ready state. The real `text3_Batch_docking` project returned verified receptor and pose content for `ligand_0001`, Mode 1.
+- Vina/Python and AutoGrid4/resource cards flow in independent columns, so one expanded or content-heavy card no longer stretches the unrelated card beside it.
+- The hydrated workflow presents a visible AutoGrid4 gate and configuration action before maps generation. A finished `hydrated_ad4_experimental` run produces the green Hydrated AD4 sidebar state.
+- Browser console reported zero errors and zero warnings. TypeScript/Vite build and focused frontend tests passed.
+
 final result: passed

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.13.8
+
+- Added a full-width receptor structure-review row so incomplete residues and alternate conformations no longer overflow the narrow action column.
+- Added a selectable six-ligand preparation browser with per-candidate 3D preview and preserved source/record names instead of presenting every input as a generic `ligand.pdbqt`.
+- Reworked the macrocycle review layout, radio focus treatment, confirmation actions, and responsive behavior to keep the four-step workflow readable without nested-card clutter.
+- Added AutoGrid4 detection and a configuration entry to the toolchain page while keeping it an external optional GPL tool that does not affect Basic or Assisted availability.
+- Repackaged the Assisted Windows GUI as a local v0.13.8 test candidate without claiming full release-gate completion.
+
+## v0.13.7
+
+- Added explicit alternate-location review to receptor preparation and verified the official 5X72 receptor after selecting `A:133=A` together with the reviewed incomplete residue `A:29`.
+- Reorganized macrocycle preparation into a visible four-step workflow with direct prepare and continue actions, then verified the official BACE_1 macrocycle input through real Vina execution and report generation.
+- Compacted the flexible-receptor ready state into an aligned summary row instead of leaving a large mostly empty status card.
+- Re-ran the official examples 3–6: serial multi-ligand screening, macrocycle docking, hydrated docking, and AutoDock4 maps docking.
+- Repackaged the Assisted Windows GUI as a local v0.13.7 test candidate without claiming full release-gate completion.
+
+## v0.13.6
+
+- Fixed flexible-receptor preparation handling so Meeko's structured bad-residue review is surfaced once, rather than retried across Python candidates and rendered as an oversized raw diagnostic transcript.
+- Added bounded flexible-review diagnostics and verified the official 1FPU `A:315` Vina workflow with real rigid/flexible receptor outputs.
+- Added single-ligand MOL2 preparation support for the official BACE_1 macrocycle input while keeping multi-record/batch MOL2 import explicitly unsupported.
+- Corrected hydrated AD4 verification so `num_modes` is treated as a maximum; a valid Vina run returning fewer in-range poses is no longer rejected.
+- Added real standard AutoDock4-maps acceptance evidence for the official 1IEP inputs, external AutoGrid4, Vina 1.2.7, parsed scores, and Markdown report generation.
+- Repackaged Basic and Assisted Windows GUI builds as local v0.13.6 test candidates without claiming full release-gate completion.
+
 ## v0.13.5
 
 - Added a reviewed Meeko recovery path for receptors with incomplete residues: strict conversion reports the exact residue list, and `--allow_bad_res` is available only after explicit confirmation and list matching at publication.

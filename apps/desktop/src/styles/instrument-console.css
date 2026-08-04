@@ -1412,12 +1412,64 @@ pre,
 /* Toolchain, forms, run and result pages */
 
 .toolchain-wizard-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  display: block;
+  column-count: 2;
+  column-gap: 10px;
 }
 
 .toolchain-wizard-card {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0 10px;
+  break-inside: avoid;
   border-top: 3px solid var(--ds-navy-700);
+}
+
+.toolchain-wizard-card:nth-child(2) {
+  break-after: column;
+}
+
+.toolchain-status-page .toolchain-status-body {
+  align-items: start;
+}
+
+.toolchain-status-page .right-rail {
+  height: auto;
+  min-height: 0;
+  align-self: start;
+}
+
+.toolchain-status-page .compact-grid {
+  align-items: start;
+}
+
+.toolchain-status-page .metric-card {
+  align-self: start;
+}
+
+.toolchain-status-page .technical-details {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.toolchain-status-page .technical-details[open] {
+  overflow: visible;
+}
+
+.toolchain-status-page .technical-details .tool-meta,
+.toolchain-status-page .technical-details pre {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.toolchain-status-page .toolchain-resource-details[open] .tool-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .settings-list,
@@ -2479,6 +2531,18 @@ pre,
   .toolchain-wizard-grid,
   .two-column-grid,
   .three-column-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toolchain-wizard-grid {
+    column-count: 1;
+  }
+
+  .toolchain-wizard-card:nth-child(2) {
+    break-after: auto;
+  }
+
+  .toolchain-status-page .toolchain-resource-details[open] .tool-meta {
     grid-template-columns: 1fr;
   }
 

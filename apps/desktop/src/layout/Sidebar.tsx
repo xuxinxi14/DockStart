@@ -18,6 +18,7 @@ import { appVersion } from "../navigation/pages";
 import { navigationItems, resolveNavigationTarget, type NavigateHandler, type PageId } from "../navigation/pages";
 import type { WorkflowStep } from "../components/WorkflowStepper";
 import { resolveSidebarNavigationState, type SidebarNavigationState } from "../utils/sidebarNavigationState";
+import { hydratedRunSummaries } from "../utils/hydratedWorkflow";
 
 type SidebarProps = {
   collapsed?: boolean;
@@ -25,6 +26,7 @@ type SidebarProps = {
   distributionProfile: DistributionProfileStatus;
   project: DockStartProject | null;
   workflowSteps?: WorkflowStep[];
+  batchScreeningCompleted?: boolean;
   onNavigate: NavigateHandler;
   onToggleCollapsed?: () => void;
 };
@@ -73,10 +75,14 @@ export default function Sidebar({
   distributionProfile,
   project,
   workflowSteps = [],
+  batchScreeningCompleted = false,
   onNavigate,
   onToggleCollapsed,
 }: SidebarProps) {
   const hasProject = Boolean(project);
+  const hydratedRunFinished = Boolean(
+    project && hydratedRunSummaries(project).some((run) => run.status === "finished"),
+  );
   const groups: Array<"Project" | "Workflow" | "Workbench" | "Support"> = ["Project", "Workflow", "Workbench", "Support"];
   const visibleGroups = groups.filter((group) => navigationItems.some((item) => item.group === group));
   const groupLabels: Record<(typeof groups)[number], string> = {
@@ -141,6 +147,8 @@ export default function Sidebar({
                   hasProject,
                   Boolean(item.requiresProject),
                   workflowSteps,
+                  hydratedRunFinished,
+                  batchScreeningCompleted,
                 );
                 const itemLabel = item.label;
                 return (

@@ -378,6 +378,12 @@ export default function AutoGridMapsPanel({
             </StatusBadge>
           </div>
 
+          {status && status.tool?.status !== "ok" ? (
+            <p className="ad4-inline-error" role="alert">
+              尚未配置可用的 AutoGrid4，当前不能生成 maps。请打开右上角“工具链”，配置 AutoGrid4 路径并重新检测；已有完整 maps 仍可从下方导入。
+            </p>
+          ) : null}
+
           {form ? (
             <>
               <div className="ad4-grid-fields">

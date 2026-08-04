@@ -270,7 +270,7 @@ if ($SkipTauriBuild) {
 }
 else {
     Write-Step "Clean stale Tauri release resources and bundles"
-    foreach ($relativePath in @("backend", "frontend", "examples", "resources", "bundle", "nsis", "wix")) {
+    foreach ($relativePath in @("backend", "frontend", "examples", "resources", "DockStart", "bundle", "nsis", "wix")) {
         Remove-ReleasePath $releaseDir (Join-Path $releaseDir $relativePath)
     }
 
@@ -280,22 +280,59 @@ else {
         @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.basic.conf.json", "--bundles", "msi,nsis", "--ci") `
         $desktopDir
 
-    Invoke-Checked `
-        "Post-package Basic docking regression" `
-        "python" `
-        @("scripts/verify_basic_release.py", $releaseDir) `
-        $repoRoot
-
     Write-Step "Validate release artifacts"
     $bundleDir = Join-Path $releaseDir "bundle"
     $tauriMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
     $tauriNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
     $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_Basic_x64_en-US.msi"
     $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_Basic_x64-setup.exe"
-    foreach ($rename in @(@($tauriMsi, $expectedMsi), @($tauriNsis, $expectedNsis))) {
-        if (-not (Test-Path -LiteralPath $rename[0] -PathType Leaf)) {
-            throw "Expected Tauri release artifact is missing: $($rename[0])"
+    foreach ($artifact in @($tauriMsi, $tauriNsis)) {
+        if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+            throw "Expected Tauri release artifact is missing: $artifact"
         }
+    }
+
+    Write-Step "Extract MSI for the post-package Basic gate"
+    $postPackageGateRoot = Join-Path $repoRoot ".release\post-package-gate"
+    $postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\basic"
+    $postPackagePrefix = [IO.Path]::GetFullPath($postPackageGateRoot).TrimEnd('\') + '\'
+    $postPackageExtractFull = [IO.Path]::GetFullPath($postPackageExtract)
+    if (-not $postPackageExtractFull.StartsWith($postPackagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to extract the MSI outside .release/post-package-gate: $postPackageExtractFull"
+    }
+    if (Test-Path -LiteralPath $postPackageExtractFull) {
+        Remove-Item -LiteralPath $postPackageExtractFull -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $postPackageExtractFull -Force | Out-Null
+    $postPackageLog = Join-Path $postPackageGateRoot "$appVersion-basic-msiexec.log"
+    $msiArguments = @(
+        "/a",
+        "`"$tauriMsi`"",
+        "TARGETDIR=`"$postPackageExtractFull`"",
+        "/qn",
+        "/L*v",
+        "`"$postPackageLog`""
+    )
+    $msiProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArguments -Wait -PassThru -WindowStyle Hidden
+    if ($msiProcess.ExitCode -ne 0) {
+        throw "MSI administrative extraction failed with exit code $($msiProcess.ExitCode). Log: $postPackageLog"
+    }
+    $layoutManifests = @(
+        Get-ChildItem -LiteralPath $postPackageExtractFull -Recurse -File -Filter "toolchain_manifest.json" |
+            Where-Object { $_.Directory.Name -eq "resources" }
+    )
+    if ($layoutManifests.Count -ne 1) {
+        throw "Expected exactly one extracted toolchain manifest, found $($layoutManifests.Count)."
+    }
+    $postPackageLayout = $layoutManifests[0].Directory.Parent.FullName
+
+    Invoke-Checked `
+        "Post-package Basic docking regression" `
+        "python" `
+        @("scripts/verify_basic_release.py", $postPackageLayout) `
+        $repoRoot
+
+    foreach ($rename in @(@($tauriMsi, $expectedMsi), @($tauriNsis, $expectedNsis))) {
         Move-Item -LiteralPath $rename[0] -Destination $rename[1]
     }
     foreach ($artifact in @($expectedMsi, $expectedNsis)) {

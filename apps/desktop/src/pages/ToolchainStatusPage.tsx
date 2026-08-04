@@ -147,6 +147,8 @@ function normalizeResponse(rawPayload: string): ToolchainStatusResponse {
     warnings: parsed.warnings ?? [...(vinaIntegrity?.warnings ?? []), ...(pythonIntegrity?.warnings ?? [])],
     active_vina: normalizeTool(parsed.active_vina, "vina"),
     active_source: parsed.active_source ?? "unknown",
+    autogrid4: normalizeTool(parsed.autogrid4, "autogrid4"),
+    autogrid4_source: parsed.autogrid4_source ?? "unknown",
     resolved_python: normalizeTool(parsed.resolved_python, "python"),
     python_source: parsed.python_source ?? "unknown",
     meeko_for_python: normalizeTool(parsed.meeko_for_python, "meeko"),
@@ -365,6 +367,8 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
     warnings: [],
     active_vina: frontendTool,
     active_source: "unknown",
+    autogrid4: null,
+    autogrid4_source: "unknown",
     resolved_python: null,
     python_source: "unknown",
     meeko_for_python: null,
@@ -544,20 +548,20 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
   };
 
   return (
-    <PageShell labelledBy="toolchain-status-title">
+    <PageShell labelledBy="toolchain-status-title" className="toolchain-status-page">
       <OperationLoadingDialog
         open={isLoading || isDiagnosticLoading}
         title={isDiagnosticLoading ? "正在运行本机自检" : "正在检测工具链"}
         message={isDiagnosticLoading
           ? "正在核对随附资源、运行环境与示例状态。"
-          : "正在加载 Vina、Python、RDKit 与 Meeko。"}
+          : "正在加载 Vina、AutoGrid4、Python、RDKit 与 Meeko。"}
         detail="首次加载科学工具时可能需要更长时间。"
       />
       <PageHero
         eyebrow="支持"
         title="配置工具链"
         titleId="toolchain-status-title"
-        description="确认 Vina 和 Python 工具链是否可用。"
+        description="确认 Vina、AutoGrid4 和 Python 工具链是否可用。"
         actions={
           <>
           <button className="text-button" type="button" onClick={onBack}>返回</button>
@@ -571,7 +575,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
         }
       />
 
-      <BodyGrid>
+      <BodyGrid className="toolchain-status-body">
         <MainPanel>
           <div className="main-panel-content">
             {status ? (
@@ -675,6 +679,44 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               </p>
             </article>
 
+            <article className="tool-card toolchain-wizard-card toolchain-optional-card">
+              <div className="tool-card-header">
+                <div>
+                  <h2>AutoGrid4</h2>
+                  <p>为 AutoDock4 maps、AD4Zn 与水合 AD4 生成网格。</p>
+                </div>
+                <span className={`status-badge ${statusClass(status.autogrid4?.status)}`}>
+                  {statusText[status.autogrid4?.status ?? "unknown"]}
+                </span>
+              </div>
+              <dl className="tool-meta">
+                <div>
+                  <dt>来源</dt>
+                  <dd>{sourceText[status.autogrid4_source] ?? sourceText.unknown}</dd>
+                </div>
+                <div>
+                  <dt>版本</dt>
+                  <dd>{status.autogrid4?.version || "未获取"}</dd>
+                </div>
+                <div>
+                  <dt>路径</dt>
+                  <dd>{pathOrEmpty(status.autogrid4?.path)}</dd>
+                </div>
+                <div>
+                  <dt>影响范围</dt>
+                  <dd>{status.autogrid4?.message || "缺失时仅 AutoDock4 maps 相关协议不可用。"}</dd>
+                </div>
+              </dl>
+              <div className="toolbar">
+                {onOpenSettings ? (
+                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                    配置 AutoGrid4 路径
+                  </button>
+                ) : null}
+              </div>
+              <p className="placeholder-note">外部 GPL 工具，不随 DockStart 安装包分发；缺失不影响 Vina / Vinardo 对接。</p>
+            </article>
+
             <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
                 <div>
@@ -707,50 +749,51 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <dd>{status.message || "暂无说明。"}</dd>
                 </div>
               </dl>
-              <details className="technical-details">
-                <summary>技术详情</summary>
-                <dl className="tool-meta">
-                  <div>
-                    <dt>runtime_mode</dt>
-                    <dd>{status.runtime_mode}</dd>
-                  </div>
-                  <div>
-                    <dt>resource_dir</dt>
-                    <dd>{pathOrEmpty(status.resource_dir)}</dd>
-                  </div>
-                  <div>
-                    <dt>toolchain_root</dt>
-                    <dd>{pathOrEmpty(status.toolchain_root)}</dd>
-                  </div>
-                  <div>
-                    <dt>manifest</dt>
-                    <dd>{pathOrEmpty(status.manifest_file)}（{booleanText(status.manifest_exists)}）</dd>
-                  </div>
-                  <div>
-                    <dt>Vina sha256</dt>
-                    <dd title={status.bundled_vina.sha256}>{shortHash(status.bundled_vina.sha256)}</dd>
-                  </div>
-                  <div>
-                    <dt>Python sha256</dt>
-                    <dd title={status.bundled_python.sha256}>{shortHash(status.bundled_python.sha256)}</dd>
-                  </div>
-                  <div>
-                    <dt>manifest sha256</dt>
-                    <dd title={status.bundled_python_integrity?.manifest_sha256 ?? ""}>
-                      {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Vina LICENSE</dt>
-                    <dd>{pathOrEmpty(status.bundled_vina_integrity?.license_path)}</dd>
-                  </div>
-                </dl>
-                {status.manifest_error ? <pre>{status.manifest_error}</pre> : null}
-                {status.bundled_vina.raw_error ? <pre>{status.bundled_vina.raw_error}</pre> : null}
-                {status.bundled_python.raw_error ? <pre>{status.bundled_python.raw_error}</pre> : null}
-              </details>
             </article>
           </div>
+
+          <details className="technical-details toolchain-resource-details">
+            <summary>随附资源技术详情</summary>
+            <dl className="tool-meta">
+              <div>
+                <dt>runtime_mode</dt>
+                <dd>{status.runtime_mode}</dd>
+              </div>
+              <div>
+                <dt>resource_dir</dt>
+                <dd>{pathOrEmpty(status.resource_dir)}</dd>
+              </div>
+              <div>
+                <dt>toolchain_root</dt>
+                <dd>{pathOrEmpty(status.toolchain_root)}</dd>
+              </div>
+              <div>
+                <dt>manifest</dt>
+                <dd>{pathOrEmpty(status.manifest_file)}（{booleanText(status.manifest_exists)}）</dd>
+              </div>
+              <div>
+                <dt>Vina sha256</dt>
+                <dd aria-label={status.bundled_vina.sha256 || "未记录"}>{shortHash(status.bundled_vina.sha256)}</dd>
+              </div>
+              <div>
+                <dt>Python sha256</dt>
+                <dd aria-label={status.bundled_python.sha256 || "未记录"}>{shortHash(status.bundled_python.sha256)}</dd>
+              </div>
+              <div>
+                <dt>manifest sha256</dt>
+                <dd aria-label={status.bundled_python_integrity?.manifest_sha256 || "未记录"}>
+                  {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
+                </dd>
+              </div>
+              <div>
+                <dt>Vina LICENSE</dt>
+                <dd>{pathOrEmpty(status.bundled_vina_integrity?.license_path)}</dd>
+              </div>
+            </dl>
+            {status.manifest_error ? <pre>{status.manifest_error}</pre> : null}
+            {status.bundled_vina.raw_error ? <pre>{status.bundled_vina.raw_error}</pre> : null}
+            {status.bundled_python.raw_error ? <pre>{status.bundled_python.raw_error}</pre> : null}
+          </details>
 
           <section className="mode-panel" aria-label="工具链对使用模式的影响">
             <div className="mode-panel-header">
@@ -960,11 +1003,15 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <dt>Meeko</dt>
                 <dd>{statusText[status?.meeko_for_python?.status ?? "unknown"]}</dd>
               </div>
+              <div>
+                <dt>AutoGrid4</dt>
+                <dd>{statusText[status?.autogrid4?.status ?? "unknown"]}</dd>
+              </div>
             </dl>
           </RightRailSection>
 
           <RightRailSection title="路径影响">
-            <p>基础模式主要依赖 Vina；从 PDB / SDF 准备输入时还需要 Python、RDKit 和 Meeko。</p>
+            <p>基础模式主要依赖 Vina；结构准备还需要 Python、RDKit 和 Meeko。AutoGrid4 只影响 AutoDock4 maps 相关协议。</p>
           </RightRailSection>
 
           <RightRailSection title="操作">

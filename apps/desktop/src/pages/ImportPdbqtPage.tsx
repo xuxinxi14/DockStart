@@ -130,6 +130,7 @@ export default function ImportPdbqtPage({
     try {
       let readyLigandCount = 0;
       let sourcePath = receptorPath;
+      let sourceLabel = receptorPath.split(/[\\/]/).pop() || receptorPath;
       if (role === "ligand") {
         const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
           projectDir: project.project_dir,
@@ -151,17 +152,19 @@ export default function ImportPdbqtPage({
           throw new Error(noReadyLigandMessage());
         }
         sourcePath = projectStagedFilePath(project.project_dir, firstReady.stagedFile);
+        sourceLabel = firstReady.displayName || firstReady.originalName;
       }
       const rawPayload = await invoke<string>(role === "receptor" ? "import_receptor_pdbqt" : "import_ligand_pdbqt", {
         projectDir: project.project_dir,
         sourcePath,
+        sourceLabel,
       });
       const response = parseProjectResponse(rawPayload);
       applyProjectResponse(response, role === "receptor" ? "受体 PDBQT 已导入。" : "配体 PDBQT 已导入。");
       if (response.ok && role === "ligand") {
         if (readyLigandCount >= 2) {
           writeDockingWorkspaceMode(project.project_dir, "batch");
-          setMessage(`已导入 ${readyLigandCount} 个可用配体，并自动切换为串行批量筛选；首个可用配体用于搜索范围预览。`);
+          setMessage(`已导入 ${readyLigandCount} 个可用配体，并自动切换为串行批量筛选；可在准备页逐个切换 3D 预览。`);
         } else {
           writeDockingWorkspaceMode(project.project_dir, "single");
           setMessage("已导入 1 个可用配体，并保持单配体任务。");

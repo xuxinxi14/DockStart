@@ -424,14 +424,15 @@ def _validate_manifest_contract(
         expected.get("vina") if isinstance(expected, Mapping) else None
     )
     if not isinstance(vina_expected, Mapping) or (
-        vina_expected.get("accepted_output_mode_counts") != [8, 9]
-        or vina_expected.get("minimum_output_modes") != 8
+        vina_expected.get("accepted_output_mode_counts")
+        != [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        or vina_expected.get("minimum_output_modes") != 1
         or vina_expected.get("maximum_output_modes") != 9
         or vina_expected.get("num_modes") != 9
     ):
         _fail(
             "HYDRATED_ACCEPTANCE_MANIFEST_INVALID",
-            "Hydrated 1UW6 must pin accepted output mode counts to 8 or 9.",
+            "Hydrated 1UW6 must treat num_modes=9 as an output maximum.",
             details={
                 "vina": (
                     dict(vina_expected)
@@ -965,14 +966,14 @@ def _validate_output_mode_contract(
     maximum = expected.get("maximum_output_modes")
     requested = expected.get("num_modes")
     if (
-        accepted_raw != [8, 9]
-        or minimum != 8
+        accepted_raw != [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        or minimum != 1
         or maximum != 9
         or requested != 9
     ):
         _fail(
             "HYDRATED_ACCEPTANCE_MANIFEST_INVALID",
-            "The hydrated Vina mode contract must explicitly accept only 8 or 9 modes.",
+            "The hydrated Vina mode contract must accept one through nine modes.",
             details={
                 "accepted_output_mode_counts": accepted_raw,
                 "minimum_output_modes": minimum,
@@ -982,13 +983,13 @@ def _validate_output_mode_contract(
         )
 
     mode_count = len(models)
-    if mode_count not in {8, 9}:
+    if mode_count not in set(range(1, 10)):
         _fail(
             "HYDRATED_ACCEPTANCE_VINA_MODE_COUNT",
-            "Vina must emit exactly 8 or 9 hydrated modes for the pinned gate.",
+            "Vina must emit between one and nine hydrated modes.",
             details={
-                "accepted_output_mode_counts": [8, 9],
-                "minimum": 8,
+                "accepted_output_mode_counts": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                "minimum": 1,
                 "maximum": 9,
                 "actual": mode_count,
             },
@@ -1020,8 +1021,8 @@ def _validate_output_mode_contract(
             },
         )
     return {
-        "accepted_output_mode_counts": [8, 9],
-        "minimum": 8,
+        "accepted_output_mode_counts": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "minimum": 1,
         "maximum": 9,
         "actual": mode_count,
         "model_numbers": model_numbers,

@@ -2,7 +2,7 @@ export type StructureInputRole = "receptor" | "ligand";
 export type StructureInputKind = "pdbqt" | "raw" | "unsupported";
 
 const RECEPTOR_RAW_EXTENSIONS = new Set(["pdb", "cif"]);
-const LIGAND_RAW_EXTENSIONS = new Set(["sdf", "mol"]);
+const LIGAND_RAW_EXTENSIONS = new Set(["sdf", "mol", "mol2"]);
 
 export function structureInputExtension(path: string): string {
   const fileName = path.trim().split(/[\\/]/).pop() ?? "";
@@ -25,4 +25,3 @@ export function splitLigandStructurePaths(paths: string[]): { pdbqt: string[]; r
     return result;
   }, { pdbqt: [], raw: [] });
 }
-

@@ -179,6 +179,8 @@ export type ToolchainStatusResponse = {
   warnings: string[];
   active_vina: ToolCheckResult | null;
   active_source: ToolSource;
+  autogrid4: ToolCheckResult | null;
+  autogrid4_source: ToolSource;
   resolved_python: ToolCheckResult | null;
   python_source: ToolSource;
   meeko_for_python: ToolCheckResult | null;
@@ -1138,6 +1140,13 @@ export type PreparationMethod =
   | "meeko_macrocycle"
   | "external_manual";
 
+export type ReceptorAltlocReviewOption = {
+  selector: string;
+  meeko_id?: string;
+  residue_name?: string;
+  ids: string[];
+};
+
 export type PreparationResult = {
   target: PreparationTarget;
   prep_id: string;
@@ -1166,6 +1175,7 @@ export type PreparationResult = {
     raw_error?: string;
     suggestion?: string;
     bad_residues?: string[];
+    alternate_locations?: ReceptorAltlocReviewOption[];
   } | null;
   warnings: string[];
 };
@@ -2058,6 +2068,7 @@ export type PreparationStatusResponse = {
     raw_error: string;
     suggestion: string;
     bad_residues?: string[];
+    alternate_locations?: ReceptorAltlocReviewOption[];
   };
 };
 

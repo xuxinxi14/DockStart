@@ -359,29 +359,65 @@ async fn load_project(project_dir: String) -> String {
 }
 
 #[tauri::command]
-async fn import_receptor_pdbqt(project_dir: String, source_path: String) -> String {
-    match run_backend_module_async(
-        "dockstart_core.project",
-        vec!["import-receptor".to_string(), project_dir, source_path],
-    )
-    .await
+async fn import_receptor_pdbqt(
+    project_dir: String,
+    source_path: String,
+    source_label: Option<String>,
+) -> String {
+    let mut args = vec!["import-receptor".to_string(), project_dir, source_path];
+    if let Some(label) = source_label
+        .as_deref()
+        .map(normalize_pdbqt_source_label_arg)
+        .filter(|value| !value.is_empty())
     {
+        args.push(label);
+    }
+    match run_backend_module_async("dockstart_core.project", args).await {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法导入受体 PDBQT。", &error),
     }
 }
 
 #[tauri::command]
-async fn import_ligand_pdbqt(project_dir: String, source_path: String) -> String {
-    match run_backend_module_async(
-        "dockstart_core.project",
-        vec!["import-ligand".to_string(), project_dir, source_path],
-    )
-    .await
+async fn import_ligand_pdbqt(
+    project_dir: String,
+    source_path: String,
+    source_label: Option<String>,
+) -> String {
+    let mut args = vec!["import-ligand".to_string(), project_dir, source_path];
+    if let Some(label) = source_label
+        .as_deref()
+        .map(normalize_pdbqt_source_label_arg)
+        .filter(|value| !value.is_empty())
     {
+        args.push(label);
+    }
+    match run_backend_module_async("dockstart_core.project", args).await {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法导入配体 PDBQT。", &error),
     }
+}
+
+fn normalize_pdbqt_source_label_arg(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .filter_map(|character| {
+            if character.is_control() {
+                character.is_whitespace().then_some(' ')
+            } else {
+                Some(character)
+            }
+        })
+        .collect::<String>();
+    sanitized
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 #[tauri::command]
@@ -1867,6 +1903,44 @@ async fn load_structure_for_viewer(project_dir: String, file_kind: String) -> St
     {
         Ok(payload) => payload,
         Err(error) => fallback_project_error_json("无法读取 3D Viewer 结构文件。", &error),
+    }
+}
+
+#[tauri::command]
+async fn load_screening_candidate_for_viewer(
+    project_dir: String,
+    candidate_id: String,
+    expected_revision_sha256: String,
+) -> String {
+    if !is_safe_screening_candidate_id(&candidate_id) {
+        return screening_argument_error_json(
+            "VIEWER_SCREENING_CANDIDATE_INVALID",
+            "批量配体候选编号无效。",
+            &candidate_id,
+            "请从当前批量配体列表中重新选择。",
+        );
+    }
+    if !is_sha256_hex(&expected_revision_sha256) {
+        return screening_argument_error_json(
+            "VIEWER_SCREENING_REVISION_INVALID",
+            "批量配体导入 revision 无效。",
+            &expected_revision_sha256,
+            "请刷新批量配体列表后重新选择。",
+        );
+    }
+    match run_backend_module_async(
+        "dockstart_core.viewer",
+        vec![
+            "load-screening-candidate".to_string(),
+            project_dir,
+            candidate_id,
+            expected_revision_sha256,
+        ],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_project_error_json("无法读取批量配体候选。", &error),
     }
 }
 
@@ -5000,14 +5074,7 @@ fn run_python_module_with_env(
     command.creation_flags(CREATE_NO_WINDOW);
 
     let output = command.output().map_err(|error| error.to_string())?;
-
-    if output.status.success() {
-        return String::from_utf8(output.stdout).map_err(|error| error.to_string());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!("stdout:\n{stdout}\nstderr:\n{stderr}"))
+    classify_structured_backend_output(output.status.success(), &output.stdout, &output.stderr)
 }
 
 #[cfg(test)]
@@ -5631,6 +5698,7 @@ fn main() {
             read_project_markdown_report,
             get_viewer_file_status,
             load_structure_for_viewer,
+            load_screening_candidate_for_viewer,
             list_docking_poses,
             load_docking_pose_for_viewer,
             load_multiple_ligand_pose,
@@ -5671,6 +5739,18 @@ mod tests {
     // invalidate each other's generation while the Rust test harness runs
     // test functions in parallel.
     static BACKEND_CACHE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn pdbqt_source_label_argument_is_safe_and_keeps_chemical_identity() {
+        let normalized = normalize_pdbqt_source_label_arg("  InChI=1S/CH4/h1H4\0\n  配体 α  ");
+        assert_eq!(normalized, "InChI=1S/CH4/h1H4 配体 α");
+        assert_eq!(
+            normalize_pdbqt_source_label_arg(&"配".repeat(300))
+                .chars()
+                .count(),
+            240
+        );
+    }
 
     #[test]
     fn tauri_config_declares_the_main_workbench_window() {
@@ -6429,6 +6509,19 @@ mod tests {
                 String::from_utf8_lossy(rejected)
             );
         }
+    }
+
+    #[test]
+    fn background_backend_output_preserves_structured_review_errors() {
+        let review = b"{\"ok\":false,\"error\":{\"code\":\"FLEX_BAD_RESIDUES_REVIEW_REQUIRED\"},\"review\":{\"bad_residues\":[\"A:226\",\"A:229\"]}}";
+        assert_eq!(
+            classify_structured_backend_output(false, review, b"meeko diagnostic"),
+            Ok(String::from_utf8(review.to_vec()).unwrap())
+        );
+
+        let malformed = b"{\"ok\":false";
+        let error = classify_structured_backend_output(false, malformed, b"traceback").unwrap_err();
+        assert!(error.contains("traceback"));
     }
 
     #[test]

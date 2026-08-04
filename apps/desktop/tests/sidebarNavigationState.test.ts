@@ -54,6 +54,22 @@ test("水合 AD4 没有全局协议状态时不因项目存在而显示成功", 
   assert.equal(resolveSidebarNavigationState("hydrated-ad4", true, true, steps), "idle");
 });
 
+test("水合 AD4 存在已完成运行时显示成功", () => {
+  const steps = [
+    workflowStep("structure-fetch", "done"),
+    workflowStep("import-pdbqt", "done"),
+    workflowStep("preparation", "done"),
+  ];
+
+  assert.equal(resolveSidebarNavigationState("hydrated-ad4", true, true, steps, true), "ready");
+});
+
+test("批量筛选完成时结果入口显示成功", () => {
+  const steps = [workflowStep("result", "pending")];
+
+  assert.equal(resolveSidebarNavigationState("result", true, true, steps, false, true), "ready");
+});
+
 test("项目入口仍可由项目创建步骤显示成功", () => {
   const steps = [workflowStep("project-create", "done")];
   assert.equal(resolveSidebarNavigationState("home", true, false, steps), "ready");

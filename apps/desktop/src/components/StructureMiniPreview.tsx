@@ -18,6 +18,10 @@ type StructureMiniPreviewProps = {
   label: string;
   refreshKey?: number;
   highlightBonds?: MacrocycleBond[];
+  screeningCandidate?: {
+    id: string;
+    revisionSha256: string;
+  };
 };
 
 const EMPTY_HIGHLIGHT_BONDS: MacrocycleBond[] = [];
@@ -32,6 +36,7 @@ export default function StructureMiniPreview({
   label,
   refreshKey = 0,
   highlightBonds = EMPTY_HIGHLIGHT_BONDS,
+  screeningCandidate,
 }: StructureMiniPreviewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
@@ -62,7 +67,7 @@ export default function StructureMiniPreview({
   }, []);
 
   useEffect(() => {
-    const identity = `${projectDir}|${fileKind}`;
+    const identity = `${projectDir}|${fileKind}|${screeningCandidate?.id ?? ""}|${screeningCandidate?.revisionSha256 ?? ""}`;
     if (identityRef.current === identity) return;
     identityRef.current = identity;
     sceneGenerationRef.current += 1;
@@ -76,7 +81,7 @@ export default function StructureMiniPreview({
     viewer?.removeAllShapes();
     viewer?.removeAllLabels();
     viewer?.render();
-  }, [fileKind, projectDir]);
+  }, [fileKind, projectDir, screeningCandidate?.id, screeningCandidate?.revisionSha256]);
 
   useEffect(() => {
     let observer: ResizeObserver | null = null;
@@ -101,7 +106,13 @@ export default function StructureMiniPreview({
     async function loadStructure() {
       setMessage("正在读取结构…");
       try {
-        const rawPayload = await invoke<string>("load_structure_for_viewer", { projectDir, fileKind });
+        const rawPayload = screeningCandidate
+          ? await invoke<string>("load_screening_candidate_for_viewer", {
+              projectDir,
+              candidateId: screeningCandidate.id,
+              expectedRevisionSha256: screeningCandidate.revisionSha256,
+            })
+          : await invoke<string>("load_structure_for_viewer", { projectDir, fileKind });
         if (cancelled || generation !== loadGenerationRef.current) return;
         const parsed = parseStructure(rawPayload);
         setStructure(parsed);
@@ -116,7 +127,7 @@ export default function StructureMiniPreview({
     return () => {
       cancelled = true;
     };
-  }, [fileKind, projectDir, refreshKey]);
+  }, [fileKind, projectDir, refreshKey, screeningCandidate?.id, screeningCandidate?.revisionSha256]);
 
   useEffect(() => {
     const sceneGeneration = sceneGenerationRef.current;

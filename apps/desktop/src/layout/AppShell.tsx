@@ -36,6 +36,7 @@ export default function AppShell({
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+  const [batchScreeningCompleted, setBatchScreeningCompleted] = useState(false);
   const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
     releaseProfile: "unknown",
     displayName: "识别中",
@@ -80,6 +81,29 @@ export default function AppShell({
     document.addEventListener("contextmenu", preventContextMenu, true);
     return () => document.removeEventListener("contextmenu", preventContextMenu, true);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBatchScreeningCompleted(false);
+    if (!project?.project_dir) return () => {
+      cancelled = true;
+    };
+
+    void invoke<string>("get_screening_status", { projectDir: project.project_dir })
+      .then((rawPayload) => {
+        if (cancelled) return;
+        const payload = JSON.parse(rawPayload) as {
+          screening?: { status?: unknown } | null;
+        };
+        setBatchScreeningCompleted(payload.screening?.status === "completed");
+      })
+      .catch(() => {
+        if (!cancelled) setBatchScreeningCompleted(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPage, project?.project_dir]);
 
   useEffect(() => {
     const shell = document.querySelector(".dockstart-shell");
@@ -128,6 +152,7 @@ export default function AppShell({
         distributionProfile={distributionProfile}
         project={project}
         workflowSteps={workflowSteps}
+        batchScreeningCompleted={batchScreeningCompleted}
         onNavigate={onNavigate}
         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
       />

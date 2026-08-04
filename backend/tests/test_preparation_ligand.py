@@ -80,6 +80,7 @@ class LigandPreparationTests(unittest.TestCase):
         self.assertIn("preparator.prepare(molecule)", script)
         self.assertIn("MACROCYCLE_REVIEW_REQUIRED", script)
         self.assertIn("detected_macrocycle_rings", script)
+        self.assertIn("Chem.MolFromMol2Block", script)
 
     def test_standard_script_refuses_real_bace_macrocycle_without_review(self) -> None:
         runtime = BACKEND_ROOT.parent / "resources" / "python" / "python.exe"
@@ -158,10 +159,20 @@ class LigandPreparationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "LIGAND_RAW_FILE_NOT_READY")
 
-    def test_validate_ligand_preparation_input_unsupported_format_fails(self) -> None:
+    def test_validate_ligand_preparation_input_accepts_mol2(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
             self._set_ligand_raw(project_dir, "raw/ligand.mol2")
+            with patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()):
+                result = validate_ligand_preparation_input(str(project_dir))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["format"], ".mol2")
+
+    def test_validate_ligand_preparation_input_unsupported_format_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_ligand_raw(project_dir, "raw/ligand.xyz")
             result = validate_ligand_preparation_input(str(project_dir))
 
         self.assertFalse(result["ok"])

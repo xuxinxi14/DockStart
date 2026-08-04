@@ -1034,10 +1034,10 @@ export default function StructureFetchPage({
       const selected = await open({
         directory: false,
         multiple: !isReceptor,
-        title: isReceptor ? "选择受体 PDB / CIF" : "选择一个或多个配体 SDF / MOL",
+        title: isReceptor ? "选择受体 PDB / CIF" : "选择一个或多个配体 SDF / MOL / MOL2",
         filters: [isReceptor
           ? { name: "受体原始结构", extensions: ["pdb", "cif"] }
-          : { name: "配体原始结构", extensions: ["sdf", "mol"] }],
+          : { name: "配体原始结构", extensions: ["sdf", "mol", "mol2"] }],
       });
       const selectedPaths = Array.isArray(selected) ? selected : selected ? [selected] : [];
       const sourcePath = selectedPaths[0] ?? "";
@@ -1048,7 +1048,7 @@ export default function StructureFetchPage({
         setBusyAction(isReceptor ? "prepare-receptor" : "prepare-ligand");
         setMessage(`正在导入${label}原始结构…`);
       });
-      if (!isReceptor) {
+      if (!isReceptor && selectedPaths.length > 1) {
         const stageResponse = JSON.parse(await invoke<string>("stage_screening_inputs", {
           projectDir: project.project_dir,
           files: selectedPaths,
@@ -1071,12 +1071,13 @@ export default function StructureFetchPage({
         const imported = parseProjectResponse(await invoke<string>("import_ligand_pdbqt", {
           projectDir: project.project_dir,
           sourcePath: firstSnapshot,
+          sourceLabel: firstReady.displayName || firstReady.originalName,
         }));
         if (!imported.ok) throw new Error(imported.error?.raw_error || imported.error?.message || "无法载入首个可用配体预览。");
         applyProjectResponse(imported, "配体已准备。", true, token);
         if (preview.counts.ready >= 2) {
           writeDockingWorkspaceMode(project.project_dir, "batch");
-          operationScope.commit(token, () => setMessage(`已准备 ${preview.counts.ready} 个可用配体并自动进入串行批量筛选；首个可用配体用于搜索范围预览。`));
+          operationScope.commit(token, () => setMessage(`已准备 ${preview.counts.ready} 个可用配体并自动进入串行批量筛选；可在准备页逐个切换 3D 预览。`));
         } else {
           writeDockingWorkspaceMode(project.project_dir, "single");
           operationScope.commit(token, () => setMessage("已准备 1 个可用配体，并保持单配体任务。"));

@@ -19,6 +19,7 @@ import ProjectDashboardPage from "./pages/ProjectDashboardPage";
 import ReportPage from "./pages/ReportPage";
 import ResultPage from "./pages/ResultPage";
 import RunRequiredPage from "./pages/RunRequiredPage";
+import BatchResultsPage from "./pages/BatchResultsPage";
 import RunExecutePage from "./pages/RunExecutePage";
 import RunPreparePage from "./pages/RunPreparePage";
 import SettingsPage from "./pages/SettingsPage";
@@ -416,6 +417,7 @@ export default function App() {
             setCurrentRunId(runId);
             navigateTo("run-execute");
           }}
+          onOpenToolchain={() => navigateTo("toolchain-status")}
         />
       );
     }
@@ -478,7 +480,13 @@ export default function App() {
     }
 
     if (currentPage === "result" && currentProject && !currentRunId) {
-      return <RunRequiredPage project={currentProject} requestedPage="result" onNavigate={navigateTo} />;
+      return (
+        <BatchResultsPage
+          project={currentProject}
+          onBack={() => navigateTo("run-prepare")}
+          onOpenProjectHome={() => navigateTo("home")}
+        />
+      );
     }
 
 

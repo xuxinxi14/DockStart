@@ -17,12 +17,15 @@ from typing import Any
 from adapters import meeko_adapter, rdkit_adapter, vina_adapter
 from dockstart_core.advanced_protocols import (
     MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
+    MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
     ProtocolValidationError,
+    extract_meeko_altloc_residues,
     extract_meeko_bad_residues,
     inspect_meeko_ligand_pdbqt,
     meeko_receptor_control_arguments,
     normalize_meeko_receptor_controls,
     parse_flexible_residue,
+    receptor_altloc_review_options,
 )
 from dockstart_core.macrocycle import (
     ANALYSIS_VERSION,
@@ -50,7 +53,7 @@ from dockstart_core.preparation_models import (
 from dockstart_core.structure_review import build_structure_review
 from dockstart_core.toolchain import get_resolved_python
 
-SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol"}
+SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol", ".mol2"}
 SUPPORTED_RECEPTOR_PREPARATION_FORMATS = {".pdb", ".cif"}
 LIGAND_PREPARATION_OUTPUT = "prepared/ligand.pdbqt"
 RECEPTOR_PREPARATION_OUTPUT = "prepared/receptor.pdbqt"
@@ -1613,6 +1616,28 @@ def _finalize_preparation(
         if target == "receptor"
         else []
     )
+    detected_altloc_residues = (
+        extract_meeko_altloc_residues(f"{stdout}\n{stderr}")
+        if target == "receptor"
+        else []
+    )
+    detected_altloc_options: list[dict[str, Any]] = []
+    if target == "receptor" and detected_altloc_residues:
+        try:
+            detected_altloc_options = receptor_altloc_review_options(
+                built["input_path"],
+                detected_altloc_residues,
+            )
+        except (ProtocolValidationError, OSError, UnicodeError, ValueError):
+            detected_altloc_options = [
+                {
+                    "selector": parse_flexible_residue(value).canonical,
+                    "meeko_id": parse_flexible_residue(value).meeko_id,
+                    "residue_name": "",
+                    "ids": [],
+                }
+                for value in detected_altloc_residues
+            ]
     if target == "receptor" and built.get("protocol") == "meeko_allow_bad_res_reviewed":
         acknowledged_bad_residues = [
             str(value)
@@ -1628,6 +1653,9 @@ def _finalize_preparation(
             "detected_bad_residues": detected_bad_residues,
             "lists_match": set(acknowledged_bad_residues)
             == set(detected_bad_residues),
+            "alternate_locations": copy.deepcopy(
+                built.get("alternate_locations", {}),
+            ),
         }
         if exit_code == 0 and set(acknowledged_bad_residues) != set(detected_bad_residues):
             protocol_gate_error = {
@@ -1704,25 +1732,45 @@ def _finalize_preparation(
         }
     elif (
         target == "receptor"
-        and not built.get("protocol")
         and exit_code != 0
-        and detected_bad_residues
+        and (detected_bad_residues or detected_altloc_options)
+        and (
+            not built.get("protocol")
+            or (
+                built.get("protocol") == "meeko_allow_bad_res_reviewed"
+                and detected_altloc_options
+            )
+        )
     ):
-        error = {
-            "code": "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED",
-            "message": (
+        if detected_bad_residues and detected_altloc_options:
+            review_code = "RECEPTOR_STRUCTURE_REVIEW_REQUIRED"
+            review_message = (
+                f"Meeko 检测到 {len(detected_bad_residues)} 个不完整残基和 "
+                f"{len(detected_altloc_options)} 个未决替代构象。"
+            )
+            review_suggestion = "请核对不完整残基，并为每个替代构象选择明确的 altloc 后重试。"
+        elif detected_altloc_options:
+            review_code = "RECEPTOR_ALTLOC_REVIEW_REQUIRED"
+            review_message = f"Meeko 检测到 {len(detected_altloc_options)} 个未决替代构象。"
+            review_suggestion = "请为每个残基明确选择原始结构中存在的 altloc 后重试。"
+        else:
+            review_code = "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED"
+            review_message = (
                 f"Meeko 检测到 {len(detected_bad_residues)} 个不完整或无法匹配模板的残基。"
-            ),
+            )
+            review_suggestion = "请先检查这些残基；如确认可以忽略，请勾选确认后重新转换。"
+        error = {
+            "code": review_code,
+            "message": review_message,
             "raw_error": _preparation_failure_diagnostic(
                 publication_error="",
                 stdout=stdout,
                 stderr=stderr,
                 exit_code=exit_code,
             ),
-            "suggestion": (
-                "请先检查这些残基；如确认可以忽略，请勾选确认后重新转换。"
-            ),
+            "suggestion": review_suggestion,
             "bad_residues": detected_bad_residues,
+            "alternate_locations": detected_altloc_options,
         }
 
     with _preparation_target_lock(project_path, target):
@@ -2272,6 +2320,16 @@ def read_ligand(path: Path):
         if molecule is None:
             raise RuntimeError("RDKit 未能从 MOL 文件中读取到有效分子。")
         return prepare_ligand_for_meeko(molecule)
+    if suffix == ".mol2":
+        molecule = Chem.MolFromMol2Block(
+            path.read_text(encoding="utf-8", errors="replace"),
+            sanitize=True,
+            removeHs=False,
+            cleanupSubstructures=True,
+        )
+        if molecule is None:
+            raise RuntimeError("RDKit 未能从 MOL2 文件中读取到有效分子。")
+        return prepare_ligand_for_meeko(molecule)
     raise RuntimeError(f"暂不支持的配体输入格式：{suffix}")
 
 
@@ -2534,7 +2592,7 @@ def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False)
             "LIGAND_RAW_FORMAT_UNSUPPORTED",
             "当前版本暂不支持该配体 raw 文件格式自动准备 PDBQT。",
             raw_error=suffix,
-            suggestion="V0.3.2 优先支持 SDF 和 MOL；MOL2/SMILES 暂不自动准备，请先使用外部工具准备 PDBQT。",
+            suggestion="配体自动准备支持 SDF、MOL 和 MOL2；PDB/SMILES 请先使用外部工具准备 PDBQT。",
         )
 
     if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
@@ -2771,8 +2829,9 @@ def _normalize_receptor_preparation_options(
     The contract intentionally reuses the reviewed flexible-receptor control
     schema for typed residue decisions.  A separate reviewed recovery protocol
     permits ``allow_bad_res`` only after a strict run has returned the exact
-    residue list and the user has acknowledged that same list.  Free argv and
-    ``default_altloc`` remain unavailable.
+    residue list and the user has acknowledged that same list.  The reviewed
+    retry may also carry explicit per-residue alternate-location decisions.
+    Free argv and ``default_altloc`` remain unavailable.
     """
 
     if options is None or not options:
@@ -2787,7 +2846,7 @@ def _normalize_receptor_preparation_options(
     raw = dict(options)
     protocol = str(raw.get("protocol") or "").strip()
     allowed_fields = (
-        {"protocol", "acknowledged_bad_residues"}
+        {"protocol", "acknowledged_bad_residues", "alternate_locations"}
         if protocol == "meeko_allow_bad_res_reviewed"
         else {"protocol", "receptor_controls"}
     )
@@ -2798,7 +2857,7 @@ def _normalize_receptor_preparation_options(
             "受体准备选项包含未支持的字段。",
             raw_error=", ".join(str(item) for item in unknown),
             suggestion=(
-                "受审查的不完整残基恢复只接受 acknowledged_bad_residues；"
+                "受审查的不完整残基恢复只接受 acknowledged_bad_residues 和 alternate_locations；"
                 "逐残基控制合同只接受 receptor_controls。"
             ),
         )
@@ -2832,9 +2891,33 @@ def _normalize_receptor_preparation_options(
                 raw_error=exc.detail,
                 suggestion=exc.suggestion,
             )
+        try:
+            normalized_altloc_controls = normalize_meeko_receptor_controls(
+                {
+                    "schema_version": MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
+                    "allow_bad_res": False,
+                    "alternate_locations": raw.get("alternate_locations", {}),
+                    "template_assignments": {},
+                    "deleted_residues": [],
+                },
+                structure_path=structure_path,
+            )
+        except ProtocolValidationError as exc:
+            detail = ": ".join(
+                item for item in (exc.title, exc.detail) if str(item).strip()
+            )
+            return None, _error(
+                exc.code,
+                exc.message,
+                raw_error=detail,
+                suggestion=exc.suggestion,
+            )
         return {
             "protocol": "meeko_allow_bad_res_reviewed",
             "acknowledged_bad_residues": acknowledged,
+            "alternate_locations": copy.deepcopy(
+                normalized_altloc_controls["alternate_locations"],
+            ),
         }, None
     if protocol != "meeko_receptor_controls":
         return None, _error(
@@ -3156,8 +3239,23 @@ def build_receptor_preparation_command_or_script(
             acknowledged = list(
                 normalized_options.get("acknowledged_bad_residues", []),
             )
+            alternate_locations = copy.deepcopy(
+                normalized_options.get("alternate_locations", {}),
+            )
             command.append("--allow_bad_res")
+            command.extend(
+                meeko_receptor_control_arguments(
+                    {
+                        "alternate_locations": alternate_locations,
+                        "template_assignments": {},
+                        "deleted_residues": [],
+                    },
+                ),
+            )
             acknowledgement_sha256 = _canonical_json_sha256(acknowledged)
+            alternate_locations_sha256 = _canonical_json_sha256(
+                alternate_locations,
+            )
             protocol_fields = {
                 "protocol": "meeko_allow_bad_res_reviewed",
                 "protocol_mode": "reviewed",
@@ -3165,11 +3263,17 @@ def build_receptor_preparation_command_or_script(
                 "allow_bad_res": True,
                 "acknowledged_bad_residues": acknowledged,
                 "acknowledged_bad_residues_sha256": acknowledgement_sha256,
+                "alternate_locations": alternate_locations,
+                "alternate_locations_sha256": alternate_locations_sha256,
             }
             warnings.append(
                 "用户已明确确认由 Meeko 严格模式列出的不完整残基；"
                 "本次准备会忽略这些残基，并在发布前核对实际忽略列表。"
             )
+            if alternate_locations:
+                warnings.append(
+                    "本次受体准备同时采用用户逐项确认的交替构象选择。"
+                )
 
     return {
         **validation,

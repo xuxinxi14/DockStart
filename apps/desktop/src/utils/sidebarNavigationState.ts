@@ -26,6 +26,8 @@ export function resolveSidebarNavigationState(
   hasProject: boolean,
   requiresProject: boolean,
   workflowSteps: WorkflowStep[],
+  hydratedRunFinished = false,
+  batchScreeningCompleted = false,
 ): SidebarNavigationState {
   if (requiresProject && !hasProject) {
     return "blocked";
@@ -33,12 +35,16 @@ export function resolveSidebarNavigationState(
 
   if (itemId === "hydrated-ad4") {
     if (!hasProject) return "blocked";
+    if (hydratedRunFinished) return "ready";
 
-    // Hydrated AD4 does not yet expose a global completion snapshot. Surface
-    // failed/missing structure prerequisites, but never report success merely
-    // because a project directory exists.
+    // Before a hydrated run finishes, surface failed/missing structure
+    // prerequisites without claiming success merely because a project exists.
     const inputSteps = stepsForNavigationItem("preparation", workflowSteps);
     return inputSteps.some((step) => blockingStates.has(step.status)) ? "blocked" : "idle";
+  }
+
+  if (itemId === "result" && batchScreeningCompleted) {
+    return "ready";
   }
 
   const matchedSteps = stepsForNavigationItem(itemId, workflowSteps);

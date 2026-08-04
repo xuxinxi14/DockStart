@@ -431,17 +431,17 @@ def _active_source(project: Any, root: Path) -> dict[str, Any]:
             "MACROCYCLE_LIGAND_RAW_NOT_SET",
             "尚未选择配体原始结构",
             "当前项目没有可用于大环审查的 ligand raw 文件。",
-            suggestion="请先导入单分子 SDF 或 MOL 文件。",
+            suggestion="请先导入单分子 SDF、MOL 或 MOL2 文件。",
         )
     path = _project_member(root, relative_path, must_exist=True)
     suffix = path.suffix.lower()
-    if suffix not in {".sdf", ".mol"}:
+    if suffix not in {".sdf", ".mol", ".mol2"}:
         raise MacrocycleError(
             "MACROCYCLE_LIGAND_FORMAT_UNSUPPORTED",
             "配体格式不受支持",
-            "正式大环审查当前仅支持单分子 SDF 或 MOL。",
+            "正式大环审查当前仅支持单分子 SDF、MOL 或 MOL2。",
             raw_error=suffix or "无扩展名",
-            suggestion="请使用保留三维坐标的 SDF 或 MOL 文件。",
+            suggestion="请使用保留三维坐标的 SDF、MOL 或 MOL2 文件。",
         )
     payload = _read_stable_bytes(path, maximum_bytes=MAX_SOURCE_BYTES, label="配体原始结构")
     return {
@@ -642,11 +642,18 @@ def _load_single_molecule(
                 sanitize=True,
                 strictParsing=True,
             )
+        elif suffix == ".mol2":
+            molecule = Chem.MolFromMol2Block(
+                payload.decode("utf-8-sig", errors="replace"),
+                removeHs=False,
+                sanitize=True,
+                cleanupSubstructures=True,
+            )
         else:
             raise MacrocycleError(
                 "MACROCYCLE_LIGAND_FORMAT_UNSUPPORTED",
                 "配体格式不受支持",
-                "正式大环协议当前仅支持单分子 SDF 或 MOL。",
+                "正式大环协议当前仅支持单分子 SDF、MOL 或 MOL2。",
                 raw_error=suffix or "无扩展名",
             )
     except MacrocycleError:
@@ -657,7 +664,7 @@ def _load_single_molecule(
             "无法解析配体结构",
             "RDKit 无法读取或清理当前配体。",
             raw_error=str(exc),
-            suggestion="请检查 SDF/MOL 的价态、键级和文件完整性。",
+            suggestion="请检查 SDF/MOL/MOL2 的价态、键级和文件完整性。",
         ) from exc
     if molecule is None:
         raise MacrocycleError(
@@ -665,7 +672,7 @@ def _load_single_molecule(
             "无法解析配体结构",
             "RDKit 未能从当前文件获得有效分子。",
             raw_error=str(path),
-            suggestion="请检查 SDF/MOL 的价态、键级和文件完整性。",
+            suggestion="请检查 SDF/MOL/MOL2 的价态、键级和文件完整性。",
         )
     return molecule
 
@@ -767,7 +774,7 @@ def _atom_table(molecule: Any) -> tuple[list[dict[str, Any]], str, Any]:
             "配体构象数量不受支持",
             "正式大环审查要求输入文件恰好包含一个三维构象。",
             raw_error=f"conformer_count={molecule.GetNumConformers()}",
-            suggestion="请把待对接构象单独保存为 SDF 或 MOL。",
+            suggestion="请把待对接构象单独保存为 SDF、MOL 或 MOL2。",
         )
     conformer = molecule.GetConformer()
     if not conformer.Is3D():
@@ -968,7 +975,7 @@ def analyze_macrocycle_file(
     input_path: str | Path,
     options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Analyse one SDF/MOL and return deterministic Meeko candidate combinations.
+    """Analyse one SDF/MOL/MOL2 and return deterministic Meeko candidate combinations.
 
     This pure worker neither reads nor writes ``project.json``.  Atom indices
     are always persisted in both Meeko/RDKit zero-based form and UI one-based

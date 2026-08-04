@@ -297,6 +297,8 @@
 .batch-screening-archive-select input {
   width: 15px;
   height: 15px;
+  min-height: 15px;
+  padding: 0;
   accent-color: var(--ds-accent);
   cursor: pointer;
 }
@@ -613,7 +615,25 @@
 .batch-screening-import-table input[type="checkbox"] {
   width: 15px;
   height: 15px;
+  min-height: 15px;
+  padding: 0;
   accent-color: var(--ds-accent);
+}
+
+.batch-screening-import-table input[type="checkbox"]:focus,
+.batch-screening-import-table input[type="checkbox"]:focus-visible,
+.batch-screening-archive-select input[type="checkbox"]:focus,
+.batch-screening-archive-select input[type="checkbox"]:focus-visible,
+.batch-screening-top-toggle input[type="checkbox"]:focus,
+.batch-screening-top-toggle input[type="checkbox"]:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.batch-screening-import-table tr:has(input[type="checkbox"]:focus-visible),
+.batch-screening-archive-card:has(input[type="checkbox"]:focus-visible),
+.batch-screening-top-toggle:has(input[type="checkbox"]:focus-visible) {
+  background-color: var(--ds-surface-selected);
 }
 
 .batch-screening-import-table tr[data-status="duplicate"],
@@ -1055,6 +1075,8 @@
 .batch-screening-top-toggle input {
   width: 15px;
   height: 15px;
+  min-height: 15px;
+  padding: 0;
 }
 
 .batch-screening-table-wrap {

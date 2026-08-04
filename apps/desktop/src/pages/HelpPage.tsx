@@ -125,7 +125,7 @@ const workflowSteps: Array<{
   page: PageId;
 }> = [
   { index: "01", icon: FolderOpen, title: "获取或导入结构", description: "在线搜索 RCSB / PubChem，或从电脑导入支持的结构文件。", page: "structure-fetch" },
-  { index: "02", icon: Wrench, title: "转换为 PDBQT", description: "将受体 PDB/CIF 与配体 SDF/MOL 准备为 Vina 输入；已有 PDBQT 可跳过。", page: "preparation" },
+  { index: "02", icon: Wrench, title: "转换为 PDBQT", description: "将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备为 Vina 输入；已有 PDBQT 可跳过。", page: "preparation" },
   { index: "03", icon: Cube, title: "设置搜索范围", description: "复核结构，定位 Box，并设置 Vina 参数。", page: "run-prepare" },
   { index: "04", icon: Play, title: "运行对接", description: "保存配置、创建运行记录并执行本地 Vina。", page: "run-prepare" },
   { index: "05", icon: ChartBar, title: "结果与报告", description: "查看构象和评分，导出 CSV 与 Markdown 实验记录。", page: "result" },
@@ -372,7 +372,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <h2>格式与输出</h2>
             <dl className="help-format-list">
               <div><dt>受体准备</dt><dd>PDB / CIF</dd></div>
-              <div><dt>配体准备</dt><dd>SDF / MOL</dd></div>
+              <div><dt>配体准备</dt><dd>SDF / MOL / MOL2</dd></div>
               <div><dt>Vina 输入</dt><dd>PDBQT</dd></div>
               <div><dt>结果输出</dt><dd>PDBQT / CSV / MD</dd></div>
             </dl>
@@ -382,7 +382,7 @@ export default function HelpPage({ project, onNavigate }: HelpPageProps) {
             <h2>当前边界</h2>
             <ul>
               <li><CheckCircle aria-hidden="true" size={15} />本地运行，不自动上传项目数据</li>
-              <li><WarningCircle aria-hidden="true" size={15} />不支持 MOL2 / SMILES 自动准备</li>
+              <li><WarningCircle aria-hidden="true" size={15} />不支持 PDB / SMILES 配体自动准备</li>
               <li><WarningCircle aria-hidden="true" size={15} />不做口袋预测或药效判断</li>
             </ul>
           </section>

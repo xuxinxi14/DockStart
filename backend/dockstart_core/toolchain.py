@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from adapters import meeko_adapter, python_adapter, rdkit_adapter, vina_adapter
+from adapters import autogrid_adapter, meeko_adapter, python_adapter, rdkit_adapter, vina_adapter
 from dockstart_core.models import ToolCheckResult
 from dockstart_core.settings import load_settings
 from dockstart_core.toolchain_paths import (
@@ -304,6 +304,7 @@ def get_toolchain_status() -> dict[str, Any]:
 
     settings = load_settings()
     active_vina = vina_adapter.detect(settings.tool_paths.vina, str(bundled_vina_path))
+    autogrid4_detection = autogrid_adapter.detect(settings.tool_paths.autogrid4)
     resolved_python = get_resolved_python(settings.tool_paths.python)
     meeko_detection = meeko_adapter.detect(resolved_python.path, resolved_python.source)
     rdkit_detection = rdkit_adapter.detect(resolved_python.path, resolved_python.source)
@@ -380,6 +381,8 @@ def get_toolchain_status() -> dict[str, Any]:
         "warnings": warnings,
         "active_vina": active_vina.to_dict(),
         "active_source": active_vina.source,
+        "autogrid4": autogrid4_detection.to_dict(),
+        "autogrid4_source": autogrid4_detection.source,
         "resolved_python": resolved_python.to_dict(),
         "python_source": resolved_python.source,
         "meeko_for_python": meeko_detection.to_dict(),

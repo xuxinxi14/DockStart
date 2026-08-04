@@ -23,6 +23,7 @@ BACE_LIGAND = (
     / "macrocycle_bace1"
     / "BACE_1_ligand.sdf"
 )
+BACE_LIGAND_MOL2 = BACE_LIGAND.with_suffix(".mol2")
 
 
 def _fake_analysis() -> dict:
@@ -593,6 +594,27 @@ class MacrocycleDomainTests(unittest.TestCase):
         self.assertEqual(
             prepared["glue_pseudo_atom_count"],
             2 * len(plan["contract"]["exact_bonds"]),
+        )
+
+    def test_official_bace_mol2_has_same_topology_and_recommended_break(self) -> None:
+        self._require_toolkit()
+        self.assertTrue(BACE_LIGAND_MOL2.is_file(), BACE_LIGAND_MOL2)
+
+        sdf = macrocycle.analyze_macrocycle_file(BACE_LIGAND)
+        mol2 = macrocycle.analyze_macrocycle_file(BACE_LIGAND_MOL2)
+        recommended = next(
+            candidate
+            for candidate in mol2["candidate_sets"]
+            if candidate["candidate_id"] == mol2["recommended_candidate_id"]
+        )
+
+        self.assertTrue(mol2["is_macrocycle"])
+        self.assertTrue(mol2["flexible_supported"], mol2)
+        self.assertEqual(mol2["candidate_count_total"], 7)
+        self.assertEqual(recommended["exact_bonds"], [[2, 3]])
+        self.assertEqual(
+            mol2["bond_topology_sha256"],
+            sdf["bond_topology_sha256"],
         )
 
     def test_implicit_hydrogens_use_same_review_and_worker_mapping(

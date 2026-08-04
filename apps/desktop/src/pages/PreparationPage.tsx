@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CheckCircle, FileArrowUp, Info, Wrench } from "@phosphor-icons/react";
+import { CheckCircle, FileArrowUp, Info } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -39,6 +39,12 @@ import {
   normalizeMacrocycleReviewOptions,
   selectionFromMacrocycleStatus,
 } from "../utils/macrocyclePreparation";
+import {
+  normalizeLigandImportPreview,
+  type LigandImportCandidate,
+  type LigandImportPreview,
+} from "../utils/screeningLigandImport";
+import { readDockingWorkspaceMode, writeDockingWorkspaceMode } from "../utils/dockingMode";
 import { structureInputKind } from "../utils/structureInput";
 
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
@@ -114,6 +120,16 @@ function capabilityLine(tool: PreparationToolCapabilityResult | undefined, capab
   return `${statusLabel(capability.status)} · ${capability.message}`;
 }
 
+function sourceIdentityLabel(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  const isFilesystemPath = /^[a-zA-Z]:[\\/]/.test(normalized)
+    || /^\\\\/.test(normalized)
+    || normalized.startsWith("/");
+  if (!isFilesystemPath) return normalized;
+  return normalized.split(/[\\/]/).filter(Boolean).pop() || normalized;
+}
+
 function factRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
@@ -159,7 +175,6 @@ function FactValue({ children, source }: { children: ReactNode; source: string }
     <dd
       aria-label={`${String(children)}；数据来源：${source}`}
       className="preparation-fact-value"
-      title={`数据来源：${source}`}
     >
       <span className="preparation-fact-text">{children}</span>
     </dd>
@@ -180,6 +195,7 @@ export default function PreparationPage({
   const [overwriteReceptor, setOverwriteReceptor] = useState(false);
   const [overwriteLigand, setOverwriteLigand] = useState(false);
   const [badResidueReviewConfirmed, setBadResidueReviewConfirmed] = useState(false);
+  const [receptorAltlocSelections, setReceptorAltlocSelections] = useState<Record<string, string>>({});
   const [macrocycleMode, setMacrocycleMode] = useState<MacrocyclePreparationMode>("standard");
   const [macrocycleOptions, setMacrocycleOptions] = useState<MacrocycleReviewOptions>(
     defaultMacrocycleReviewOptions,
@@ -192,15 +208,26 @@ export default function PreparationPage({
   const [previewRequested, setPreviewRequested] = useState<Record<PreparationTarget, boolean>>({ receptor: false, ligand: false });
   const [tools, setTools] = useState<PreparationStatusResponse["tools"]>();
   const [isCheckingTools, setIsCheckingTools] = useState(false);
+  const [batchLigandPreview, setBatchLigandPreview] = useState<LigandImportPreview | null>(null);
+  const [selectedBatchLigandId, setSelectedBatchLigandId] = useState("");
   const [pendingTarget, setPendingTarget] = useState<PreparationTarget | null>(null);
   const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const macrocycleRequestRef = useRef(0);
+  const statusRequestRef = useRef(0);
+  const currentProjectDirRef = useRef(initialProject.project_dir);
   const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
+  const rawReceptorIdentityRef = useRef(`${initialProject.project_dir}|${initialProject.receptor.raw_file}`);
   const rawLigandIdentityRef = useRef(`${initialProject.project_dir}|${initialProject.ligand.raw_file}`);
 
   useEffect(() => {
+    if (currentProjectDirRef.current !== initialProject.project_dir) {
+      currentProjectDirRef.current = initialProject.project_dir;
+      statusRequestRef.current += 1;
+      setBatchLigandPreview(null);
+      setSelectedBatchLigandId("");
+    }
     const nextIdentity = `${initialProject.receptor.file}|${initialProject.ligand.file}`;
     if (preparedIdentityRef.current !== nextIdentity) {
       const [previousReceptor, previousLigand] = preparedIdentityRef.current.split("|");
@@ -209,6 +236,12 @@ export default function PreparationPage({
         receptor: previousReceptor !== initialProject.receptor.file ? revision.receptor + 1 : revision.receptor,
         ligand: previousLigand !== initialProject.ligand.file ? revision.ligand + 1 : revision.ligand,
       }));
+    }
+    const nextRawReceptorIdentity = `${initialProject.project_dir}|${initialProject.receptor.raw_file}`;
+    if (rawReceptorIdentityRef.current !== nextRawReceptorIdentity) {
+      rawReceptorIdentityRef.current = nextRawReceptorIdentity;
+      setBadResidueReviewConfirmed(false);
+      setReceptorAltlocSelections({});
     }
     const nextRawLigandIdentity = `${initialProject.project_dir}|${initialProject.ligand.raw_file}`;
     if (rawLigandIdentityRef.current !== nextRawLigandIdentity) {
@@ -256,7 +289,10 @@ export default function PreparationPage({
       }
       setMessage(next.message ?? next.error?.message ?? fallbackMessage);
       setRawError(next.error?.raw_error ?? "");
-      if (completedTarget === "receptor") setBadResidueReviewConfirmed(false);
+      if (completedTarget === "receptor") {
+        setBadResidueReviewConfirmed(false);
+        setReceptorAltlocSelections({});
+      }
     },
     [onProjectChange],
   );
@@ -331,20 +367,76 @@ export default function PreparationPage({
 
   const reloadStatus = useCallback(async () => {
     if (!mountedRef.current) return;
+    const requestId = ++statusRequestRef.current;
+    const requestedProjectDir = project.project_dir;
     setIsBusy(true);
     try {
-      const [rawPayload, rawReviewPayload] = await Promise.all([
+      const [rawPayload, rawReviewPayload, rawScreeningPayload] = await Promise.all([
         invoke<string>("get_preparation_status", { projectDir: project.project_dir }),
         invoke<string>("get_structure_review", { projectDir: project.project_dir }),
+        invoke<string>("get_screening_status", { projectDir: project.project_dir }),
       ]);
       const parsed = parsePreparationResponse(rawPayload);
       const reviewResponse = JSON.parse(rawReviewPayload) as {
         ok?: boolean;
         structure_review?: StructureReviewPayload;
       };
-      if (!mountedRef.current) return;
+      if (
+        !mountedRef.current
+        || requestId !== statusRequestRef.current
+        || requestedProjectDir !== project.project_dir
+      ) return;
       if (reviewResponse.ok && reviewResponse.structure_review) {
         parsed.structure_review = reviewResponse.structure_review;
+      }
+      try {
+        const screeningResponse = JSON.parse(rawScreeningPayload) as Record<string, unknown>;
+        const preview = normalizeLigandImportPreview(screeningResponse);
+        const selectedCandidateIds = new Set(
+          Array.isArray(screeningResponse.staged)
+            ? screeningResponse.staged.flatMap((item) => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                const candidateId = String((item as Record<string, unknown>).candidate_id || "");
+                return candidateId ? [candidateId] : [];
+              })
+            : [],
+        );
+        const viewableCandidates = preview.candidates.filter((candidate) => {
+          if (!candidate.stagedFile) return false;
+          if (candidate.status === "ready") {
+            return selectedCandidateIds.size === 0 || selectedCandidateIds.has(candidate.id);
+          }
+          if (candidate.status === "duplicate") {
+            return selectedCandidateIds.size === 0
+              || Boolean(candidate.duplicateOf && selectedCandidateIds.has(candidate.duplicateOf));
+          }
+          return false;
+        });
+        const readyCandidates = viewableCandidates.filter((candidate) => candidate.status === "ready");
+        const activeLigandSource = String(parsed.project?.ligand.source_id || "").trim().toLowerCase();
+        const activeLigandMatches = Boolean(activeLigandSource) && viewableCandidates.some((candidate) => (
+          [candidate.displayName, candidate.originalName]
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean)
+            .some((value) => activeLigandSource === value || activeLigandSource.includes(value))
+        ));
+        const batchModeIsCurrent = screeningResponse.mode === "batch"
+          && readDockingWorkspaceMode(project.project_dir) === "batch"
+          && activeLigandMatches;
+        if (batchModeIsCurrent && readyCandidates.length > 1 && preview.revisionSha256) {
+          setBatchLigandPreview({ ...preview, candidates: viewableCandidates });
+          setSelectedBatchLigandId((current) => (
+            viewableCandidates.some((candidate) => candidate.id === current)
+              ? current
+              : viewableCandidates[0].id
+          ));
+        } else {
+          setBatchLigandPreview(null);
+          setSelectedBatchLigandId("");
+        }
+      } catch {
+        setBatchLigandPreview(null);
+        setSelectedBatchLigandId("");
       }
       applyResponse(parsed, "准备状态已刷新。");
     } catch (error) {
@@ -367,7 +459,7 @@ export default function PreparationPage({
         title: isReceptor ? "选择受体结构" : "选择配体结构",
         filters: [{
           name: isReceptor ? "受体结构" : "配体结构",
-          extensions: isReceptor ? ["pdbqt", "pdb", "cif"] : ["pdbqt", "sdf", "mol"],
+          extensions: isReceptor ? ["pdbqt", "pdb", "cif"] : ["pdbqt", "sdf", "mol", "mol2"],
         }],
       });
       const sourcePath = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
@@ -376,7 +468,7 @@ export default function PreparationPage({
       if (kind === "unsupported") {
         setMessage(isReceptor
           ? "受体格式不受支持。请选择 PDBQT、PDB 或 CIF。"
-          : "配体格式不受支持。请选择 PDBQT、SDF 或 MOL。");
+          : "配体格式不受支持。请选择 PDBQT、SDF、MOL 或 MOL2。");
         return;
       }
       setIsBusy(true);
@@ -386,6 +478,7 @@ export default function PreparationPage({
       const rawPayload = await invoke<string>(command, {
         projectDir: project.project_dir,
         sourcePath,
+        ...(kind === "pdbqt" ? { sourceLabel: sourcePath.split(/[\\/]/).pop() || sourcePath } : {}),
       });
       const parsed = JSON.parse(rawPayload) as {
         ok?: boolean;
@@ -400,7 +493,15 @@ export default function PreparationPage({
       }
       setProject(parsed.project);
       onProjectChange(parsed.project);
-      if (target === "receptor") setBadResidueReviewConfirmed(false);
+      if (target === "ligand") {
+        writeDockingWorkspaceMode(project.project_dir, "single");
+        setBatchLigandPreview(null);
+        setSelectedBatchLigandId("");
+      }
+      if (target === "receptor") {
+        setBadResidueReviewConfirmed(false);
+        setReceptorAltlocSelections({});
+      }
       setPreviewRequested((current) => ({ ...current, [target]: false }));
       setMessage(kind === "pdbqt"
         ? `${isReceptor ? "受体" : "配体"} PDBQT 已导入，可直接预览。`
@@ -417,6 +518,11 @@ export default function PreparationPage({
   useEffect(() => {
     void reloadStatus();
   }, [reloadStatus]);
+
+  useEffect(() => {
+    const errorCode = response?.preparation?.ligand.error?.code ?? response?.error?.code;
+    if (errorCode === "MACROCYCLE_REVIEW_REQUIRED") setMacrocycleMode("reviewed");
+  }, [response?.error?.code, response?.preparation?.ligand.error?.code]);
 
   const applyMacrocycleStatus = useCallback((
     next: MacrocycleStatusResponse,
@@ -656,12 +762,32 @@ export default function PreparationPage({
     const detectedBadResidues = target === "receptor"
       ? response?.preparation?.receptor.error?.bad_residues ?? []
       : [];
+    const detectedAltlocs = target === "receptor"
+      ? response?.preparation?.receptor.error?.alternate_locations
+        ?? response?.error?.alternate_locations
+        ?? []
+      : [];
     const reviewedBadResidueOptions = target === "receptor"
       && detectedBadResidues.length > 0
       && badResidueReviewConfirmed
       ? {
           protocol: "meeko_allow_bad_res_reviewed",
           acknowledged_bad_residues: detectedBadResidues,
+          alternate_locations: receptorAltlocSelections,
+        }
+      : undefined;
+    const reviewedAltlocOptions = target === "receptor"
+      && detectedBadResidues.length === 0
+      && detectedAltlocs.length > 0
+      ? {
+          protocol: "meeko_receptor_controls",
+          receptor_controls: {
+            schema_version: 1,
+            allow_bad_res: false,
+            alternate_locations: receptorAltlocSelections,
+            template_assignments: {},
+            deleted_residues: [],
+          },
         }
       : undefined;
     setPendingTarget(target);
@@ -677,7 +803,7 @@ export default function PreparationPage({
         project.project_dir,
         target,
         target === "receptor" ? overwriteReceptor : overwriteLigand,
-        reviewedBadResidueOptions ?? reviewedMacrocycleOptions ?? undefined,
+        reviewedBadResidueOptions ?? reviewedAltlocOptions ?? reviewedMacrocycleOptions ?? undefined,
       );
       taskId = started.task_id;
       if (!mountedRef.current) return;
@@ -744,11 +870,42 @@ export default function PreparationPage({
   const receptorPrep: PreparationResult | undefined = preparation?.receptor;
   const ligandPrep: PreparationResult | undefined = preparation?.ligand;
   const files = response?.files;
-  const readyForBox = files?.receptor_prepared?.status === "ok" && files?.ligand_prepared?.status === "ok";
+  const batchViewableLigands = batchLigandPreview?.candidates.filter((candidate) => (
+    (candidate.status === "ready" || candidate.status === "duplicate")
+    && Boolean(candidate.stagedFile)
+  )) ?? [];
+  const batchReadyLigands = batchViewableLigands.filter((candidate) => (
+    candidate.status === "ready" && Boolean(candidate.stagedFile)
+  ));
+  const isBatchPreparation = batchReadyLigands.length > 1 && Boolean(batchLigandPreview?.revisionSha256);
+  const selectedBatchLigand = batchViewableLigands.find((candidate) => candidate.id === selectedBatchLigandId)
+    ?? batchViewableLigands[0]
+    ?? null;
+  const readyForBox = files?.receptor_prepared?.status === "ok"
+    && (isBatchPreparation || files?.ligand_prepared?.status === "ok");
   const reviewedMacrocyclePreparationOptions = buildReviewedMacrocyclePreparationOptions(
     macrocycleStatus,
     macrocycleSelection,
     macrocycleOptions,
+  );
+  const macrocycleConfirmation = macrocycleStatus?.confirmation?.valid
+    ? macrocycleStatus.confirmation
+    : null;
+  const macrocyclePreparedForCurrentConfirmation = Boolean(
+    files?.ligand_prepared?.status === "ok"
+    && ligandPrep?.method === "meeko_macrocycle"
+    && ligandPrep.status === "finished"
+    && macrocycleConfirmation
+    && macrocycleEvidence
+    && macrocycleEvidence.reviewId === macrocycleConfirmation.review_id
+    && macrocycleEvidence.confirmationSha256.toLowerCase()
+      === String(macrocycleConfirmation.record?.sha256 || "").toLowerCase()
+    && macrocycleEvidence.selectionMode === macrocycleConfirmation.selection_mode
+    && (
+      macrocycleConfirmation.selection_mode === "rigid"
+      || macrocycleEvidence.candidateId === macrocycleConfirmation.candidate_id
+    )
+    && macrocycleEvidence.bondsMatch === true
   );
   const interactionBusy = Boolean(
     isMacrocycleBusy
@@ -815,6 +972,7 @@ export default function PreparationPage({
     const preparedFile = isReceptor ? files?.receptor_prepared : files?.ligand_prepared;
     const projectFile = isReceptor ? project.receptor.file : project.ligand.file;
     const projectRawFile = isReceptor ? project.receptor.raw_file : project.ligand.raw_file;
+    const projectSourceId = isReceptor ? project.receptor.source_id : project.ligand.source_id;
     const rawReady = rawFile?.status === "ok";
     const isReady = preparedFile?.status === "ok";
     const macrocyclePreparationBlocked = (
@@ -825,7 +983,10 @@ export default function PreparationPage({
     const displayFile = isReady
       ? fileLine(preparedFile, projectFile)
       : fileLine(rawFile, projectRawFile);
-    const fileName = displayFile.split(/[\\/]/).filter(Boolean).pop() || "尚未选择结构";
+    const sourceName = sourceIdentityLabel(projectSourceId);
+    const fileName = sourceName
+      || displayFile.split(/[\\/]/).filter(Boolean).pop()
+      || "尚未选择结构";
     const preparedSize = preparedFile?.size ?? 0;
     const shouldLoadPreview = isReady && previewRequested[target];
     const review: StructureReviewPayload | undefined = response?.structure_review;
@@ -856,6 +1017,12 @@ export default function PreparationPage({
     const badResidues = isReceptor
       ? prep?.error?.bad_residues ?? response?.error?.bad_residues ?? []
       : [];
+    const alternateLocations = isReceptor
+      ? prep?.error?.alternate_locations ?? response?.error?.alternate_locations ?? []
+      : [];
+    const allAlternateLocationsSelected = alternateLocations.every((item) => (
+      item.ids.includes(receptorAltlocSelections[item.selector] ?? "")
+    ));
 
     return (
       <article className="preparation-target-row">
@@ -865,7 +1032,7 @@ export default function PreparationPage({
             <div>
               <span>{label}</span>
               <strong>{fileName}</strong>
-              <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL") : "等待文件"}</small>
+              <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL / MOL2") : "等待文件"}</small>
             </div>
           </div>
           {isReady ? (
@@ -989,39 +1156,30 @@ export default function PreparationPage({
                 />
                 {isReady ? "从原始文件重新转换" : "覆盖已有 PDBQT"}
               </label>
-              {badResidues.length ? (
-                <div className="preparation-bad-residue-review" role="group" aria-label="不完整残基确认">
-                  <strong>需确认 {badResidues.length} 个不完整残基</strong>
-                  <div className="preparation-bad-residue-list">
-                    {badResidues.map((residue) => <code key={residue}>{residue}</code>)}
-                  </div>
-                  <label className="checkbox-row compact">
-                    <input
-                      type="checkbox"
-                      checked={badResidueReviewConfirmed}
-                      onChange={(event) => setBadResidueReviewConfirmed(event.target.checked)}
-                    />
-                    已检查并同意本次转换忽略这些残基
-                  </label>
-                </div>
-              ) : null}
-              <ActionButton
-                variant="primary"
-                disabled={
-                  interactionBusy
-                  || !rawReady
-                  || macrocyclePreparationBlocked
-                  || (badResidues.length > 0 && !badResidueReviewConfirmed)
-                  || (isReady && !(isReceptor ? overwriteReceptor : overwriteLigand))
-                }
-                onClick={() => void prepareTarget(target)}
-              >
-                {isReceptor
-                  ? badResidues.length ? "确认并重新转换" : "转换受体为 PDBQT"
-                  : macrocyclePreparationBlocked
-                    ? "先确认大环方案"
-                    : "转换配体为 PDBQT"}
-              </ActionButton>
+              {!isReceptor && macrocycleMode === "reviewed"
+                ? null
+                : badResidues.length || alternateLocations.length
+                  ? null
+                  : (
+                <ActionButton
+                  variant="primary"
+                  disabled={
+                    interactionBusy
+                    || !rawReady
+                    || macrocyclePreparationBlocked
+                    || (badResidues.length > 0 && !badResidueReviewConfirmed)
+                    || !allAlternateLocationsSelected
+                    || (isReady && !(isReceptor ? overwriteReceptor : overwriteLigand))
+                  }
+                  onClick={() => void prepareTarget(target)}
+                >
+                  {isReceptor
+                    ? badResidues.length || alternateLocations.length ? "确认并重新转换" : "转换受体为 PDBQT"
+                    : macrocyclePreparationBlocked
+                      ? "先确认大环方案"
+                      : "转换配体为 PDBQT"}
+                </ActionButton>
+                  )}
             </>
           ) : null}
 
@@ -1037,9 +1195,154 @@ export default function PreparationPage({
             </div>
           </AdvancedDetails>
         </div>
+        {badResidues.length || alternateLocations.length ? (
+          <section className="preparation-target-review" aria-label="受体结构审查">
+            <header>
+              <div>
+                <span className="section-kicker">结构审查</span>
+                <strong>确认不完整残基与替代构象</strong>
+              </div>
+              <span>{badResidues.length + alternateLocations.length} 项待确认</span>
+            </header>
+            <div className="preparation-target-review-grid">
+              {badResidues.length ? (
+                <div className="preparation-review-group">
+                  <strong>不完整残基（{badResidues.length}）</strong>
+                  <div className="preparation-bad-residue-list">
+                    {badResidues.map((residue) => <code key={residue}>{residue}</code>)}
+                  </div>
+                  <label className="checkbox-row compact">
+                    <input
+                      type="checkbox"
+                      checked={badResidueReviewConfirmed}
+                      onChange={(event) => setBadResidueReviewConfirmed(event.target.checked)}
+                    />
+                    <span>已检查并同意本次转换忽略这些残基</span>
+                  </label>
+                </div>
+              ) : null}
+              {alternateLocations.length ? (
+                <div className="preparation-review-group preparation-altloc-review">
+                  <strong>替代构象（{alternateLocations.length}）</strong>
+                  {alternateLocations.map((item) => (
+                    <label key={item.selector}>
+                      <span>{item.selector}{item.residue_name ? ` ${item.residue_name}` : ""}</span>
+                      <select
+                        value={receptorAltlocSelections[item.selector] ?? ""}
+                        onChange={(event) => setReceptorAltlocSelections((current) => ({
+                          ...current,
+                          [item.selector]: event.target.value,
+                        }))}
+                      >
+                        <option value="">请选择构象</option>
+                        {item.ids.map((id) => <option key={id} value={id}>{id}</option>)}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <footer>
+              <span>完成以上选择后，将使用本次确认重新准备受体。</span>
+              <ActionButton
+                variant="primary"
+                disabled={
+                  interactionBusy
+                  || !rawReady
+                  || (badResidues.length > 0 && !badResidueReviewConfirmed)
+                  || !allAlternateLocationsSelected
+                  || (isReady && !overwriteReceptor)
+                }
+                onClick={() => void prepareTarget("receptor")}
+              >
+                确认并重新转换
+              </ActionButton>
+            </footer>
+          </section>
+        ) : null}
       </article>
     );
   };
+
+  const renderBatchLigandRow = (
+    candidates: LigandImportCandidate[],
+    selected: LigandImportCandidate,
+    revisionSha256: string,
+  ) => (
+    <article className="preparation-target-row preparation-batch-target-row">
+      <div className="preparation-batch-browser">
+        <header>
+          <div>
+            <span className="section-kicker">02 · LIGAND LIBRARY</span>
+            <strong>批量配体（{candidates.length}）</strong>
+          </div>
+          <span>{batchReadyLigands.length} 个对接快照{candidates.length !== batchReadyLigands.length ? ` · ${candidates.length} 条来源记录` : ""}</span>
+        </header>
+        <div className="preparation-batch-list" role="listbox" aria-label="选择要预览的批量配体">
+          {candidates.map((candidate, index) => {
+            const active = candidate.id === selected.id;
+            const facts = candidate.chemicalFacts;
+            return (
+              <button
+                className={`preparation-batch-item${active ? " is-selected" : ""}`}
+                key={candidate.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => setSelectedBatchLigandId(candidate.id)}
+              >
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <span>
+                  <strong>{candidate.displayName}</strong>
+                  <small>{candidate.originalName || candidate.sourceFile}</small>
+                </span>
+                <span>
+                  {candidate.sourceFormat.toUpperCase()} → PDBQT
+                  {candidate.status === "duplicate" ? " · 重复结构" : ""}
+                  {facts?.heavyAtomCount !== null && facts?.heavyAtomCount !== undefined
+                    ? ` · ${facts.heavyAtomCount} 重原子`
+                    : ""}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">正在加载 3D 预览…</div>}>
+        <StructureMiniPreview
+          fileKind="ligand_prepared"
+          label={selected.displayName}
+          projectDir={project.project_dir}
+          screeningCandidate={{ id: selected.id, revisionSha256 }}
+        />
+      </Suspense>
+
+      <div className="preparation-target-actions preparation-batch-actions">
+        <div className="preparation-file-check is-ready">
+          <CheckCircle aria-hidden="true" size={18} weight="fill" />
+          <div>
+            <strong>{selected.displayName}</strong>
+            <span>当前 3D 预览</span>
+          </div>
+        </div>
+        <dl className="preparation-batch-facts">
+          <div><dt>原始文件</dt><dd>{selected.originalName || "未记录"}</dd></div>
+          <div><dt>记录</dt><dd>{selected.recordIndex}</dd></div>
+          <div><dt>形式电荷</dt><dd>{selected.chemicalFacts?.formalCharge ?? "未记录"}</dd></div>
+          <div><dt>可旋转键</dt><dd>{selected.chemicalFacts?.rotatableBondCount ?? "未记录"}</dd></div>
+        </dl>
+        <ActionButton onClick={onBack}>更改配体库</ActionButton>
+        <AdvancedDetails className="preparation-target-details" summary="查看候选身份">
+          <dl className="meta-list">
+            <div><dt>候选编号</dt><dd><code>{selected.id}</code></dd></div>
+            <div><dt>来源格式</dt><dd>{selected.sourceFormat.toUpperCase()}</dd></div>
+            <div><dt>准备后快照</dt><dd><code>{selected.stagedFile || "未生成"}</code></dd></div>
+          </dl>
+        </AdvancedDetails>
+      </div>
+    </article>
+  );
 
   return (
     <PageShell labelledBy="preparation-title" className="preparation-workspace-page">
@@ -1059,7 +1362,7 @@ export default function PreparationPage({
         eyebrow="格式转换 · PDBQT PREPARATION"
         title="格式转换与 PDBQT 准备"
         titleId="preparation-title"
-        description="将受体 PDB/CIF 与配体 SDF/MOL 准备并转换为 PDBQT，或直接导入已有 PDBQT。"
+        description="将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。"
         actions={(
           <>
             <ActionButton variant="primary" onClick={onBack}>在线搜索并下载</ActionButton>
@@ -1075,10 +1378,13 @@ export default function PreparationPage({
         <MainPanel className="preparation-stage-panel">
           <div className="preparation-target-list">
             {renderStructureRow("receptor", receptorPrep)}
-            {renderStructureRow("ligand", ligandPrep)}
+            {isBatchPreparation && selectedBatchLigand && batchLigandPreview?.revisionSha256
+              ? renderBatchLigandRow(batchViewableLigands, selectedBatchLigand, batchLigandPreview.revisionSha256)
+              : renderStructureRow("ligand", ligandPrep)}
           </div>
 
-          <AdvancedDetails className="preparation-macrocycle-panel" summary="高级：Meeko 大环配体准备">
+          {!isBatchPreparation ? (
+          <section className="preparation-macrocycle-panel" aria-label="Meeko 大环配体准备">
             <MacrocycleBondSelector
               projectDir={project.project_dir}
               mode={macrocycleMode}
@@ -1088,6 +1394,9 @@ export default function PreparationPage({
               evidence={macrocycleEvidence}
               rawReady={files?.ligand_raw?.status === "ok"}
               busy={interactionBusy}
+              prepared={macrocyclePreparedForCurrentConfirmation}
+              canPrepare={Boolean(reviewedMacrocyclePreparationOptions)}
+              canContinue={Boolean(readyForBox && macrocyclePreparedForCurrentConfirmation)}
               onModeChange={changeMacrocycleMode}
               onOptionsChange={changeMacrocycleOptions}
               onReview={() => void reviewMacrocycle()}
@@ -1096,16 +1405,11 @@ export default function PreparationPage({
               onConfirmCandidate={() => void confirmMacrocycleCandidate()}
               onConfirmRigid={() => void confirmRigidMacrocycle()}
               onResetConfirmation={() => void resetMacrocycleConfirmation()}
+              onPrepare={() => void prepareTarget("ligand")}
+              onContinue={() => onOpenBoxSetup(project)}
             />
-          </AdvancedDetails>
-
-          <div className="preparation-source-strip">
-            <div>
-              <Wrench aria-hidden="true" size={18} />
-              <span>每个文件按实际格式处理：PDBQT 直接使用，PDB/CIF 或 SDF/MOL 提供转换。</span>
-            </div>
-            <ActionButton variant="primary" onClick={onBack}>在线搜索结构</ActionButton>
-          </div>
+          </section>
+          ) : null}
 
           <div className="preparation-feedback">
             <ScientificDisclaimer kind="preparation" />
@@ -1116,9 +1420,13 @@ export default function PreparationPage({
             <p>自动准备结果仍需人工检查质子化、电荷、构象和缺失残基。</p>
             <div>
               <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新文件状态"}</ActionButton>
-              <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
-                PDBQT 已就绪，设置搜索范围
-              </ActionButton>
+              {!isBatchPreparation && macrocycleMode === "reviewed" ? (
+                <span className="preparation-next-step-status">请在大环准备模块完成并继续</span>
+              ) : readyForBox ? (
+                <ActionButton variant="primary" onClick={() => onOpenBoxSetup(project)}>
+                  设置搜索范围
+                </ActionButton>
+              ) : <span className="preparation-next-step-status">受体与配体准备完成后可继续</span>}
             </div>
           </footer>
         </MainPanel>
@@ -1126,15 +1434,22 @@ export default function PreparationPage({
         <RightRail className="preparation-context-rail">
           <RightRailSection title="当前输入">
             <dl className="mode-context-list">
-              <div><dt>受体</dt><dd>{files?.receptor_prepared?.path || files?.receptor_raw?.path || project.receptor.file || project.receptor.raw_file || "未选择"}</dd></div>
-              <div><dt>配体</dt><dd>{files?.ligand_prepared?.path || files?.ligand_raw?.path || project.ligand.file || project.ligand.raw_file || "未选择"}</dd></div>
+              <div><dt>受体</dt><dd>{project.receptor.source_id || files?.receptor_prepared?.path || files?.receptor_raw?.path || project.receptor.file || project.receptor.raw_file || "未选择"}</dd></div>
+              {isBatchPreparation && selectedBatchLigand ? (
+                <>
+                  <div><dt>配体库</dt><dd>{batchViewableLigands.length} 条来源记录 · {batchReadyLigands.length} 个对接快照</dd></div>
+                  <div><dt>当前预览</dt><dd>{selectedBatchLigand.displayName}</dd></div>
+                </>
+              ) : (
+                <div><dt>配体</dt><dd>{project.ligand.source_id || files?.ligand_prepared?.path || files?.ligand_raw?.path || project.ligand.file || project.ligand.raw_file || "未选择"}</dd></div>
+              )}
             </dl>
           </RightRailSection>
 
           <RightRailSection title="文件检查">
             <div className="preparation-check-list">
               <span className={files?.receptor_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 受体 PDBQT</span>
-              <span className={files?.ligand_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 配体 PDBQT</span>
+              <span className={isBatchPreparation || files?.ligand_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> {isBatchPreparation ? `${batchReadyLigands.length} 个配体 PDBQT` : "配体 PDBQT"}</span>
             </div>
           </RightRailSection>
 

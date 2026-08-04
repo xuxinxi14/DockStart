@@ -531,6 +531,7 @@ class ProjectTests(unittest.TestCase):
             project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
             self.assertEqual(project["receptor"]["file"], "prepared/receptor.pdbqt")
             self.assertEqual(project["receptor"]["source"], "local")
+            self.assertEqual(project["receptor"]["source_id"], "source_receptor.pdbqt")
 
     def test_import_ligand_copies_file_and_updates_project_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -549,6 +550,157 @@ class ProjectTests(unittest.TestCase):
             project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
             self.assertEqual(project["ligand"]["file"], "prepared/ligand.pdbqt")
             self.assertEqual(project["ligand"]["source"], "local")
+            self.assertEqual(project["ligand"]["source_id"], "source_ligand.pdbqt")
+
+    def test_import_pdbqt_preserves_explicit_display_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            ligand_source = Path(temp_dir) / "frozen_hash.pdbqt"
+            ligand_source.write_text("REMARK ligand\n", encoding="utf-8")
+
+            response = import_ligand_pdbqt(
+                str(project_dir),
+                str(ligand_source),
+                "P69",
+            )
+
+            self.assertTrue(response["ok"])
+            project = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(project["ligand"]["source_id"], "P69")
+            self.assertEqual(project["ligand"]["query_type"], "local_file")
+
+    def test_import_pdbqt_preserves_inchi_display_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            ligand_source = Path(temp_dir) / "frozen_hash.pdbqt"
+            ligand_source.write_text("REMARK ligand\n", encoding="utf-8")
+            source_label = "InChI=1S/C8H10N4O2/c1-10-6-5(7(13)11:8(10)14)9-3-2-4-12-6/h2-4H,1H3"
+
+            response = import_ligand_pdbqt(
+                str(project_dir),
+                str(ligand_source),
+                source_label,
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["project"]["ligand"]["source_id"], source_label)
+
+    def test_import_pdbqt_normalizes_unicode_and_control_characters_in_label(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            ligand_source = Path(temp_dir) / "unicode.pdbqt"
+            ligand_source.write_text("REMARK ligand\n", encoding="utf-8")
+
+            response = import_ligand_pdbqt(
+                str(project_dir),
+                str(ligand_source),
+                "  配体 α/β:\x00\t候选\n二号\x1f  ",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(
+                response["project"]["ligand"]["source_id"],
+                "配体 α/β: 候选 二号",
+            )
+
+    def test_import_pdbqt_limits_display_identity_to_240_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            ligand_source = Path(temp_dir) / "long-label.pdbqt"
+            ligand_source.write_text("REMARK ligand\n", encoding="utf-8")
+            source_label = "长" * 300
+
+            response = import_ligand_pdbqt(
+                str(project_dir),
+                str(ligand_source),
+                source_label,
+            )
+
+            self.assertTrue(response["ok"])
+            normalized = response["project"]["ligand"]["source_id"]
+            self.assertEqual(normalized, "长" * 240)
+            self.assertEqual(len(normalized), 240)
+
+    def test_import_pdbqt_empty_normalized_label_falls_back_to_source_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            ligand_source = Path(temp_dir) / "fallback-name.pdbqt"
+            ligand_source.write_text("REMARK ligand\n", encoding="utf-8")
+
+            response = import_ligand_pdbqt(
+                str(project_dir),
+                str(ligand_source),
+                " \x00\t\n\x1f ",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(
+                response["project"]["ligand"]["source_id"],
+                ligand_source.name,
+            )
+
+    def test_import_pdbqt_clears_only_imported_target_current_preparation(self) -> None:
+        for role, importer in (
+            ("receptor", import_receptor_pdbqt),
+            ("ligand", import_ligand_pdbqt),
+        ):
+            with self.subTest(role=role), tempfile.TemporaryDirectory() as temp_dir:
+                project_response = create_project("demo_project", temp_dir)
+                project_dir = Path(project_response["project_dir"])
+                project_json = project_dir / "project.json"
+                project = json.loads(project_json.read_text(encoding="utf-8"))
+                other_role = "ligand" if role == "receptor" else "receptor"
+                for target in ("receptor", "ligand"):
+                    prep_id = f"{target}_001"
+                    project["preparation"][target].update(
+                        {
+                            "prep_id": prep_id,
+                            "status": "finished",
+                            "method": "meeko",
+                            "input_file": f"raw/{target}.pdb",
+                            "metadata_file": f"preparation/{prep_id}/metadata.json",
+                            "finished_at": "2026-08-03T00:00:00+00:00",
+                        }
+                    )
+                    project["latest_preparation"][target] = prep_id
+                    record_dir = project_dir / "preparation" / prep_id
+                    record_dir.mkdir()
+                    (record_dir / "metadata.json").write_text(
+                        json.dumps({"prep_id": prep_id}, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                project_json.write_text(
+                    json.dumps(project, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                source = Path(temp_dir) / f"new-{role}.pdbqt"
+                source.write_text(f"REMARK {role}\n", encoding="utf-8")
+
+                response = importer(str(project_dir), str(source))
+
+                self.assertTrue(response["ok"])
+                imported_preparation = response["project"]["preparation"][role]
+                self.assertEqual(imported_preparation["prep_id"], "")
+                self.assertEqual(imported_preparation["status"], "not_started")
+                self.assertIsNone(imported_preparation["method"])
+                self.assertEqual(imported_preparation["metadata_file"], "")
+                self.assertEqual(response["project"]["latest_preparation"][role], "")
+                self.assertEqual(
+                    response["project"]["preparation"][other_role]["prep_id"],
+                    f"{other_role}_001",
+                )
+                self.assertEqual(
+                    response["project"]["latest_preparation"][other_role],
+                    f"{other_role}_001",
+                )
+                self.assertTrue(
+                    (project_dir / "preparation" / f"{role}_001" / "metadata.json").is_file()
+                )
 
     def test_imports_then_load_project_reads_existing_project(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

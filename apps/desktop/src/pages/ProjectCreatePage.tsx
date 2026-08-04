@@ -13,6 +13,7 @@ import { writeDockingWorkspaceMode } from "../utils/dockingMode";
 import { normalizeLigandImportPreview } from "../utils/screeningLigandImport";
 import {
   splitLigandStructurePaths,
+  structureInputExtension,
   structureInputKind,
 } from "../utils/structureInput";
 import {
@@ -358,7 +359,13 @@ export default function ProjectCreatePage({
         throw new Error("受体格式不受支持。请选择 PDBQT、PDB 或 CIF 文件。");
       }
       if (ligandStructurePaths.some((path) => structureInputKind(path, "ligand") === "unsupported")) {
-        throw new Error("配体格式不受支持。请选择 PDBQT、SDF 或 MOL 文件。");
+        throw new Error("配体格式不受支持。请选择 PDBQT、SDF、MOL 或 MOL2 文件。");
+      }
+      if (
+        ligandStructurePaths.length > 1
+        && ligandStructurePaths.some((path) => structureInputExtension(path) === "mol2")
+      ) {
+        throw new Error("MOL2 当前按单配体原始结构准备；批量导入请先分别准备为 PDBQT，或改用 SDF/MOL。");
       }
 
       setBusyOperation({
@@ -367,7 +374,11 @@ export default function ProjectCreatePage({
       });
       project = await runProjectCommand(
         receptorKind === "pdbqt" ? "import_receptor_pdbqt" : "import_receptor_raw_file",
-        { projectDir: project.project_dir, sourcePath: receptorStructurePath },
+        {
+          projectDir: project.project_dir,
+          sourcePath: receptorStructurePath,
+          ...(receptorKind === "pdbqt" ? { sourceLabel: fileNameFromPath(receptorStructurePath) } : {}),
+        },
         receptorKind === "pdbqt" ? "受体 PDBQT 导入失败。" : "受体原始结构导入失败。",
       );
 
@@ -395,6 +406,7 @@ export default function ProjectCreatePage({
             {
               projectDir: project.project_dir,
               sourcePath: projectStagedFilePath(project.project_dir, firstReady.stagedFile),
+              sourceLabel: firstReady.displayName || firstReady.originalName,
             },
             "首个可用配体预览文件导入失败。",
           );
@@ -407,7 +419,11 @@ export default function ProjectCreatePage({
         const ligandKind = structureInputKind(ligandPath, "ligand");
         project = await runProjectCommand(
           ligandKind === "pdbqt" ? "import_ligand_pdbqt" : "import_ligand_raw_file",
-          { projectDir: project.project_dir, sourcePath: ligandPath },
+          {
+            projectDir: project.project_dir,
+            sourcePath: ligandPath,
+            ...(ligandKind === "pdbqt" ? { sourceLabel: fileNameFromPath(ligandPath) } : {}),
+          },
           ligandKind === "pdbqt" ? "配体 PDBQT 导入失败。" : "配体原始结构导入失败。",
         );
         writeDockingWorkspaceMode(project.project_dir, "single");
@@ -527,7 +543,7 @@ export default function ProjectCreatePage({
       directory: false,
       multiple: !single,
       title: single ? "选择一个配体结构" : "选择一个或多个配体结构",
-      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol"] }],
+      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
     });
     const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
     setUnifiedLigandPaths(files);
@@ -538,7 +554,7 @@ export default function ProjectCreatePage({
       directory: false,
       multiple: false,
       title: "更改配体结构",
-      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol"] }],
+      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
     });
     const replacement = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
     if (!replacement) return;
@@ -755,7 +771,7 @@ export default function ProjectCreatePage({
                     ? ligandStructurePaths.length === 1
                       ? "已选择 1 个待评价结构"
                       : "姿势评分与局部优化一次只能使用一个配体"
-                    : `已选择 ${ligandStructurePaths.length} 个文件；PDBQT 直接使用，SDF/MOL 按需转换`}
+                    : `已选择 ${ligandStructurePaths.length} 个文件；PDBQT 直接使用，SDF/MOL/MOL2 按需转换`}
                 </span>
               ) : null}
             </div>

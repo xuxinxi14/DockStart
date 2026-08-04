@@ -283,7 +283,7 @@ class StructureFetchTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["format"], "mol")
 
-    def test_import_ligand_raw_file_rejects_mol2_with_conversion_guidance(self) -> None:
+    def test_import_ligand_raw_file_accepts_local_mol2(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
             source = Path(temp_dir) / "ligand.mol2"
@@ -291,9 +291,8 @@ class StructureFetchTests(unittest.TestCase):
 
             result = import_ligand_raw_file(str(project_dir), str(source))
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "LOCAL_RAW_FORMAT_UNSUPPORTED")
-        self.assertIn("MOL2", result["error"]["suggestion"])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["format"], "mol2")
 
     def test_import_ligand_raw_file_rejects_unsupported_extension(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

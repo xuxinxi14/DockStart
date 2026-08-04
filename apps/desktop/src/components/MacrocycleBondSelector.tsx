@@ -26,6 +26,9 @@ type MacrocycleBondSelectorProps = {
   evidence: MacrocyclePreparationEvidence | null;
   rawReady: boolean;
   busy: boolean;
+  prepared: boolean;
+  canPrepare: boolean;
+  canContinue: boolean;
   onModeChange: (mode: MacrocycleMode) => void;
   onOptionsChange: (options: MacrocycleReviewOptions) => void;
   onReview: () => void;
@@ -34,6 +37,8 @@ type MacrocycleBondSelectorProps = {
   onConfirmCandidate: () => void;
   onConfirmRigid: () => void;
   onResetConfirmation: () => void;
+  onPrepare: () => void;
+  onContinue: () => void;
 };
 
 function statePresentation(status: MacrocycleStatusResponse | null): {
@@ -68,6 +73,9 @@ export default function MacrocycleBondSelector({
   evidence,
   rawReady,
   busy,
+  prepared,
+  canPrepare,
+  canContinue,
   onModeChange,
   onOptionsChange,
   onReview,
@@ -76,6 +84,8 @@ export default function MacrocycleBondSelector({
   onConfirmCandidate,
   onConfirmRigid,
   onResetConfirmation,
+  onPrepare,
+  onContinue,
 }: MacrocycleBondSelectorProps) {
   const review = status?.review?.valid ? status.review : null;
   const confirmation = status?.confirmation?.valid ? status.confirmation : null;
@@ -92,13 +102,16 @@ export default function MacrocycleBondSelector({
     ? Number.parseInt(review.analysis_sha256.slice(0, 8), 16) || 0
     : 0;
   const state = statePresentation(status);
+  const reviewDone = Boolean(review && reviewCurrent);
+  const confirmationDone = Boolean(confirmation);
 
   return (
     <section className="macrocycle-selector" aria-labelledby="macrocycle-selector-title">
       <header className="macrocycle-selector-header">
         <div>
+          <span className="macrocycle-selector-eyebrow">MEEKO MACROCYCLE</span>
           <h3 id="macrocycle-selector-title">大环配体准备</h3>
-          <p>柔性断环必须先分析并确认；普通配体保持标准准备。</p>
+          <p>检测到大环时，依次完成分析、断环选择、确认和转换。</p>
         </div>
         <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
       </header>
@@ -124,75 +137,87 @@ export default function MacrocycleBondSelector({
 
       {mode === "reviewed" ? (
         <>
+          <ol className="macrocycle-progress" aria-label="大环准备进度">
+            <li className={reviewDone ? "is-complete" : "is-current"}><span>1</span><strong>分析候选</strong></li>
+            <li className={selectedCandidateExists ? "is-complete" : reviewDone ? "is-current" : ""}><span>2</span><strong>选择方案</strong></li>
+            <li className={confirmationDone ? "is-complete" : selectedCandidateExists ? "is-current" : ""}><span>3</span><strong>确认断环</strong></li>
+            <li className={prepared ? "is-complete" : confirmationDone ? "is-current" : ""}><span>4</span><strong>转换 PDBQT</strong></li>
+          </ol>
+
           <div className="macrocycle-review-settings">
-            <label>
-              <span>最小环尺寸</span>
-              <input
-                type="number"
-                min={7}
-                max={33}
-                disabled={busy}
-                value={options.min_ring_size}
-                onChange={(event) => onOptionsChange({
-                  ...options,
-                  min_ring_size: Math.max(7, Math.min(33, Number(event.target.value) || 7)),
-                })}
-              />
-            </label>
-            <label>
-              <span>最大断环数</span>
-              <input
-                type="number"
-                min={1}
-                max={4}
-                disabled={busy}
-                value={options.max_breaks}
-                onChange={(event) => onOptionsChange({
-                  ...options,
-                  max_breaks: Math.max(1, Math.min(4, Number(event.target.value) || 4)),
-                })}
-              />
-            </label>
-            <label className="checkbox-row compact">
-              <input
-                type="checkbox"
-                checked={options.allow_atom_type_a_endpoints}
-                disabled={busy}
-                onChange={(event) => onOptionsChange({
-                  ...options,
-                  allow_atom_type_a_endpoints: event.target.checked,
-                })}
-              />
-              允许 A 型芳香原子作为断环端点
-            </label>
-            <label className="checkbox-row compact">
-              <input
-                type="checkbox"
-                checked={options.keep_chorded_rings}
-                disabled={busy}
-                onChange={(event) => onOptionsChange({
-                  ...options,
-                  keep_chorded_rings: event.target.checked,
-                  keep_equivalent_rings: event.target.checked
-                    ? true
-                    : options.keep_equivalent_rings,
-                })}
-              />
-              保留弦环候选
-            </label>
-            <label className="checkbox-row compact">
-              <input
-                type="checkbox"
-                checked={options.keep_equivalent_rings}
-                disabled={busy || options.keep_chorded_rings}
-                onChange={(event) => onOptionsChange({
-                  ...options,
-                  keep_equivalent_rings: event.target.checked,
-                })}
-              />
-              保留等价环候选
-            </label>
+            <div className="macrocycle-number-fields">
+              <label>
+                <span>最小环尺寸</span>
+                <input
+                  type="number"
+                  min={7}
+                  max={33}
+                  disabled={busy}
+                  value={options.min_ring_size}
+                  onChange={(event) => onOptionsChange({
+                    ...options,
+                    min_ring_size: Math.max(7, Math.min(33, Number(event.target.value) || 7)),
+                  })}
+                />
+              </label>
+              <label>
+                <span>最大断环数</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={4}
+                  disabled={busy}
+                  value={options.max_breaks}
+                  onChange={(event) => onOptionsChange({
+                    ...options,
+                    max_breaks: Math.max(1, Math.min(4, Number(event.target.value) || 4)),
+                  })}
+                />
+              </label>
+            </div>
+            <div className="macrocycle-option-toggles">
+              <label className="checkbox-row compact">
+                <input
+                  type="checkbox"
+                  checked={options.allow_atom_type_a_endpoints}
+                  disabled={busy}
+                  onChange={(event) => onOptionsChange({
+                    ...options,
+                    allow_atom_type_a_endpoints: event.target.checked,
+                  })}
+                />
+                允许芳香原子断环
+              </label>
+              <label className="checkbox-row compact">
+                <input
+                  type="checkbox"
+                  checked={options.keep_chorded_rings}
+                  disabled={busy}
+                  onChange={(event) => onOptionsChange({
+                    ...options,
+                    keep_chorded_rings: event.target.checked,
+                    keep_equivalent_rings: event.target.checked
+                      ? true
+                      : options.keep_equivalent_rings,
+                  })}
+                />
+                保留弦环候选
+              </label>
+              <label className="checkbox-row compact">
+                <input
+                  type="checkbox"
+                  checked={options.keep_equivalent_rings}
+                  disabled={busy || options.keep_chorded_rings}
+                  onChange={(event) => onOptionsChange({
+                    ...options,
+                    keep_equivalent_rings: event.target.checked,
+                  })}
+                />
+                保留等价候选
+              </label>
+            </div>
             <ActionButton
+              className="macrocycle-review-button"
               variant="primary"
               disabled={busy || !rawReady}
               onClick={onReview}
@@ -204,7 +229,7 @@ export default function MacrocycleBondSelector({
           {!rawReady ? (
             <div className="macrocycle-inline-message">
               <Info aria-hidden="true" size={17} />
-              <span>请先导入单分子 SDF 或 MOL。</span>
+              <span>请先导入单分子 SDF、MOL 或 MOL2。</span>
             </div>
           ) : null}
 
@@ -313,46 +338,66 @@ export default function MacrocycleBondSelector({
 
           {review?.is_macrocycle ? (
             <div className="macrocycle-confirmation-bar">
-              <div>
-                {confirmation ? (
-                  <>
+              {confirmation ? (
+                <>
+                  <div>
                     <CheckCircle aria-hidden="true" size={18} weight="fill" />
                     <span>
                       {confirmation.selection_mode === "rigid"
                         ? "已确认刚性大环"
                         : "已确认所选断环组合"}
                     </span>
-                  </>
-                ) : (
-                  <>
+                  </div>
+                  <ActionButton disabled={busy} onClick={onResetConfirmation}>撤销确认</ActionButton>
+                </>
+              ) : (
+                <>
+                  <div>
                     <Info aria-hidden="true" size={18} />
                     <span>确认后才能启动正式大环准备。</span>
-                  </>
-                )}
+                  </div>
+                  <div className="button-row">
+                    <ActionButton
+                      variant="primary"
+                      disabled={
+                        busy
+                        || !reviewCurrent
+                        || !status?.can_confirm_candidate
+                        || !selectedCandidateExists
+                      }
+                      onClick={onConfirmCandidate}
+                    >
+                      确认所选断环
+                    </ActionButton>
+                    {status?.can_confirm_rigid ? (
+                      <ActionButton
+                        disabled={busy || !reviewCurrent}
+                        onClick={onConfirmRigid}
+                      >
+                        改用刚性大环
+                      </ActionButton>
+                    ) : null}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {confirmation ? (
+            <div className="macrocycle-next-action">
+              <div>
+                <strong>{prepared ? "配体 PDBQT 已完成" : "断环方案已确认"}</strong>
+                <span>{prepared ? (canContinue ? "受体与配体均已就绪，可以设置搜索范围。" : "请完成受体 PDBQT 后继续。") : "按已确认方案生成配体 PDBQT。"}</span>
               </div>
-              <div className="button-row">
-                {confirmation ? (
-                  <ActionButton disabled={busy} onClick={onResetConfirmation}>撤销确认</ActionButton>
-                ) : null}
-                <ActionButton
-                  variant="primary"
-                  disabled={
-                    busy
-                    || !reviewCurrent
-                    || !status?.can_confirm_candidate
-                    || !selectedCandidateExists
-                  }
-                  onClick={onConfirmCandidate}
-                >
-                  确认所选断环
+              {prepared ? (
+                <ActionButton variant="primary" disabled={busy || !canContinue} onClick={onContinue}>
+                  设置搜索范围并继续
                 </ActionButton>
-                <ActionButton
-                  disabled={busy || !reviewCurrent || !status?.can_confirm_rigid}
-                  onClick={onConfirmRigid}
-                >
-                  确认刚性大环
+              ) : (
+                <ActionButton variant="primary" disabled={busy || !canPrepare} onClick={onPrepare}>
+                  按确认方案转换配体
                 </ActionButton>
-              </div>
+              )}
             </div>
           ) : null}
         </>

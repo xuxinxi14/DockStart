@@ -37,6 +37,10 @@ MEEKO_BAD_RESIDUE_SUMMARY_PATTERN = re.compile(
     r"Template matching failed for:\s*\[(.*?)\]",
     re.DOTALL,
 )
+MEEKO_ALTLOC_RESIDUE_SUMMARY_PATTERN = re.compile(
+    r"Residues with alternate location:\s*\[(.*?)\]",
+    re.DOTALL,
+)
 MEEKO_CONTROL_TOKEN_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9_+-]{0,7}$")
 MEEKO_DELETION_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION = 1
@@ -274,6 +278,53 @@ def extract_meeko_bad_residues(output: str) -> list[str]:
             unique.append(normalized)
             seen.add(normalized)
     return unique
+
+
+def extract_meeko_altloc_residues(output: str) -> list[str]:
+    """Extract residue IDs for which Meeko requires an explicit altloc.
+
+    Meeko prints the list as a Python-style representation.  Only quoted
+    residue tokens are parsed; the external text is never evaluated.
+    """
+
+    text = str(output or "")
+    values: list[str] = []
+    for summary in MEEKO_ALTLOC_RESIDUE_SUMMARY_PATTERN.findall(text):
+        values.extend(re.findall(r"['\"]([^'\"]+)['\"]", summary))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in seen:
+            unique.append(normalized)
+            seen.add(normalized)
+    return unique
+
+
+def receptor_altloc_review_options(
+    structure_path: str | Path,
+    residue_ids: Iterable[str],
+) -> list[dict[str, Any]]:
+    """Return explicit, source-backed altloc choices for Meeko diagnostics."""
+
+    _, available = _load_receptor_residues(Path(structure_path))
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in residue_ids:
+        selector = parse_flexible_residue(str(value))
+        if selector.canonical in seen:
+            continue
+        residue = available.get(selector.key)
+        options.append(
+            {
+                "selector": selector.canonical,
+                "meeko_id": selector.meeko_id,
+                "residue_name": residue.residue_name if residue is not None else "",
+                "ids": sorted(residue.altlocs) if residue is not None else [],
+            }
+        )
+        seen.add(selector.canonical)
+    return options
 
 
 def _normalize_bad_residue_acknowledgements(

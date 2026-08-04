@@ -33,7 +33,11 @@ from dockstart_core.flexible_movement import (
 )
 from dockstart_core.persistence import atomic_write_text as _atomic_write_text
 from dockstart_core.pose_comparison import compare_local_only_poses
-from dockstart_core.preparation_models import PreparationState, preparation_state_from_dict
+from dockstart_core.preparation_models import (
+    PreparationState,
+    default_preparation_result,
+    preparation_state_from_dict,
+)
 from dockstart_core.settings import load_settings
 from dockstart_core.structure_review import build_structure_review
 
@@ -69,6 +73,7 @@ LOCAL_ONLY_EXECUTION_PLAN_SCHEMA_VERSION = 2
 LOCAL_ONLY_EXECUTION_PLAN_KIND = "local_only_with_baseline"
 VINA_GRID_MEMORY_WARNING_BYTES = 512 * 1024 * 1024
 VINA_GRID_MEMORY_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
+PDBQT_SOURCE_LABEL_MAX_CHARS = 240
 AD4ZN_PROTOCOL_ID = "ad4zn_beta"
 HYDRATED_PROTOCOL_ID = "hydrated_ad4_experimental"
 HYDRATED_RETAINED_OUTPUT_NAME = "hydrated_retained.pdbqt"
@@ -871,7 +876,29 @@ def validate_pdbqt_file(path: str) -> dict[str, Any]:
     return {"ok": True, "path": str(file_path), "error": None}
 
 
-def _import_pdbqt(project_dir: str, source_path: str, role: str) -> dict[str, Any]:
+def _normalize_pdbqt_source_label(source_label: str, fallback: str) -> str:
+    """Normalize a human-facing PDBQT identity without path semantics."""
+
+    def normalize(value: str) -> str:
+        # Preserve punctuation and Unicode verbatim. C0 whitespace becomes a
+        # regular separator; other C0 controls (including NUL) are discarded.
+        without_controls = "".join(
+            " " if character.isspace() else character
+            for character in str(value or "")
+            if ord(character) >= 0x20 or character.isspace()
+        )
+        compact = " ".join(without_controls.split())
+        return compact[:PDBQT_SOURCE_LABEL_MAX_CHARS].rstrip()
+
+    return normalize(source_label) or normalize(fallback)
+
+
+def _import_pdbqt(
+    project_dir: str,
+    source_path: str,
+    role: str,
+    source_label: str = "",
+) -> dict[str, Any]:
     if role not in {"receptor", "ligand"}:
         return _error("PDBQT_ROLE_INVALID", "PDBQT 导入类型无效。")
 
@@ -892,11 +919,24 @@ def _import_pdbqt(project_dir: str, source_path: str, role: str) -> dict[str, An
             target_relative = f"prepared/{role}.pdbqt"
             target_path = Path(project.project_dir).expanduser() / "prepared" / f"{role}.pdbqt"
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(Path(source_path).expanduser(), target_path)
+            source = Path(source_path).expanduser()
+            shutil.copy2(source, target_path)
 
             file_ref = getattr(project, role)
+            human_label = _normalize_pdbqt_source_label(source_label, source.name)
             file_ref.source = "local"
+            file_ref.source_id = human_label
+            file_ref.query_type = "local_file"
+            file_ref.downloaded_at = _now_iso()
+            file_ref.raw_file = ""
             file_ref.file = target_relative
+
+            # A manually imported PDBQT is a new active structure. Keep old
+            # preparation records on disk for audit, but detach their current
+            # project pointers so their method/evidence cannot be attributed
+            # to the newly imported bytes.
+            setattr(project.preparation, role, default_preparation_result(role))
+            project.latest_preparation[role] = ""
 
             saved = save_project(project)
             if not saved.get("ok"):
@@ -913,12 +953,20 @@ def _import_pdbqt(project_dir: str, source_path: str, role: str) -> dict[str, An
         )
 
 
-def import_receptor_pdbqt(project_dir: str, source_path: str) -> dict[str, Any]:
-    return _import_pdbqt(project_dir, source_path, "receptor")
+def import_receptor_pdbqt(
+    project_dir: str,
+    source_path: str,
+    source_label: str = "",
+) -> dict[str, Any]:
+    return _import_pdbqt(project_dir, source_path, "receptor", source_label)
 
 
-def import_ligand_pdbqt(project_dir: str, source_path: str) -> dict[str, Any]:
-    return _import_pdbqt(project_dir, source_path, "ligand")
+def import_ligand_pdbqt(
+    project_dir: str,
+    source_path: str,
+    source_label: str = "",
+) -> dict[str, Any]:
+    return _import_pdbqt(project_dir, source_path, "ligand", source_label)
 
 
 def _parse_box_number(box: dict[str, Any], key: str) -> tuple[float | None, dict[str, Any] | None]:
@@ -18525,14 +18573,26 @@ def main() -> None:
         if len(sys.argv) < 4:
             _print_json(_error("PDBQT_IMPORT_ARGS", "导入受体需要 project_dir 和 source_path 参数。"))
             return
-        _print_json(import_receptor_pdbqt(sys.argv[2], sys.argv[3]))
+        _print_json(
+            import_receptor_pdbqt(
+                sys.argv[2],
+                sys.argv[3],
+                sys.argv[4] if len(sys.argv) >= 5 else "",
+            )
+        )
         return
 
     if command == "import-ligand":
         if len(sys.argv) < 4:
             _print_json(_error("PDBQT_IMPORT_ARGS", "导入配体需要 project_dir 和 source_path 参数。"))
             return
-        _print_json(import_ligand_pdbqt(sys.argv[2], sys.argv[3]))
+        _print_json(
+            import_ligand_pdbqt(
+                sys.argv[2],
+                sys.argv[3],
+                sys.argv[4] if len(sys.argv) >= 5 else "",
+            )
+        )
         return
 
     if command == "get-box":

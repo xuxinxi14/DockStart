@@ -24,7 +24,7 @@ from dockstart_core.project import (
     validate_box_params,
 )
 from dockstart_core.pose_comparison import compare_local_only_pose_texts
-from dockstart_core.screening import get_screening_archive
+from dockstart_core.screening import _screening_import_revision, get_screening_archive
 from dockstart_core.viewer_models import DockingPoseSummary, ViewerStructureResult
 
 MAX_VIEWER_FILE_BYTES = 20 * 1024 * 1024
@@ -54,6 +54,9 @@ TEXT_STRUCTURE_EXTENSIONS = {
 MODEL_PATTERN = re.compile(r"^\s*MODEL\s+(\d+)?\s*$", re.IGNORECASE)
 ENDMDL_PATTERN = re.compile(r"^\s*ENDMDL\s*$", re.IGNORECASE)
 SCREENING_ITEM_ID_PATTERN = re.compile(r"^ligand_\d{4,}$")
+SCREENING_CANDIDATE_ID_PATTERN = re.compile(
+    r"^ligand_[0-9a-f]{12}_\d{4}(?:_\d{2})?$"
+)
 PDBQT_VIEWER_RECORDS = {
     "ATOM",
     "HETATM",
@@ -1489,11 +1492,367 @@ def _parse_pdbqt_poses(content: str) -> list[dict[str, Any]]:
 
 
 def _viewer_sha256(path: Path) -> str:
+    """Return a streaming SHA256 for viewer integrity checks."""
+
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _screening_staging_root(
+    project_root: Path,
+) -> tuple[Path | None, dict[str, Any] | None]:
+    screening_dir = project_root / "screening"
+    staging_dir = screening_dir / "staging"
+    if screening_dir.is_symlink() or staging_dir.is_symlink():
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            "批量配体 staging 路径不能是符号链接。",
+            file_kind="screening_candidate",
+            relative_path=Path("screening", "staging").as_posix(),
+            suggestion="请重新导入批量配体以重建项目内的普通 staging 目录。",
+        )
+    if not staging_dir.is_dir():
+        return None, _viewer_error(
+            "VIEWER_SCREENING_STAGING_NOT_FOUND",
+            "没有找到批量配体 staging 目录。",
+            file_kind="screening_candidate",
+            relative_path=Path("screening", "staging").as_posix(),
+            suggestion="请重新导入批量配体后再打开 3D 预览。",
+        )
+    try:
+        resolved_staging = staging_dir.resolve(strict=True)
+        resolved_staging.relative_to(project_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            "批量配体 staging 路径不属于当前项目。",
+            file_kind="screening_candidate",
+            relative_path=Path("screening", "staging").as_posix(),
+            raw_error=str(exc),
+            suggestion="请重新导入批量配体以重建项目内的 staging 快照。",
+        )
+    return resolved_staging, None
+
+
+def _read_verified_screening_snapshot(
+    project_root: Path,
+    staging_root: Path,
+    *,
+    relative_path: Any,
+    expected_sha256: Any,
+    expected_size: Any,
+    allowed_extensions: set[str],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    value = str(relative_path or "").strip()
+    raw_parts = value.split("/") if value and "\\" not in value else []
+    path = Path(value)
+    if (
+        not raw_parts
+        or "\x00" in value
+        or path.is_absolute()
+        or bool(path.drive)
+        or any(part in {"", ".", ".."} for part in raw_parts)
+        or tuple(part.lower() for part in raw_parts[:2])
+        != ("screening", "staging")
+        or len(raw_parts) < 3
+    ):
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            "批量配体候选路径不属于当前 staging 快照。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            suggestion="请重新导入该配体以生成新的可复现快照。",
+        )
+    if path.suffix.lower() not in allowed_extensions:
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_FORMAT_INVALID",
+            "批量配体候选文件格式与记录类型不一致。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=f"allowed={','.join(sorted(allowed_extensions))}",
+            suggestion="请重新导入该配体以重建正确格式的 staging 快照。",
+        )
+
+    normalized_sha256 = str(expected_sha256 or "").strip().lower()
+    if (
+        isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or expected_size <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256)
+    ):
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_IDENTITY_INVALID",
+            "批量配体候选缺少可信的文件身份记录。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            suggestion="请重新导入该配体以生成新的可复现快照。",
+        )
+
+    candidate_path = project_root.joinpath(*raw_parts)
+    current = project_root
+    for part in raw_parts:
+        current /= part
+        if current.is_symlink():
+            return None, _viewer_error(
+                "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+                "批量配体候选路径不能包含符号链接。",
+                file_kind="screening_candidate",
+                relative_path=value,
+                suggestion="请重新导入该配体以生成普通文件快照。",
+            )
+    if not candidate_path.exists():
+        return None, _viewer_error(
+            "VIEWER_FILE_NOT_FOUND",
+            "没有找到批量配体候选文件。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=str(candidate_path),
+            suggestion="请重新导入该配体以生成新的 staging 快照。",
+        )
+    if not candidate_path.is_file():
+        return None, _viewer_error(
+            "VIEWER_PATH_NOT_FILE",
+            "批量配体候选路径不是普通文件。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=str(candidate_path),
+        )
+    try:
+        resolved_path = candidate_path.resolve(strict=True)
+        resolved_path.relative_to(staging_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            "批量配体候选解析后不属于当前 staging 快照。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=str(exc),
+            suggestion="请重新导入该配体以生成新的可复现快照。",
+        )
+
+    try:
+        with resolved_path.open("rb") as handle:
+            content_bytes = handle.read(MAX_VIEWER_FILE_BYTES + 1)
+    except Exception as exc:  # noqa: BLE001 - return a structured viewer error.
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_READ_ERROR",
+            "读取批量配体快照时发生错误。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=str(exc),
+        )
+    if not content_bytes:
+        return None, _viewer_error(
+            "VIEWER_FILE_EMPTY",
+            "批量配体候选文件为空，无法用于 3D 预览。",
+            file_kind="screening_candidate",
+            relative_path=value,
+        )
+    if len(content_bytes) > MAX_VIEWER_FILE_BYTES:
+        return None, _viewer_error(
+            "VIEWER_FILE_TOO_LARGE",
+            "批量配体候选文件超过 20 MB 的预览上限。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=f"> {MAX_VIEWER_FILE_BYTES} bytes",
+        )
+    actual_sha256 = hashlib.sha256(content_bytes).hexdigest()
+    if len(content_bytes) != expected_size or actual_sha256 != normalized_sha256:
+        return None, _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_HASH_MISMATCH",
+            "批量配体快照已发生变化，已拒绝加载。",
+            file_kind="screening_candidate",
+            relative_path=value,
+            raw_error=(
+                f"expected_size={expected_size}; actual_size={len(content_bytes)}; "
+                f"expected_sha256={normalized_sha256}; actual_sha256={actual_sha256}"
+            ),
+            suggestion="请重新导入配体并创建新的批量任务。",
+        )
+    return {
+        "relative_path": value,
+        "absolute_path": str(resolved_path),
+        "format": _detect_format(value),
+        "content": content_bytes.decode("utf-8", errors="replace"),
+        "size_bytes": len(content_bytes),
+        "sha256": actual_sha256,
+    }, None
+
+
+def load_screening_candidate_for_viewer(
+    project_dir: str,
+    candidate_id: str,
+    expected_revision_sha256: str,
+) -> dict[str, Any]:
+    """Load one frozen batch-import candidate before the queue is created.
+
+    The staging index is the authority for both the user-facing identity and
+    the immutable file hash.  Prefer the frozen source topology when it is
+    available so the preview keeps the original bond representation; otherwise
+    fall back to the prepared PDBQT snapshot used by the screening queue.
+    """
+
+    normalized_candidate_id = str(candidate_id or "").strip().lower()
+    if not SCREENING_CANDIDATE_ID_PATTERN.fullmatch(normalized_candidate_id):
+        return _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_INVALID",
+            "批量配体候选编号无效。",
+            file_kind="screening_candidate",
+            raw_error=str(candidate_id),
+            suggestion="请从当前批量配体列表中重新选择一个候选。",
+        )
+
+    project_root = _project_root(project_dir)
+    staging_root, staging_error = _screening_staging_root(project_root)
+    if staging_error:
+        return staging_error
+    assert staging_root is not None
+    index_path = staging_root / "index.json"
+    if index_path.is_symlink():
+        return _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            "批量配体导入记录不能是符号链接。",
+            file_kind="screening_candidate",
+            relative_path=Path("screening", "staging", "index.json").as_posix(),
+            suggestion="请重新导入批量配体以重建 staging 记录。",
+        )
+    if not index_path.is_file():
+        return _viewer_error(
+            "VIEWER_SCREENING_STAGING_NOT_FOUND",
+            "没有找到批量配体导入记录。",
+            file_kind="screening_candidate",
+            relative_path=Path("screening", "staging", "index.json").as_posix(),
+            suggestion="请重新导入批量配体后再打开 3D 预览。",
+        )
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - return a structured viewer error.
+        return _viewer_error(
+            "VIEWER_SCREENING_STAGING_INVALID",
+            "批量配体导入记录无法解析。",
+            file_kind="screening_candidate",
+            raw_error=str(exc),
+            suggestion="请重新导入批量配体以重建 staging 记录。",
+        )
+
+    preview = index.get("last_import") if isinstance(index, dict) else None
+    candidates = preview.get("candidates") if isinstance(preview, dict) else None
+    if not isinstance(candidates, list):
+        return _viewer_error(
+            "VIEWER_SCREENING_PREVIEW_NOT_FOUND",
+            "当前项目没有可供预览的批量配体候选。",
+            file_kind="screening_candidate",
+            suggestion="请返回结构导入步骤并重新选择配体文件。",
+        )
+    recorded_revision = str(preview.get("revision_sha256") or "").lower()
+    requested_revision = str(expected_revision_sha256 or "").strip().lower()
+    computed_revision = _screening_import_revision(preview)
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", recorded_revision)
+        or not re.fullmatch(r"[0-9a-f]{64}", requested_revision)
+        or requested_revision != recorded_revision
+        or recorded_revision != computed_revision
+    ):
+        return _viewer_error(
+            "VIEWER_SCREENING_REVISION_MISMATCH",
+            "批量配体列表已经变化，已停止加载旧候选。",
+            file_kind="screening_candidate",
+            raw_error=(
+                f"expected={requested_revision or 'missing'}; "
+                f"current={recorded_revision or 'missing'}; "
+                f"computed={computed_revision or 'missing'}"
+            ),
+            suggestion="请刷新页面并从当前批量配体列表重新选择。",
+        )
+    candidate = next(
+        (
+            item
+            for item in candidates
+            if isinstance(item, dict)
+            and str(item.get("candidate_id") or "").lower()
+            == normalized_candidate_id
+        ),
+        None,
+    )
+    if candidate is None:
+        return _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_NOT_FOUND",
+            "没有找到所选批量配体候选。",
+            file_kind="screening_candidate",
+            raw_error=normalized_candidate_id,
+            suggestion="请刷新批量配体列表后重新选择。",
+        )
+    if str(candidate.get("status") or "") not in {"ready", "duplicate"}:
+        return _viewer_error(
+            "VIEWER_SCREENING_CANDIDATE_NOT_READY",
+            "所选批量配体尚未准备为可预览结构。",
+            file_kind="screening_candidate",
+            raw_error=str(candidate.get("status") or "unknown"),
+            suggestion="请先处理该配体的导入或结构审查问题。",
+        )
+
+    prepared_snapshot, prepared_error = _read_verified_screening_snapshot(
+        project_root,
+        staging_root,
+        relative_path=candidate.get("file"),
+        expected_sha256=candidate.get("sha256"),
+        expected_size=candidate.get("size_bytes"),
+        allowed_extensions={".pdbqt"},
+    )
+    if prepared_error:
+        return prepared_error
+    assert prepared_snapshot is not None
+
+    display_snapshot = prepared_snapshot
+    if candidate.get("topology_integrity") == "verified":
+        topology_snapshot, topology_error = _read_verified_screening_snapshot(
+            project_root,
+            staging_root,
+            relative_path=candidate.get("source_topology_file"),
+            expected_sha256=candidate.get("source_topology_sha256"),
+            expected_size=candidate.get("source_topology_size_bytes"),
+            allowed_extensions={".sdf", ".mol", ".mol2"},
+        )
+        if topology_error:
+            return topology_error
+        assert topology_snapshot is not None
+        display_snapshot = topology_snapshot
+        source_kind = "frozen_source_topology"
+    else:
+        source_kind = "prepared_pdbqt"
+
+    viewer_content, viewer_format, viewer_warnings = _viewer_content(
+        str(display_snapshot["content"]),
+        str(display_snapshot["format"]),
+    )
+    display_name = str(
+        candidate.get("source_record_name")
+        or candidate.get("original_name")
+        or normalized_candidate_id
+    )
+    return ViewerStructureResult(
+        ok=True,
+        file_kind="screening_candidate",
+        relative_path=str(display_snapshot["relative_path"]),
+        absolute_path=str(display_snapshot["absolute_path"]),
+        exists=True,
+        format=viewer_format,
+        content=viewer_content,
+        size_bytes=int(display_snapshot["size_bytes"]),
+        message="批量配体候选已加载。",
+        warnings=viewer_warnings,
+        error=None,
+    ).to_dict() | {
+        "candidate_id": normalized_candidate_id,
+        "display_name": display_name,
+        "original_name": str(candidate.get("original_name") or ""),
+        "source_kind": source_kind,
+        "sha256": str(display_snapshot["sha256"]),
+        "prepared_sha256": str(prepared_snapshot["sha256"]),
+    }
 
 
 def load_screening_pose_for_viewer(
@@ -2370,6 +2729,24 @@ def main() -> None:
             _print_json(_viewer_error("VIEWER_LOAD_ARGS", "读取结构文件需要 project_dir 和 file_kind 参数。"))
             return
         _print_json(load_structure_for_viewer(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "load-screening-candidate":
+        if len(sys.argv) < 5:
+            _print_json(
+                _viewer_error(
+                    "VIEWER_SCREENING_CANDIDATE_ARGS",
+                    "读取批量配体候选需要 project_dir、candidate_id 和导入 revision。",
+                )
+            )
+            return
+        _print_json(
+            load_screening_candidate_for_viewer(
+                sys.argv[2],
+                sys.argv[3],
+                sys.argv[4],
+            )
+        )
         return
 
     if command == "load-screening-pose":

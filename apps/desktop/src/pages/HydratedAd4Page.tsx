@@ -17,6 +17,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   hydratedApi,
   type HydratedDesktopApi,
@@ -58,6 +59,13 @@ type HydratedAd4PageProps = {
   onBack: () => void;
   onProjectChange: (project: DockStartProject) => void;
   onOpenRunExecute: (project: DockStartProject, runId: string) => void;
+  onOpenToolchain?: () => void;
+};
+
+type AutoGridCheck = {
+  status: "checking" | "ready" | "missing" | "error";
+  version: string;
+  message: string;
 };
 
 type BusyAction =
@@ -187,6 +195,7 @@ export default function HydratedAd4Page({
   onBack,
   onProjectChange,
   onOpenRunExecute,
+  onOpenToolchain,
 }: HydratedAd4PageProps) {
   const [status, setStatus] = useState<HydratedStatusSuccess | null>(null);
   const [preflight, setPreflight] =
@@ -195,6 +204,11 @@ export default function HydratedAd4Page({
   const [busyAction, setBusyAction] = useState<BusyAction>("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState<HydratedApiError | null>(null);
+  const [autoGridCheck, setAutoGridCheck] = useState<AutoGridCheck>({
+    status: "checking",
+    version: "",
+    message: "正在检测 AutoGrid4…",
+  });
   const initialRun = resolveHydratedRun(project, currentRunId);
   const [selectedRunId, setSelectedRunId] = useState(
     initialRun?.runId ?? "",
@@ -223,6 +237,38 @@ export default function HydratedAd4Page({
     ?? status?.manifest?.water_count
     ?? status?.manifest?.outputs?.hydrated_pdbqt?.water_count;
   const mapSetId = status?.maps_manifest?.map_set_id ?? "";
+  const autoGridReady = autoGridCheck.status === "ready";
+
+  const refreshAutoGridCheck = useCallback(async () => {
+    setAutoGridCheck({ status: "checking", version: "", message: "正在检测 AutoGrid4…" });
+    try {
+      const response = JSON.parse(await invoke<string>("get_toolchain_status")) as {
+        autogrid4?: { status?: string; version?: string; message?: string } | null;
+      };
+      if (!mountedRef.current) return;
+      const tool = response.autogrid4;
+      if (tool?.status === "ok") {
+        setAutoGridCheck({
+          status: "ready",
+          version: tool.version || "",
+          message: tool.message || "AutoGrid4 已配置。",
+        });
+        return;
+      }
+      setAutoGridCheck({
+        status: "missing",
+        version: tool?.version || "",
+        message: tool?.message || "尚未配置可用的 AutoGrid4。",
+      });
+    } catch (requestError) {
+      if (!mountedRef.current) return;
+      setAutoGridCheck({
+        status: "error",
+        version: "",
+        message: requestError instanceof Error ? requestError.message : String(requestError),
+      });
+    }
+  }, []);
 
   useEffect(() => {
     const preferred = resolveHydratedRun(project, currentRunId);
@@ -302,11 +348,12 @@ export default function HydratedAd4Page({
   useEffect(() => {
     mountedRef.current = true;
     void refreshStatus(false);
+    void refreshAutoGridCheck();
     return () => {
       mountedRef.current = false;
       statusRequestRef.current += 1;
     };
-  }, [refreshStatus]);
+  }, [refreshAutoGridCheck, refreshStatus]);
 
   const prepareLigand = async () => {
     if (!availability.canPrepareLigand) return;
@@ -330,6 +377,15 @@ export default function HydratedAd4Page({
   };
 
   const generateMaps = async () => {
+    if (!autoGridReady) {
+      setError({
+        code: "HYDRATED_AUTOGRID_NOT_AVAILABLE",
+        title: "尚未配置 AutoGrid4",
+        message: "水合 AD4 需要 AutoGrid4 生成基础 affinity maps 与 W map。",
+        suggestion: "请打开工具链配置，选择可用的 autogrid4 可执行文件后重新检测。",
+      });
+      return;
+    }
     if (!availability.canGenerateMaps) return;
     setBusyAction("generate-maps");
     setError(null);
@@ -531,7 +587,10 @@ export default function HydratedAd4Page({
             </StatusBadge>
             <ActionButton
               disabled={Boolean(busyAction)}
-              onClick={() => void refreshStatus()}
+              onClick={() => {
+                void refreshStatus();
+                void refreshAutoGridCheck();
+              }}
             >
               {busyAction === "refresh" ? (
                 <SpinnerGap
@@ -555,6 +614,19 @@ export default function HydratedAd4Page({
         <MainPanel>
           <div className="main-panel-content">
             <HydratedProtocolScope />
+
+            {autoGridCheck.status === "missing" || autoGridCheck.status === "error" ? (
+              <WarningCallout title="水合 AD4 需要 AutoGrid4">
+                <div className="hydrated-autogrid-warning">
+                  <p>{autoGridCheck.message} 配置完成前不会启动 maps 生成。</p>
+                  {onOpenToolchain ? (
+                    <ActionButton variant="secondary" onClick={onOpenToolchain}>
+                      打开工具链配置
+                    </ActionButton>
+                  ) : null}
+                </div>
+              </WarningCallout>
+            ) : null}
 
             <section
               aria-labelledby="hydrated-overview-title"
@@ -679,16 +751,19 @@ export default function HydratedAd4Page({
                     </dl>
                   ) : (
                     <p>
-                      {availability.reasons.generateMaps
-                      || "AutoGrid4 必须已配置；生成过程会校验全部 map 文件。"}
+                      {!autoGridReady
+                        ? autoGridCheck.status === "checking"
+                          ? "正在检测 AutoGrid4。"
+                          : "尚未配置 AutoGrid4；请先打开工具链配置。"
+                        : availability.reasons.generateMaps
+                          || `AutoGrid4 ${autoGridCheck.version || "已配置"}；生成过程会校验全部 map 文件。`}
                     </p>
                   )
                 }
                 actions={
                   <ActionButton
-                    disabled={!availability.canGenerateMaps}
+                    disabled={!availability.canGenerateMaps || !autoGridReady}
                     onClick={() => void generateMaps()}
-                    title={availability.reasons.generateMaps || undefined}
                   >
                     <GridFour aria-hidden="true" size={17} />
                     {status?.maps_ready

@@ -203,6 +203,7 @@ type BatchScreeningPanelProps = {
   receptorFile: string;
   box: DockStartProject["box"];
   vina: DockStartProject["vina"];
+  presentation?: "workspace" | "results";
   disabled?: boolean;
   disabledReason?: string;
   onBatchModeDetected?: () => void;
@@ -310,6 +311,7 @@ export default function BatchScreeningPanel({
   receptorFile,
   box,
   vina,
+  presentation = "workspace",
   disabled = false,
   disabledReason = "",
   onBatchModeDetected,
@@ -1140,8 +1142,8 @@ export default function BatchScreeningPanel({
     <section className="run-cockpit-card batch-screening-panel" aria-labelledby="batch-screening-title">
       <div className="run-cockpit-section-heading">
         <div>
-          <span className="run-cockpit-kicker">多配体任务</span>
-          <h2 id="batch-screening-title">配体队列与批量运行</h2>
+          <span className="run-cockpit-kicker">{presentation === "results" ? "批量结果" : "多配体任务"}</span>
+          <h2 id="batch-screening-title">{presentation === "results" ? "配体排名、构象与实验记录" : "配体队列与批量运行"}</h2>
         </div>
         <StatusBadge tone={tone(visibleStatus || "idle")}>{visibleStatusLabel}</StatusBadge>
       </div>
@@ -1181,7 +1183,11 @@ export default function BatchScreeningPanel({
         </div>
 
         {panelTab === "current" ? (
-          <p className="batch-screening-intro">全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。</p>
+          <p className="batch-screening-intro">
+            {presentation === "results"
+              ? "查看本次批量任务的完成情况、评分排名和逐配体最佳构象；历史归档可在相邻标签中核对。"
+              : "全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"}
+          </p>
         ) : archiveComparison ? null : archiveDetail ? (
           <>
             <div className="batch-screening-archive-heading">

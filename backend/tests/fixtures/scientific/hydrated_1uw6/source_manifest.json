@@ -216,10 +216,17 @@
       "exhaustiveness": 32,
       "num_modes": 9,
       "accepted_output_mode_counts": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
         8,
         9
       ],
-      "minimum_output_modes": 8,
+      "minimum_output_modes": 1,
       "maximum_output_modes": 9,
       "energy_range": 3,
       "cpu": 1,

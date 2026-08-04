@@ -504,16 +504,16 @@ class Hydrated1uw6VerifierTests(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.code, expected_code)
 
-    def test_mode_gate_rejects_7_accepts_8_and_9_and_rejects_10(
+    def test_mode_gate_accepts_one_through_nine_and_rejects_empty_or_ten(
         self,
     ) -> None:
         expected = {
-            "accepted_output_mode_counts": [8, 9],
-            "minimum_output_modes": 8,
+            "accepted_output_mode_counts": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "minimum_output_modes": 1,
             "maximum_output_modes": 9,
             "num_modes": 9,
         }
-        for count, accepted in ((7, False), (8, True), (9, True), (10, False)):
+        for count, accepted in ((0, False), (1, True), (7, True), (9, True), (10, False)):
             models = [[f"MODEL {index}"] for index in range(1, count + 1)]
             with self.subTest(count=count):
                 if accepted:
@@ -538,8 +538,8 @@ class Hydrated1uw6VerifierTests(unittest.TestCase):
 
     def test_mode_gate_requires_continuous_model_numbers(self) -> None:
         expected = {
-            "accepted_output_mode_counts": [8, 9],
-            "minimum_output_modes": 8,
+            "accepted_output_mode_counts": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+            "minimum_output_modes": 1,
             "maximum_output_modes": 9,
             "num_modes": 9,
         }

@@ -103,6 +103,23 @@
   padding: var(--ds-space-2) var(--ds-space-3);
 }
 
+.hydrated-autogrid-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+}
+
+.hydrated-autogrid-warning p {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  line-height: var(--ds-leading-normal);
+}
+
+.hydrated-autogrid-warning [data-layout="action-button"] {
+  flex: 0 0 auto;
+}
+
 .hydrated-section-heading {
   display: flex;
   align-items: flex-end;

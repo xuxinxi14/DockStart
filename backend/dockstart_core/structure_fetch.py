@@ -25,7 +25,7 @@ PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
 SUPPORTED_PDB_FORMATS = {"pdb", "cif"}
 SUPPORTED_PUBCHEM_FORMATS = {"sdf"}
 SUPPORTED_LOCAL_RECEPTOR_FORMATS = {"pdb", "cif"}
-SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol"}
+SUPPORTED_LOCAL_LIGAND_FORMATS = {"sdf", "mol", "mol2"}
 DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_SEARCH_LIMIT = 8
 MAX_SEARCH_LIMIT = 20
@@ -465,7 +465,7 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
     format_suggestion = (
         "受体原始结构当前支持 PDB（.pdb）和 mmCIF（.cif）；PDBQT 请使用“已有 PDBQT”导入入口。"
         if is_receptor
-        else "配体原始结构当前支持 SDF（.sdf）和 MOL（.mol）；MOL2、PDB 与 SMILES 暂不支持内置转换。"
+        else "配体原始结构当前支持 SDF（.sdf）、MOL（.mol）和 MOL2（.mol2）；PDB 与 SMILES 暂不支持内置转换。"
     )
     validation = _validate_local_raw_file(source_path, supported_formats, label, format_suggestion)
     if not validation.get("ok"):

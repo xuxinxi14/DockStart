@@ -32,6 +32,29 @@ class ViewerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _write_screening_candidate_index(
+        self,
+        staging_dir: Path,
+        candidate: dict,
+    ) -> str:
+        preview = {
+            "schema_version": 2,
+            "candidates": [candidate],
+        }
+        revision = viewer._screening_import_revision(preview)
+        preview["revision_sha256"] = revision
+        (staging_dir / "index.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "last_import": preview,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return revision
+
     @staticmethod
     def _pdbqt_atom(
         serial: int,
@@ -277,6 +300,315 @@ class ViewerTests(unittest.TestCase):
             self.assertIn("REMARK receptor", receptor["content"])
             self.assertTrue(ligand["ok"])
             self.assertIn("REMARK ligand", ligand["content"])
+
+    def test_screening_candidate_preview_uses_frozen_identity_without_mutating_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            content = "ROOT\n" + self._pdbqt_atom(1, "C1", "C", 1.0, 2.0, 3.0) + "\nENDROOT\nTORSDOF 0\n"
+            ligand_path = staging_dir / "candidate.pdbqt"
+            ligand_path.write_text(content, encoding="utf-8")
+            digest = hashlib.sha256(ligand_path.read_bytes()).hexdigest()
+            preview = {
+                "schema_version": 2,
+                "candidates": [{
+                    "candidate_id": "ligand_012345abcdef_0001",
+                    "status": "ready",
+                    "source_record_name": "P69",
+                    "original_name": "5x72_ligand_p69.sdf",
+                    "topology_integrity": "not_available",
+                    "file": "screening/staging/candidate.pdbqt",
+                    "sha256": digest,
+                    "size_bytes": ligand_path.stat().st_size,
+                }],
+            }
+            revision = viewer._screening_import_revision(preview)
+            preview["revision_sha256"] = revision
+            (staging_dir / "index.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "last_import": preview,
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            project_before = (project_dir / "project.json").read_bytes()
+
+            response = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                "ligand_012345abcdef_0001",
+                revision,
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["display_name"], "P69")
+            self.assertEqual(response["original_name"], "5x72_ligand_p69.sdf")
+            self.assertIn("ATOM", response["content"])
+            self.assertEqual(project_before, (project_dir / "project.json").read_bytes())
+
+    def test_screening_candidate_preview_rejects_stale_revision_and_modified_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            ligand_path = staging_dir / "candidate.pdbqt"
+            ligand_path.write_text("REMARK original\n", encoding="utf-8")
+            digest = hashlib.sha256(ligand_path.read_bytes()).hexdigest()
+            preview = {
+                "schema_version": 2,
+                "candidates": [{
+                    "candidate_id": "ligand_abcdef012345_0001",
+                    "status": "ready",
+                    "topology_integrity": "not_available",
+                    "file": "screening/staging/candidate.pdbqt",
+                    "sha256": digest,
+                    "size_bytes": ligand_path.stat().st_size,
+                }],
+            }
+            revision = viewer._screening_import_revision(preview)
+            preview["revision_sha256"] = revision
+            (staging_dir / "index.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "last_import": preview,
+                }),
+                encoding="utf-8",
+            )
+
+            stale = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                "ligand_abcdef012345_0001",
+                "c" * 64,
+            )
+            self.assertFalse(stale["ok"])
+            self.assertEqual(stale["error"]["code"], "VIEWER_SCREENING_REVISION_MISMATCH")
+
+            ligand_path.write_text("REMARK changed\n", encoding="utf-8")
+            changed = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                "ligand_abcdef012345_0001",
+                revision,
+            )
+            self.assertFalse(changed["ok"])
+            self.assertEqual(changed["error"]["code"], "VIEWER_SCREENING_CANDIDATE_HASH_MISMATCH")
+
+    def test_screening_candidate_preview_rejects_traversal_and_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            secret_path = project_dir / "prepared" / "secret.pdbqt"
+            secret_path.write_text("REMARK project-local secret\n", encoding="utf-8")
+            digest = hashlib.sha256(secret_path.read_bytes()).hexdigest()
+
+            for unsafe_path in (
+                "screening/staging/../../prepared/secret.pdbqt",
+                str(secret_path.resolve()),
+            ):
+                with self.subTest(unsafe_path=unsafe_path):
+                    candidate = {
+                        "candidate_id": "ligand_012345abcdef_0001",
+                        "status": "ready",
+                        "topology_integrity": "not_available",
+                        "file": unsafe_path,
+                        "sha256": digest,
+                        "size_bytes": secret_path.stat().st_size,
+                    }
+                    revision = self._write_screening_candidate_index(
+                        staging_dir,
+                        candidate,
+                    )
+
+                    response = viewer.load_screening_candidate_for_viewer(
+                        str(project_dir),
+                        candidate["candidate_id"],
+                        revision,
+                    )
+
+                    self.assertFalse(response["ok"])
+                    self.assertEqual(
+                        response["error"]["code"],
+                        "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+                    )
+
+    def test_screening_candidate_preview_rejects_symlink_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            target_path = project_dir / "prepared" / "target.pdbqt"
+            target_path.write_text("REMARK target\n", encoding="utf-8")
+            link_path = staging_dir / "linked.pdbqt"
+            try:
+                link_path.symlink_to(target_path)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"当前平台不能创建测试用符号链接：{exc}")
+            candidate = {
+                "candidate_id": "ligand_012345abcdef_0001",
+                "status": "ready",
+                "topology_integrity": "not_available",
+                "file": "screening/staging/linked.pdbqt",
+                "sha256": hashlib.sha256(target_path.read_bytes()).hexdigest(),
+                "size_bytes": target_path.stat().st_size,
+            }
+            revision = self._write_screening_candidate_index(staging_dir, candidate)
+
+            response = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(
+                response["error"]["code"],
+                "VIEWER_SCREENING_CANDIDATE_PATH_INVALID",
+            )
+
+    def test_screening_candidate_preview_validates_prepared_before_verified_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            topology_path = staging_dir / "imports" / "import_001" / "records" / "record_000001.sdf"
+            topology_path.parent.mkdir(parents=True)
+            topology_path.write_text(
+                "Ligand\n  DockStart\n\n  0  0  0  0  0  0            999 V2000\nM  END\n$$$$\n",
+                encoding="utf-8",
+            )
+            expected_prepared = b"REMARK original\n"
+            prepared_path = staging_dir / "candidate.pdbqt"
+            candidate = {
+                "candidate_id": "ligand_012345abcdef_0001",
+                "status": "ready",
+                "topology_integrity": "verified",
+                "file": "screening/staging/candidate.pdbqt",
+                "sha256": hashlib.sha256(expected_prepared).hexdigest(),
+                "size_bytes": len(expected_prepared),
+                "source_topology_file": topology_path.relative_to(project_dir).as_posix(),
+                "source_topology_sha256": hashlib.sha256(topology_path.read_bytes()).hexdigest(),
+                "source_topology_size_bytes": topology_path.stat().st_size,
+            }
+            revision = self._write_screening_candidate_index(staging_dir, candidate)
+
+            missing = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertFalse(missing["ok"])
+            self.assertEqual(missing["error"]["code"], "VIEWER_FILE_NOT_FOUND")
+
+            prepared_path.write_bytes(b"REMARK modified\n")
+            modified = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertFalse(modified["ok"])
+            self.assertEqual(
+                modified["error"]["code"],
+                "VIEWER_SCREENING_CANDIDATE_HASH_MISMATCH",
+            )
+
+    def test_screening_candidate_preview_rejects_modified_verified_topology(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            prepared_path = staging_dir / "candidate.pdbqt"
+            prepared_path.write_text("REMARK prepared\n", encoding="utf-8")
+            topology_path = staging_dir / "imports" / "import_001" / "records" / "record_000001.sdf"
+            topology_path.parent.mkdir(parents=True)
+            topology_path.write_text(
+                "Ligand\n  DockStart\n\n  0  0  0  0  0  0            999 V2000\nM  END\n$$$$\n",
+                encoding="utf-8",
+            )
+            candidate = {
+                "candidate_id": "ligand_012345abcdef_0001",
+                "status": "ready",
+                "topology_integrity": "verified",
+                "file": prepared_path.relative_to(project_dir).as_posix(),
+                "sha256": hashlib.sha256(prepared_path.read_bytes()).hexdigest(),
+                "size_bytes": prepared_path.stat().st_size,
+                "source_topology_file": topology_path.relative_to(project_dir).as_posix(),
+                "source_topology_sha256": hashlib.sha256(topology_path.read_bytes()).hexdigest(),
+                "source_topology_size_bytes": topology_path.stat().st_size,
+            }
+            revision = self._write_screening_candidate_index(staging_dir, candidate)
+
+            loaded = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertTrue(loaded["ok"], loaded)
+            self.assertEqual(loaded["source_kind"], "frozen_source_topology")
+
+            topology_path.write_bytes(topology_path.read_bytes().replace(b"Ligand", b"Tamper"))
+            modified = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertFalse(modified["ok"])
+            self.assertEqual(
+                modified["error"]["code"],
+                "VIEWER_SCREENING_CANDIDATE_HASH_MISMATCH",
+            )
+
+    def test_screening_candidate_preview_rejects_mismatched_snapshot_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            staging_dir = project_dir / "screening" / "staging"
+            staging_dir.mkdir(parents=True)
+            wrong_prepared = staging_dir / "candidate.sdf"
+            wrong_prepared.write_text("not a prepared PDBQT\n", encoding="utf-8")
+            candidate = {
+                "candidate_id": "ligand_012345abcdef_0001",
+                "status": "ready",
+                "topology_integrity": "not_available",
+                "file": wrong_prepared.relative_to(project_dir).as_posix(),
+                "sha256": hashlib.sha256(wrong_prepared.read_bytes()).hexdigest(),
+                "size_bytes": wrong_prepared.stat().st_size,
+            }
+            revision = self._write_screening_candidate_index(staging_dir, candidate)
+
+            wrong_prepared_response = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertFalse(wrong_prepared_response["ok"])
+            self.assertEqual(
+                wrong_prepared_response["error"]["code"],
+                "VIEWER_SCREENING_CANDIDATE_FORMAT_INVALID",
+            )
+
+            prepared_path = staging_dir / "candidate.pdbqt"
+            prepared_path.write_text("REMARK prepared\n", encoding="utf-8")
+            wrong_topology = staging_dir / "source.pdbqt"
+            wrong_topology.write_text("REMARK not source topology\n", encoding="utf-8")
+            candidate.update({
+                "topology_integrity": "verified",
+                "file": prepared_path.relative_to(project_dir).as_posix(),
+                "sha256": hashlib.sha256(prepared_path.read_bytes()).hexdigest(),
+                "size_bytes": prepared_path.stat().st_size,
+                "source_topology_file": wrong_topology.relative_to(project_dir).as_posix(),
+                "source_topology_sha256": hashlib.sha256(wrong_topology.read_bytes()).hexdigest(),
+                "source_topology_size_bytes": wrong_topology.stat().st_size,
+            })
+            revision = self._write_screening_candidate_index(staging_dir, candidate)
+
+            wrong_topology_response = viewer.load_screening_candidate_for_viewer(
+                str(project_dir),
+                candidate["candidate_id"],
+                revision,
+            )
+            self.assertFalse(wrong_topology_response["ok"])
+            self.assertEqual(
+                wrong_topology_response["error"]["code"],
+                "VIEWER_SCREENING_CANDIDATE_FORMAT_INVALID",
+            )
 
     def test_meeko_ligand_is_not_truncated_at_endroot_in_viewer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

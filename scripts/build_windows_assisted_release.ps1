@@ -181,7 +181,7 @@ if ($SkipTauriBuild) {
 }
 
 Write-Step "Clean stale Tauri release resources and bundles"
-foreach ($relativePath in @("backend", "frontend", "examples", "resources", "bundle", "nsis", "wix")) {
+foreach ($relativePath in @("backend", "frontend", "examples", "resources", "DockStart", "bundle", "nsis", "wix")) {
     Remove-ReleasePath $releaseDir (Join-Path $releaseDir $relativePath)
 }
 
@@ -191,25 +191,62 @@ Invoke-Checked `
     @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.assisted.conf.json", "--bundles", "msi,nsis", "--ci") `
     $desktopDir
 
-# Gate 2 uses the resource layout emitted by Tauri. Gate 3 below performs a
-# real silent NSIS installation into .release/install-gate and verifies that
-# actual installed layout before silently uninstalling it again.
-Invoke-Checked `
-    "Mandatory post-package Assisted preparation and docking gate" `
-    "python" `
-    @("scripts/verify_assisted_release.py", $releaseDir, "--gate", "post-package") `
-    $repoRoot
-
 Write-Step "Validate installer artifacts"
 $bundleDir = Join-Path $releaseDir "bundle"
 $tauriMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
 $tauriNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
 $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_Assisted_x64_en-US.msi"
 $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_Assisted_x64-setup.exe"
-foreach ($rename in @(@($tauriMsi, $expectedMsi), @($tauriNsis, $expectedNsis))) {
-    if (-not (Test-Path -LiteralPath $rename[0] -PathType Leaf)) {
-        throw "Expected Tauri release artifact is missing: $($rename[0])"
+foreach ($artifact in @($tauriMsi, $tauriNsis)) {
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+        throw "Expected Tauri release artifact is missing: $artifact"
     }
+}
+
+# Tauri does not promise to leave an exploded resource tree beside the release
+# binary. Verify the files that are actually inside the MSI instead of reading
+# a possibly stale target/release/DockStart directory.
+Write-Step "Extract MSI for the post-package Assisted gate"
+$postPackageGateRoot = Join-Path $repoRoot ".release\post-package-gate"
+$postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\assisted"
+$postPackagePrefix = [IO.Path]::GetFullPath($postPackageGateRoot).TrimEnd('\') + '\'
+$postPackageExtractFull = [IO.Path]::GetFullPath($postPackageExtract)
+if (-not $postPackageExtractFull.StartsWith($postPackagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to extract the MSI outside .release/post-package-gate: $postPackageExtractFull"
+}
+if (Test-Path -LiteralPath $postPackageExtractFull) {
+    Remove-Item -LiteralPath $postPackageExtractFull -Recurse -Force
+}
+New-Item -ItemType Directory -Path $postPackageExtractFull -Force | Out-Null
+$postPackageLog = Join-Path $postPackageGateRoot "$appVersion-assisted-msiexec.log"
+$msiArguments = @(
+    "/a",
+    "`"$tauriMsi`"",
+    "TARGETDIR=`"$postPackageExtractFull`"",
+    "/qn",
+    "/L*v",
+    "`"$postPackageLog`""
+)
+$msiProcess = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArguments -Wait -PassThru -WindowStyle Hidden
+if ($msiProcess.ExitCode -ne 0) {
+    throw "MSI administrative extraction failed with exit code $($msiProcess.ExitCode). Log: $postPackageLog"
+}
+$layoutManifests = @(
+    Get-ChildItem -LiteralPath $postPackageExtractFull -Recurse -File -Filter "toolchain_manifest.json" |
+        Where-Object { $_.Directory.Name -eq "resources" }
+)
+if ($layoutManifests.Count -ne 1) {
+    throw "Expected exactly one extracted toolchain manifest, found $($layoutManifests.Count)."
+}
+$postPackageLayout = $layoutManifests[0].Directory.Parent.FullName
+
+Invoke-Checked `
+    "Mandatory post-package Assisted preparation and docking gate" `
+    "python" `
+    @("scripts/verify_assisted_release.py", $postPackageLayout, "--gate", "post-package") `
+    $repoRoot
+
+foreach ($rename in @(@($tauriMsi, $expectedMsi), @($tauriNsis, $expectedNsis))) {
     Move-Item -LiteralPath $rename[0] -Destination $rename[1]
 }
 foreach ($artifact in @($expectedMsi, $expectedNsis)) {

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.13.5-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.13.8-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,9 +31,9 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码与本地 Windows 候选包版本为 **v0.13.5**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
+> 当前源码与本地 Windows 候选包版本为 **v0.13.8**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
 
-> v0.13.5 候选包包含“多配体共同对接”、AD4Zn 和水合 AD4 的独立实验协议入口；它们仍分别标记为 Experimental/Beta，不属于默认稳定流程。多配体共同对接要求 AutoDock Vina 1.2.0 或更高版本，只接受恰好两个已经准备好的 PDBQT 配体、刚性受体、全局对接和 Vina/Vinardo 评分。它与“多个配体分别运行”的串行批量筛选是两种不同协议，不能用批筛结果语义解释。
+> v0.13.8 候选包包含“多配体共同对接”、AD4Zn 和水合 AD4 的独立实验协议入口；它们仍分别标记为 Experimental/Beta，不属于默认稳定流程。多配体共同对接要求 AutoDock Vina 1.2.0 或更高版本，只接受恰好两个已经准备好的 PDBQT 配体、刚性受体、全局对接和 Vina/Vinardo 评分。它与“多个配体分别运行”的串行批量筛选是两种不同协议，不能用批筛结果语义解释。
 
 ## 为什么使用 DockStart
 
@@ -49,11 +49,11 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 
 | | Basic Stable | Assisted Stable |
 | --- | --- | --- |
-| 适合谁 | 已有受体和配体 PDBQT | 只有受体 PDB/CIF 与配体 SDF/MOL |
+| 适合谁 | 已有受体和配体 PDBQT | 只有受体 PDB/CIF 与配体 SDF/MOL/MOL2 |
 | 内置 AutoDock Vina | 是，1.2.7 | 是，1.2.7 |
 | 内置后端 Python | 是，精简运行时 | 是，独立 CPython 3.11 运行时 |
 | 内置 RDKit / Meeko | 否 | 是，RDKit 2026.3.3 / Meeko 0.7.1 |
-| PDB/SDF/MOL → PDBQT | 不提供 | 可离线尝试准备 |
+| PDB/SDF/MOL/MOL2 → PDBQT | 不提供 | 可离线尝试准备 |
 | PDBQT 对接完整流程 | 支持 | 支持 |
 | AutoDock4 maps 工作流 | 支持，需外部 AutoGrid4 | 支持，需外部 AutoGrid4 |
 | 典型安装包体积 | 较小 | 较大 |
@@ -61,7 +61,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 如果不确定：
 
 - 已经有 `receptor.pdbqt` 和 `ligand.pdbqt`：选择 **Basic Stable**。
-- 只有 `.pdb`、`.cif`、`.sdf` 或 `.mol`：选择 **Assisted Stable**。
+- 只有 `.pdb`、`.cif`、`.sdf`、`.mol` 或单分子 `.mol2`：选择 **Assisted Stable**。
 - 只想了解软件流程：安装任一版本后打开内置示例。
 
 > 当前安装包尚未进行 Authenticode 签名，Windows SmartScreen 可能显示“未知发布者”。发布者字段应为 `XinXi Xu`，安装前仍应核对 Release 页面提供的 SHA256。
@@ -83,7 +83,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 ```
 
 1. **创建项目**：选择本地目录，DockStart 建立独立的项目文件结构。
-2. **准备输入**：Basic 直接导入受体/配体 PDBQT；Assisted 可搜索或导入 PDB/CIF、SDF/MOL，并在写入项目后立即尝试生成 PDBQT。
+2. **准备输入**：Basic 直接导入受体/配体 PDBQT；Assisted 可搜索或导入 PDB/CIF、SDF/MOL/MOL2，并在写入项目后尝试生成 PDBQT。
 3. **设置搜索范围**：在 3D 工作台检查结构和 Box，输入中心及尺寸；可按受体坐标范围快速定位，再人工微调。
 4. **配置运行**：设置搜索彻底程度、构象数量、能量范围、CPU 和随机种子。
 5. **开始对接**：运行前检查会确认项目文件、PDBQT、Box、Vina 参数、工具和输出目录。
@@ -91,13 +91,13 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 
 高级用户可在对接工作台切换到独立的 **AutoDock4（maps）** 协议，生成或导入 affinity maps 后运行。该协议的 scores 与报告独立保存，不能与 Vina/Vinardo 分值直接比较。AutoGrid4 需要用户自行安装并在设置页配置。
 
-> v0.13.5 候选包已接入 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。首版只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。
+> v0.13.8 候选包已接入 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。首版只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。
 
 > 当前源码工作树还接入了显式标记的 **AD4Zn beta**。它不是新的 Vina 评分函数，而是先为符合条件的三配位 Zn 受体生成 TZ 几何伪原子，再使用用户提供的 `AD4Zn.dat` 和 AutoGrid4 4.2.7+ 生成专用 maps，最后由 Vina 以 `--maps ... --scoring ad4` 运行。协议只适用于单核 Zn 位点，不自动泛化到多核位点或 Mg、Fe、Ca 等其他金属；没有生成 TZ、缺少参数文件或 AutoGrid 版本不满足时均阻止运行，不降级为标准 AD4。`AD4Zn.dat` 文件自身声明 GPL-2.0-or-later，DockStart 不随仓库或安装包内置、也不自动下载；用户明确选择后，应用会为可复现性复制到项目并记录本机来源路径、SHA256、许可证 ID、受支持参数配置和固定上游参考。分享含该副本的项目时，分享者需要自行履行相应 GPL 再分发义务。该源码增量尚未修改版本号、重新打包或进入正式 Release。
 
 Box 的“定位到受体”只使用受体原子坐标范围的几何中心，不预测结合口袋，也不会自动判断 Box 是否适合研究目标。
 
-详细操作见 [用户指南](docs/user_guide.md)。如果第一次使用 AutoDock Vina，建议先从 [示例项目](docs/demo_projects.md) 开始。
+详细操作见 [用户指南](docs/user_guide.md)。需要逐项复现官方教程时，使用 [v0.13.8 六个 AutoDock Vina 官方示例人工验收清单](docs/manual_official_vina_examples_v0_13_8.md)。如果第一次使用 AutoDock Vina，建议先从 [示例项目](docs/demo_projects.md) 开始。
 
 > 源码工作树另有尚未发布的运行增量：`score_only` 评价冻结的输入姿势；新的 `local_only` 在同一 run 内先记录输入评分，再执行局部优化，显示“优化后－输入”差值、未对齐重原子位移，并可在同一受体坐标系中叠合输入与优化后姿势。帮助页、新建项目页和项目总览已提供评分/局部优化入口，文件来源与科学任务分开选择；独立 PubChem 在线构象不作为评价输入入口。评价模式运行前必须由用户在同场 3D 视图确认当前姿势；确认绑定本次运行实际使用的刚性受体、可选柔性侧链与配体 PDBQT 的 SHA256，任一输入文件替换后失效，prepared run 执行前还会再次核对确认与不可变输入快照。该记录只表示用户完成复核，不代表软件已验证姿势。叠合读取本次 run 的冻结受体和两份姿势，不读取后来替换的项目当前结构；现代双阶段 run 在显示前复核关键文件 SHA256。单次运行还可设置 `max_evals`、`min_rmsd`、`spacing`、`verbosity`、`no_refine`、`force_even_voxels`，并在刚性单配体 `score_only` 中选填 `unbound_energy`。有效值和 Vina 能力证据会冻结到 run 快照；两个专家开关默认关闭，未结合态参考能量默认留空。需要门禁的选项只有在当前 Vina 的高级帮助明确声明支持且版本满足要求时才允许运行；评价模式的 `autobox` 要求稳定版 Vina 1.2.3 或更高版本，`unbound_energy` 最低门槛按 SemVer 与稳定版 Vina 1.2.4 比较，因此 `1.2.4-rc1` 不通过。新生成的 `score_only` 结果会先核对记录的日志 SHA256；显式未结合态参考还会核对日志第 (4) 项与冻结值，并验证总评分满足 `(1) + (2) + (3) - (4)`。生成后的 `evaluation.json` 也以 SHA256 绑定到本次 run，读取与报告前会再次校验。AutoDock4 maps、柔性受体、全局对接、局部优化和批量筛选不使用 `unbound_energy`。上述能力尚未分配发布版本，不代表当前 Release 安装包已经包含或通过安装态验证。
 

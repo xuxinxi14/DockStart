@@ -90,10 +90,11 @@ The gate verifies this complete project workflow:
 11. compare the official raw output with DockStart's retained-water semantics
     and the read-only upstream `dry.py` reference.
 
-The requested `num_modes` remains 9. This pinned fixed-seed acceptance record
-accepts exactly 8 or 9 continuous `MODEL` records; 7 or fewer and 10 or more
-are rejected. Every accepted raw pose must retain both W pseudo-atoms, and the
-best-affinity neighborhood remains a hard gate.
+The requested `num_modes` remains 9. Vina defines this as the maximum number
+of output modes, so this acceptance record permits one through nine continuous
+`MODEL` records and rejects empty output or more than nine. Every accepted raw
+pose must retain both W pseudo-atoms, and the best-affinity neighborhood remains
+a hard gate.
 
 ## Positive pose-recovery oracle
 

@@ -732,6 +732,68 @@ def main():
         self.assertEqual(result["error"]["code"], "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED")
         self.assertEqual(result["error"]["bad_residues"], ["A:226", "A:315"])
 
+    def test_combined_bad_residue_and_altloc_review_retries_with_both_decisions(self) -> None:
+        strict_diagnostic = (
+            "No template matched for residue_key='A:42'\n"
+            "- Template matching failed for: ['A:42']\n"
+            "- Residues with alternate location: ['A:43']\n"
+        )
+        reviewed_diagnostic = (
+            "No template matched for residue_key='A:42'\n"
+            "- Template matching failed for: ['A:42'] Ignored due to allow_bad_res.\n"
+        )
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], cwd: str | Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+            _ = cwd, timeout
+            commands.append(list(command))
+            if "--allow_bad_res" not in command:
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr=strict_diagnostic)
+            output_stem = Path(command[command.index("-o") + 1])
+            output_stem.with_suffix(".pdbqt").write_text(
+                "REMARK reviewed receptor with explicit altloc\n",
+                encoding="utf-8",
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="written", stderr=reviewed_diagnostic)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._set_receptor_raw(
+                project_dir,
+                "raw/receptor.pdb",
+                content=_receptor_with_altloc(),
+            )
+            with (
+                patch("dockstart_core.preparation.get_preparation_tool_status", return_value=_tool_status()),
+                patch("adapters.meeko_adapter.run_preparation_command", side_effect=fake_run),
+            ):
+                strict_result = prepare_receptor_pdbqt(str(project_dir))
+                reviewed_result = prepare_receptor_pdbqt(
+                    str(project_dir),
+                    options={
+                        "protocol": "meeko_allow_bad_res_reviewed",
+                        "acknowledged_bad_residues": ["A:42"],
+                        "alternate_locations": {"A:43": "A"},
+                    },
+                )
+
+        self.assertFalse(strict_result["ok"])
+        self.assertEqual(strict_result["error"]["code"], "RECEPTOR_STRUCTURE_REVIEW_REQUIRED")
+        self.assertEqual(strict_result["error"]["bad_residues"], ["A:42"])
+        self.assertEqual(
+            strict_result["error"]["alternate_locations"],
+            [{
+                "selector": "A:43",
+                "meeko_id": "A:43",
+                "residue_name": "THR",
+                "ids": ["A", "B"],
+            }],
+        )
+        self.assertTrue(reviewed_result["ok"], reviewed_result)
+        self.assertIn("--allow_bad_res", commands[-1])
+        wanted_index = commands[-1].index("--wanted_altloc")
+        self.assertEqual(commands[-1][wanted_index + 1], "A:43=A")
+
     def test_reviewed_bad_residue_retry_publishes_only_when_detected_list_matches(self) -> None:
         diagnostic = (
             "No template matched for residue_key='A:226'\n"

@@ -793,6 +793,13 @@ class ToolCheckTests(unittest.TestCase):
 
     def test_toolchain_status_returns_structured_result(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
+        autogrid_result = ToolCheckResult(
+            key="autogrid4",
+            name="AutoGrid4",
+            status="missing",
+            message="仅 AutoDock4 maps 协议需要。",
+            source="missing",
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -817,6 +824,7 @@ class ToolCheckTests(unittest.TestCase):
                     },
                 ),
                 patch.object(vina_adapter.subprocess, "run", return_value=completed),
+                patch("dockstart_core.toolchain.autogrid_adapter.detect", return_value=autogrid_result) as autogrid_detect,
             ):
                 os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
                 response = get_toolchain_status()
@@ -828,6 +836,121 @@ class ToolCheckTests(unittest.TestCase):
         self.assertTrue(response["bundled_vina"]["exists"])
         self.assertEqual(response["bundled_vina"]["version"], "1.2.5")
         self.assertEqual(response["active_source"], "bundled")
+        self.assertEqual(response["autogrid4"]["status"], "missing")
+        self.assertEqual(response["autogrid4_source"], "missing")
+        autogrid_detect.assert_called_once_with("")
+
+    def test_toolchain_status_uses_configured_autogrid_without_affecting_vina(self) -> None:
+        vina_result = ToolCheckResult(
+            key="vina",
+            name="AutoDock Vina",
+            status="ok",
+            version="1.2.7",
+            path="C:/tools/vina.exe",
+            message="Vina 可用。",
+            source="configured",
+        )
+        autogrid_result = ToolCheckResult(
+            key="autogrid4",
+            name="AutoGrid4",
+            status="ok",
+            version="4.2.7",
+            path="C:/tools/autogrid4.exe",
+            message="AutoGrid4 可用。",
+            source="configured",
+        )
+        python_result = ToolCheckResult(
+            key="python",
+            name="Python",
+            status="ok",
+            version="3.11",
+            path=sys.executable,
+            message="Python 可用。",
+            source="configured",
+        )
+        missing_python_tool = ToolCheckResult(
+            key="python-package",
+            name="Python package",
+            status="missing",
+            message="未检测到。",
+            source="configured",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings_path = root / "settings.json"
+            save_payload = DockStartSettings(
+                tool_paths=ToolPaths(
+                    vina="C:/tools/vina.exe",
+                    python=sys.executable,
+                    autogrid4="C:/tools/autogrid4.exe",
+                ),
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    TOOLCHAIN_ROOT_ENV_VAR: str(root),
+                    SETTINGS_ENV_VAR: str(settings_path),
+                },
+                clear=False,
+            ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                save_settings(save_payload)
+                with (
+                    patch("dockstart_core.toolchain.vina_adapter.detect", return_value=vina_result),
+                    patch("dockstart_core.toolchain.autogrid_adapter.detect", return_value=autogrid_result) as autogrid_detect,
+                    patch("dockstart_core.toolchain.get_resolved_python", return_value=python_result),
+                    patch("dockstart_core.toolchain.rdkit_adapter.detect", return_value=missing_python_tool),
+                    patch("dockstart_core.toolchain.meeko_adapter.detect", return_value=missing_python_tool),
+                ):
+                    response = get_toolchain_status()
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["active_vina"]["status"], "ok")
+        self.assertEqual(response["autogrid4"]["status"], "ok")
+        self.assertEqual(response["autogrid4"]["version"], "4.2.7")
+        autogrid_detect.assert_called_once_with("C:/tools/autogrid4.exe")
+
+    def test_missing_autogrid_does_not_change_first_run_guidance(self) -> None:
+        ok_tool = ToolCheckResult(
+            key="tool",
+            name="Tool",
+            status="ok",
+            version="1.0",
+            path=sys.executable,
+            message="可用。",
+            source="configured",
+        )
+        missing_autogrid = ToolCheckResult(
+            key="autogrid4",
+            name="AutoGrid4",
+            status="missing",
+            message="仅 AutoDock4 maps 协议需要。",
+            source="missing",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch.dict(
+                os.environ,
+                {
+                    TOOLCHAIN_ROOT_ENV_VAR: str(root),
+                    SETTINGS_ENV_VAR: str(root / "settings.json"),
+                },
+                clear=False,
+            ):
+                os.environ.pop(RESOURCE_DIR_ENV_VAR, None)
+                with (
+                    patch("dockstart_core.toolchain.vina_adapter.detect", return_value=ok_tool),
+                    patch("dockstart_core.toolchain.autogrid_adapter.detect", return_value=missing_autogrid),
+                    patch("dockstart_core.toolchain.get_resolved_python", return_value=ok_tool),
+                    patch("dockstart_core.toolchain.rdkit_adapter.detect", return_value=ok_tool),
+                    patch("dockstart_core.toolchain.meeko_adapter.detect", return_value=ok_tool),
+                ):
+                    response = get_toolchain_status()
+
+        self.assertEqual(response["autogrid4"]["status"], "missing")
+        self.assertEqual(response["first_run_guidance"]["status"], "ready")
 
     def test_toolchain_status_uses_packaged_resource_dir(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="AutoDock Vina v1.2.5\n", stderr="")
