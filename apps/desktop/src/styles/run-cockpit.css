@@ -286,6 +286,7 @@
 .ad4-maps-status p,
 .ad4-license-note,
 .ad4-disabled-reason,
+.ad4-inline-note,
 .ad4-inline-error {
   margin: 0;
   color: var(--ds-text-secondary);
@@ -1013,6 +1014,11 @@
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   align-items: stretch;
   gap: 9px;
+}
+
+.ad4-inline-note {
+  border-left: 3px solid var(--ds-brand);
+  padding-left: 10px;
 }
 
 .vina-maps-action-card {

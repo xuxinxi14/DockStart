@@ -2474,11 +2474,11 @@ def validate_config_prerequisites(project_dir: str) -> dict[str, Any]:
             raw_error=f"run_mode={run_mode}",
             suggestion="请将任务类型切换为全局对接。",
         )
-    if (scoring_protocol == "ad4_maps" or uses_vina_maps) and receptor_inputs.get("mode") == "flexible":
+    if uses_vina_maps and receptor_inputs.get("mode") == "flexible":
         return _error(
             "MAPS_FLEXIBLE_RECEPTOR_UNSUPPORTED",
-            "预计算 maps 运行只支持刚性受体。",
-            suggestion="请切换回刚性受体，或改用由受体实时计算网格的 Vina/Vinardo 流程。",
+            "Vina/Vinardo 预计算 maps 运行只支持刚性受体。",
+            suggestion="请切换回刚性受体，或改用 AutoDock4 maps 柔性对接流程。",
         )
     if uses_vina_maps and run_mode != "dock":
         return _error(
@@ -6062,20 +6062,20 @@ def validate_run_prerequisites(project_dir: str) -> dict[str, Any]:
         )
     receptor_file = str(receptor_inputs["receptor_file"])
     flex_file = str(receptor_inputs.get("flex_file") or "")
-    if (scoring_protocol == "ad4_maps" or uses_vina_maps) and flex_file:
+    if uses_vina_maps and flex_file:
         checks.append(
             _run_check(
                 "ad4_maps",
                 "AutoDock4 affinity maps",
                 "error",
-                "预计算 maps 运行只支持刚性受体。",
+                "Vina/Vinardo 预计算 maps 运行只支持刚性受体。",
             )
         )
         return _run_error(
             "MAPS_FLEXIBLE_RECEPTOR_UNSUPPORTED",
-            "预计算 maps 运行只支持刚性受体。",
+            "Vina/Vinardo 预计算 maps 运行只支持刚性受体。",
             checks,
-            suggestion="请切换回刚性受体，或改用由受体实时计算网格的 Vina/Vinardo 流程。",
+            suggestion="请切换回刚性受体，或改用 AutoDock4 maps 柔性对接流程。",
         )
     if uses_vina_maps and run_mode != "dock":
         checks.append(

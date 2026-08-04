@@ -366,6 +366,10 @@ export default function RunPreparePage({
   });
 
   const isAd4Maps = project.docking_protocol?.engine === "ad4_maps";
+  const isStandardAd4Maps = isAd4Maps && ![
+    "ad4zn_beta",
+    "hydrated_ad4_experimental",
+  ].includes(String(project.docking_protocol?.protocol_id || "ad4_maps"));
   const isEvaluationMode = runMode !== "dock";
   const receptorMode = project.docking_protocol?.receptor_mode ?? project.docking_protocol?.mode ?? "rigid";
   const applicableAdvancedVinaKeys = useMemo(
@@ -537,11 +541,11 @@ export default function RunPreparePage({
   }, [project.project_dir]);
 
   useEffect(() => {
-    if ((isAd4Maps || isEvaluationMode) && workspaceMode === "batch") {
+    if (((isAd4Maps && !isStandardAd4Maps) || isEvaluationMode) && workspaceMode === "batch") {
       setWorkspaceMode("single");
       writeDockingWorkspaceMode(project.project_dir, "single");
     }
-  }, [isAd4Maps, isEvaluationMode, project.project_dir, workspaceMode]);
+  }, [isAd4Maps, isEvaluationMode, isStandardAd4Maps, project.project_dir, workspaceMode]);
 
   useEffect(() => {
     if (isAd4Maps && autobox) {
@@ -1146,8 +1150,14 @@ export default function RunPreparePage({
           type="button"
           className={workspaceMode === "batch" ? "active" : ""}
           aria-pressed={workspaceMode === "batch"}
-          disabled={isAd4Maps || isEvaluationMode}
-          title={isAd4Maps ? "串行批量筛选当前仅支持 Vina / Vinardo 协议" : isEvaluationMode ? "串行批量筛选仅支持全局对接" : undefined}
+          disabled={(isAd4Maps && !isStandardAd4Maps) || isEvaluationMode}
+          title={
+            isAd4Maps && !isStandardAd4Maps
+              ? "串行批量 AD4 仅支持标准 AutoDock4 maps，不支持 AD4Zn 或水合协议"
+              : isEvaluationMode
+                ? "串行批量筛选仅支持全局对接"
+                : undefined
+          }
           onClick={() => selectWorkspaceMode("batch")}
         >
           串行批量筛选
@@ -1801,7 +1811,7 @@ export default function RunPreparePage({
             {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
           </section>
 
-          {workspaceMode === "single" && !isAd4Maps ? <FlexibleReceptorPanel
+          {workspaceMode === "single" && (!isAd4Maps || isStandardAd4Maps) ? <FlexibleReceptorPanel
             project={project}
             disabled={isBusy || activeRunBlocked || isDirty}
             pickedResidue={pickedResidue.selector}
@@ -1823,12 +1833,13 @@ export default function RunPreparePage({
               receptorFile={project.receptor.file}
               box={project.box}
               vina={project.vina}
-              disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || project.docking_protocol?.mode === "flexible" || isAd4Maps || isEvaluationMode}
+              scoringProtocol={project.docking_protocol?.engine}
+              disabled={isBusy || isDirty || !formIsValid || !preflight?.ready || !project.receptor.file || receptorMode === "flexible" || (isAd4Maps && !isStandardAd4Maps) || isEvaluationMode}
               disabledReason={isEvaluationMode
                 ? "串行批量筛选只执行全局对接。请先将任务类型切换为“全局对接”。"
-                : isAd4Maps
-                ? "串行批量筛选当前只支持 Vina / Vinardo。请先切换评分协议。"
-                : project.docking_protocol?.mode === "flexible"
+                : isAd4Maps && !isStandardAd4Maps
+                ? "串行批量 AD4 仅支持标准 AutoDock4 maps；AD4Zn 与水合协议仍使用各自的单配体工作流。"
+                : receptorMode === "flexible"
                 ? "串行批量筛选当前仅支持刚性受体。请切回刚性受体后创建或恢复队列；系统不会静默改用旧受体。"
                 : isBusy
                 ? "当前单次对接流程正在运行，暂不能创建新的筛选队列。"
@@ -1850,6 +1861,7 @@ export default function RunPreparePage({
               receptorFile={project.receptor.file}
               box={project.box}
               vina={project.vina}
+              scoringProtocol={project.docking_protocol?.engine}
               compatibilityIssues={multipleLigandIssues}
               disabled={
                 isBusy

@@ -86,13 +86,13 @@ export function multipleLigandCompatibilityIssues(
   const issues: string[] = [];
   const engine = String(input.engine || "vina").toLowerCase();
   const protocolId = String(input.protocolId || "").toLowerCase();
-  if (
+  const standardAd4 = engine === "ad4_maps" && (!protocolId || protocolId === "ad4_maps");
+  if (!standardAd4 && (
     engine !== "vina"
-    || protocolId === "ad4_maps"
     || protocolId === "ad4zn_beta"
     || protocolId === "vina_maps"
-  ) {
-    issues.push("不支持 AutoDock4、AD4Zn 或预计算 maps");
+  )) {
+    issues.push("仅支持 Vina/Vinardo 或标准 AutoDock4 maps");
   }
   if (String(input.receptorMode || "rigid").toLowerCase() !== "rigid") {
     issues.push("仅支持刚性受体");

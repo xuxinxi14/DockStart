@@ -76,6 +76,9 @@ export default function AutoGridMapsPanel({
 }: AutoGridMapsPanelProps) {
   const isAd4 = project.docking_protocol?.engine === "ad4_maps";
   const isAd4Zn = isAd4 && project.docking_protocol?.protocol_id === "ad4zn_beta";
+  const isFlexible = (
+    project.docking_protocol?.receptor_mode ?? project.docking_protocol?.mode
+  ) === "flexible";
   const [defaults, setDefaults] = useState<AutoGridMapsDefaults | null>(null);
   const [status, setStatus] = useState<AutoGridMapsStatusResponse | null>(null);
   const [ad4ZnStatus, setAd4ZnStatus] = useState<Ad4ZnStatusResponse | null>(null);
@@ -377,6 +380,12 @@ export default function AutoGridMapsPanel({
               {`AutoGrid4 ${status?.tool?.status === "ok" ? status.tool.version || "可用" : "未配置"}`}
             </StatusBadge>
           </div>
+
+          {isFlexible ? (
+            <p className="ad4-inline-note" role="status">
+              有限柔性 AD4：AutoGrid4 使用柔性准备生成的刚性受体部分建立 maps；运行时会同时加载对应的柔性侧链文件。
+            </p>
+          ) : null}
 
           {status && status.tool?.status !== "ok" ? (
             <p className="ad4-inline-error" role="alert">

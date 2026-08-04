@@ -252,6 +252,58 @@ class AutoGridWorkflowTests(unittest.TestCase):
         ):
             return generate_maps(str(project_dir), runner=self._fake_autogrid)
 
+    def _activate_flexible_receptor(self, project_dir: Path) -> None:
+        raw = project_dir / "raw" / "receptor.pdb"
+        raw.write_text(
+            "ATOM      1  CA  ALA A  42       1.000   2.000   3.000\n",
+            encoding="utf-8",
+        )
+        flex_root = project_dir / "prepared" / "flexible_receptor" / "flex_001"
+        flex_root.mkdir(parents=True)
+        rigid = flex_root / "receptor_rigid.pdbqt"
+        flex = flex_root / "receptor_flex.pdbqt"
+        receptor_json = flex_root / "receptor.json"
+        rigid.write_text(RECEPTOR_PDBQT, encoding="utf-8")
+        flex.write_text(
+            "BEGIN_RES A ALA 42\n"
+            "ATOM      1  CA  ALA A  42       1.000   2.000   3.000  1.00 20.00     0.000 C\n"
+            "END_RES A ALA 42\n",
+            encoding="utf-8",
+        )
+        receptor_json.write_text("{}\n", encoding="utf-8")
+
+        project_json = project_dir / "project.json"
+        payload = json.loads(project_json.read_text(encoding="utf-8"))
+        payload["receptor"]["raw_file"] = "raw/receptor.pdb"
+        payload["docking_protocol"] = {
+            "schema_version": 1,
+            "engine": "vina",
+            "protocol_id": "flexible_single",
+            "run_mode": "dock",
+            "receptor_mode": "flexible",
+            "flexible_receptor": {
+                "status": "ready",
+                "preparation_id": "flex_001",
+                "source_raw_file": "raw/receptor.pdb",
+                "source_sha256": hashlib.sha256(raw.read_bytes()).hexdigest(),
+                "selected_residues": [
+                    {"selector": "A:42", "residue_name": "ALA"}
+                ],
+                "rigid_file": rigid.relative_to(project_dir).as_posix(),
+                "flex_file": flex.relative_to(project_dir).as_posix(),
+                "receptor_json_file": receptor_json.relative_to(project_dir).as_posix(),
+                "sha256": {
+                    "rigid_pdbqt": hashlib.sha256(rigid.read_bytes()).hexdigest(),
+                    "flex_pdbqt": hashlib.sha256(flex.read_bytes()).hexdigest(),
+                    "receptor_json": hashlib.sha256(receptor_json.read_bytes()).hexdigest(),
+                },
+            },
+        }
+        project_json.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     def test_generates_gpf_manifest_and_validated_maps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
@@ -759,6 +811,44 @@ class AutoGridWorkflowTests(unittest.TestCase):
             rejected = execute_prepared_vina_run(str(project_dir), prepared["run_id"])
             self.assertFalse(rejected["ok"])
             self.assertEqual(rejected["error"]["code"], "RUN_AD4_MAP_HASH_MISMATCH")
+
+    def test_flexible_ad4_maps_bind_rigid_component_and_run_with_flex(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            self._activate_flexible_receptor(project_dir)
+
+            generated = self._generate(project_dir, temp_dir)
+            self.assertTrue(generated["ok"], generated)
+            self.assertEqual(
+                generated["manifest"]["flexible_receptor"]["preparation_id"],
+                "flex_001",
+            )
+            project_payload = json.loads(
+                (project_dir / "project.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                project_payload["docking_protocol"]["receptor_mode"],
+                "flexible",
+            )
+            maps_status = validate_active_maps(str(project_dir))
+            self.assertTrue(maps_status["ok"], maps_status)
+            self.assertTrue(maps_status["ready"], maps_status)
+            self.assertTrue(generate_vina_config(str(project_dir))["ok"])
+
+            vina = Path(temp_dir) / "vina.exe"
+            vina.write_bytes(b"mock vina")
+            with patch(
+                "dockstart_core.project.vina_adapter.detect",
+                return_value=self._vina_ok(vina),
+            ):
+                prepared = prepare_vina_run(str(project_dir))
+            self.assertTrue(prepared["ok"], prepared)
+            self.assertIn("--maps", prepared["metadata"]["command"])
+            self.assertIn("--flex", prepared["metadata"]["command"])
+            self.assertEqual(
+                prepared["metadata"]["docking_protocol"]["receptor_mode"],
+                "flexible",
+            )
 
     def test_status_without_maps_is_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -21,6 +21,15 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+import dockstart_core.screening as screening  # noqa: E402
+from dockstart_core.autogrid import generate_maps  # noqa: E402
+from dockstart_core.models import ToolCheckResult  # noqa: E402
+from dockstart_core.project import (  # noqa: E402
+    create_project,
+    import_ligand_pdbqt,
+    import_receptor_pdbqt,
+    update_box_params,
+)
 from dockstart_core.screening import (  # noqa: E402
     archive_screening,
     compare_screening_archives,
@@ -351,6 +360,139 @@ class ScreeningWorkflowTests(unittest.TestCase):
         archived = archive_screening(str(self.root))
         self.assertTrue(archived["ok"], archived)
         return archived
+
+    def test_standard_ad4_batch_freezes_maps_runs_and_archives(self) -> None:
+        parent = self.root / "ad4_parent"
+        parent.mkdir()
+        created_project = create_project("ad4_batch", str(parent))
+        self.assertTrue(created_project["ok"], created_project)
+        project = Path(created_project["project_dir"])
+        receptor_source = parent / "ad4_receptor.pdbqt"
+        ligand_source = parent / "ad4_ligand.pdbqt"
+        receptor_source.write_text(_pdbqt("N"), encoding="utf-8")
+        ligand_source.write_text(_pdbqt("C"), encoding="utf-8")
+        self.assertTrue(
+            import_receptor_pdbqt(str(project), str(receptor_source))["ok"]
+        )
+        self.assertTrue(
+            import_ligand_pdbqt(str(project), str(ligand_source))["ok"]
+        )
+        self.assertTrue(update_box_params(str(project), BOX)["ok"])
+        second_ligand = project / "prepared" / "ligand_two.pdbqt"
+        second_ligand.write_text(_pdbqt("O"), encoding="utf-8")
+
+        autogrid = parent / "autogrid4.exe"
+        autogrid.write_bytes(b"mock autogrid")
+
+        def fake_autogrid(
+            _executable: str,
+            gpf_file: str,
+            log_file: str,
+            working_directory: str | Path,
+            **_kwargs: object,
+        ) -> dict:
+            root = Path(working_directory)
+            gpf_text = (root / gpf_file).read_text(encoding="utf-8")
+            ligand_types = next(
+                line.split()[1:]
+                for line in gpf_text.splitlines()
+                if line.startswith("ligand_types ")
+            )
+            for name in (
+                "receptor.maps.fld",
+                *(f"receptor.{atom_type}.map" for atom_type in ligand_types),
+                "receptor.e.map",
+                "receptor.d.map",
+            ):
+                (root / name).write_text(f"mock {name}\n", encoding="utf-8")
+            (root / log_file).write_text(
+                "Successful Completion\n",
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "command": ["autogrid4", "-p", gpf_file, "-l", log_file],
+                "exit_code": 0,
+                "stdout": "AutoGrid complete\n",
+                "stderr": "",
+                "error": "",
+            }
+
+        autogrid_detection = ToolCheckResult(
+            key="autogrid4",
+            name="AutoGrid4",
+            status="ok",
+            version="4.2.6",
+            path=str(autogrid),
+            message="ok",
+            source="configured",
+        )
+        with patch(
+            "dockstart_core.autogrid.autogrid_adapter.detect",
+            return_value=autogrid_detection,
+        ):
+            generated = generate_maps(str(project), runner=fake_autogrid)
+        self.assertTrue(generated["ok"], generated)
+
+        project_payload = json.loads(
+            (project / "project.json").read_text(encoding="utf-8")
+        )
+        vina = parent / "vina.exe"
+        vina.write_bytes(b"mock vina")
+        vina_detection = SimpleNamespace(
+            status="ok",
+            path=str(vina),
+            version="1.2.7",
+            source="configured",
+            message="ok",
+            raw_error="",
+            capabilities={},
+        )
+        with patch(
+            "dockstart_core.screening.vina_adapter.detect",
+            return_value=vina_detection,
+        ):
+            created = create_screening(
+                str(project),
+                "prepared/receptor.pdbqt",
+                ["prepared/ligand.pdbqt", "prepared/ligand_two.pdbqt"],
+                vina_path=str(vina),
+                box=project_payload["box"],
+                vina={**VINA, "scoring": "ad4"},
+                max_retries=0,
+                top_n=2,
+            )
+        self.assertTrue(created["ok"], created)
+        state = created["screening"]
+        self.assertEqual(state["scoring_protocol"], "ad4_maps")
+        self.assertTrue(state["inputs"]["ad4_maps"]["files"])
+        config = screening._config_text(state)
+        self.assertIn("scoring = ad4", config)
+        self.assertNotIn("receptor =", config)
+        self.assertNotIn("center_x =", config)
+
+        finished = run_screening(
+            str(project),
+            runner=_successful_runner([]),
+        )
+        self.assertTrue(finished["ok"], finished)
+        first_attempt = finished["screening"]["items"][0]["attempts"][0]
+        self.assertEqual(
+            first_attempt["command"][
+                first_attempt["command"].index("--scoring") + 1
+            ],
+            "ad4",
+        )
+        self.assertIn("--maps", first_attempt["command"])
+
+        archived = archive_screening(str(project))
+        self.assertTrue(archived["ok"], archived)
+        archive_root = project / archived["archive"]
+        archived_state = json.loads(
+            (archive_root / "screening.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(archived_state["scoring_protocol"], "ad4_maps")
+        self.assertTrue((archive_root / "inputs" / "ad4_maps").is_dir())
 
     def _assert_mid_queue_mutation_blocked(
         self,

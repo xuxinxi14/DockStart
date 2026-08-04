@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.14.0
+
+- Added standard AutoDock4 finite-flexible docking: maps bind the rigid receptor component while each run freezes and loads the matching flexible side-chain PDBQT.
+- Added rigid serial-batch AutoDock4 docking with one validated map set frozen for the queue, per-ligand AD4 execution evidence, recovery, reports, and archive export.
+- Added rigid two-ligand joint AutoDock4 docking with official multi-ligand command semantics, union atom-type map validation, frozen maps, joint scores, and reproducible reports.
+- Updated the docking-workbench protocol gates and guidance so standard AD4 exposes the new paths while AD4Zn and hydrated AD4 remain isolated single-ligand subprotocols.
+- Prepared a local v0.14.0 Assisted Windows GUI test candidate with focused regression and production-build checks, without claiming full release-gate completion.
+
 ## v0.13.8
 
 - Added a full-width receptor structure-review row so incomplete residues and alternate conformations no longer overflow the narrow action column.

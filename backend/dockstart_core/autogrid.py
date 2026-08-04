@@ -15,7 +15,13 @@ from typing import Any, Callable, Mapping
 
 from adapters import autogrid_adapter
 from dockstart_core.persistence import atomic_write_text
-from dockstart_core.project import BoxSettings, _project_from_dict, load_project, save_project
+from dockstart_core.project import (
+    BoxSettings,
+    _active_receptor_inputs,
+    _project_from_dict,
+    load_project,
+    save_project,
+)
 from dockstart_core.settings import load_settings
 
 MAP_SET_ID_PATTERN = re.compile(r"^ad4_(\d{3,})$")
@@ -176,6 +182,38 @@ def _project_file(root: Path, relative_path: str, label: str) -> tuple[Path | No
             str(candidate),
         )
     return candidate, None
+
+
+def _standard_receptor_inputs(
+    root: Path,
+    project: Any,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve the current rigid grid receptor and optional flexible side chains."""
+
+    resolved = _active_receptor_inputs(root, project)
+    if not resolved.get("ok"):
+        return None, resolved
+    receptor_relative = str(resolved.get("receptor_file") or "")
+    receptor_path, receptor_error = _project_file(
+        root,
+        receptor_relative,
+        "受体",
+    )
+    if receptor_error:
+        return None, receptor_error
+    flex_relative = str(resolved.get("flex_file") or "")
+    flex_path: Path | None = None
+    if flex_relative:
+        flex_path, flex_error = _project_file(root, flex_relative, "柔性侧链受体")
+        if flex_error:
+            return None, flex_error
+    return {
+        **resolved,
+        "receptor_relative": Path(receptor_relative).as_posix(),
+        "receptor_path": receptor_path,
+        "flex_relative": Path(flex_relative).as_posix() if flex_relative else "",
+        "flex_path": flex_path,
+    }, None
 
 
 def canonical_atom_type(value: str) -> str:
@@ -1205,9 +1243,11 @@ def get_maps_defaults(project_dir: str) -> dict[str, Any]:
         ):
             receptor_path = None
     else:
-        receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+        receptor_inputs, receptor_error = _standard_receptor_inputs(root, project)
         if receptor_error:
             return receptor_error
+        assert receptor_inputs is not None
+        receptor_path = receptor_inputs["receptor_path"]
     ligand_path, ligand_error = _project_file(root, project.ligand.file, "配体")
     if ligand_error:
         return ligand_error
@@ -1354,6 +1394,17 @@ def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
 
 def _activate_map_set(project: Any, manifest_relative: str, manifest: dict[str, Any]) -> dict[str, Any]:
     protocol_id = str(manifest.get("protocol_id") or "ad4_maps")
+    flexible_record = (
+        manifest.get("flexible_receptor")
+        if isinstance(manifest.get("flexible_receptor"), dict)
+        else {}
+    )
+    receptor_mode = (
+        "flexible"
+        if protocol_id == "ad4_maps"
+        and str(flexible_record.get("mode") or "") == "flexible"
+        else "rigid"
+    )
     state_key = "ad4zn" if protocol_id == AD4ZN_PROTOCOL_ID else "ad4_maps"
     current_state = project.preserved_data.get(state_key)
     state = copy.deepcopy(current_state) if isinstance(current_state, dict) else {}
@@ -1388,7 +1439,7 @@ def _activate_map_set(project: Any, manifest_relative: str, manifest: dict[str, 
             "protocol_id": protocol_id,
             "autobox": False,
             "run_mode": "dock",
-            "receptor_mode": "rigid",
+            "receptor_mode": receptor_mode,
         }
     )
     if protocol_id == AD4ZN_PROTOCOL_ID:
@@ -1442,14 +1493,15 @@ def generate_maps(
         if isinstance(docking_protocol, dict)
         else "rigid"
     )
-    if receptor_mode == "flexible":
+    if receptor_mode == "flexible" and is_ad4zn:
         return _error(
-            "MAPS_FLEXIBLE_RECEPTOR_UNSUPPORTED",
-            "AutoDock4 (maps) 的 v0.12.0 基准仅开放刚性受体。",
-            suggestion="请先切换到刚性受体；柔性 AD4 maps 需单独科学回归后再开放。",
+            "MAPS_FLEXIBLE_SUBPROTOCOL_UNSUPPORTED",
+            "有限柔性 AD4 当前仅支持标准 AutoDock4 maps。",
+            suggestion="请切换到标准 AD4，或为 AD4Zn 使用刚性受体。",
         )
     ad4zn_status: dict[str, Any] | None = None
     original_receptor_path: Path | None = None
+    flexible_receptor_input: dict[str, Any] | None = None
     if is_ad4zn:
         from dockstart_core.ad4zn import get_status as get_ad4zn_status
 
@@ -1497,11 +1549,27 @@ def generate_maps(
         if original_receptor_error:
             return original_receptor_error
     else:
-        receptor_relative = Path(project.receptor.file).as_posix()
-        receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+        receptor_inputs, receptor_error = _standard_receptor_inputs(root, project)
         if receptor_error:
             return receptor_error
+        assert receptor_inputs is not None
+        receptor_relative = str(receptor_inputs["receptor_relative"])
+        receptor_path = receptor_inputs["receptor_path"]
         original_receptor_path = receptor_path
+        if receptor_inputs.get("mode") == "flexible":
+            flex_path = receptor_inputs.get("flex_path")
+            assert isinstance(flex_path, Path)
+            flexible_receptor_input = {
+                "mode": "flexible",
+                "preparation_id": str(receptor_inputs.get("preparation_id") or ""),
+                "rigid_file": receptor_relative,
+                "rigid_sha256": _sha256(receptor_path),
+                "flex_file": str(receptor_inputs.get("flex_relative") or ""),
+                "flex_sha256": _sha256(flex_path),
+                "selected_residues": copy.deepcopy(
+                    receptor_inputs.get("selected_residues") or []
+                ),
+            }
     ligand_relative = (
         str(profile.get("ligand_file") or "").strip()
         if is_hydrated
@@ -2159,6 +2227,11 @@ def generate_maps(
                 ),
                 "atom_types": receptor_types,
             },
+            **(
+                {"flexible_receptor": flexible_receptor_input}
+                if flexible_receptor_input is not None
+                else {}
+            ),
             "ligand": {
                 **_snapshot(ligand_snapshot, Path("maps", map_set_id, "inputs", "ligand.pdbqt").as_posix()),
                 "source_relative_path": Path(ligand_relative).as_posix(),
@@ -2451,9 +2524,26 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
 
     ad4zn_prepared_path: Path | None = None
     ad4zn_frozen_receptor_path: Path | None = None
-    receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+    receptor_inputs, receptor_error = _standard_receptor_inputs(root, project)
     if receptor_error:
         return receptor_error
+    assert receptor_inputs is not None
+    receptor_path = receptor_inputs["receptor_path"]
+    flexible_receptor_input: dict[str, Any] | None = None
+    if receptor_inputs.get("mode") == "flexible":
+        flex_path = receptor_inputs.get("flex_path")
+        assert isinstance(flex_path, Path)
+        flexible_receptor_input = {
+            "mode": "flexible",
+            "preparation_id": str(receptor_inputs.get("preparation_id") or ""),
+            "rigid_file": str(receptor_inputs["receptor_relative"]),
+            "rigid_sha256": _sha256(receptor_path),
+            "flex_file": str(receptor_inputs.get("flex_relative") or ""),
+            "flex_sha256": _sha256(flex_path),
+            "selected_residues": copy.deepcopy(
+                receptor_inputs.get("selected_residues") or []
+            ),
+        }
     ligand_path, ligand_error = _project_file(root, project.ligand.file, "配体")
     if ligand_error:
         return ligand_error
@@ -2545,12 +2635,17 @@ def import_maps(project_dir: str, fld_file: str) -> dict[str, Any]:
             "finished_at": _now_iso(),
             "receptor": {
                 **_snapshot(receptor_snapshot, Path("maps", map_set_id, "inputs", "receptor.pdbqt").as_posix()),
-                "source_relative_path": Path(project.receptor.file).as_posix(),
+                "source_relative_path": str(receptor_inputs["receptor_relative"]),
                 "source_sha256": _sha256(receptor_path),
                 "atom_types": receptor_detected["atom_types"],
                 "gpf_declared_atom_types": receptor_types,
                 "provenance_file": str(source_receptor),
             },
+            **(
+                {"flexible_receptor": flexible_receptor_input}
+                if flexible_receptor_input is not None
+                else {}
+            ),
             "ligand": {
                 **_snapshot(ligand_snapshot, Path("maps", map_set_id, "inputs", "ligand.pdbqt").as_posix()),
                 "source_relative_path": Path(project.ligand.file).as_posix(),
@@ -2759,7 +2854,12 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
         )
         if log_summary.get("successful_completion") is not True:
             issues.append("AD4Zn AutoGrid 日志未记录 Successful Completion。")
-    receptor_path, receptor_error = _project_file(root, project.receptor.file, "受体")
+    receptor_inputs, receptor_error = _standard_receptor_inputs(root, project)
+    receptor_path = (
+        receptor_inputs.get("receptor_path")
+        if isinstance(receptor_inputs, dict)
+        else None
+    )
     if receptor_error or receptor_path is None:
         issues.append(str((receptor_error or {}).get("error", {}).get("message") or "当前受体不可读取。"))
     elif is_ad4zn:
@@ -2889,6 +2989,27 @@ def validate_active_maps(project_dir: str) -> dict[str, Any]:
         expected_receptor = str((manifest.get("receptor") or {}).get("source_sha256") or "").lower()
         if not SHA256_PATTERN.fullmatch(expected_receptor) or _sha256(receptor_path) != expected_receptor:
             issues.append("当前受体 SHA256 与 maps 绑定受体不一致。")
+        current_mode = str((receptor_inputs or {}).get("mode") or "rigid")
+        frozen_flexible = (
+            manifest.get("flexible_receptor")
+            if isinstance(manifest.get("flexible_receptor"), dict)
+            else {}
+        )
+        if current_mode == "flexible":
+            flex_path = (receptor_inputs or {}).get("flex_path")
+            if not isinstance(flex_path, Path):
+                issues.append("当前柔性侧链受体文件不可读取。")
+            elif (
+                str(frozen_flexible.get("rigid_sha256") or "").lower()
+                != _sha256(receptor_path)
+                or str(frozen_flexible.get("flex_sha256") or "").lower()
+                != _sha256(flex_path)
+                or str(frozen_flexible.get("preparation_id") or "")
+                != str((receptor_inputs or {}).get("preparation_id") or "")
+            ):
+                issues.append("当前柔性受体三件套与 maps 绑定记录不一致。")
+        elif frozen_flexible:
+            issues.append("当前已切换为刚性受体，但活动 maps 绑定了柔性受体三件套。")
     ligand_path, ligand_error = _project_file(root, project.ligand.file, "配体")
     current_ligand_types: list[str] = []
     if ligand_error or ligand_path is None:

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.13.8-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.14.0-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,9 +31,9 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码与本地 Windows 候选包版本为 **v0.13.8**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
+> 当前源码与本地 Windows 候选包版本为 **v0.14.0**。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。安装包不提交到 Git 仓库，请以 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 中实际发布的版本、门禁结果和校验值为准。
 
-> v0.13.8 候选包包含“多配体共同对接”、AD4Zn 和水合 AD4 的独立实验协议入口；它们仍分别标记为 Experimental/Beta，不属于默认稳定流程。多配体共同对接要求 AutoDock Vina 1.2.0 或更高版本，只接受恰好两个已经准备好的 PDBQT 配体、刚性受体、全局对接和 Vina/Vinardo 评分。它与“多个配体分别运行”的串行批量筛选是两种不同协议，不能用批筛结果语义解释。
+> v0.14.0 在标准 AutoDock4 maps 协议中补齐有限柔性单配体、刚性串行批量和刚性双配体共同对接。批量队列复用一组冻结 maps，但每个配体独立运行和排名；共同对接则让两个配体在一次 Vina 搜索中产生联合评分，不能拆成两个成员 affinity。两条刚性多配体路径都会先验证 maps 覆盖全部配体原子类型。AD4Zn beta 与水合 AD4 Experimental 仍是隔离的单配体子协议，不能与这些标准 AD4 扩展组合。
 
 ## 为什么使用 DockStart
 
@@ -89,23 +89,23 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 5. **开始对接**：运行前检查会确认项目文件、PDBQT、Box、Vina 参数、工具和输出目录。
 6. **查看结果**：比较 pose、affinity 与 RMSD，查看输出文件并导出 Markdown 报告。
 
-高级用户可在对接工作台切换到独立的 **AutoDock4（maps）** 协议，生成或导入 affinity maps 后运行。该协议的 scores 与报告独立保存，不能与 Vina/Vinardo 分值直接比较。AutoGrid4 需要用户自行安装并在设置页配置。
+高级用户可在对接工作台切换到独立的 **AutoDock4（maps）** 协议，生成或导入 affinity maps 后运行。标准 AD4 支持刚性单配体、有限柔性单配体、刚性串行批量，以及刚性双配体共同对接；所有路径都会冻结并校验实际使用的 maps。该协议的 scores 与报告独立保存，不能与 Vina/Vinardo 分值直接比较。AutoGrid4 需要用户自行安装并在设置页配置。
 
-> v0.13.8 候选包已接入 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。首版只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。
+> 当前候选包同时保留 **Vina / Vinardo 预计算 maps 复用**。它使用现有 AutoDock Vina 的 `--write_maps` 生成网格，或导入带 DockStart manifest 的 maps；不依赖 AutoGrid4，也不是 AutoDock4 评分。启用后，run 使用冻结的 `--maps`，不再向 Vina 传入 `--receptor`、Box 或 spacing，因此属于 `grid-only`，等价于 `no-refine`。该模式仍只允许刚性受体、单配体、全局对接，并把评分函数、受体、请求 Box、实际网格、Vina 二进制和每个 map 的 SHA256 一起绑定。
 
-> 当前源码工作树还接入了显式标记的 **AD4Zn beta**。它不是新的 Vina 评分函数，而是先为符合条件的三配位 Zn 受体生成 TZ 几何伪原子，再使用用户提供的 `AD4Zn.dat` 和 AutoGrid4 4.2.7+ 生成专用 maps，最后由 Vina 以 `--maps ... --scoring ad4` 运行。协议只适用于单核 Zn 位点，不自动泛化到多核位点或 Mg、Fe、Ca 等其他金属；没有生成 TZ、缺少参数文件或 AutoGrid 版本不满足时均阻止运行，不降级为标准 AD4。`AD4Zn.dat` 文件自身声明 GPL-2.0-or-later，DockStart 不随仓库或安装包内置、也不自动下载；用户明确选择后，应用会为可复现性复制到项目并记录本机来源路径、SHA256、许可证 ID、受支持参数配置和固定上游参考。分享含该副本的项目时，分享者需要自行履行相应 GPL 再分发义务。该源码增量尚未修改版本号、重新打包或进入正式 Release。
+> 当前候选包保留显式标记的 **AD4Zn beta**。它不是新的 Vina 评分函数，而是先为符合条件的三配位 Zn 受体生成 TZ 几何伪原子，再使用用户提供的 `AD4Zn.dat` 和 AutoGrid4 4.2.7+ 生成专用 maps，最后由 Vina 以 `--maps ... --scoring ad4` 运行。协议只适用于单核 Zn 位点，不自动泛化到多核位点或 Mg、Fe、Ca 等其他金属；没有生成 TZ、缺少参数文件或 AutoGrid 版本不满足时均阻止运行，不降级为标准 AD4。`AD4Zn.dat` 文件自身声明 GPL-2.0-or-later，DockStart 不随仓库或安装包内置、也不自动下载；用户明确选择后，应用会为可复现性复制到项目并记录本机来源路径、SHA256、许可证 ID、受支持参数配置和固定上游参考。分享含该副本的项目时，分享者需要自行履行相应 GPL 再分发义务。它仍是 Beta，不代表已进入正式 Release。
 
 Box 的“定位到受体”只使用受体原子坐标范围的几何中心，不预测结合口袋，也不会自动判断 Box 是否适合研究目标。
 
 详细操作见 [用户指南](docs/user_guide.md)。需要逐项复现官方教程时，使用 [v0.13.8 六个 AutoDock Vina 官方示例人工验收清单](docs/manual_official_vina_examples_v0_13_8.md)。如果第一次使用 AutoDock Vina，建议先从 [示例项目](docs/demo_projects.md) 开始。
 
-> 源码工作树另有尚未发布的运行增量：`score_only` 评价冻结的输入姿势；新的 `local_only` 在同一 run 内先记录输入评分，再执行局部优化，显示“优化后－输入”差值、未对齐重原子位移，并可在同一受体坐标系中叠合输入与优化后姿势。帮助页、新建项目页和项目总览已提供评分/局部优化入口，文件来源与科学任务分开选择；独立 PubChem 在线构象不作为评价输入入口。评价模式运行前必须由用户在同场 3D 视图确认当前姿势；确认绑定本次运行实际使用的刚性受体、可选柔性侧链与配体 PDBQT 的 SHA256，任一输入文件替换后失效，prepared run 执行前还会再次核对确认与不可变输入快照。该记录只表示用户完成复核，不代表软件已验证姿势。叠合读取本次 run 的冻结受体和两份姿势，不读取后来替换的项目当前结构；现代双阶段 run 在显示前复核关键文件 SHA256。单次运行还可设置 `max_evals`、`min_rmsd`、`spacing`、`verbosity`、`no_refine`、`force_even_voxels`，并在刚性单配体 `score_only` 中选填 `unbound_energy`。有效值和 Vina 能力证据会冻结到 run 快照；两个专家开关默认关闭，未结合态参考能量默认留空。需要门禁的选项只有在当前 Vina 的高级帮助明确声明支持且版本满足要求时才允许运行；评价模式的 `autobox` 要求稳定版 Vina 1.2.3 或更高版本，`unbound_energy` 最低门槛按 SemVer 与稳定版 Vina 1.2.4 比较，因此 `1.2.4-rc1` 不通过。新生成的 `score_only` 结果会先核对记录的日志 SHA256；显式未结合态参考还会核对日志第 (4) 项与冻结值，并验证总评分满足 `(1) + (2) + (3) - (4)`。生成后的 `evaluation.json` 也以 SHA256 绑定到本次 run，读取与报告前会再次校验。AutoDock4 maps、柔性受体、全局对接、局部优化和批量筛选不使用 `unbound_energy`。上述能力尚未分配发布版本，不代表当前 Release 安装包已经包含或通过安装态验证。
+> 当前候选包包含 `score_only` 与双阶段 `local_only`：前者评价冻结的输入姿势，后者在同一 run 内先记录输入评分，再执行局部优化，显示“优化后－输入”差值、未对齐重原子位移，并可在同一受体坐标系中叠合输入与优化后姿势。帮助页、新建项目页和项目总览已提供评分/局部优化入口，文件来源与科学任务分开选择；独立 PubChem 在线构象不作为评价输入入口。评价模式运行前必须由用户在同场 3D 视图确认当前姿势；确认绑定本次运行实际使用的刚性受体、可选柔性侧链与配体 PDBQT 的 SHA256，任一输入文件替换后失效，prepared run 执行前还会再次核对确认与不可变输入快照。该记录只表示用户完成复核，不代表软件已验证姿势。叠合读取本次 run 的冻结受体和两份姿势，不读取后来替换的项目当前结构；现代双阶段 run 在显示前复核关键文件 SHA256。单次运行还可设置 `max_evals`、`min_rmsd`、`spacing`、`verbosity`、`no_refine`、`force_even_voxels`，并在刚性单配体 `score_only` 中选填 `unbound_energy`。有效值和 Vina 能力证据会冻结到 run 快照；两个专家开关默认关闭，未结合态参考能量默认留空。需要门禁的选项只有在当前 Vina 的高级帮助明确声明支持且版本满足要求时才允许运行；评价模式的 `autobox` 要求稳定版 Vina 1.2.3 或更高版本，`unbound_energy` 最低门槛按 SemVer 与稳定版 Vina 1.2.4 比较，因此 `1.2.4-rc1` 不通过。新生成的 `score_only` 结果会先核对记录的日志 SHA256；显式未结合态参考还会核对日志第 (4) 项与冻结值，并验证总评分满足 `(1) + (2) + (3) - (4)`。生成后的 `evaluation.json` 也以 SHA256 绑定到本次 run，读取与报告前会再次校验。AutoDock4 maps、柔性受体、全局对接、局部优化和批量筛选不使用 `unbound_energy`。这些能力已进入 v0.14.0 本地候选包，但尚未完成正式 Release 的安装态门禁。
 
-> 同一源码工作树已补齐串行批量筛选结果工作区：全部配体可检索、筛选、排序和分页，成功项按需加载本次筛选冻结的受体与最佳构象，并在新记录中核对输出 SHA256；终态队列可生成独立的 `screening_report.md`。批量全局对接还会继承 `max_evals`、`min_rmsd`、`spacing`、`verbosity`、`no_refine` 和 `force_even_voxels`：这些值进入队列冻结状态、每个配体的独立配置、整批报告和归档协议指纹；建队后界面持续显示本队列冻结的 Box 与 Vina 快照。`no_refine` 与 `force_even_voxels` 仍受当前 Vina 运行时能力门禁；能力在开始或恢复队列时统一复核。每次 attempt 会先把冻结受体和当前配体按实际字节写入独立目录，再核对输入、配置及 Vina 二进制的大小与 SHA256；Vina 返回后还会再次复核这些证据，全部一致才把该 attempt 标记为成功。证据写入 `attempt.json`，归档详情和双归档比较也会复核已保存的 attempt 输入与配置；Vina 二进制本身不复制进归档，只保留并交叉核对冻结的版本、大小和 SHA256。旧归档缺少逐次运行证据时仍可读取，但归档详情会明确提示不能视为完整验证。`unbound_energy` 只适用于刚性单配体 `score_only`，不会进入批量队列。归档后的筛选可从历史列表重新打开并只读查看结果与报告，成功配体可按 `archive_id` 安全加载 Mode 1；损坏归档仍保留在列表中，但会阻止打开详情。旧归档缺少输出哈希时会显示“未完全验证”警告。历史列表还可严格只读比较恰好两个不同的有效归档：先选归档作为基线，后选归档作为对照，逐配体只按冻结输入的 SHA256 匹配。比较前会实际核对两批受体和全部配体输入的文件大小与 SHA256，并比较覆盖受体、评分函数、Box 六项、Vina 版本与二进制 SHA256、批量基础参数及上述六项适用高级参数的协议指纹。只有协议相同、配体身份唯一、两侧运行成功且评分和排名有效时，才显示“对照－基线”差值；协议不同仍可并排查看但不计算差值，同一归档内重复 SHA256 的配体标记为 `ambiguous`。归档浏览和比较全程只读，不能恢复活动队列、编辑、重试或修改项目及归档。该增量不修改版本号，尚未在本轮重新打包，Release 能力仍以发布页为准。
+> 串行批量筛选结果工作区可检索、筛选、排序和分页全部配体，成功项按需加载本次筛选冻结的受体与最佳构象，并在新记录中核对输出 SHA256；终态队列可生成独立的 `screening_report.md`。批量全局对接还会继承 `max_evals`、`min_rmsd`、`spacing`、`verbosity`、`no_refine` 和 `force_even_voxels`：这些值进入队列冻结状态、每个配体的独立配置、整批报告和归档协议指纹；建队后界面持续显示本队列冻结的 Box 与 Vina 快照。`no_refine` 与 `force_even_voxels` 仍受当前 Vina 运行时能力门禁；能力在开始或恢复队列时统一复核。每次 attempt 会先把冻结受体和当前配体按实际字节写入独立目录，再核对输入、配置及 Vina 二进制的大小与 SHA256；Vina 返回后还会再次复核这些证据，全部一致才把该 attempt 标记为成功。证据写入 `attempt.json`，归档详情和双归档比较也会复核已保存的 attempt 输入与配置；Vina 二进制本身不复制进归档，只保留并交叉核对冻结的版本、大小和 SHA256。旧归档缺少逐次运行证据时仍可读取，但归档详情会明确提示不能视为完整验证。`unbound_energy` 只适用于刚性单配体 `score_only`，不会进入批量队列。归档后的筛选可从历史列表重新打开并只读查看结果与报告，成功配体可按 `archive_id` 安全加载 Mode 1；损坏归档仍保留在列表中，但会阻止打开详情。旧归档缺少输出哈希时会显示“未完全验证”警告。历史列表还可严格只读比较恰好两个不同的有效归档：先选归档作为基线，后选归档作为对照，逐配体只按冻结输入的 SHA256 匹配。比较前会实际核对两批受体和全部配体输入的文件大小与 SHA256，并比较覆盖受体、评分函数、Box 六项、Vina 版本与二进制 SHA256、批量基础参数及上述六项适用高级参数的协议指纹。只有协议相同、配体身份唯一、两侧运行成功且评分和排名有效时，才显示“对照－基线”差值；协议不同仍可并排查看但不计算差值，同一归档内重复 SHA256 的配体标记为 `ambiguous`。归档浏览和比较全程只读，不能恢复活动队列、编辑、重试或修改项目及归档。该工作区已进入 v0.14.0 本地候选包，正式 Release 能力仍以发布页为准。
 >
 > 新建队列还会冻结并哈希九项资源限制。开始、恢复、读取归档和比较归档时都会重新核对重试次数、Top N、配体数量、单文件大小、总输入大小以及 CPU、Box 和搜索参数边界；超过应用硬上限或与冻结哈希不一致时，在启动 Vina 前阻断。旧记录缺少资源限制或哈希时按默认上限只读兼容，并标记为推断或未完全验证。
 >
-> 配体库导入已支持多文件、目录递归和多分子 SDF 逐记录处理。每条 SDF 记录保留原始 1-based 位置；单条 RDKit/Meeko 错误会显示在预览中，不会吞掉其他有效分子。准备后的 PDBQT 按精确字节 SHA256 去重，重复与失败项不能进入队列；用户可在建队前逐条选择可用项。源文件、record SHA256 和重复来源会写入 staging index，并在创建队列时校验后冻结到任务与 attempt。当前尚未冻结原始 record 拓扑字节，因此不会据此生成批量 SDF。该增量不修改版本号、安装包或 schema。
+> 配体库导入已支持多文件、目录递归和多分子 SDF 逐记录处理。每条 SDF 记录保留原始 1-based 位置；单条 RDKit/Meeko 错误会显示在预览中，不会吞掉其他有效分子。准备后的 PDBQT 按精确字节 SHA256 去重，重复与失败项不能进入队列；用户可在建队前逐条选择可用项。源文件、record SHA256 和重复来源会写入 staging index，并在创建队列时校验后冻结到任务与 attempt。当前尚未冻结原始 record 拓扑字节，因此不会据此生成批量 SDF。该能力已纳入 v0.14.0 本地候选包，不改变项目 schema。
 >
 > 有效的历史筛选归档现在可另存为单个 ZIP。包内根清单 `dockstart_screening_export.json` 记录逐文件大小与 SHA256、payload 树哈希和源归档完整性结论；DockStart 写完后会重新核对 ZIP 的 CRC、成员集合和逐文件哈希。现代记录还会交叉核对 `attempt.json` 与冻结状态，并为完整汇总、Top N 和 Markdown 实验记录保存大小与 SHA256；旧归档缺少这些历史凭据时仍可导出，但会标为“部分验证”，不会把导出时新计算的哈希冒充历史证据。为避免保存对话框与实际写入之间的覆盖竞态，GUI 不替换已有目标；路径已被占用时会保留原文件并要求另选名称。导出只读取归档，不修改项目或归档，也不包含 Vina 可执行文件、活动队列、项目当前状态或 staging 文件。该 ZIP 是便于移动和审计的只读实验包，不是可直接恢复运行的项目备份，也不是数字签名；已有 JSON 可能保留本机绝对路径，因此导出内容默认不匿名。该增量同样不修改版本号或现有安装包。
 

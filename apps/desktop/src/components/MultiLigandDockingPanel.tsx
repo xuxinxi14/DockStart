@@ -101,6 +101,7 @@ type MultiLigandDockingPanelProps = {
   receptorFile: string;
   box: DockStartProject["box"];
   vina: DockStartProject["vina"];
+  scoringProtocol?: string;
   compatibilityIssues: string[];
   disabled?: boolean;
   disabledReason?: string;
@@ -162,6 +163,7 @@ export default function MultiLigandDockingPanel({
   receptorFile,
   box,
   vina,
+  scoringProtocol = "vina",
   compatibilityIssues,
   disabled = false,
   disabledReason = "",
@@ -201,6 +203,7 @@ export default function MultiLigandDockingPanel({
       .filter((candidate): candidate is LigandImportCandidate => Boolean(candidate));
   }, [candidates, selection]);
   const compatible = compatibilityIssues.length === 0;
+  const isAd4 = scoringProtocol === "ad4_maps";
   const runStatus = run?.status || "";
   const hasActiveRun = runStatus === "prepared" || runStatus === "running";
   const bestMode = run?.scores?.find((score) => score.pose_available !== false)
@@ -513,7 +516,9 @@ export default function MultiLigandDockingPanel({
     >
       <div className="run-cockpit-section-heading">
         <div>
-          <span className="run-cockpit-kicker">实验性协议</span>
+          <span className="run-cockpit-kicker">
+            {isAd4 ? "实验性协议 · 标准 AD4 maps" : "实验性协议"}
+          </span>
           <h2 id="multiple-ligand-docking-title">多配体共同对接</h2>
         </div>
         <StatusBadge tone={runTone(runStatus)}>
@@ -524,7 +529,9 @@ export default function MultiLigandDockingPanel({
       <div className="multiple-ligand-definition">
         <Flask aria-hidden="true" size={24} weight="duotone" />
         <div>
-          <strong>两个配体在同一次全局搜索中共同优化</strong>
+          <strong>
+            两个配体在同一次{isAd4 ? " AutoDock4 maps" : " Vina/Vinardo"}全局搜索中共同优化
+          </strong>
           <p>
             这不是串行批量筛选。每个 Mode 同时包含两个成员，Vina 只给出整个联合体系的一个评分，
             不提供单个成员的独立贡献。

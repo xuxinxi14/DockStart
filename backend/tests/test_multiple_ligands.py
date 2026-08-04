@@ -19,6 +19,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from dockstart_core.models import ToolCheckResult  # noqa: E402
 import dockstart_core.multiple_ligands as multiple_ligands  # noqa: E402
+from dockstart_core.autogrid import generate_maps  # noqa: E402
 from dockstart_core.multiple_ligands import (  # noqa: E402
     PROTOCOL_ID,
     build_multiple_ligand_markdown_report,
@@ -36,6 +37,7 @@ from dockstart_core.project import (  # noqa: E402
     build_markdown_report,
     create_project,
     get_run_runtime_status,
+    import_ligand_pdbqt,
     import_receptor_pdbqt,
     load_scores_csv,
     recover_project_state,
@@ -702,6 +704,128 @@ class MultipleLigandRunTests(unittest.TestCase):
         self.assertEqual(details["total_declared_torsdof"], 0)
         self.assertEqual(details["total_search_dof"], 37)
 
+    def test_ad4_command_uses_two_ligands_and_precomputed_maps(self) -> None:
+        loaded = multiple_ligands.load_project(str(self.project_dir))
+        self.assertTrue(loaded["ok"], loaded)
+        project = multiple_ligands._project_from_dict(
+            loaded["project"],
+            self.project_dir,
+        )
+        maps_prefix = "runs/run_001/inputs/ad4_maps/receptor"
+        command = multiple_ligands._build_command(
+            str(self.vina),
+            "run_001",
+            ad4_maps_prefix=maps_prefix,
+        )
+        ligand_index = command.index("--ligand")
+        self.assertEqual(
+            command[ligand_index + 1 : ligand_index + 3],
+            [
+                "runs/run_001/inputs/ligand_001.pdbqt",
+                "runs/run_001/inputs/ligand_002.pdbqt",
+            ],
+        )
+        self.assertEqual(command[command.index("--maps") + 1], maps_prefix)
+        self.assertEqual(command[command.index("--scoring") + 1], "ad4")
+
+        config = multiple_ligands._build_config(
+            project,
+            "run_001",
+            ad4_maps_prefix=maps_prefix,
+        )
+        self.assertIn("scoring = ad4", config)
+        self.assertNotIn("receptor =", config)
+        self.assertNotIn("center_x =", config)
+        self.assertNotIn("spacing =", config)
+
+    def test_standard_ad4_prepare_freezes_maps_and_executes_joint_run(self) -> None:
+        imported = import_ligand_pdbqt(
+            str(self.project_dir),
+            str(self.ligand_1),
+        )
+        self.assertTrue(imported["ok"], imported)
+        autogrid = self.root / "autogrid4.exe"
+        autogrid.write_bytes(b"mock autogrid")
+
+        def fake_autogrid(
+            _executable: str,
+            gpf_file: str,
+            log_file: str,
+            working_directory: str | Path,
+            **_kwargs: object,
+        ) -> dict:
+            root = Path(working_directory)
+            gpf_text = (root / gpf_file).read_text(encoding="utf-8")
+            ligand_types = next(
+                line.split()[1:]
+                for line in gpf_text.splitlines()
+                if line.startswith("ligand_types ")
+            )
+            for name in (
+                "receptor.maps.fld",
+                *(f"receptor.{atom_type}.map" for atom_type in ligand_types),
+                "receptor.e.map",
+                "receptor.d.map",
+            ):
+                (root / name).write_text(f"mock {name}\n", encoding="utf-8")
+            (root / log_file).write_text(
+                "Successful Completion\n",
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "command": ["autogrid4", "-p", gpf_file, "-l", log_file],
+                "exit_code": 0,
+                "stdout": "AutoGrid complete\n",
+                "stderr": "",
+                "error": "",
+            }
+
+        autogrid_detection = ToolCheckResult(
+            key="autogrid4",
+            name="AutoGrid4",
+            status="ok",
+            version="4.2.6",
+            path=str(autogrid),
+            message="ok",
+            source="configured",
+        )
+        with patch(
+            "dockstart_core.autogrid.autogrid_adapter.detect",
+            return_value=autogrid_detection,
+        ):
+            generated = generate_maps(
+                str(self.project_dir),
+                {"ligand_atom_types": ["C", "OA"]},
+                runner=fake_autogrid,
+            )
+        self.assertTrue(generated["ok"], generated)
+
+        with patch(
+            "dockstart_core.multiple_ligands.vina_adapter.detect",
+            return_value=self._detection(),
+        ):
+            prepared = prepare_multiple_ligand_run(
+                str(self.project_dir),
+                [str(self.ligand_1), str(self.ligand_2)],
+            )
+        self.assertTrue(prepared["ok"], prepared)
+        metadata = prepared["metadata"]
+        self.assertEqual(metadata["scoring_protocol"], "ad4_maps")
+        self.assertEqual(metadata["scoring_function"], "ad4")
+        self.assertTrue(metadata["snapshots"]["ad4_maps"]["files"])
+        self.assertIn("--maps", metadata["command"])
+        self.assertIn("--scoring", metadata["command"])
+        config = (
+            self.project_dir / metadata["config_file"]
+        ).read_text(encoding="utf-8")
+        self.assertIn("scoring = ad4", config)
+        self.assertNotIn("receptor =", config)
+
+        executed = self._run(prepared["run_id"])
+        self.assertTrue(executed["ok"], executed)
+        self.assertEqual(executed["metadata"]["status"], "finished")
+
     def test_degenerate_leaf_branches_do_not_inflate_search_dimension(
         self,
     ) -> None:
@@ -1055,10 +1179,10 @@ class MultipleLigandRunTests(unittest.TestCase):
             (
                 {
                     "engine": "ad4_maps",
-                    "protocol_id": "ad4_maps",
+                    "protocol_id": "ad4zn_beta",
                     "run_mode": "dock",
                 },
-                "MULTIPLE_LIGAND_SCORING_PROTOCOL_UNSUPPORTED",
+                "MULTIPLE_LIGAND_AD4_SUBPROTOCOL_UNSUPPORTED",
             ),
         ]
         for protocol, expected_code in cases:

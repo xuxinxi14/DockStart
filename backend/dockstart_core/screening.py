@@ -37,7 +37,13 @@ from dockstart_core.preparation import get_preparation_tool_status
 from dockstart_core.project import (
     _exclusive_file_lock,
     _parse_pdbqt_stats,
+    _project_from_dict,
+    _project_protocol_id,
+    _project_receptor_mode,
+    _project_run_mode,
+    _project_scoring_protocol,
     _validate_vina_grid_resource,
+    load_project,
     validate_vina_params,
     validate_vina_runtime_capabilities,
 )
@@ -224,6 +230,26 @@ def _project_file(root: Path, value: str | Path, *, label: str) -> tuple[Path, s
         raise ValueError(f"{label} 必须是 PDBQT 文件。")
     if resolved.stat().st_size <= 0:
         raise ValueError(f"{label} 为空文件。")
+    return resolved, relative.as_posix()
+
+
+def _project_artifact_file(
+    root: Path,
+    value: str | Path,
+    *,
+    label: str,
+) -> tuple[Path, str]:
+    """Resolve a non-PDBQT project artifact without weakening containment."""
+
+    supplied = Path(value).expanduser()
+    candidate = supplied if supplied.is_absolute() else root / supplied
+    resolved = candidate.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label} 必须位于项目目录内。") from exc
+    if not resolved.is_file() or resolved.stat().st_size <= 0:
+        raise ValueError(f"{label} 不是可读取的非空文件。")
     return resolved, relative.as_posix()
 
 
@@ -448,6 +474,30 @@ def _validate_screening_resource_state(
         maximum=limits.max_total_input_bytes,
     )
     total_input_bytes = receptor_size
+    ad4_maps = (
+        inputs.get("ad4_maps")
+        if isinstance(inputs.get("ad4_maps"), dict)
+        else {}
+    )
+    map_files = (
+        ad4_maps.get("files")
+        if isinstance(ad4_maps.get("files"), list)
+        else []
+    )
+    if str(state.get("scoring_protocol") or "vina") == "ad4_maps":
+        if not map_files:
+            raise ValueError("screening.json 缺少冻结 AutoDock4 maps 文件。")
+        for index, record in enumerate(map_files, start=1):
+            if not isinstance(record, dict):
+                raise ValueError(f"冻结 AD4 map #{index} 记录无效。")
+            total_input_bytes += _strict_integer(
+                record.get("size_bytes"),
+                f"冻结 AD4 map #{index} size_bytes",
+                minimum=1,
+                maximum=limits.max_total_input_bytes,
+            )
+            if total_input_bytes > limits.max_total_input_bytes:
+                raise ValueError("冻结受体、maps 与配体总大小超过资源上限。")
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             raise ValueError(f"items[{index - 1}] 必须是对象。")
@@ -509,8 +559,8 @@ def _validate_settings(
         return parsed_value
 
     scoring = str(vina.get("scoring") or "vina").strip().lower()
-    if scoring not in {"vina", "vinardo"}:
-        raise ValueError("批量筛选当前仅支持 vina 或 vinardo 评分函数。")
+    if scoring not in {"vina", "vinardo", "ad4"}:
+        raise ValueError("批量筛选仅支持 vina、vinardo 或标准 AD4 maps 评分。")
     exhaustiveness = integer(
         "exhaustiveness",
         8,
@@ -536,7 +586,7 @@ def _validate_settings(
     vina_validation = validate_vina_params(
         {
             **vina,
-            "scoring": scoring,
+            "scoring": "vina" if scoring == "ad4" else scoring,
             "exhaustiveness": exhaustiveness,
             "num_modes": num_modes,
             "energy_range": energy_range if energy_range > 0 else 3,
@@ -1108,6 +1158,7 @@ def _verified_frozen_ligand_entries(
         raise ValueError("screening.json 缺少有效的冻结受体 SHA256。")
     if _sha256(receptor_path).lower() != receptor_sha256:
         raise ValueError("冻结受体的 SHA256 与 screening.json 不一致。")
+    _verify_screening_ad4_maps(root, state)
 
     entries: list[tuple[Path, str]] = []
     verified_topology_count = 0
@@ -1200,27 +1251,37 @@ def _validate_screening_execution_state(
                 warnings.append(warning)
         state["parameter_warnings"] = warnings
         ligand_entries = _verified_frozen_ligand_entries(root, state)
-        grid_validation = _screening_grid_resource(
-            normalized_box,
-            normalized_vina,
-            ligand_entries,
-        )
-        if not grid_validation.get("ok"):
-            return grid_validation
         recorded_grid = (
             state.get("grid_resource")
             if isinstance(state.get("grid_resource"), dict)
             else {}
         )
-        revalidated_grid = grid_validation["grid_resource"]
+        if str(state.get("scoring_protocol") or "vina") == "ad4_maps":
+            _verify_screening_ad4_maps(root, state)
+            revalidated_grid = {
+                **recorded_grid,
+                "source": "ad4_maps_manifest",
+            }
+        else:
+            grid_validation = _screening_grid_resource(
+                normalized_box,
+                normalized_vina,
+                ligand_entries,
+            )
+            if not grid_validation.get("ok"):
+                return grid_validation
+            revalidated_grid = grid_validation["grid_resource"]
         state["grid_resource"] = {
             **revalidated_grid,
             "execution_check": {
                 "checked_at": _now_iso(),
                 "matches_recorded": (
-                    recorded_grid.get("estimate") == revalidated_grid["estimate"]
-                    and recorded_grid.get("reference_ligand")
-                    == revalidated_grid["reference_ligand"]
+                    str(state.get("scoring_protocol") or "vina") == "ad4_maps"
+                    or (
+                        recorded_grid.get("estimate") == revalidated_grid["estimate"]
+                        and recorded_grid.get("reference_ligand")
+                        == revalidated_grid["reference_ligand"]
+                    )
                 ),
             },
         }
@@ -1270,7 +1331,7 @@ def _validate_screening_execution_state(
                 )
             capability_validation = validate_vina_runtime_capabilities(
                 normalized_vina,
-                str(normalized_vina["scoring"]),
+                str(state.get("scoring_protocol") or normalized_vina["scoring"]),
                 current_capabilities,
                 run_mode="dock",
                 receptor_mode="rigid",
@@ -1319,6 +1380,212 @@ def _read_state(root: Path) -> dict[str, Any]:
 
 def _copy_snapshot(source: Path, destination: Path) -> None:
     atomic_write_bytes(destination, source.read_bytes())
+
+
+def _screening_protocol_context(
+    root: Path,
+    *,
+    requested_scoring: str = "",
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    loaded = load_project(str(root))
+    if not loaded.get("ok"):
+        # The screening backend predates project schema v2 and is also used by
+        # the standalone/legacy API.  Keep that Vina-only entry point readable,
+        # but never infer AD4 without a valid project and its bound maps.
+        if str(requested_scoring or "vina").strip().lower() != "ad4":
+            return {
+                "project": None,
+                "scoring_protocol": "vina",
+                "protocol_id": "rigid_single",
+                "maps_status": None,
+            }, None
+        return None, loaded
+    project = _project_from_dict(loaded["project"], root)
+    scoring_protocol = _project_scoring_protocol(project)
+    protocol_id = _project_protocol_id(project)
+    if (
+        str(requested_scoring or "").strip().lower() == "ad4"
+        and scoring_protocol != "ad4_maps"
+    ):
+        return None, _error(
+            "SCREENING_AD4_PROTOCOL_REQUIRED",
+            "批量 AD4 必须先在项目中启用标准 AutoDock4 maps 协议。",
+            suggestion="请切换到标准 AD4，生成或导入 maps 后再创建批量任务。",
+        )
+    if _project_run_mode(project) != "dock":
+        return None, _error(
+            "SCREENING_GLOBAL_SEARCH_REQUIRED",
+            "批量筛选只支持全局对接。",
+            suggestion="请将任务类型切换为全局对接。",
+        )
+    if _project_receptor_mode(project) != "rigid":
+        return None, _error(
+            "SCREENING_RIGID_RECEPTOR_REQUIRED",
+            "批量筛选只支持刚性受体。",
+            suggestion="请切换回刚性受体；柔性受体请使用单配体运行。",
+        )
+    if scoring_protocol == "ad4_maps" and protocol_id != "ad4_maps":
+        return None, _error(
+            "SCREENING_AD4_SUBPROTOCOL_UNSUPPORTED",
+            "批量 AD4 仅支持标准 AutoDock4 maps，不支持 AD4Zn 或水合 AD4。",
+            suggestion="请切换到标准 AD4 maps 协议。",
+        )
+    maps_status: dict[str, Any] | None = None
+    if scoring_protocol == "ad4_maps":
+        from dockstart_core.autogrid import validate_active_maps
+
+        maps_status = validate_active_maps(str(root))
+        if not maps_status.get("ok") or not maps_status.get("ready"):
+            return None, _error(
+                "SCREENING_AD4_MAPS_NOT_READY",
+                "标准 AutoDock4 maps 尚未通过完整性校验。",
+                "；".join(str(item) for item in maps_status.get("issues") or []),
+                "请先生成或导入与当前受体、Box 和配体原子类型匹配的 AD4 maps。",
+            )
+    return {
+        "project": project,
+        "scoring_protocol": scoring_protocol,
+        "protocol_id": protocol_id,
+        "maps_status": maps_status,
+    }, None
+
+
+def _freeze_screening_ad4_maps(
+    root: Path,
+    inputs_root: Path,
+    maps_status: dict[str, Any],
+) -> dict[str, Any]:
+    manifest = (
+        maps_status.get("manifest")
+        if isinstance(maps_status.get("manifest"), dict)
+        else {}
+    )
+    source_files = (
+        (manifest.get("maps") or {}).get("files")
+        if isinstance(manifest.get("maps"), dict)
+        else []
+    )
+    if not isinstance(source_files, list) or not source_files:
+        raise ValueError("活动 AD4 maps manifest 没有文件清单。")
+    target_root = inputs_root / "ad4_maps"
+    target_root.mkdir(parents=False, exist_ok=False)
+    snapshots: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for item in source_files:
+        if not isinstance(item, dict):
+            raise ValueError("活动 AD4 maps manifest 包含无效文件记录。")
+        source_relative = str(item.get("relative_path") or "")
+        source, _ = _project_artifact_file(
+            root,
+            source_relative,
+            label="AD4 map",
+        )
+        name = source.name
+        if name in seen_names:
+            raise ValueError(f"活动 AD4 maps 包含重名文件：{name}")
+        seen_names.add(name)
+        destination = target_root / name
+        _copy_snapshot(source, destination)
+        snapshots.append(
+            {
+                "relative_path": Path(
+                    "screening",
+                    "inputs",
+                    "ad4_maps",
+                    name,
+                ).as_posix(),
+                "sha256": _sha256(destination),
+                "size_bytes": destination.stat().st_size,
+                "source_relative_path": source_relative,
+            }
+        )
+    manifest_relative = str(maps_status.get("manifest_file") or "")
+    manifest_source, _ = _project_artifact_file(
+        root,
+        manifest_relative,
+        label="AD4 maps manifest",
+    )
+    manifest_destination = target_root / "source_manifest.json"
+    _copy_snapshot(manifest_source, manifest_destination)
+    prefix_name = Path(str(maps_status.get("maps_prefix") or "")).name
+    if not prefix_name:
+        raise ValueError("活动 AD4 maps 缺少 prefix。")
+    return {
+        "map_set_id": str(maps_status.get("map_set_id") or ""),
+        "source_manifest": manifest_relative,
+        "manifest": {
+            "file": Path(
+                "screening",
+                "inputs",
+                "ad4_maps",
+                "source_manifest.json",
+            ).as_posix(),
+            "sha256": _sha256(manifest_destination),
+            "size_bytes": manifest_destination.stat().st_size,
+        },
+        "prefix": Path(
+            "screening",
+            "inputs",
+            "ad4_maps",
+            prefix_name,
+        ).as_posix(),
+        "attempt_prefix": Path(
+            "..",
+            "..",
+            "..",
+            "inputs",
+            "ad4_maps",
+            prefix_name,
+        ).as_posix(),
+        "files": snapshots,
+        "grid": json.loads(json.dumps(manifest.get("grid") or {})),
+        "ligand_atom_types": list(
+            (manifest.get("maps") or {}).get("ligand_atom_types") or []
+        ),
+    }
+
+
+def _verify_screening_ad4_maps(
+    root: Path,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    if str(state.get("scoring_protocol") or "vina") != "ad4_maps":
+        return {}
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    record = (
+        inputs.get("ad4_maps")
+        if isinstance(inputs.get("ad4_maps"), dict)
+        else {}
+    )
+    manifest = (
+        record.get("manifest")
+        if isinstance(record.get("manifest"), dict)
+        else {}
+    )
+    files = record.get("files") if isinstance(record.get("files"), list) else []
+    if not manifest or not files:
+        raise ValueError("screening.json 缺少冻结 AD4 maps 证据。")
+    for label, item in [("AD4 maps manifest", manifest), *[
+        (f"AD4 map #{index}", value)
+        for index, value in enumerate(files, start=1)
+        if isinstance(value, dict)
+    ]]:
+        path, _ = _project_artifact_file(
+            root,
+            str(item.get("file") or item.get("relative_path") or ""),
+            label=label,
+        )
+        _verified_frozen_file_bytes(
+            path,
+            item,
+            code="SCREENING_AD4_MAPS_SNAPSHOT_CHANGED",
+            label=label,
+        )
+    prefix = str(record.get("prefix") or "")
+    expected_prefix_root = Path("screening", "inputs", "ad4_maps").as_posix() + "/"
+    if not prefix.startswith(expected_prefix_root) or Path(prefix).name in {"", ".", ".."}:
+        raise ValueError("screening.json 中冻结 maps prefix 不安全。")
+    return record
 
 
 def _looks_like_pdbqt(path: Path) -> bool:
@@ -3910,6 +4177,21 @@ def create_screening(
     screening_root_for_cleanup: Path | None = None
     try:
         root = _project_root(project_dir)
+        protocol_context, protocol_error = _screening_protocol_context(
+            root,
+            requested_scoring=str(vina.get("scoring") or ""),
+        )
+        if protocol_error:
+            return protocol_error
+        assert protocol_context is not None
+        scoring_protocol = str(
+            protocol_context.get("scoring_protocol") or "vina"
+        )
+        ad4_maps_status = (
+            protocol_context.get("maps_status")
+            if isinstance(protocol_context.get("maps_status"), dict)
+            else None
+        )
         if _state_path(root).exists():
             return _error(
                 "SCREENING_ALREADY_EXISTS",
@@ -4034,22 +4316,92 @@ def create_screening(
         total_bytes = receptor_path.stat().st_size + sum(
             path.stat().st_size for path, _relative, _record in ligand_inputs
         )
+        if ad4_maps_status is not None:
+            ad4_manifest = (
+                ad4_maps_status.get("manifest")
+                if isinstance(ad4_maps_status.get("manifest"), dict)
+                else {}
+            )
+            total_bytes += sum(
+                int(item.get("size_bytes") or 0)
+                for item in (
+                    (ad4_manifest.get("maps") or {}).get("files") or []
+                )
+                if isinstance(item, dict)
+            )
         if total_bytes > limits.max_total_input_bytes:
             raise ValueError("受体和配体输入总大小超过批量筛选资源上限。")
 
-        parameter_warnings = _screening_parameter_warnings(vina)
-        normalized_box, normalized_vina = _validate_settings(box, vina, limits)
-        grid_validation = _screening_grid_resource(
-            normalized_box,
-            normalized_vina,
-            ligand_entries,
+        requested_vina = dict(vina)
+        if scoring_protocol == "ad4_maps":
+            requested_vina.update(
+                {
+                    "scoring": "ad4",
+                    "no_refine": False,
+                    "force_even_voxels": False,
+                }
+            )
+        parameter_warnings = _screening_parameter_warnings(requested_vina)
+        normalized_box, normalized_vina = _validate_settings(
+            box,
+            requested_vina,
+            limits,
         )
-        if not grid_validation.get("ok"):
-            return grid_validation
+        if ad4_maps_status is not None:
+            manifest = (
+                ad4_maps_status.get("manifest")
+                if isinstance(ad4_maps_status.get("manifest"), dict)
+                else {}
+            )
+            available_types = {
+                str(value or "").strip().upper()
+                for value in (manifest.get("maps") or {}).get(
+                    "ligand_atom_types",
+                    [],
+                )
+            }
+            required_types = {
+                str(value or "").strip().upper()
+                for ligand_path, relative in ligand_entries
+                for value in (
+                    _parse_pdbqt_stats(
+                        ligand_path,
+                        relative,
+                        ligand=True,
+                    ).get("atom_types")
+                    or []
+                )
+            }
+            missing_types = sorted(required_types - available_types)
+            if missing_types:
+                return _error(
+                    "SCREENING_AD4_MAP_TYPES_MISSING",
+                    "当前 AD4 maps 未覆盖批量配体库所需的全部原子类型。",
+                    ", ".join(missing_types),
+                    "请在 AutoGrid4 面板加入缺失的配体原子类型并重新生成 maps。",
+                )
+            grid_validation = {
+                "ok": True,
+                "grid_resource": {
+                    "source": "ad4_maps_manifest",
+                    "map_set_id": str(ad4_maps_status.get("map_set_id") or ""),
+                    "grid": json.loads(json.dumps(manifest.get("grid") or {})),
+                    "warnings": [],
+                },
+                "error": None,
+            }
+        else:
+            grid_validation = _screening_grid_resource(
+                normalized_box,
+                normalized_vina,
+                ligand_entries,
+            )
+            if not grid_validation.get("ok"):
+                return grid_validation
         vina_tool, vina_capabilities = _resolve_vina_tool(vina_path)
         capability_validation = validate_vina_runtime_capabilities(
             normalized_vina,
-            str(normalized_vina["scoring"]),
+            scoring_protocol,
             vina_capabilities,
             run_mode="dock",
             receptor_mode="rigid",
@@ -4126,6 +4478,11 @@ def create_screening(
         inputs_root = pending_inputs_root
         receptor_snapshot = inputs_root / "receptor.pdbqt"
         _copy_snapshot(receptor_path, receptor_snapshot)
+        frozen_ad4_maps = (
+            _freeze_screening_ad4_maps(root, inputs_root, ad4_maps_status)
+            if ad4_maps_status is not None
+            else None
+        )
         items: list[ScreeningItem] = []
         topology_items: list[dict[str, Any]] = []
         library_manifest_records: list[dict[str, Any]] = []
@@ -4359,6 +4716,10 @@ def create_screening(
             "started_at": None,
             "finished_at": None,
             "cancel_requested": False,
+            "scoring_protocol": scoring_protocol,
+            "scoring_function": (
+                "ad4" if scoring_protocol == "ad4_maps" else normalized_vina["scoring"]
+            ),
             "vina_path": vina_tool.path,
             "tools": {
                 "vina": {
@@ -4374,6 +4735,11 @@ def create_screening(
                     "sha256": _sha256(receptor_snapshot),
                     "size_bytes": receptor_snapshot.stat().st_size,
                 },
+                **(
+                    {"ad4_maps": frozen_ad4_maps}
+                    if frozen_ad4_maps is not None
+                    else {}
+                ),
                 "raw_ligand_topology_available": (
                     topology_status == "complete"
                 ),
@@ -4978,6 +5344,74 @@ def _relocate_archive_logical_file(
     return resolved
 
 
+def _archived_ad4_map_records(
+    state: dict[str, Any],
+) -> list[tuple[str, dict[str, Any], str]]:
+    """Return validated logical paths for the AD4 maps frozen with a queue."""
+
+    if str(state.get("scoring_protocol") or "vina") != "ad4_maps":
+        return []
+    inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    ad4_maps = (
+        inputs.get("ad4_maps")
+        if isinstance(inputs.get("ad4_maps"), dict)
+        else {}
+    )
+    manifest = (
+        ad4_maps.get("manifest")
+        if isinstance(ad4_maps.get("manifest"), dict)
+        else {}
+    )
+    files = ad4_maps.get("files") if isinstance(ad4_maps.get("files"), list) else []
+    prefix = str(ad4_maps.get("prefix") or "")
+    expected_root = PurePosixPath("screening", "inputs", "ad4_maps")
+    prefix_path = PurePosixPath(prefix)
+    if (
+        not manifest
+        or not files
+        or tuple(prefix_path.parts[:-1]) != expected_root.parts
+        or not prefix_path.name
+        or "\\" in prefix
+    ):
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_AD4_MAPS_INVALID",
+            "归档缺少完整、安全的 AutoDock4 maps 快照记录。",
+        )
+
+    records: list[tuple[str, dict[str, Any], str]] = []
+    manifest_path = str(manifest.get("file") or "")
+    expected_manifest = (expected_root / "source_manifest.json").as_posix()
+    if manifest_path != expected_manifest:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_AD4_MAPS_INVALID",
+            f"归档 AutoDock4 maps manifest 路径无效：{manifest_path or 'missing'}。",
+        )
+    records.append((manifest_path, manifest, "AutoDock4 maps manifest"))
+
+    seen_names: set[str] = set()
+    for index, item in enumerate(files, start=1):
+        if not isinstance(item, dict):
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_AD4_MAPS_INVALID",
+                f"归档 AutoDock4 map #{index} 记录无效。",
+            )
+        logical = str(item.get("relative_path") or "")
+        logical_path = PurePosixPath(logical)
+        if (
+            tuple(logical_path.parts[:-1]) != expected_root.parts
+            or not logical_path.name
+            or logical_path.name in seen_names
+            or "\\" in logical
+        ):
+            raise _ArchiveValidationError(
+                "SCREENING_ARCHIVE_AD4_MAPS_INVALID",
+                f"归档 AutoDock4 map #{index} 路径无效或重名：{logical or 'missing'}。",
+            )
+        seen_names.add(logical_path.name)
+        records.append((logical, item, f"AutoDock4 map {logical_path.name}"))
+    return records
+
+
 def _archive_export_snapshot_identity(
     source_records: dict[str, dict[str, Any]],
     relative: str,
@@ -5079,6 +5513,20 @@ def _validate_archived_resource_state(
                         library_manifest,
                         "批量配体导入 manifest",
                         "inputs/library_import_manifest.json",
+                    )
+                )
+            for logical, record, label in _archived_ad4_map_records(state):
+                logical_path = PurePosixPath(logical)
+                records.append(
+                    (
+                        _relocate_archive_logical_file(
+                            archive_dir,
+                            logical,
+                            expected_tail=tuple(logical_path.parts[1:]),
+                        ),
+                        record,
+                        label,
+                        PurePosixPath(*logical_path.parts[1:]).as_posix(),
                     )
                 )
             for item in state.get("items") or []:
@@ -6220,6 +6668,9 @@ def _archive_export_allowlist(
         add_file(fixed)
 
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+    for logical, _record, _label in _archived_ad4_map_records(state):
+        logical_path = PurePosixPath(logical)
+        add_file(PurePosixPath(*logical_path.parts[1:]).as_posix())
     library_manifest = (
         inputs.get("library_import_manifest")
         if isinstance(inputs.get("library_import_manifest"), dict)
@@ -8215,7 +8666,7 @@ def _comparison_protocol_fingerprint(
         normalized_box[key] = value
 
     scoring = str(vina["scoring"] or "").strip().lower()
-    if scoring not in {"vina", "vinardo"}:
+    if scoring not in {"vina", "vinardo", "ad4"}:
         raise _ArchiveValidationError(
             "SCREENING_ARCHIVE_COMPARE_PROTOCOL_INVALID",
             f"归档 {archive_id} 的评分函数不受支持：{scoring or 'missing'}。",
@@ -8306,6 +8757,7 @@ def _comparison_protocol_fingerprint(
     advanced_validation = validate_vina_params(
         {
             **vina,
+            "scoring": "vina" if scoring == "ad4" else scoring,
             "energy_range": energy_range if energy_range > 0 else 3,
             "unbound_energy": None,
         }
@@ -8323,6 +8775,7 @@ def _comparison_protocol_fingerprint(
 
     fingerprint: dict[str, Any] = {
         "receptor_sha256": receptor_sha256,
+        "scoring_protocol": str(state.get("scoring_protocol") or "vina"),
         "scoring": scoring,
         "box": normalized_box,
         "vina_version": vina_version_value.strip(),
@@ -8340,6 +8793,43 @@ def _comparison_protocol_fingerprint(
         "no_refine": bool(parsed_vina["no_refine"]),
         "force_even_voxels": bool(parsed_vina["force_even_voxels"]),
     }
+    if scoring == "ad4":
+        map_records = _archived_ad4_map_records(state)
+        map_identity = []
+        for logical, record, label in map_records:
+            sha256 = _comparison_recorded_sha256(
+                record.get("sha256"),
+                archive_id=archive_id,
+                label=label,
+            )
+            size_bytes = record.get("size_bytes")
+            if (
+                isinstance(size_bytes, bool)
+                or not isinstance(size_bytes, int)
+                or size_bytes < 1
+            ):
+                raise _ArchiveValidationError(
+                    "SCREENING_ARCHIVE_COMPARE_PROTOCOL_INVALID",
+                    f"归档 {archive_id} 的 {label} 文件大小无效。",
+                )
+            map_identity.append(
+                {
+                    "file": logical,
+                    "sha256": sha256,
+                    "size_bytes": size_bytes,
+                }
+            )
+        inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
+        ad4_maps = (
+            inputs.get("ad4_maps")
+            if isinstance(inputs.get("ad4_maps"), dict)
+            else {}
+        )
+        fingerprint["ad4_maps"] = {
+            "map_set_id": str(ad4_maps.get("map_set_id") or ""),
+            "prefix": str(ad4_maps.get("prefix") or ""),
+            "files": map_identity,
+        }
     canonical = json.dumps(
         fingerprint,
         ensure_ascii=False,
@@ -8356,7 +8846,9 @@ def _comparison_protocol_differences(
 ) -> list[dict[str, Any]]:
     fields = (
         "receptor_sha256",
+        "scoring_protocol",
         "scoring",
+        "ad4_maps",
         "box.center_x",
         "box.center_y",
         "box.center_z",
@@ -9096,30 +9588,37 @@ def resume_screening(project_dir: str) -> dict[str, Any]:
 def _config_text(state: dict[str, Any]) -> str:
     box = state["box"]
     vina = _screening_vina_with_defaults(state["vina"])
-    lines = [
-        "receptor = receptor.pdbqt",
-        "ligand = ligand.pdbqt",
-        f"scoring = {vina['scoring']}",
-        "",
-        f"center_x = {box['center_x']:g}",
-        f"center_y = {box['center_y']:g}",
-        f"center_z = {box['center_z']:g}",
-        f"size_x = {box['size_x']:g}",
-        f"size_y = {box['size_y']:g}",
-        f"size_z = {box['size_z']:g}",
-        "",
+    is_ad4 = str(state.get("scoring_protocol") or "vina") == "ad4_maps"
+    if is_ad4:
+        lines = ["ligand = ligand.pdbqt", "scoring = ad4", ""]
+    else:
+        lines = [
+            "receptor = receptor.pdbqt",
+            "ligand = ligand.pdbqt",
+            f"scoring = {vina['scoring']}",
+            "",
+            f"center_x = {box['center_x']:g}",
+            f"center_y = {box['center_y']:g}",
+            f"center_z = {box['center_z']:g}",
+            f"size_x = {box['size_x']:g}",
+            f"size_y = {box['size_y']:g}",
+            f"size_z = {box['size_z']:g}",
+            "",
+        ]
+    lines.extend([
         f"exhaustiveness = {vina['exhaustiveness']}",
         f"max_evals = {vina['max_evals']}",
         f"num_modes = {vina['num_modes']}",
         f"min_rmsd = {float(vina['min_rmsd']):g}",
         f"energy_range = {vina['energy_range']:g}",
         f"cpu = {vina['cpu']}",
-        f"spacing = {float(vina['spacing']):g}",
-    ]
-    if vina["no_refine"]:
-        lines.append("no_refine = true")
-    if vina["force_even_voxels"]:
-        lines.append("force_even_voxels = true")
+    ])
+    if not is_ad4:
+        lines.append(f"spacing = {float(vina['spacing']):g}")
+        if vina["no_refine"]:
+            lines.append("no_refine = true")
+        if vina["force_even_voxels"]:
+            lines.append("force_even_voxels = true")
     lines.append(f"verbosity = {vina['verbosity']}")
     if vina.get("seed") is not None:
         lines.append(f"seed = {vina['seed']}")
@@ -9248,7 +9747,18 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
     stdout_path = attempt_dir / "stdout.txt"
     stderr_path = attempt_dir / "stderr.txt"
     log_path = attempt_dir / "log.txt"
-    command = [str(vina_path), "--config", "config.txt", "--out", "out.pdbqt"]
+    command = [str(vina_path), "--config", "config.txt"]
+    if str(state.get("scoring_protocol") or "vina") == "ad4_maps":
+        ad4_maps = _verify_screening_ad4_maps(root, state)
+        command.extend(
+            [
+                "--maps",
+                str(ad4_maps.get("attempt_prefix") or ""),
+                "--scoring",
+                "ad4",
+            ]
+        )
+    command.extend(["--out", "out.pdbqt"])
     started_at = _now_iso()
     tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
     vina_tool = tools.get("vina") if isinstance(tools.get("vina"), dict) else {}
@@ -10594,6 +11104,22 @@ def _screening_report_text(state: dict[str, Any]) -> str:
     }
     inputs = state.get("inputs") if isinstance(state.get("inputs"), dict) else {}
     receptor = inputs.get("receptor") if isinstance(inputs.get("receptor"), dict) else {}
+    is_ad4 = str(state.get("scoring_protocol") or "vina") == "ad4_maps"
+    ad4_maps = (
+        inputs.get("ad4_maps")
+        if isinstance(inputs.get("ad4_maps"), dict)
+        else {}
+    )
+    ad4_manifest = (
+        ad4_maps.get("manifest")
+        if isinstance(ad4_maps.get("manifest"), dict)
+        else {}
+    )
+    ad4_map_files = (
+        ad4_maps.get("files")
+        if isinstance(ad4_maps.get("files"), list)
+        else []
+    )
     topology_summary = (
         inputs.get("topology")
         if isinstance(inputs.get("topology"), dict)
@@ -10711,7 +11237,18 @@ def _screening_report_text(state: dict[str, Any]) -> str:
         f"- AutoDock Vina：{_markdown_cell(vina_tool.get('version'))}",
         f"- Vina 来源：{_markdown_cell(vina_tool.get('source'))}",
         f"- Vina SHA256：`{_markdown_cell(vina_tool.get('sha256'))}`",
+        f"- 评分协议：{'标准 AutoDock4 maps' if is_ad4 else 'Vina / Vinardo'}",
         f"- 评分函数：{_markdown_cell(vina.get('scoring'))}",
+        *(
+            [
+                f"- maps 集合：`{_markdown_cell(ad4_maps.get('map_set_id'))}`",
+                f"- maps 前缀：`{_markdown_cell(ad4_maps.get('prefix'))}`",
+                f"- maps 文件数：{len(ad4_map_files)}",
+                f"- maps manifest SHA256：`{_markdown_cell(ad4_manifest.get('sha256'))}`",
+            ]
+            if is_ad4
+            else []
+        ),
         f"- 搜索彻底程度：{_markdown_cell(vina.get('exhaustiveness'))}",
         f"- 单条搜索链最大评估次数：{max_evals_label}",
         f"- 输出构象数：{_markdown_cell(vina.get('num_modes'))}",
@@ -10835,8 +11372,16 @@ def _screening_report_text(state: dict[str, Any]) -> str:
             "",
             "## 科学边界",
             "",
-            "- 本任务按固定受体、Box 与 Vina 参数逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。",
-            "- 排名只在本批次相同评分协议和参数下按 Vina 数值排序，不应与其他评分函数或其他输入条件直接比较。",
+            (
+                "- 本任务按固定受体与冻结 AutoDock4 maps 逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。"
+                if is_ad4
+                else "- 本任务按固定受体、Box 与 Vina 参数逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。"
+            ),
+            (
+                "- 排名只在本批次相同 AD4 maps 和搜索参数下按 AD4 数值排序，不应与 Vina、Vinardo 或其他网格条件直接比较。"
+                if is_ad4
+                else "- 排名只在本批次相同评分协议和参数下按 Vina 数值排序，不应与其他评分函数或其他输入条件直接比较。"
+            ),
             "- 单项失败不会自动说明该配体不能结合；应结合错误日志、输入质量和必要的进一步计算或实验判断。",
             "- PDBQT 不保存可靠完整的键级信息；没有受控原始拓扑时，DockStart 不会据此猜测并生成 SDF。",
             "- 批量结果 SDF 只收录经 Meeko 拓扑映射导出且与冻结原始重原子图一致的构象；失败或缺失覆盖会在清单中显式记录。",

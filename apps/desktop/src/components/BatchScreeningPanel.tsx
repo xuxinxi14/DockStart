@@ -91,6 +91,8 @@ type ScreeningState = {
   items?: ScreeningItem[];
   box?: Partial<DockStartProject["box"]>;
   vina?: Partial<DockStartProject["vina"]>;
+  scoring_protocol?: string;
+  scoring_function?: string;
   compatibility?: {
     inferred_vina_fields?: string[];
     [key: string]: unknown;
@@ -203,6 +205,7 @@ type BatchScreeningPanelProps = {
   receptorFile: string;
   box: DockStartProject["box"];
   vina: DockStartProject["vina"];
+  scoringProtocol?: string;
   presentation?: "workspace" | "results";
   disabled?: boolean;
   disabledReason?: string;
@@ -277,6 +280,7 @@ function formatProtocolNumber(value: unknown): string {
 function formatScreeningProtocol(value: unknown): string {
   if (value === "vina") return "Vina";
   if (value === "vinardo") return "Vinardo";
+  if (value === "ad4") return "AutoDock4 maps";
   return "未记录";
 }
 
@@ -311,6 +315,7 @@ export default function BatchScreeningPanel({
   receptorFile,
   box,
   vina,
+  scoringProtocol = "vina",
   presentation = "workspace",
   disabled = false,
   disabledReason = "",
@@ -1186,7 +1191,9 @@ export default function BatchScreeningPanel({
           <p className="batch-screening-intro">
             {presentation === "results"
               ? "查看本次批量任务的完成情况、评分排名和逐配体最佳构象；历史归档可在相邻标签中核对。"
-              : "全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"}
+              : scoringProtocol === "ad4_maps"
+                ? "全部配体共用当前受体与标准 AutoDock4 maps，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"
+                : "全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"}
           </p>
         ) : archiveComparison ? null : archiveDetail ? (
           <>
@@ -1473,7 +1480,7 @@ export default function BatchScreeningPanel({
               <header>
                 <div>
                   <span>{panelTab === "history" ? "归档冻结协议" : "队列冻结协议"}</span>
-                  <strong>本次筛选使用的 Box 与 Vina 参数</strong>
+                  <strong>本次筛选使用的网格与搜索参数</strong>
                 </div>
                 <small>
                   {frozenVinaHasAllAdvancedFields
@@ -1501,9 +1508,9 @@ export default function BatchScreeningPanel({
                   </dd>
                 </div>
                 <div>
-                  <dt>基础 Vina</dt>
+                  <dt>评分协议</dt>
                   <dd>
-                    {formatScreeningProtocol(displayState.vina?.scoring)} · exhaustiveness{" "}
+                    {formatScreeningProtocol(displayState.scoring_function ?? displayState.vina?.scoring)} · exhaustiveness{" "}
                     {formatProtocolNumber(displayState.vina?.exhaustiveness)} · 构象{" "}
                     {formatProtocolNumber(displayState.vina?.num_modes)} · 能量范围{" "}
                     {formatProtocolNumber(displayState.vina?.energy_range)} kcal/mol

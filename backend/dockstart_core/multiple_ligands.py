@@ -45,6 +45,7 @@ from dockstart_core.project import (
     _parse_pdbqt_stats,
     _project_from_dict,
     _project_grid_source,
+    _project_protocol_id,
     _project_receptor_mode,
     _project_run_mode,
     _project_scoring_protocol,
@@ -82,6 +83,8 @@ RECOMMENDED_MIN_EXHAUSTIVENESS = 32
 BOX_FIT_EPSILON_ANGSTROM = 1e-6
 BRANCH_AXIS_MIN_LENGTH_ANGSTROM = 1e-6
 OUTPUT_GRID_EPSILON_ANGSTROM = 0.000501
+GRID_MEMORY_WARNING_BYTES = 512 * 1024 * 1024
+GRID_MEMORY_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 CONFIG_FLOAT_SERIALIZATION = "python_float_17g_round_trip_v1"
 PDBQT_HYDROGEN_ATOM_TYPES = frozenset({"H", "HD"})
 RUN_OUTPUT_FILE = "out.pdbqt"
@@ -248,6 +251,92 @@ def _validate_joint_grid_resource(
         "ok": True,
         "grid_estimate": grid_estimate,
         "warnings": list(validation.get("warnings") or []),
+        "error": None,
+    }
+
+
+def _validate_ad4_joint_grid_resource(
+    grid: dict[str, Any],
+    members: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild the effective search grid from a frozen AutoGrid manifest."""
+
+    center = grid.get("center") if isinstance(grid.get("center"), dict) else {}
+    points = (
+        grid.get("grid_points")
+        if isinstance(grid.get("grid_points"), dict)
+        else {}
+    )
+    actual_size = (
+        grid.get("actual_size")
+        if isinstance(grid.get("actual_size"), dict)
+        else {}
+    )
+    try:
+        spacing = float(grid["spacing"])
+        axis_intervals = {axis: int(points[axis]) for axis in "xyz"}
+        normalized_center = {axis: float(center[axis]) for axis in "xyz"}
+        normalized_size = {axis: float(actual_size[axis]) for axis in "xyz"}
+    except (KeyError, TypeError, ValueError) as exc:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_AD4_GRID_INVALID",
+            "冻结 AutoDock4 maps manifest 缺少完整网格参数。",
+            raw_error=str(exc),
+        )
+    if (
+        not math.isfinite(spacing)
+        or spacing <= 0
+        or any(value <= 0 for value in axis_intervals.values())
+        or not all(
+            math.isfinite(value)
+            for value in [*normalized_center.values(), *normalized_size.values()]
+        )
+        or any(value <= 0 for value in normalized_size.values())
+        or any(
+            not math.isclose(
+                normalized_size[axis],
+                axis_intervals[axis] * spacing,
+                abs_tol=1e-6,
+            )
+            for axis in "xyz"
+        )
+    ):
+        return _protocol_error(
+            "MULTIPLE_LIGAND_AD4_GRID_INVALID",
+            "冻结 AutoDock4 maps manifest 的间距、点数或实际尺寸无效。",
+            raw_error=json.dumps(grid, ensure_ascii=False, sort_keys=True),
+        )
+    atom_types = _joint_atom_types(members)
+    if not atom_types:
+        return _protocol_error(
+            "MULTIPLE_LIGAND_GRID_ATOM_TYPES_MISSING",
+            "两个配体都没有可用于 AD4 maps 核对的原子类型。",
+        )
+    axis_points = {
+        axis: axis_intervals[axis] + 1
+        for axis in "xyz"
+    }
+    total_points = math.prod(axis_points.values())
+    return {
+        "ok": True,
+        "grid_estimate": {
+            "source": "autogrid_manifest",
+            "spacing_angstrom": spacing,
+            "force_even_voxels": True,
+            "axis_intervals": axis_intervals,
+            "axis_points": axis_points,
+            "adjusted_axes": [],
+            "total_points": total_points,
+            "atom_types": atom_types,
+            "map_count": len(atom_types),
+            "estimated_map_bytes": total_points * len(atom_types) * 8,
+            "warning_bytes": GRID_MEMORY_WARNING_BYTES,
+            "hard_limit_bytes": GRID_MEMORY_HARD_LIMIT_BYTES,
+            "center": normalized_center,
+            "actual_size": normalized_size,
+            "config_number_serialization": CONFIG_FLOAT_SERIALIZATION,
+        },
+        "warnings": [],
         "error": None,
     }
 
@@ -1544,19 +1633,26 @@ def _safe_atomic_write_json(
     )
 
 
-def _build_command(vina_path: str, run_id: str) -> list[str]:
+def _build_command(
+    vina_path: str,
+    run_id: str,
+    *,
+    ad4_maps_prefix: str = "",
+) -> list[str]:
     """Build the official multitoken ``--ligand`` command shape."""
 
-    return [
+    command = [
         vina_path,
         "--config",
         _fixed_run_relative(run_id, "config_snapshot.txt"),
         "--ligand",
         _fixed_run_relative(run_id, "inputs", "ligand_001.pdbqt"),
         _fixed_run_relative(run_id, "inputs", "ligand_002.pdbqt"),
-        "--out",
-        _fixed_run_relative(run_id, RUN_OUTPUT_FILE),
     ]
+    if ad4_maps_prefix:
+        command.extend(["--maps", ad4_maps_prefix, "--scoring", "ad4"])
+    command.extend(["--out", _fixed_run_relative(run_id, RUN_OUTPUT_FILE)])
+    return command
 
 
 def _format_roundtrip_config_number(value: int | float) -> str:
@@ -1574,59 +1670,92 @@ def _format_roundtrip_config_number(value: int | float) -> str:
     return format(number, ".17g")
 
 
-def _build_config(project: Any, run_id: str) -> str:
+def _build_config(
+    project: Any,
+    run_id: str,
+    *,
+    ad4_maps_prefix: str = "",
+) -> str:
     receptor = _fixed_run_relative(run_id, "inputs", "receptor.pdbqt")
     vina = project.vina
     box = project.box
-    lines = [
-        f"receptor = {receptor}",
-        f"scoring = {vina.scoring}",
-        "",
-        f"center_x = {_format_roundtrip_config_number(box.center_x)}",
-        f"center_y = {_format_roundtrip_config_number(box.center_y)}",
-        f"center_z = {_format_roundtrip_config_number(box.center_z)}",
-        "",
-        f"size_x = {_format_roundtrip_config_number(box.size_x)}",
-        f"size_y = {_format_roundtrip_config_number(box.size_y)}",
-        f"size_z = {_format_roundtrip_config_number(box.size_z)}",
-        "",
+    if ad4_maps_prefix:
+        lines = ["scoring = ad4", ""]
+    else:
+        lines = [
+            f"receptor = {receptor}",
+            f"scoring = {vina.scoring}",
+            "",
+            f"center_x = {_format_roundtrip_config_number(box.center_x)}",
+            f"center_y = {_format_roundtrip_config_number(box.center_y)}",
+            f"center_z = {_format_roundtrip_config_number(box.center_z)}",
+            "",
+            f"size_x = {_format_roundtrip_config_number(box.size_x)}",
+            f"size_y = {_format_roundtrip_config_number(box.size_y)}",
+            f"size_z = {_format_roundtrip_config_number(box.size_z)}",
+            "",
+        ]
+    lines.extend([
         f"exhaustiveness = {vina.exhaustiveness}",
         f"max_evals = {vina.max_evals}",
         f"num_modes = {vina.num_modes}",
         f"min_rmsd = {_format_roundtrip_config_number(vina.min_rmsd)}",
         f"energy_range = {_format_roundtrip_config_number(vina.energy_range)}",
         f"cpu = {vina.cpu}",
-        f"spacing = {_format_roundtrip_config_number(vina.spacing)}",
-    ]
-    if vina.no_refine:
-        lines.append("no_refine = true")
-    if vina.force_even_voxels:
-        lines.append("force_even_voxels = true")
+    ])
+    if not ad4_maps_prefix:
+        lines.append(f"spacing = {_format_roundtrip_config_number(vina.spacing)}")
+        if vina.no_refine:
+            lines.append("no_refine = true")
+        if vina.force_even_voxels:
+            lines.append("force_even_voxels = true")
     lines.append(f"verbosity = {vina.verbosity}")
     if vina.seed is not None:
         lines.append(f"seed = {vina.seed}")
     return "\n".join(lines) + "\n"
 
 
-def _project_protocol_validation(project: Any) -> dict[str, Any] | None:
+def _project_protocol_validation(
+    project: Any,
+    project_root: Path,
+) -> dict[str, Any] | None:
     protocol = (
         project.preserved_data.get("docking_protocol")
         if isinstance(project.preserved_data, dict)
         else {}
     )
     protocol = protocol if isinstance(protocol, dict) else {}
-    if _project_scoring_protocol(project) != "vina":
+    scoring_protocol = _project_scoring_protocol(project)
+    protocol_id = _project_protocol_id(project)
+    if scoring_protocol not in {"vina", "ad4_maps"}:
         return _protocol_error(
             "MULTIPLE_LIGAND_SCORING_PROTOCOL_UNSUPPORTED",
-            "多配体共同对接（实验性）首版只支持 Vina 或 Vinardo 评分。",
-            suggestion="请关闭 AutoDock4/AD4Zn 协议后重新准备本次共同对接。",
+            "多配体共同对接只支持 Vina、Vinardo 或标准 AutoDock4 maps。",
+            suggestion="请切换到受支持的评分协议后重新准备本次共同对接。",
         )
-    if _project_grid_source(project) != "receptor":
+    if scoring_protocol == "ad4_maps" and protocol_id != "ad4_maps":
+        return _protocol_error(
+            "MULTIPLE_LIGAND_AD4_SUBPROTOCOL_UNSUPPORTED",
+            "多配体 AD4 仅支持标准 AutoDock4 maps，不支持 AD4Zn 或水合 AD4。",
+            suggestion="请切换到标准 AD4 maps 协议。",
+        )
+    if scoring_protocol == "vina" and _project_grid_source(project) != "receptor":
         return _protocol_error(
             "MULTIPLE_LIGAND_PRECOMPUTED_MAPS_UNSUPPORTED",
             "多配体共同对接（实验性）首版不支持预计算 maps。",
             suggestion="请切换为直接从刚性受体建立网格的 Vina/Vinardo 全局搜索。",
         )
+    if scoring_protocol == "ad4_maps":
+        from dockstart_core.autogrid import validate_active_maps
+
+        maps_status = validate_active_maps(str(project_root))
+        if not maps_status.get("ok") or not maps_status.get("ready"):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_NOT_READY",
+                "标准 AutoDock4 maps 尚未通过完整性校验。",
+                raw_error="；".join(str(item) for item in maps_status.get("issues") or []),
+                suggestion="请先生成或导入与当前受体、Box 和配体原子类型匹配的 AD4 maps。",
+            )
     if _project_receptor_mode(project) != "rigid":
         return _protocol_error(
             "MULTIPLE_LIGAND_RIGID_RECEPTOR_REQUIRED",
@@ -1646,6 +1775,121 @@ def _project_protocol_validation(project: Any) -> dict[str, Any] | None:
             suggestion="请回到对接工作台设置 Box 中心和尺寸。",
         )
     return None
+
+
+def _freeze_ad4_maps(
+    project_root: Path,
+    run_id: str,
+    inputs_dir: Path,
+    maps_status: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    manifest = (
+        maps_status.get("manifest")
+        if isinstance(maps_status.get("manifest"), dict)
+        else {}
+    )
+    source_files = (
+        (manifest.get("maps") or {}).get("files")
+        if isinstance(manifest.get("maps"), dict)
+        else []
+    )
+    if not isinstance(source_files, list) or not source_files:
+        return None, _protocol_error(
+            "MULTIPLE_LIGAND_AD4_MAPS_MANIFEST_INVALID",
+            "活动 AutoDock4 maps manifest 没有可冻结的网格文件。",
+        )
+    maps_dir = inputs_dir / "ad4_maps"
+    maps_dir.mkdir(parents=False, exist_ok=False)
+    snapshots: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for item in source_files:
+        if not isinstance(item, dict):
+            return None, _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_MANIFEST_INVALID",
+                "活动 AutoDock4 maps manifest 包含无效文件记录。",
+            )
+        source_relative = str(item.get("relative_path") or "")
+        source_path = (project_root / source_relative).resolve(strict=True)
+        try:
+            source_path.relative_to(project_root)
+        except ValueError:
+            return None, _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_PATH_UNSAFE",
+                "活动 AutoDock4 maps 文件越出项目目录。",
+                raw_error=source_relative,
+            )
+        name = source_path.name
+        if name in seen_names:
+            return None, _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_NAME_COLLISION",
+                "活动 AutoDock4 maps 包含重名文件，无法安全冻结。",
+                raw_error=name,
+            )
+        seen_names.add(name)
+        destination = maps_dir / name
+        atomic_write_bytes(destination, source_path.read_bytes())
+        snapshot = _hash_snapshot(
+            destination,
+            _fixed_run_relative(run_id, "inputs", "ad4_maps", name),
+        )
+        snapshot.pop("absolute_path", None)
+        snapshots.append(snapshot)
+
+    source_manifest_relative = str(maps_status.get("manifest_file") or "")
+    source_manifest_path = (project_root / source_manifest_relative).resolve(
+        strict=True
+    )
+    try:
+        source_manifest_path.relative_to(project_root)
+    except ValueError:
+        return None, _protocol_error(
+            "MULTIPLE_LIGAND_AD4_MAPS_PATH_UNSAFE",
+            "活动 AutoDock4 maps manifest 越出项目目录。",
+            raw_error=source_manifest_relative,
+        )
+    manifest_destination = maps_dir / "source_manifest.json"
+    atomic_write_bytes(manifest_destination, source_manifest_path.read_bytes())
+    manifest_snapshot = _hash_snapshot(
+        manifest_destination,
+        _fixed_run_relative(
+            run_id,
+            "inputs",
+            "ad4_maps",
+            "source_manifest.json",
+        ),
+    )
+    manifest_snapshot.pop("absolute_path", None)
+
+    source_prefix = Path(str(maps_status.get("maps_prefix") or ""))
+    prefix_name = source_prefix.name
+    if not prefix_name:
+        return None, _protocol_error(
+            "MULTIPLE_LIGAND_AD4_MAPS_PREFIX_INVALID",
+            "活动 AutoDock4 maps 缺少可冻结的 prefix。",
+        )
+    frozen_prefix = _fixed_run_relative(
+        run_id,
+        "inputs",
+        "ad4_maps",
+        prefix_name,
+    )
+    if not any(Path(str(item.get("relative_path") or "")).name.startswith(f"{prefix_name}.") for item in snapshots):
+        return None, _protocol_error(
+            "MULTIPLE_LIGAND_AD4_MAPS_PREFIX_INVALID",
+            "冻结 maps 文件与 manifest 中记录的 prefix 不一致。",
+            raw_error=prefix_name,
+        )
+    return {
+        "map_set_id": str(maps_status.get("map_set_id") or ""),
+        "source_manifest": source_manifest_relative,
+        "manifest": manifest_snapshot,
+        "prefix": frozen_prefix,
+        "files": snapshots,
+        "grid": json.loads(json.dumps(manifest.get("grid") or {})),
+        "ligand_atom_types": list(
+            (manifest.get("maps") or {}).get("ligand_atom_types") or []
+        ),
+    }, None
 
 
 def _parse_branch_pair(
@@ -3333,7 +3577,7 @@ def _validated_project(
     project_root = Path(project_dir).expanduser().resolve()
     project = _project_from_dict(loaded["project"], project_root)
     project.project_dir = str(project_root)
-    protocol_error = _project_protocol_validation(project)
+    protocol_error = _project_protocol_validation(project, project_root)
     if protocol_error:
         return None, None, protocol_error
     box_validation = validate_box_params(project.box.__dict__)
@@ -3349,6 +3593,7 @@ def _detect_supported_vina(
     project: Any,
     *,
     vina_options: dict[str, Any] | None = None,
+    scoring_protocol: str | None = None,
 ) -> tuple[Any | None, dict[str, Any] | None, dict[str, Any] | None]:
     settings = load_settings()
     detection = vina_adapter.detect(settings.tool_paths.vina)
@@ -3398,7 +3643,7 @@ def _detect_supported_vina(
         )
     capability = validate_vina_runtime_capabilities(
         vina_options if vina_options is not None else project.vina.__dict__,
-        "vina",
+        scoring_protocol or _project_scoring_protocol(project),
         detection.capabilities,
         run_mode="dock",
         receptor_mode="rigid",
@@ -3490,10 +3735,57 @@ def prepare_multiple_ligand_run(
             raw_error=", ".join(member_hashes),
             suggestion="请选择两个内容不同的已准备 PDBQT 配体。",
         )
-    grid_validation = _validate_joint_grid_resource(
-        dict(project.box.__dict__),
-        dict(project.vina.__dict__),
-        source_members,
+    scoring_protocol = _project_scoring_protocol(project)
+    ad4_maps_status: dict[str, Any] | None = None
+    if scoring_protocol == "ad4_maps":
+        from dockstart_core.autogrid import validate_active_maps
+
+        ad4_maps_status = validate_active_maps(str(project_root))
+        if not ad4_maps_status.get("ok") or not ad4_maps_status.get("ready"):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_NOT_READY",
+                "标准 AutoDock4 maps 尚未通过完整性校验。",
+                raw_error="；".join(
+                    str(item) for item in ad4_maps_status.get("issues") or []
+                ),
+                suggestion="请重新生成或导入标准 AD4 maps。",
+            )
+        manifest = (
+            ad4_maps_status.get("manifest")
+            if isinstance(ad4_maps_status.get("manifest"), dict)
+            else {}
+        )
+        available_types = {
+            str(value or "").strip().upper()
+            for value in (manifest.get("maps") or {}).get(
+                "ligand_atom_types",
+                [],
+            )
+        }
+        required_types = {
+            str(value or "").strip().upper()
+            for member in source_members
+            for value in (member.get("stats") or {}).get("atom_types") or []
+        }
+        missing_types = sorted(required_types - available_types)
+        if missing_types:
+            return _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAP_TYPES_MISSING",
+                "当前 AD4 maps 未覆盖两个配体所需的全部原子类型。",
+                raw_error=", ".join(missing_types),
+                suggestion="请在 AutoGrid4 面板加入缺失的配体原子类型并重新生成 maps。",
+            )
+    grid_validation = (
+        _validate_ad4_joint_grid_resource(
+            dict((ad4_maps_status.get("manifest") or {}).get("grid") or {}),
+            source_members,
+        )
+        if ad4_maps_status is not None
+        else _validate_joint_grid_resource(
+            dict(project.box.__dict__),
+            dict(project.vina.__dict__),
+            source_members,
+        )
     )
     if not grid_validation.get("ok"):
         return grid_validation
@@ -3630,14 +3922,36 @@ def prepare_multiple_ligand_run(
                 }
             )
 
+        frozen_ad4_maps: dict[str, Any] | None = None
+        ad4_maps_prefix = ""
+        if ad4_maps_status is not None:
+            frozen_ad4_maps, maps_error = _freeze_ad4_maps(
+                project_root,
+                run_id,
+                inputs_dir,
+                ad4_maps_status,
+            )
+            if maps_error:
+                return maps_error
+            assert frozen_ad4_maps is not None
+            ad4_maps_prefix = str(frozen_ad4_maps["prefix"])
+
         config_relative = _fixed_run_relative(run_id, "config_snapshot.txt")
         config_path = run_dir / "config_snapshot.txt"
-        config_text = _build_config(project, run_id)
+        config_text = _build_config(
+            project,
+            run_id,
+            ad4_maps_prefix=ad4_maps_prefix,
+        )
         atomic_write_text(config_path, config_text)
         config_snapshot = _hash_snapshot(config_path, config_relative)
         config_snapshot.pop("absolute_path", None)
 
-        command = _build_command(str(binary["path"]), run_id)
+        command = _build_command(
+            str(binary["path"]),
+            run_id,
+            ad4_maps_prefix=ad4_maps_prefix,
+        )
         created_at = _now_iso()
         metadata = {
             "schema_version": SCHEMA_VERSION,
@@ -3657,10 +3971,10 @@ def prepare_multiple_ligand_run(
             "started_at": "",
             "finished_at": "",
             "run_mode": "dock",
-            "scoring_protocol": "vina",
-            "scoring_function": project.vina.scoring,
+            "scoring_protocol": scoring_protocol,
+            "scoring_function": "ad4" if frozen_ad4_maps else project.vina.scoring,
             "receptor_mode": "rigid",
-            "grid_source": "receptor",
+            "grid_source": "precomputed_maps" if frozen_ad4_maps else "receptor",
             "member_count": MEMBER_COUNT,
             "members": members,
             "box": dict(project.box.__dict__),
@@ -3701,7 +4015,13 @@ def prepare_multiple_ligand_run(
                     for member in members
                 ],
                 "config": config_snapshot,
+                **(
+                    {"ad4_maps": frozen_ad4_maps}
+                    if frozen_ad4_maps is not None
+                    else {}
+                ),
             },
+            "ad4_maps": frozen_ad4_maps,
             "prepared_vina": binary,
             "multiple_ligands_capability": multiple_ligands_capability,
             "execution_vina": None,
@@ -3738,8 +4058,8 @@ def prepare_multiple_ligand_run(
                 "protocol_id": PROTOCOL_ID,
                 "protocol_name": PROTOCOL_NAME,
                 "run_mode": "dock",
-                "scoring_protocol": "vina",
-                "scoring_function": project.vina.scoring,
+                "scoring_protocol": scoring_protocol,
+                "scoring_function": "ad4" if frozen_ad4_maps else project.vina.scoring,
                 "member_count": MEMBER_COUNT,
                 "members": [
                     {
@@ -3916,6 +4236,78 @@ def _verify_snapshots(
             )
         )
 
+    frozen_ad4_maps: dict[str, Any] = {}
+    if metadata.get("scoring_protocol") == "ad4_maps":
+        frozen_ad4_maps = (
+            snapshots.get("ad4_maps")
+            if isinstance(snapshots.get("ad4_maps"), dict)
+            else {}
+        )
+        manifest_record = (
+            frozen_ad4_maps.get("manifest")
+            if isinstance(frozen_ad4_maps.get("manifest"), dict)
+            else {}
+        )
+        map_records = (
+            frozen_ad4_maps.get("files")
+            if isinstance(frozen_ad4_maps.get("files"), list)
+            else []
+        )
+        prefix = str(frozen_ad4_maps.get("prefix") or "")
+        expected_prefix_parent = _fixed_run_relative(
+            run_id,
+            "inputs",
+            "ad4_maps",
+        )
+        if (
+            not manifest_record
+            or not map_records
+            or Path(prefix).parent.as_posix() != expected_prefix_parent
+            or not Path(prefix).name
+        ):
+            return _protocol_error(
+                "MULTIPLE_LIGAND_AD4_MAPS_SNAPSHOT_INVALID",
+                "metadata 缺少完整、安全的 AutoDock4 maps 快照记录。",
+            )
+        records.append(
+            (
+                "ad4_maps_manifest",
+                manifest_record,
+                _fixed_run_relative(
+                    run_id,
+                    "inputs",
+                    "ad4_maps",
+                    "source_manifest.json",
+                ),
+            )
+        )
+        seen_map_names: set[str] = set()
+        for index, record in enumerate(map_records, start=1):
+            if not isinstance(record, dict):
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_AD4_MAPS_SNAPSHOT_INVALID",
+                    "metadata 包含无效的 AutoDock4 maps 快照记录。",
+                )
+            name = Path(str(record.get("relative_path") or "")).name
+            if not name or name in seen_map_names:
+                return _protocol_error(
+                    "MULTIPLE_LIGAND_AD4_MAPS_SNAPSHOT_INVALID",
+                    "metadata 中的 AutoDock4 maps 文件名为空或重复。",
+                )
+            seen_map_names.add(name)
+            records.append(
+                (
+                    f"ad4_map_{index}",
+                    record,
+                    _fixed_run_relative(
+                        run_id,
+                        "inputs",
+                        "ad4_maps",
+                        name,
+                    ),
+                )
+            )
+
     verified: dict[str, Any] = {}
     verified_member_stats: list[dict[str, Any]] = []
     for key, record, expected_relative in records:
@@ -4030,18 +4422,29 @@ def _verify_snapshots(
             "sha256": actual_sha256,
             "size_bytes": actual_size,
         }
-    grid_validation = _validate_joint_grid_resource(
-        (
-            metadata.get("box")
-            if isinstance(metadata.get("box"), dict)
-            else {}
-        ),
-        (
-            metadata.get("vina")
-            if isinstance(metadata.get("vina"), dict)
-            else {}
-        ),
-        verified_member_stats,
+    grid_validation = (
+        _validate_ad4_joint_grid_resource(
+            (
+                frozen_ad4_maps.get("grid")
+                if isinstance(frozen_ad4_maps.get("grid"), dict)
+                else {}
+            ),
+            verified_member_stats,
+        )
+        if metadata.get("scoring_protocol") == "ad4_maps"
+        else _validate_joint_grid_resource(
+            (
+                metadata.get("box")
+                if isinstance(metadata.get("box"), dict)
+                else {}
+            ),
+            (
+                metadata.get("vina")
+                if isinstance(metadata.get("vina"), dict)
+                else {}
+            ),
+            verified_member_stats,
+        )
     )
     if not grid_validation.get("ok"):
         return grid_validation
@@ -4314,6 +4717,12 @@ def _build_report(
         if isinstance(snapshots.get("members"), list)
         else []
     )
+    ad4_maps_snapshot = (
+        snapshots.get("ad4_maps")
+        if isinstance(snapshots.get("ad4_maps"), dict)
+        else {}
+    )
+    is_ad4 = metadata.get("scoring_protocol") == "ad4_maps"
     output_snapshot = (
         artifacts.get("output")
         if isinstance(artifacts.get("output"), dict)
@@ -4339,8 +4748,18 @@ def _build_report(
         "",
         f"- Run：`{_report_value(metadata.get('run_id'))}`",
         f"- 状态：{_report_value(metadata.get('status'))}",
+        f"- 评分协议：{'标准 AutoDock4 maps' if is_ad4 else 'Vina / Vinardo'}",
         f"- 评分函数：{_report_value(metadata.get('scoring_function'))}",
         f"- Vina 版本：{_report_value(execution_vina.get('version'))}",
+        *(
+            [
+                f"- maps 集合：`{_report_value(ad4_maps_snapshot.get('map_set_id'))}`",
+                f"- maps 前缀：`{_report_value(ad4_maps_snapshot.get('prefix'))}`",
+                f"- maps 文件数：{len(ad4_maps_snapshot.get('files') or [])}",
+            ]
+            if is_ad4
+            else []
+        ),
         f"- 联合构象数量：{len(joint_manifest.get('available_modes') or [])}",
         "",
         "## 时间",
@@ -4356,7 +4775,7 @@ def _build_report(
         "",
         "本报告来自一次 Vina 搜索中的两个配体共同优化，不是串行批量筛选。",
         JOINT_SCORE_DISCLAIMER,
-        "当前实验版本仅支持两个唯一 PDBQT 配体、刚性受体、Vina/Vinardo 评分和全局搜索。",
+        "当前实验版本仅支持两个唯一 PDBQT 配体、刚性受体、Vina/Vinardo 或标准 AutoDock4 maps 评分，以及全局搜索。",
         "",
         "## 对接箱体",
         "",
@@ -5292,9 +5711,21 @@ def _execute_multiple_ligand_run_impl(
     if (
         metadata.get("run_mode") != "dock"
         or metadata.get("receptor_mode") != "rigid"
-        or metadata.get("grid_source") != "receptor"
-        or metadata.get("scoring_protocol") != "vina"
-        or metadata.get("scoring_function") not in {"vina", "vinardo"}
+        or metadata.get("scoring_protocol") not in {"vina", "ad4_maps"}
+        or (
+            metadata.get("scoring_protocol") == "vina"
+            and (
+                metadata.get("grid_source") != "receptor"
+                or metadata.get("scoring_function") not in {"vina", "vinardo"}
+            )
+        )
+        or (
+            metadata.get("scoring_protocol") == "ad4_maps"
+            and (
+                metadata.get("grid_source") != "precomputed_maps"
+                or metadata.get("scoring_function") != "ad4"
+            )
+        )
         or int(metadata.get("member_count") or 0) != MEMBER_COUNT
     ):
         return _protocol_error(
@@ -5325,6 +5756,7 @@ def _execute_multiple_ligand_run_impl(
     detection, _, detection_error = _detect_supported_vina(
         project,
         vina_options=frozen_vina,
+        scoring_protocol=str(metadata.get("scoring_protocol") or "vina"),
     )
     if detection_error:
         return detection_error
@@ -5343,14 +5775,29 @@ def _execute_multiple_ligand_run_impl(
         if isinstance(prepared_vina, dict)
         else ""
     )
-    expected_prepared_command = _build_command(prepared_path, run_id)
+    frozen_ad4_maps = (
+        (metadata.get("snapshots") or {}).get("ad4_maps")
+        if isinstance(metadata.get("snapshots"), dict)
+        and isinstance((metadata.get("snapshots") or {}).get("ad4_maps"), dict)
+        else {}
+    )
+    ad4_maps_prefix = str(frozen_ad4_maps.get("prefix") or "")
+    expected_prepared_command = _build_command(
+        prepared_path,
+        run_id,
+        ad4_maps_prefix=ad4_maps_prefix,
+    )
     if metadata.get("command") != expected_prepared_command:
         return _protocol_error(
             "MULTIPLE_LIGAND_COMMAND_SNAPSHOT_INVALID",
             "metadata 中冻结的 Vina 命令被修改，已拒绝执行。",
             raw_error=json.dumps(metadata.get("command"), ensure_ascii=False),
         )
-    command = _build_command(str(execution_binary["path"]), run_id)
+    command = _build_command(
+        str(execution_binary["path"]),
+        run_id,
+        ad4_maps_prefix=ad4_maps_prefix,
+    )
     run_dir = _safe_run_directory(project_root, run_id)
     fixed_output_relatives = {
         "output": _fixed_run_relative(run_id, RUN_OUTPUT_FILE),
