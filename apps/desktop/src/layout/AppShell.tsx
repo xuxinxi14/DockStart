@@ -1,13 +1,16 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FolderSimple, Monitor } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DockStartProject } from "../types";
 import { appVersion, pageTitles, type NavigateHandler, type PageId } from "../navigation/pages";
 import LayoutDebugOverlay from "../components/layout/LayoutDebugOverlay";
+import Tooltip from "../components/Tooltip";
 import Sidebar from "./Sidebar";
 import type { DistributionProfileStatus } from "./Sidebar";
 import Topbar from "./Topbar";
 import type { WorkflowStep } from "../components/WorkflowStepper";
+import { isTerminalBackgroundTask, listenForBackgroundTaskUpdates } from "../utils/backgroundTasks";
+import { isSameProjectDir } from "../utils/backgroundProjectRefresh";
 
 type AppShellProps = {
   currentPage: PageId;
@@ -25,6 +28,14 @@ function readInitialTheme(): ThemeMode {
   return window.localStorage.getItem("dockstart-theme") === "light" ? "light" : "dark";
 }
 
+function readInitialSidebarState(): boolean {
+  return window.localStorage.getItem("dockstart-sidebar-collapsed") === "true";
+}
+
+function readInitialCompactViewport(): boolean {
+  return window.matchMedia("(max-width: 980px)").matches;
+}
+
 export default function AppShell({
   currentPage,
   project,
@@ -34,7 +45,8 @@ export default function AppShell({
   onOpenProject,
   children,
 }: AppShellProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialSidebarState);
+  const [compactViewport, setCompactViewport] = useState(readInitialCompactViewport);
   const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
   const [batchScreeningCompleted, setBatchScreeningCompleted] = useState(false);
   const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
@@ -42,6 +54,7 @@ export default function AppShell({
     displayName: "识别中",
     message: "正在识别当前安装包类型。",
   });
+  const mainContentRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,65 +89,55 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
-    const preventContextMenu = (event: MouseEvent) => event.preventDefault();
-
-    document.addEventListener("contextmenu", preventContextMenu, true);
-    return () => document.removeEventListener("contextmenu", preventContextMenu, true);
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    const projectDir = project?.project_dir;
     setBatchScreeningCompleted(false);
-    if (!project?.project_dir) return () => {
+    if (!projectDir) return () => {
       cancelled = true;
     };
 
-    void invoke<string>("get_screening_status", { projectDir: project.project_dir })
-      .then((rawPayload) => {
+    const refreshScreeningStatus = async () => {
+      try {
+        const rawPayload = await invoke<string>("get_screening_status", { projectDir });
         if (cancelled) return;
         const payload = JSON.parse(rawPayload) as {
           screening?: { status?: unknown } | null;
         };
         setBatchScreeningCompleted(payload.screening?.status === "completed");
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setBatchScreeningCompleted(false);
-      });
+      }
+    };
+
+    void refreshScreeningStatus();
+    void listenForBackgroundTaskUpdates((status) => {
+      if (
+        status.kind === "screening"
+        && isTerminalBackgroundTask(status)
+        && isSameProjectDir(status.project_dir, projectDir)
+      ) {
+        void refreshScreeningStatus();
+      }
+    }).then((stopListening) => {
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
+    }).catch(() => {
+      // Initial status remains authoritative when native event listening is unavailable.
+    });
+
     return () => {
       cancelled = true;
+      unlisten?.();
     };
-  }, [currentPage, project?.project_dir]);
+  }, [project?.project_dir]);
 
   useEffect(() => {
-    const shell = document.querySelector(".dockstart-shell");
-    if (!(shell instanceof HTMLElement)) return;
-
-    const removeNativeTitles = (root: ParentNode) => {
-      if (root instanceof HTMLElement) root.removeAttribute("title");
-      root.querySelectorAll<HTMLElement>("[title]").forEach((element) => {
-        element.removeAttribute("title");
-      });
-    };
-
-    removeNativeTitles(shell);
-    const observer = new MutationObserver((records) => {
-      records.forEach((record) => {
-        if (record.type === "attributes" && record.target instanceof HTMLElement) {
-          record.target.removeAttribute("title");
-          return;
-        }
-        record.addedNodes.forEach((node) => {
-          if (node instanceof HTMLElement) removeNativeTitles(node);
-        });
-      });
-    });
-    observer.observe(shell, {
-      attributeFilter: ["title"],
-      attributes: true,
-      childList: true,
-      subtree: true,
-    });
-    return () => observer.disconnect();
+    const mediaQuery = window.matchMedia("(max-width: 980px)");
+    const handleChange = (event: MediaQueryListEvent) => setCompactViewport(event.matches);
+    setCompactViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
   useEffect(() => {
@@ -143,18 +146,35 @@ export default function AppShell({
     window.localStorage.setItem("dockstart-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    window.localStorage.setItem("dockstart-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const animationFrame = window.requestAnimationFrame(() => {
+      const main = mainContentRef.current;
+      if (!main) return;
+      main.scrollTo({ top: 0, behavior: "auto" });
+      main.focus({ preventScroll: true });
+      document.title = `DockStart · ${pageTitles[currentPage]}`;
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [currentPage]);
+
+  const effectiveSidebarCollapsed = sidebarCollapsed || compactViewport;
+
   return (
-    <div className={`dockstart-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`.trim()}>
+    <div className={`dockstart-shell ${effectiveSidebarCollapsed ? "sidebar-collapsed" : ""}`.trim()}>
       <a className="skip-link" href="#main-content">跳到主要内容</a>
       <Sidebar
-        collapsed={sidebarCollapsed}
+        collapsed={effectiveSidebarCollapsed}
         currentPage={currentPage}
         distributionProfile={distributionProfile}
         project={project}
         workflowSteps={workflowSteps}
         batchScreeningCompleted={batchScreeningCompleted}
         onNavigate={onNavigate}
-        onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+        onToggleCollapsed={compactViewport ? undefined : () => setSidebarCollapsed((value) => !value)}
       />
       <div className="dockstart-workspace">
         <Topbar
@@ -166,12 +186,17 @@ export default function AppShell({
           onNavigate={onNavigate}
           onOpenProject={onOpenProject}
         />
-        <main className="app-content" data-layout="app-content" id="main-content" tabIndex={-1}>{children}</main>
+        <main className="app-content" data-layout="app-content" id="main-content" ref={mainContentRef} tabIndex={-1}>
+          <span aria-live="polite" className="ds-visually-hidden">已进入{pageTitles[currentPage]}</span>
+          <div className="app-page-frame" key={currentPage}>{children}</div>
+        </main>
         <footer className="app-statusbar" aria-label="当前工作区状态">
-          <span className="statusbar-project" title={project?.project_dir || "尚未加载项目"}>
-            <FolderSimple aria-hidden="true" size={15} weight="duotone" />
-            <span>{project?.project_dir || "尚未加载项目"}</span>
-          </span>
+          <Tooltip className="statusbar-project-tooltip" label={project?.project_dir || "尚未加载项目"}>
+            <span className="statusbar-project">
+              <FolderSimple aria-hidden="true" size={15} weight="duotone" />
+              <span>{project?.project_dir || "尚未加载项目"}</span>
+            </span>
+          </Tooltip>
           <span className="statusbar-stage">当前阶段：{pageTitles[currentPage]}</span>
           <span className="statusbar-local">
             <Monitor aria-hidden="true" size={15} />

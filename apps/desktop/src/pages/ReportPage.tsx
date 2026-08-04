@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { FolderOpen } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import MarkdownPreview from "../components/MarkdownPreview";
-import ReportStatusCard from "../components/ReportStatusCard";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
 import SectionCard from "../components/SectionCard";
 import StatusBadge from "../components/StatusBadge";
@@ -31,6 +31,17 @@ type MarkdownPreviewResponse = {
   ok: boolean;
   relative_path?: string;
   content?: string;
+  message?: string;
+  error?: {
+    message?: string;
+    raw_error?: string;
+    suggestion?: string;
+  };
+};
+
+type LocalDirectoryResponse = {
+  ok: boolean;
+  directory?: string;
   message?: string;
   error?: {
     message?: string;
@@ -211,6 +222,14 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
         : "reports/docking_report.md");
   const displayedReportedAt = reportedAt || metadataString(metadata, "reported_at");
   const hasAnalysis = analysisStatus?.status === "ok";
+  const hasExportedReport = reportStatus === "exported";
+  const runTaskLabel = runMode === "score_only"
+    ? "当前姿势评分"
+    : runMode === "local_only"
+      ? "局部优化"
+      : isMultipleLigand
+        ? "多配体共同对接"
+        : "全局对接";
   const comparison = evaluation?.comparison;
   const inputScore = finiteNumber(comparison?.input_score_kcal_mol);
   const optimizedScore = finiteNumber(comparison?.optimized_score_kcal_mol)
@@ -352,6 +371,50 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
     }
   };
 
+  const openReportDirectory = async () => {
+    setIsBusy(true);
+    setMessage("");
+    setRawError("");
+    try {
+      const response = JSON.parse(await invoke<string>("open_result_output_directory", {
+        projectDir: project.project_dir,
+        target: "reports",
+        runId,
+        relativePath: null,
+      })) as LocalDirectoryResponse;
+      if (!response.ok) {
+        setMessage(response.error?.message || "无法打开报告目录。");
+        setRawError(
+          [response.error?.raw_error, response.error?.suggestion]
+            .filter(Boolean)
+            .join("\n"),
+        );
+        return;
+      }
+      setMessage(response.message || "已打开报告目录。");
+    } catch (error) {
+      setMessage("无法打开报告目录。");
+      setRawError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const markdownPreview = (
+    <SectionCard
+      title="Markdown 阅读预览"
+      description="以安全的只读阅读视图渲染实际保存的报告；不会执行 Markdown 中的 HTML 或脚本。"
+      className="report-markdown-preview-section"
+    >
+      <MarkdownPreview
+        content={previewContent}
+        path={previewPath || displayedProjectReportFile}
+        loading={isPreviewLoading}
+        error={previewError}
+      />
+    </SectionCard>
+  );
+
   return (
     <PageShell labelledBy="report-title">
       <PageHero
@@ -370,10 +433,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                 : "生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。"
         }
         actions={
-          <>
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
-          <ActionButton onClick={() => void reloadReportStatus()} disabled={isBusy}>刷新状态</ActionButton>
-          </>
+          <ActionButton variant="text" onClick={onBack}>返回结果</ActionButton>
         }
       />
 
@@ -382,24 +442,44 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
           <div className="main-panel-content">
             <VinaWorkflowBar current="report" runId={runId} runMode={runMode} />
 
-            <div className="status-strip">
-              <article className="metric-card">
-                <span>运行记录</span>
-                <strong>{runId}</strong>
-              </article>
-              <article className="metric-card">
-                <span>{analysisLabel}</span>
-                <strong>{analysisStatus ? fileStatusText[analysisStatus.status] : "未检查"}</strong>
-                <StatusBadge tone={hasAnalysis ? "ok" : "warning"}>{hasAnalysis ? "已完成" : "缺失"}</StatusBadge>
-              </article>
-              <article className="metric-card">
-                <span>报告</span>
-                <strong>{reportStatus === "exported" ? "已导出" : "未导出"}</strong>
-                <StatusBadge tone={reportStatus === "exported" ? "ok" : "muted"}>
-                  {reportStatus === "exported" ? "已完成" : "未开始"}
+            <div className="next-step-strip report-action-strip">
+              <div>
+                <strong>
+                  {hasExportedReport
+                    ? `${modeTitle}已生成`
+                    : hasAnalysis
+                      ? `${analysisLabel} 已就绪，可以生成报告`
+                      : "请先返回结果页完成分析"}
+                </strong>
+                <p>
+                  {hasExportedReport
+                    ? displayedProjectReportFile
+                    : hasAnalysis
+                      ? "报告将沿用结果页已解析的数据，并保存到项目 reports 目录。"
+                      : `报告依赖结果页生成的 ${analysisLabel}；完成解析后再回到这里。`}
+                </p>
+              </div>
+              <div className="button-row">
+                <StatusBadge tone={hasExportedReport ? "ok" : hasAnalysis ? "warning" : "muted"}>
+                  {hasExportedReport ? "已生成" : hasAnalysis ? "待生成" : "等待分析"}
                 </StatusBadge>
-              </article>
+                <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
+                  {isBusy
+                    ? "处理中..."
+                    : hasExportedReport
+                      ? "重新生成报告"
+                      : "生成报告"}
+                </ActionButton>
+                <ActionButton disabled={isBusy} onClick={() => void openReportDirectory()}>
+                  <FolderOpen aria-hidden="true" size={17} /> 打开报告目录
+                </ActionButton>
+                <ActionButton variant="text" onClick={() => void reloadReportStatus()} disabled={isBusy}>刷新</ActionButton>
+              </div>
             </div>
+
+            {message || rawError ? <CommandResultPanel title="报告操作" message={message} rawError={rawError} /> : null}
+
+            {hasExportedReport ? markdownPreview : null}
 
             {!hasAnalysis ? (
               <WarningCallout title="分析报告暂不可生成">
@@ -509,44 +589,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
               </SectionCard>
             ) : null}
 
-            <SectionCard title="生成与导出">
-              <ReportStatusCard status={reportStatus} path={displayedProjectReportFile} />
-              <div className="button-row">
-                <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-                  {isBusy
-                    ? "处理中..."
-                    : `生成 Markdown ${
-                      isEvaluation
-                        ? "姿势评价报告"
-                        : isMultipleLigand
-                          ? "共同对接报告"
-                          : "结果分析报告"
-                    }`}
-                </ActionButton>
-              </div>
-            </SectionCard>
-
-            <SectionCard
-              title="Markdown 阅读预览"
-              description="以安全的只读阅读视图渲染实际保存的报告；不会执行 Markdown 中的 HTML 或脚本。"
-              className="report-markdown-preview-section"
-            >
-              <MarkdownPreview
-                content={previewContent}
-                path={previewPath || displayedProjectReportFile}
-                loading={isPreviewLoading}
-                error={previewError}
-              />
-            </SectionCard>
-
-            {(reportStatus === "exported" || displayedReportedAt) ? (
-              <div className="next-step-strip">
-                <div>
-                  <strong>{modeTitle}已生成</strong>
-                  <p>{displayedProjectReportFile}</p>
-                </div>
-              </div>
-            ) : null}
+            {!hasExportedReport ? markdownPreview : null}
 
             <AdvancedDetails>
               <dl className="meta-list">
@@ -568,24 +611,19 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             </AdvancedDetails>
 
             <ScientificDisclaimer kind="score" />
-            <CommandResultPanel title="报告导出" message={message} rawError={rawError} />
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="报告状态">
+          <RightRailSection title="本次运行">
             <dl className="mode-context-list">
               <div>
                 <dt>run</dt>
                 <dd>{runId}</dd>
               </div>
               <div>
-                <dt>{isEvaluation ? "评价结果" : isMultipleLigand ? "联合 scores" : "scores"}</dt>
-                <dd>{analysisStatus ? fileStatusText[analysisStatus.status] : "未检查"}</dd>
-              </div>
-              <div>
-                <dt>报告</dt>
-                <dd>{reportStatus === "exported" ? "已导出" : "未导出"}</dd>
+                <dt>任务类型</dt>
+                <dd>{runTaskLabel}</dd>
               </div>
               {isAd4Maps ? (
                 <div>
@@ -604,9 +642,10 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
 
           <RightRailSection title="输出位置">
             <p>{displayedProjectReportFile}</p>
+            {displayedReportedAt ? <small>生成时间：{displayedReportedAt}</small> : null}
           </RightRailSection>
 
-          <RightRailSection title="说明">
+          <RightRailSection title="科学边界">
             <p>
               {runMode === "local_only"
                 ? "报告会保留两阶段评分、日志与几何比较；不可用的量会注明原因。"

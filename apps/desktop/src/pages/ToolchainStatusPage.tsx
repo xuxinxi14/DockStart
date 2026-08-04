@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ActionButton from "../components/ActionButton";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
+import StatusBadge from "../components/StatusBadge";
 import type {
   DiagnosticReportResponse,
   PostInstallCheckResponse,
@@ -403,24 +405,31 @@ function buildFrontendError(error: unknown): ToolchainStatusResponse {
   };
 }
 
-function statusClass(status: ToolStatus | undefined): string {
+type StatusTone = "ok" | "warning" | "error" | "info" | "muted";
+
+function statusTone(status: ToolStatus | undefined): StatusTone {
   if (status === "ok") {
-    return "status-ok";
+    return "ok";
   }
-  if (status === "missing" || status === "unknown") {
-    return "status-missing";
+  if (status === "missing") {
+    return "warning";
   }
-  return "status-error";
+  if (status === "error") {
+    return "error";
+  }
+  return "muted";
 }
 
-function packageStatusClass(status: NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"]): string {
+function packageStatusTone(
+  status: NonNullable<ToolchainStatusResponse["bundled_python_integrity"]>["status"],
+): StatusTone {
   if (status === "ready") {
-    return "status-ok";
+    return "ok";
   }
   if (status === "incomplete") {
-    return "status-missing";
+    return "warning";
   }
-  return "status-error";
+  return "error";
 }
 
 function booleanText(value: boolean): string {
@@ -435,10 +444,11 @@ function pathOrEmpty(path: string | undefined): string {
   return path && path.trim() ? path : "未获取";
 }
 
-function severityClass(severity: string): string {
-  if (severity === "error") return "status-error";
-  if (severity === "warning") return "status-missing";
-  return "status-ok";
+function severityTone(severity: string): StatusTone {
+  if (severity === "error") return "error";
+  if (severity === "warning") return "warning";
+  if (severity === "info") return "info";
+  return "muted";
 }
 
 function modeAvailabilityText(value: boolean): string {
@@ -564,13 +574,13 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
         description="确认 Vina、AutoGrid4 和 Python 工具链是否可用。"
         actions={
           <>
-          <button className="text-button" type="button" onClick={onBack}>返回</button>
+          <ActionButton variant="text" type="button" onClick={onBack}>返回</ActionButton>
           {onOpenSettings ? (
-            <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
+            <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>配置路径</ActionButton>
           ) : null}
-          <button className="primary-button" type="button" onClick={() => void loadStatus(true)} disabled={isLoading}>
+          <ActionButton variant="primary" type="button" onClick={() => void loadStatus(true)} disabled={isLoading}>
             {isLoading ? "检测中..." : "重新检测"}
-          </button>
+          </ActionButton>
           </>
         }
       />
@@ -587,9 +597,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <h2>AutoDock Vina</h2>
                   <p>执行对接所需的外部命令行工具。</p>
                 </div>
-                <span className={`status-badge ${statusClass(status.active_vina?.status)}`}>
+                <StatusBadge tone={statusTone(status.active_vina?.status)}>
                   {statusText[status.active_vina?.status ?? "unknown"]}
-                </span>
+                </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
@@ -611,14 +621,14 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
                     配置 Vina 路径
-                  </button>
+                  </ActionButton>
                 ) : null}
                 {onOpenHelp ? (
-                  <button className="text-button inline" type="button" onClick={onOpenHelp}>
+                  <ActionButton variant="text" type="button" onClick={onOpenHelp}>
                     查看工具链说明
-                  </button>
+                  </ActionButton>
                 ) : null}
               </div>
             </article>
@@ -629,9 +639,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <h2>Python + RDKit + Meeko</h2>
                   <p>从原始结构生成 Vina 输入文件时需要这些 Python 工具。</p>
                 </div>
-                <span className={`status-badge ${statusClass(status.resolved_python?.status)}`}>
+                <StatusBadge tone={statusTone(status.resolved_python?.status)}>
                   {statusText[status.resolved_python?.status ?? "unknown"]}
-                </span>
+                </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
@@ -645,31 +655,31 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <div>
                   <dt>RDKit</dt>
                   <dd>
-                    <span className={`status-badge ${statusClass(status.rdkit_for_python?.status)}`}>
+                    <StatusBadge tone={statusTone(status.rdkit_for_python?.status)}>
                       {statusText[status.rdkit_for_python?.status ?? "unknown"]}
-                    </span>
+                    </StatusBadge>
                     <span className="inline-meta">{status.rdkit_for_python?.version || "未获取版本"}</span>
                   </dd>
                 </div>
                 <div>
                   <dt>Meeko</dt>
                   <dd>
-                    <span className={`status-badge ${statusClass(status.meeko_for_python?.status)}`}>
+                    <StatusBadge tone={statusTone(status.meeko_for_python?.status)}>
                       {statusText[status.meeko_for_python?.status ?? "unknown"]}
-                    </span>
+                    </StatusBadge>
                     <span className="inline-meta">{status.meeko_for_python?.version || "未获取版本"}</span>
                   </dd>
                 </div>
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
                     配置 Python
-                  </button>
+                  </ActionButton>
                 ) : null}
-                <button className="text-button inline" type="button" onClick={copyPythonPath}>
+                <ActionButton variant="text" type="button" onClick={copyPythonPath}>
                   复制 Python 路径
-                </button>
+                </ActionButton>
               </div>
               {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
               <p className="placeholder-note">
@@ -685,9 +695,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                   <h2>AutoGrid4</h2>
                   <p>为 AutoDock4 maps、AD4Zn 与水合 AD4 生成网格。</p>
                 </div>
-                <span className={`status-badge ${statusClass(status.autogrid4?.status)}`}>
+                <StatusBadge tone={statusTone(status.autogrid4?.status)}>
                   {statusText[status.autogrid4?.status ?? "unknown"]}
-                </span>
+                </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
@@ -709,9 +719,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <button className="secondary-button" type="button" onClick={onOpenSettings}>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
                     配置 AutoGrid4 路径
-                  </button>
+                  </ActionButton>
                 ) : null}
               </div>
               <p className="placeholder-note">外部 GPL 工具，不随 DockStart 安装包分发；缺失不影响 Vina / Vinardo 对接。</p>
@@ -727,9 +737,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                       : "Basic 包随附 Vina 和 DockStart 运行所需的 Python，但不含 RDKit/Meeko。"}
                   </p>
                 </div>
-                <span className={`status-badge ${packageStatusClass(status.bundled_vina.package_status)}`}>
+                <StatusBadge tone={packageStatusTone(status.bundled_vina.package_status)}>
                   {packageStatusText[status.bundled_vina.package_status]}
-                </span>
+                </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
@@ -801,9 +811,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <span className="eyebrow">模式影响</span>
                 <strong>缺什么，只影响对应路径</strong>
               </div>
-              <span className={`status-badge ${statusClass(status.active_vina?.status)}`}>
+              <StatusBadge tone={statusTone(status.active_vina?.status)}>
                 {status.active_vina?.status === "ok" ? "Basic Mode 可用" : "Basic Mode 需 Vina"}
-              </span>
+              </StatusBadge>
             </div>
             <div className="compact-grid">
               <article className="metric-card">
@@ -830,9 +840,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <strong>缺什么，就先修对应路径</strong>
               </div>
               {onOpenHelp ? (
-                <button className="text-button inline" type="button" onClick={onOpenHelp}>
+                <ActionButton variant="text" type="button" onClick={onOpenHelp}>
                   查看详细教程
-                </button>
+                </ActionButton>
               ) : null}
             </div>
             {repair?.suggestions.length ? (
@@ -842,9 +852,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                     <span>{suggestion.affected_mode}</span>
                     <strong>{suggestion.recommended_fix}</strong>
                     <p>{suggestion.explanation}</p>
-                    <span className={`status-badge ${severityClass(suggestion.severity)}`}>
+                    <StatusBadge tone={severityTone(suggestion.severity)}>
                       {severityText[suggestion.severity] ?? "提示"}
-                    </span>
+                    </StatusBadge>
                     {suggestion.manual_steps.length ? (
                       <details className="technical-details">
                         <summary>手动步骤</summary>
@@ -862,9 +872,9 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                           {suggestion.copyable_commands.map((command) => (
                             <div className="command-row" key={command}>
                               <code>{command}</code>
-                              <button className="text-button inline" type="button" onClick={() => void copyCommand(command)}>
+                              <ActionButton variant="text" type="button" onClick={() => void copyCommand(command)}>
                                 复制命令
-                              </button>
+                              </ActionButton>
                             </div>
                           ))}
                         </div>
@@ -886,12 +896,12 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 <strong>一键确认当前安装能完成哪条路径</strong>
               </div>
               <div className="toolbar">
-                <button className="secondary-button" type="button" onClick={() => void runDiagnostic()} disabled={isDiagnosticLoading}>
+                <ActionButton variant="secondary" type="button" onClick={() => void runDiagnostic()} disabled={isDiagnosticLoading}>
                   {isDiagnosticLoading ? "检查中..." : "运行自检"}
-                </button>
-                <button className="text-button inline" type="button" onClick={() => void exportDiagnostic()} disabled={isDiagnosticLoading}>
+                </ActionButton>
+                <ActionButton variant="text" type="button" onClick={() => void exportDiagnostic()} disabled={isDiagnosticLoading}>
                   导出诊断报告
-                </button>
+                </ActionButton>
               </div>
             </div>
             {diagnostic ? (
@@ -1017,10 +1027,10 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
           <RightRailSection title="操作">
             <div className="button-row">
               {onOpenSettings ? (
-                <button className="secondary-button" type="button" onClick={onOpenSettings}>配置路径</button>
+                <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>配置路径</ActionButton>
               ) : null}
               {onOpenHelp ? (
-                <button className="text-button inline" type="button" onClick={onOpenHelp}>查看帮助</button>
+                <ActionButton variant="text" type="button" onClick={onOpenHelp}>查看帮助</ActionButton>
               ) : null}
             </div>
           </RightRailSection>

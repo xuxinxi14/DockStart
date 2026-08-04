@@ -660,6 +660,22 @@ export default function ResultPage({
     radios[nextIndex]?.focus();
   };
 
+  const handleResultTabsKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return;
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    if (!buttons.length) return;
+    const currentIndex = Math.max(0, buttons.indexOf(document.activeElement as HTMLButtonElement));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? buttons.length - 1
+        : event.key === "ArrowRight"
+          ? (currentIndex + 1) % buttons.length
+          : (currentIndex - 1 + buttons.length) % buttons.length;
+    event.preventDefault();
+    buttons[nextIndex]?.focus();
+  };
+
   return (
     <PageShell labelledBy="result-title" className="result-analysis-page">
       <PageHero
@@ -987,7 +1003,7 @@ export default function ResultPage({
             </div>
           </section>
 
-          <nav className="result-tabs" aria-label="结果详情">
+          <nav className="result-tabs" aria-label="结果详情" onKeyDown={handleResultTabsKeyDown}>
             <button className={detailTab === "scores" ? "active" : ""} type="button" aria-pressed={detailTab === "scores"} onClick={() => setDetailTab("scores")}>{runMode === "local_only" ? "优化前后能量" : isEvaluationMode ? "能量分解" : "评分"}</button>
             <button className={detailTab === "run-files" ? "active" : ""} type="button" aria-pressed={detailTab === "run-files"} onClick={() => setDetailTab("run-files")}>运行日志与文件</button>
             <button type="button" onClick={() => onOpenReportPage(project, runId)}>分析报告</button>

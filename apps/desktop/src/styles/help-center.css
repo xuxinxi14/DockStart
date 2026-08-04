@@ -554,7 +554,8 @@
 .help-rail-boundary li svg { flex: 0 0 auto; margin-top: 1px; color: var(--ds-accent); }
 
 @media (max-width: 1180px) {
-  .help-center-layout { grid-template-columns: minmax(0, 1fr) 270px; }
+  .help-center-layout { grid-template-columns: 1fr; }
+  .help-center-rail { position: static; }
   .help-task-guide-grid { grid-template-columns: 1fr; }
   .help-route-grid { grid-template-columns: 1fr; }
   .help-route-card { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: start; }
@@ -567,8 +568,6 @@
 
 @media (max-width: 900px) {
   .help-center-hero { align-items: flex-start; flex-direction: column; }
-  .help-center-layout { grid-template-columns: 1fr; }
-  .help-center-rail { position: static; }
 }
 
 @media (max-width: 680px) {

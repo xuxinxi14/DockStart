@@ -1023,6 +1023,35 @@ export default function PreparationPage({
     const allAlternateLocationsSelected = alternateLocations.every((item) => (
       item.ids.includes(receptorAltlocSelections[item.selector] ?? "")
     ));
+    const ligandHasRawFacts = Object.keys(ligandRawFacts).length > 0;
+    const ligandDisplaySource = ligandHasRawFacts ? "原始结构" : "最终 PDBQT";
+    const preparationState = isReady
+      ? "PDBQT 已就绪"
+      : rawReady
+        ? prep?.status
+          ? `${statusLabel(prep.status)}（等待 PDBQT）`
+          : "原始结构已导入，等待转换"
+        : "等待导入结构";
+    const receptorReviewCount = badResidues.length + alternateLocations.length;
+    const receptorCriticalWarning = receptorReviewCount > 0
+      ? `${receptorReviewCount} 项结构审查待确认${badResidues.length ? `，含 ${badResidues.length} 个不完整残基` : ""}${alternateLocations.length ? `，含 ${alternateLocations.length} 处替代构象` : ""}`
+      : isReady && !receptorRawAvailable
+        ? RECEPTOR_RAW_REQUIRED
+        : receptorAltlocs.length > 0
+          ? `原始结构记录了 ${receptorAltlocs.length} 项替代构象；请人工核对最终选用构象`
+          : receptorIonComponents.length > 0
+            ? `检测到 ${receptorIonComponents.length} 项离子或非聚合物组分；请人工核对其保留范围`
+            : null;
+    const ligandCriticalWarning = fragmentCount !== null && fragmentCount > 1
+      ? `检测到 ${fragmentCount} 个连接组分；请人工核对盐、溶剂或共价关系`
+      : sourceFacts.contains_salt === true
+        ? "检测到结构包含盐；请人工核对对接时需要保留的组分"
+        : sourceFacts.undefined_stereochemistry === true
+          ? "检测到未定义立体信息；请在对接前核对目标立体化学"
+          : isReady && !ligandHasRawFacts
+            ? "当前仅有最终 PDBQT；盐、总形式电荷与立体信息可能无法可靠审计"
+            : null;
+    const criticalWarning = isReceptor ? receptorCriticalWarning : ligandCriticalWarning;
 
     return (
       <article className="preparation-target-row">
@@ -1035,70 +1064,87 @@ export default function PreparationPage({
               <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL / MOL2") : "等待文件"}</small>
             </div>
           </div>
+          <dl className="preparation-structure-facts preparation-structure-facts-summary" aria-label={`${label}核心结构事实`}>
+            <div><dt>准备状态</dt><FactValue source="当前文件检查">{preparationState}</FactValue></div>
+            {isReady && isReceptor ? (
+              <>
+                <div><dt>链 ID</dt><FactValue source={receptorDisplaySource}>{factStringList(receptorDisplayFacts.chains)}</FactValue></div>
+                <div><dt>总原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "atom_count") ?? "原子记录无法解析"}</FactValue></div>
+              </>
+            ) : null}
+            {isReady && !isReceptor ? (
+              <div><dt>重原子数</dt><FactValue source={ligandDisplaySource}>{heavyAtomCount ?? "无法可靠判定"}</FactValue></div>
+            ) : null}
+            {criticalWarning ? (
+              <div className="preparation-structure-warning">
+                <dt>关键警告</dt>
+                <FactValue source={isReceptor ? "结构审查" : ligandDisplaySource}>{criticalWarning}</FactValue>
+              </div>
+            ) : null}
+          </dl>
           {isReady ? (
-            <dl className="preparation-structure-facts" aria-label={`${label}结构事实`}>
-              {isReceptor ? (
-                <>
-                  <div><dt>总原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "atom_count") ?? "原子记录无法解析"}</FactValue></div>
-                  <div><dt>重原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "heavy_atom_count") ?? "原子类型无法解析"}</FactValue></div>
-                  <div><dt>氢原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "hydrogen_atom_count") ?? "原子类型无法解析"}</FactValue></div>
-                  <div><dt>三维坐标</dt><FactValue source={receptorDisplaySource}>{factBooleanLabel(receptorDisplayFacts.has_3d_coordinates, "坐标列无法完整解析")}</FactValue></div>
-                  <div><dt>坐标边界</dt><FactValue source={receptorDisplaySource}>{coordinateBoundsLabel(receptorDisplayFacts.coordinate_bounds)}</FactValue></div>
-                  <div><dt>链 ID</dt><FactValue source={receptorDisplaySource}>{factStringList(receptorDisplayFacts.chains)}</FactValue></div>
-                  <div><dt>残基数量</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "residue_count") ?? "残基记录无法解析"}</FactValue></div>
-                  <div><dt>AutoDock 类型</dt><FactValue source="最终 PDBQT">{receptorHasPdbqtFacts ? factStringList(receptorPdbqtFacts.autodock_atom_types) : "尚无最终 PDBQT"}</FactValue></div>
-                  <div>
-                    <dt>部分电荷总和</dt>
-                    <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorPartialCharge === null ? "PDBQT 部分电荷列无法完整解析" : receptorPartialCharge.toFixed(4)}</FactValue>
-                  </div>
-                  <div><dt>PDBQT 模式</dt><FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "flexible" ? "柔性受体" : receptorMode === "rigid" ? "刚性受体" : "无法判定"}</FactValue></div>
-                  <div>
-                    <dt>活动扭转</dt>
-                    <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "rigid" ? "不适用（刚性受体）" : receptorActiveTorsions ?? "柔性拓扑未给出扭转计数"}</FactValue>
-                  </div>
-                  <div>
-                    <dt>离子与非聚合物组分</dt>
-                    <FactValue source="原始结构">{receptorRawAvailable ? `${receptorIonComponents.length} 项` : RECEPTOR_RAW_REQUIRED}</FactValue>
-                  </div>
-                  <div><dt>替代构象</dt><FactValue source="原始结构">{receptorRawAvailable ? (receptorAltlocs.length ? receptorAltlocs.join("、") : "未检测到") : RECEPTOR_RAW_REQUIRED}</FactValue></div>
-                  <div>
-                    <dt>残基模板异常</dt>
-                    <FactValue source="Meeko">
-                      {receptorRawAvailable
-                        ? "当前准备记录未包含足够的 Meeko 残基模板校验信息"
-                        : RECEPTOR_RAW_REQUIRED}
-                    </FactValue>
-                  </div>
-                  <div>
-                    <dt>非标准手性或几何异常</dt>
-                    <FactValue source="原始结构">
-                      {receptorRawAvailable ? "原始结构已保留；尚未执行专用手性与几何模板校验" : RECEPTOR_RAW_REQUIRED}
-                    </FactValue>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div><dt>连接组分</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{fragmentCount ?? "无法可靠判定"}</FactValue></div>
-                  <div><dt>总形式电荷</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{formalChargeLabel(formalCharge)}</FactValue></div>
-                  <div><dt>重原子数</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{heavyAtomCount ?? "无法可靠判定"}</FactValue></div>
-                  <div><dt>包含盐</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.contains_salt)}</FactValue></div>
-                  <div>
-                    <dt>未定义立体信息</dt>
-                    <FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</FactValue>
-                  </div>
-                  <div><dt>三维坐标</dt><FactValue source={Object.keys(ligandRawFacts).length ? "原始结构" : "最终 PDBQT"}>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</FactValue></div>
-                  <div><dt>PDBQT 活动扭转</dt><FactValue source="最终 PDBQT">{torsdof ?? "无法从 TORSDOF 读取"}</FactValue></div>
-                </>
-              )}
-              {isReceptor && receptorRepresentations.length > 1 ? (
-                <div className="preparation-representation-row">
-                  <dt>关联格式</dt>
-                  <FactValue source="准备快照">
-                    {receptorRepresentations.map((item) => String(factRecord(item).format || "").toUpperCase()).filter(Boolean).join(" + ")}
-                  </FactValue>
-                </div>
-              ) : null}
-            </dl>
+            <AdvancedDetails className="preparation-structure-audit-details" summary={`查看${label}完整结构审计`}>
+              <dl className="preparation-structure-facts preparation-structure-facts-audit" aria-label={`${label}完整结构审计事实`}>
+                {isReceptor ? (
+                  <>
+                    <div><dt>重原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "heavy_atom_count") ?? "原子类型无法解析"}</FactValue></div>
+                    <div><dt>氢原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "hydrogen_atom_count") ?? "原子类型无法解析"}</FactValue></div>
+                    <div><dt>三维坐标</dt><FactValue source={receptorDisplaySource}>{factBooleanLabel(receptorDisplayFacts.has_3d_coordinates, "坐标列无法完整解析")}</FactValue></div>
+                    <div><dt>坐标边界</dt><FactValue source={receptorDisplaySource}>{coordinateBoundsLabel(receptorDisplayFacts.coordinate_bounds)}</FactValue></div>
+                    <div><dt>残基数量</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "residue_count") ?? "残基记录无法解析"}</FactValue></div>
+                    <div><dt>AutoDock 类型</dt><FactValue source="最终 PDBQT">{receptorHasPdbqtFacts ? factStringList(receptorPdbqtFacts.autodock_atom_types) : "尚无最终 PDBQT"}</FactValue></div>
+                    <div>
+                      <dt>部分电荷总和</dt>
+                      <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorPartialCharge === null ? "PDBQT 部分电荷列无法完整解析" : receptorPartialCharge.toFixed(4)}</FactValue>
+                    </div>
+                    <div><dt>PDBQT 模式</dt><FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "flexible" ? "柔性受体" : receptorMode === "rigid" ? "刚性受体" : "无法判定"}</FactValue></div>
+                    <div>
+                      <dt>活动扭转</dt>
+                      <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "rigid" ? "不适用（刚性受体）" : receptorActiveTorsions ?? "柔性拓扑未给出扭转计数"}</FactValue>
+                    </div>
+                    <div>
+                      <dt>离子与非聚合物组分</dt>
+                      <FactValue source="原始结构">{receptorRawAvailable ? `${receptorIonComponents.length} 项` : RECEPTOR_RAW_REQUIRED}</FactValue>
+                    </div>
+                    <div><dt>替代构象</dt><FactValue source="原始结构">{receptorRawAvailable ? (receptorAltlocs.length ? receptorAltlocs.join("、") : "未检测到") : RECEPTOR_RAW_REQUIRED}</FactValue></div>
+                    <div>
+                      <dt>残基模板异常</dt>
+                      <FactValue source="Meeko">
+                        {receptorRawAvailable
+                          ? "当前准备记录未包含足够的 Meeko 残基模板校验信息"
+                          : RECEPTOR_RAW_REQUIRED}
+                      </FactValue>
+                    </div>
+                    <div>
+                      <dt>非标准手性或几何异常</dt>
+                      <FactValue source="原始结构">
+                        {receptorRawAvailable ? "原始结构已保留；尚未执行专用手性与几何模板校验" : RECEPTOR_RAW_REQUIRED}
+                      </FactValue>
+                    </div>
+                    {receptorRepresentations.length > 1 ? (
+                      <div className="preparation-representation-row">
+                        <dt>关联格式</dt>
+                        <FactValue source="准备快照">
+                          {receptorRepresentations.map((item) => String(factRecord(item).format || "").toUpperCase()).filter(Boolean).join(" + ")}
+                        </FactValue>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div><dt>连接组分</dt><FactValue source={ligandDisplaySource}>{fragmentCount ?? "无法可靠判定"}</FactValue></div>
+                    <div><dt>总形式电荷</dt><FactValue source={ligandDisplaySource}>{formalChargeLabel(formalCharge)}</FactValue></div>
+                    <div><dt>包含盐</dt><FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.contains_salt)}</FactValue></div>
+                    <div>
+                      <dt>未定义立体信息</dt>
+                      <FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</FactValue>
+                    </div>
+                    <div><dt>三维坐标</dt><FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</FactValue></div>
+                    <div><dt>PDBQT 活动扭转</dt><FactValue source="最终 PDBQT">{torsdof ?? "无法从 TORSDOF 读取"}</FactValue></div>
+                  </>
+                )}
+              </dl>
+            </AdvancedDetails>
           ) : null}
         </div>
 
@@ -1143,7 +1189,7 @@ export default function PreparationPage({
             </div>
           </div>
 
-          <ActionButton variant="primary" disabled={interactionBusy} onClick={() => void pickStructureFile(target)}>
+          <ActionButton variant={displayFile ? "secondary" : "primary"} disabled={interactionBusy} onClick={() => void pickStructureFile(target)}>
             {displayFile ? "更改结构文件" : "选择结构文件"}
           </ActionButton>
           {rawReady ? (
@@ -1365,7 +1411,7 @@ export default function PreparationPage({
         description="将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。"
         actions={(
           <>
-            <ActionButton variant="primary" onClick={onBack}>在线搜索并下载</ActionButton>
+            <ActionButton onClick={onBack}>在线搜索并下载</ActionButton>
             {activeTask?.status === "queued" ? (
               <ActionButton onClick={() => void cancelQueuedPreparation()}>取消排队</ActionButton>
             ) : null}

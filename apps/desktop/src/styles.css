@@ -24,8 +24,8 @@ body {
   background: var(--ds-bg-app);
   color: var(--ds-text-primary);
   font-family: var(--ds-font-ui);
-  -webkit-user-select: none;
-  user-select: none;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 input,

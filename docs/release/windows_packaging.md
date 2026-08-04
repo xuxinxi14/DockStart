@@ -59,20 +59,26 @@ wheel、source archive、runtime、stage 与 installer 都被 Git 忽略。
 1. 检查 `main`、干净工作树和七处版本一致；
 2. 从空目录生成对应白名单 stage，校验 Vina/Python/package/license SHA256；
 3. 运行 Python 全量测试、前端生产构建、Cargo check/test；
-4. 清理 Tauri release 目录内已验证的旧资源和 bundle；
+4. 通过注册表与路径重叠检查后，只清理 `.release/cargo-target/<profile>/release/` 内已验证的旧资源和 bundle；
 5. 用对应 `tauri.basic.conf.json` 或 `tauri.assisted.conf.json` 生成 MSI/NSIS；
-6. 对打包后的 `target/release` 执行真实流程回归；
+6. 对打包后的 `.release/cargo-target/<profile>/release/` 执行真实流程回归；
 7. Assisted 额外真实静默安装 NSIS、从安装目录回归、静默卸载并检查残留；
 8. 只接受当前版本的 MSI/NSIS，生成带大小、SHA256 和门禁状态的 manifest。
 
 `-SkipTauriBuild` 只用于验证打包前门禁，不产生可发布证据。Assisted 的
 `-SkipPostInstallGate` 只生成开发产物，并强制写入 `publishable=false`。
 
+发布脚本通过 profile 专用的 `CARGO_TARGET_DIR` 隔离 Rust/Tauri 构建输出，并用
+`cargo metadata` 校验实际 target。构建前安全检查会枚举现有 DockStart 安装，并拒绝任何与
+stage、Cargo target、post-package gate、artifact 或 install-gate 清理根重叠的路径；因此仓库内
+旧 `target/release/` 即使曾被注册为安装目录，也不会被发布构建清理。Basic 与 Assisted 仍共享
+`apps/desktop/dist/`，必须串行构建。
+
 ## Assisted 三道强制门禁
 
 - `development`：在 `.release/assisted/` 中，用包含中文与空格的项目路径完成 PDB 受体、
   SDF 配体准备、Vina 运行、结果解析和报告；禁用网络代理，并验证 configured 优先与 bundled fallback；
-- `post-package`：在 Tauri `target/release/` 资源布局重复完整流程；
+- `post-package`：在 Tauri `.release/cargo-target/assisted/release/` 资源布局重复完整流程；
 - `post-install`：把 NSIS 安装到 `.release/install-gate/installed/`，从真实安装目录重复流程，
   然后卸载并确认目录、runtime 与卸载记录均无残留。
 
@@ -89,7 +95,7 @@ wheel、source archive、runtime、stage 与 installer 都被 Git 忽略。
 
 Tauri 原始同名产物在门禁内立即重命名为带 profile 的文件名，避免先后构建时覆盖或让用户
 无法判断安装包能力；随后复制到 profile 隔离的 `.release/artifacts/`，因此下一次构建清理
-`target/release/bundle` 不会删除上一 profile 的候选产物。两个 profile 仍使用同一应用身份，
+`.release/cargo-target/<profile>/release/bundle` 不会删除上一 profile 的候选产物。两个 profile 仍使用同一应用身份，
 不应并行安装。
 
 Assisted 的 manifest 只有在三道门禁均通过时才可写 `publishable=true`。最终发布报告必须

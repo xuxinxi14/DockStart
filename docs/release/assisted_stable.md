@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 1. `development`：在 Tauri 打包前，对 `.release/assisted/` 执行真实 PDB receptor +
    SDF ligand 准备、Vina docking、结果解析与报告导出；项目路径含中文和空格，代理指向
    不可用本地端口，证明流程不依赖网络；同时验证用户配置 Python 优先和 bundled fallback。
-2. `post-package`：Tauri 复制资源后，在 `target/release/` 上重复同一完整回归，避免
+2. `post-package`：Tauri 复制资源后，在 `.release/cargo-target/assisted/release/` 上重复同一完整回归，避免
    “开发目录可用、安装资源缺文件”。
 3. `post-install`：生成 MSI/NSIS 后，默认把 NSIS 产物以静默方式真实安装到仓库专用的
    `.release/install-gate/installed/`，从该实际安装目录执行
@@ -74,6 +74,10 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 只要发现已有 DockStart 安装或 `.release/install-gate/installed/` 非空，就会拒绝继续，
 不会覆盖用户的现有安装。失败诊断保留在 `.release/install-gate/diagnostics/`；清理逻辑
 只允许操作 `.release/install-gate/` 内已经校验过的路径。
+
+Rust/Tauri 构建输出固定隔离在 `.release/cargo-target/assisted/`。正式构建在生成 stage 前即执行
+安装与清理路径安全检查；存在任何 DockStart 安装时，默认 post-install 发布流程会提前拒绝。
+只生成开发产物时可显式使用 `-SkipPostInstallGate`，但仍必须通过所有清理根的路径重叠检查。
 
 只有三道结果均为 `passed` 且 artifact manifest 中 `publishable` 为 `true`，才可以发布
 Assisted Stable。`-SkipTauriBuild` 只用于本地开发，会跳过打包后门禁，不能作为发布证据。

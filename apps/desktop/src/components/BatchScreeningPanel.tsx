@@ -65,7 +65,6 @@ import ScreeningArchiveComparisonView, {
   type ScreeningArchiveComparison,
 } from "./ScreeningArchiveComparisonView";
 import StatusBadge from "./StatusBadge";
-import "../styles/batch-screening.css";
 
 const PoseStructurePreview = lazy(() => import("./PoseStructurePreview"));
 

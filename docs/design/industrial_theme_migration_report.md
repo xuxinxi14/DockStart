@@ -1,5 +1,7 @@
 # DockStart 高端工业主题迁移报告
 
+> 历史记录：本文记录 v0.9.4 当时的迁移与产物，不代表 v0.14.0 当前工作树。当前主题、动效、响应式和样式所有权以 `dockstart_design_system.md` 与源码为准；旧的 `workbench.css` 已在 v0.14.0 UI 产品化整理中移除。
+
 日期：2026-07-12  
 版本：DockStart v0.9.4  
 范围：只调整主题 Token、颜色层级、边框、阴影、状态色与控件表面；未修改页面布局、导航层级、业务逻辑或组件功能。
@@ -73,7 +75,7 @@ UI 主题颜色未留下 Token 外残留。以下内容不属于 UI 主题：
 
 - `apps/desktop/src/styles/tokens.css`
 - `apps/desktop/src/styles/instrument-console.css`
-- `apps/desktop/src/styles/workbench.css`
+- `apps/desktop/src/styles/workbench.css`（v0.9.4 历史文件；v0.14.0 已移除）
 - `apps/desktop/src/styles/layout.css`
 - `apps/desktop/src/styles/components.css`
 

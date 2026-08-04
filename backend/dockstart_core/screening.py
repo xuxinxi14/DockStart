@@ -8671,6 +8671,20 @@ def _comparison_protocol_fingerprint(
             "SCREENING_ARCHIVE_COMPARE_PROTOCOL_INVALID",
             f"归档 {archive_id} 的评分函数不受支持：{scoring or 'missing'}。",
         )
+    scoring_protocol = str(state.get("scoring_protocol") or "vina").strip().lower()
+    if scoring_protocol not in {"vina", "ad4_maps"}:
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_PROTOCOL_INVALID",
+            f"归档 {archive_id} 的评分协议不受支持：{scoring_protocol or 'missing'}。",
+        )
+    if (scoring == "ad4") != (scoring_protocol == "ad4_maps"):
+        raise _ArchiveValidationError(
+            "SCREENING_ARCHIVE_COMPARE_PROTOCOL_INVALID",
+            (
+                f"归档 {archive_id} 的评分函数 {scoring} 与评分协议 "
+                f"{scoring_protocol} 不一致。"
+            ),
+        )
 
     normalized_integers: dict[str, int] = {}
     integer_maximums = {
@@ -8775,7 +8789,7 @@ def _comparison_protocol_fingerprint(
 
     fingerprint: dict[str, Any] = {
         "receptor_sha256": receptor_sha256,
-        "scoring_protocol": str(state.get("scoring_protocol") or "vina"),
+        "scoring_protocol": scoring_protocol,
         "scoring": scoring,
         "box": normalized_box,
         "vina_version": vina_version_value.strip(),

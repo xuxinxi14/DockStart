@@ -47,7 +47,7 @@ Assisted 产物只有在以下三道门禁均为 `passed` 且
 `.release/assisted/artifact-manifest.json` 的 `publishable` 为 `true` 时才可发布：
 
 1. `development`：对白名单 stage 执行真实准备、对接、解析和报告流程；
-2. `post-package`：对 Tauri `target/release` 资源布局重复相同流程；
+2. `post-package`：对 Tauri `.release/cargo-target/assisted/release` 资源布局重复相同流程；
 3. `post-install`：真实静默安装 NSIS，从安装目录验证，再静默卸载并确认无残留。
 
 ## 示例与科学边界

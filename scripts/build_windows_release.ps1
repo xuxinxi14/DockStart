@@ -26,17 +26,54 @@ function Invoke-Checked {
         [string]$Label,
         [string]$FilePath,
         [string[]]$Arguments,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [string]$CargoTargetDirectory = ""
     )
     Write-Step $Label
+    $previousCargoTargetDirectory = [Environment]::GetEnvironmentVariable("CARGO_TARGET_DIR", "Process")
+    $useIsolatedCargoTarget = -not [string]::IsNullOrWhiteSpace($CargoTargetDirectory)
     Push-Location $WorkingDirectory
     try {
+        if ($useIsolatedCargoTarget) {
+            [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $CargoTargetDirectory, "Process")
+        }
         & $FilePath @Arguments
         if ($LASTEXITCODE -ne 0) {
             throw "$Label failed with exit code $LASTEXITCODE"
         }
     }
     finally {
+        if ($useIsolatedCargoTarget) {
+            [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $previousCargoTargetDirectory, "Process")
+        }
+        Pop-Location
+    }
+}
+
+function Assert-CargoTargetDirectory {
+    param(
+        [string]$ManifestPath,
+        [string]$ExpectedTargetDirectory,
+        [string]$WorkingDirectory
+    )
+    $expectedFull = [IO.Path]::GetFullPath($ExpectedTargetDirectory).TrimEnd('\')
+    $previousCargoTargetDirectory = [Environment]::GetEnvironmentVariable("CARGO_TARGET_DIR", "Process")
+    Push-Location $WorkingDirectory
+    try {
+        [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $expectedFull, "Process")
+        $metadataText = (& cargo metadata --manifest-path $ManifestPath --format-version 1 --no-deps | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo metadata failed while validating the isolated release target."
+        }
+        $metadata = $metadataText | ConvertFrom-Json
+        $actualFull = [IO.Path]::GetFullPath([string]$metadata.target_directory).TrimEnd('\')
+        if ($actualFull -ne $expectedFull) {
+            throw "Cargo target isolation mismatch. Expected $expectedFull, actual $actualFull"
+        }
+        Write-Host "Isolated Cargo target: $actualFull"
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $previousCargoTargetDirectory, "Process")
         Pop-Location
     }
 }
@@ -106,7 +143,8 @@ function Assert-FileHash {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $desktopDir = Join-Path $repoRoot "apps\desktop"
 $tauriDir = Join-Path $desktopDir "src-tauri"
-$releaseDir = Join-Path $tauriDir "target\release"
+$cargoTargetDir = Join-Path $repoRoot ".release\cargo-target\basic"
+$releaseDir = Join-Path $cargoTargetDir "release"
 $stageRoot = Join-Path $repoRoot ".release\basic"
 $stageResources = Join-Path $stageRoot "resources"
 
@@ -142,6 +180,26 @@ if (@($uniqueVersions).Count -ne 1) {
 }
 $appVersion = [string]$uniqueVersions[0]
 Write-Host "Version: $appVersion"
+
+$safetyArguments = @(
+    "scripts/check_release_build_safety.py",
+    "--repo-root", $repoRoot
+)
+foreach ($cleanupRoot in @(
+    $stageRoot,
+    $cargoTargetDir,
+    (Join-Path $repoRoot ".release\post-package-gate\$appVersion\basic"),
+    (Join-Path $repoRoot ".release\artifacts\$appVersion\basic")
+)) {
+    $safetyArguments += @("--cleanup-root", $cleanupRoot)
+}
+Invoke-Checked "Validate release build cleanup safety" "python" $safetyArguments $repoRoot
+
+Write-Step "Validate isolated Cargo target"
+Assert-CargoTargetDirectory `
+    (Join-Path $tauriDir "Cargo.toml") `
+    $cargoTargetDir `
+    $repoRoot
 
 Invoke-Checked `
     "Prepare deterministic Basic release stage" `
@@ -262,7 +320,7 @@ $artifactProfile | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $profilePa
 
 Invoke-Checked "Python unittest" "python" @("-m", "unittest", "discover", "-s", "backend/tests") $repoRoot
 Invoke-Checked "npm run build" "npm.cmd" @("run", "build") $desktopDir
-Invoke-Checked "cargo check" "cargo" @("check", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml") $repoRoot
+Invoke-Checked "cargo check" "cargo" @("check", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml") $repoRoot $cargoTargetDir
 
 if ($SkipTauriBuild) {
     Write-Step "Skip Tauri build"
@@ -278,7 +336,8 @@ else {
         "Build DockStart Basic desktop installers" `
         "npm.cmd" `
         @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.basic.conf.json", "--bundles", "msi,nsis", "--ci") `
-        $desktopDir
+        $desktopDir `
+        $cargoTargetDir
 
     Write-Step "Validate release artifacts"
     $bundleDir = Join-Path $releaseDir "bundle"

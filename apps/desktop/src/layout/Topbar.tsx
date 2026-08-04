@@ -1,7 +1,7 @@
 import {
-  CheckCircle,
   CaretRight,
   FolderOpen,
+  ListChecks,
   Moon,
   Question,
   Sun,
@@ -9,6 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import type { DockStartProject } from "../types";
 import { pageTitles, type NavigateHandler, type PageId } from "../navigation/pages";
+import Tooltip from "../components/Tooltip";
 import type { ThemeMode } from "./AppShell";
 import WindowControls from "./WindowControls";
 
@@ -54,42 +55,53 @@ export default function Topbar({
           <span className="topbar-project-stage">{pageTitles[currentPage]}</span>
         </button>
       </div>
-      <div className="topbar-summary" data-tauri-drag-region title={workflowSummary}>
-        {hasProject ? (
-          <>
-            <CheckCircle aria-hidden="true" size={17} weight="fill" />
-            <span>{workflowSummary}</span>
-            <span className="topbar-save-indicator">已保存 {formatSavedAt(project?.updated_at)}</span>
-          </>
-        ) : (
-          <span>选择一种开始方式，DockStart 会逐步引导。</span>
-        )}
-      </div>
+      <Tooltip className="topbar-summary-tooltip" disabled={!hasProject} label={workflowSummary}>
+        <div className="topbar-summary" data-tauri-drag-region>
+          {hasProject ? (
+            <>
+              <ListChecks aria-hidden="true" size={17} weight="duotone" />
+              <span>{workflowSummary}</span>
+              <span className="topbar-save-indicator">
+                项目记录更新于 {formatSavedAt(project?.updated_at) || "当前会话"}
+              </span>
+            </>
+          ) : (
+            <span>选择一种开始方式，DockStart 会逐步引导。</span>
+          )}
+        </div>
+      </Tooltip>
       <div className="topbar-end">
         <div className="topbar-actions" aria-label="工作区快捷操作">
-          <button aria-label="打开项目" title="打开项目" onClick={onOpenProject} type="button">
-            <FolderOpen aria-hidden="true" size={18} />
-            <span>打开项目</span>
-          </button>
-          <button aria-label="工具链" title="工具链" onClick={() => onNavigate("toolchain-status")} type="button">
-            <Wrench aria-hidden="true" size={18} />
-            <span>工具链</span>
-          </button>
-          <button aria-label="帮助" title="帮助" onClick={() => onNavigate("help")} type="button">
-            <Question aria-hidden="true" size={18} />
-            <span>帮助</span>
-          </button>
+          <Tooltip className="topbar-action-tooltip" label="打开项目">
+            <button aria-label="打开项目" onClick={onOpenProject} type="button">
+              <FolderOpen aria-hidden="true" size={18} />
+              <span>打开项目</span>
+            </button>
+          </Tooltip>
+          <Tooltip className="topbar-action-tooltip" label="查看工具链状态">
+            <button aria-label="工具链" onClick={() => onNavigate("toolchain-status")} type="button">
+              <Wrench aria-hidden="true" size={18} />
+              <span>工具链</span>
+            </button>
+          </Tooltip>
+          <Tooltip className="topbar-action-tooltip" label="打开帮助中心">
+            <button aria-label="帮助" onClick={() => onNavigate("help")} type="button">
+              <Question aria-hidden="true" size={18} />
+              <span>帮助</span>
+            </button>
+          </Tooltip>
         </div>
-        <button
-          className="topbar-theme-toggle"
-          type="button"
-          onClick={onToggleTheme}
-          title={theme === "dark" ? "切换到亮色主题" : "切换到暗色主题"}
-          aria-label={theme === "dark" ? "切换到亮色主题" : "切换到暗色主题"}
-          aria-pressed={theme === "light"}
-        >
-          {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}
-        </button>
+        <Tooltip label={theme === "dark" ? "切换到亮色主题" : "切换到暗色主题"}>
+          <button
+            className="topbar-theme-toggle"
+            type="button"
+            onClick={onToggleTheme}
+            aria-label="亮色主题"
+            aria-pressed={theme === "light"}
+          >
+            {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}
+          </button>
+        </Tooltip>
         <WindowControls />
       </div>
     </header>

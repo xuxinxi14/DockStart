@@ -34,7 +34,6 @@ import ActionButton from "./ActionButton";
 import AdvancedDetails from "./AdvancedDetails";
 import StatusBadge from "./StatusBadge";
 import WarningCallout from "./WarningCallout";
-import "../styles/multiple-ligand-docking.css";
 
 type MultipleLigandMember = {
   member_index: number;

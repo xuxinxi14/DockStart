@@ -1206,28 +1206,6 @@ export default function RunPreparePage({
 
       <div className="run-cockpit-layout">
         <main className="run-cockpit-main">
-          {workspaceMode === "single" ? (
-            <AutoGridMapsPanel
-              project={project}
-              disabled={isBusy || isDirty || activeRunBlocked}
-              disabledReason={
-                activeRunBlocked
-                  ? "当前 Vina 运行尚未结束。"
-                  : isDirty
-                    ? "请先保存当前 Box 与 Vina 参数，再切换协议或处理 maps。"
-                    : isBusy
-                      ? "当前运行流程尚未结束。"
-                      : ""
-              }
-              onProjectChange={(nextProject) => {
-                commitProject(nextProject, true);
-              }}
-              onStatusChange={() => {
-                void refreshPreflight(true);
-              }}
-            />
-          ) : null}
-
           <section className="run-cockpit-card run-preview-card">
             <div className="run-cockpit-section-heading">
               <div>
@@ -1314,6 +1292,28 @@ export default function RunPreparePage({
               />
             </div>
           </section>
+
+          {workspaceMode === "single" ? (
+            <AutoGridMapsPanel
+              project={project}
+              disabled={isBusy || isDirty || activeRunBlocked}
+              disabledReason={
+                activeRunBlocked
+                  ? "当前 Vina 运行尚未结束。"
+                  : isDirty
+                    ? "请先保存当前 Box 与 Vina 参数，再切换协议或处理 maps。"
+                    : isBusy
+                      ? "当前运行流程尚未结束。"
+                      : ""
+              }
+              onProjectChange={(nextProject) => {
+                commitProject(nextProject, true);
+              }}
+              onStatusChange={() => {
+                void refreshPreflight(true);
+              }}
+            />
+          ) : null}
 
           {workspaceMode === "single" && isEvaluationMode ? (
             <section

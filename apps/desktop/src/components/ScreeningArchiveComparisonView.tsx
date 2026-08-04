@@ -28,7 +28,6 @@ import {
 } from "../utils/screeningArchiveComparison";
 import ActionButton from "./ActionButton";
 import StatusBadge from "./StatusBadge";
-import "../styles/screening-archive-comparison.css";
 
 export type ScreeningArchiveComparisonSummary = {
   screening_id?: string;

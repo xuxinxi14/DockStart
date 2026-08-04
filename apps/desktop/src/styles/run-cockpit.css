@@ -1278,13 +1278,13 @@
 .run-preview-grid {
   display: grid;
   grid-template-columns: minmax(460px, 1fr) 270px;
-  min-height: 296px;
+  min-height: clamp(340px, 42vh, 480px);
 }
 
 .run-preview {
   position: relative;
   min-width: 0;
-  min-height: 296px;
+  min-height: clamp(340px, 42vh, 480px);
   overflow: hidden;
   background: var(--ds-viewer-bg);
 }
@@ -1301,7 +1301,7 @@
 .run-preview-canvas {
   position: absolute;
   inset: 0;
-  min-height: 296px;
+  min-height: clamp(340px, 42vh, 480px);
   outline: none;
 }
 
@@ -1850,7 +1850,7 @@
   margin: 3px 0 7px;
   border-top: 1px solid var(--ds-border-subtle);
   border-bottom: 1px solid var(--ds-border-subtle);
-  background: var(--ds-surface-subtle);
+  background: var(--ds-surface-input);
   padding: 7px 9px;
 }
 
@@ -2111,7 +2111,7 @@
   border: 1px solid var(--ds-border-default);
   border-left: 3px solid var(--ds-warning);
   border-radius: 6px;
-  background: var(--ds-surface-subtle);
+  background: var(--ds-surface-input);
   padding: 9px 10px;
 }
 
@@ -2682,8 +2682,14 @@
 }
 
 @media (max-width: 1180px) {
+  .run-cockpit-layout,
   .run-preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .run-preflight-rail {
+    position: static;
+    max-height: none;
   }
 
   .run-box-inspector {

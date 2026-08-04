@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core";
 import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import AppShell from "./layout/AppShell";
+import DelayedPending from "./components/DelayedPending";
 import {
   normalizeNavigationPage,
   type NavigateOptions,
@@ -534,13 +535,15 @@ export default function App() {
       ) : null}
       <Suspense
         fallback={(
-          <section aria-live="polite" className="page-loading-state" role="status">
-            <SpinnerGap aria-hidden="true" className="page-loading-indicator" size={24} weight="bold" />
-            <div>
-              <strong>正在打开工作区</strong>
-              <p>正在打开当前页面。</p>
-            </div>
-          </section>
+          <DelayedPending>
+            <section aria-live="polite" className="page-loading-state" role="status">
+              <SpinnerGap aria-hidden="true" className="page-loading-indicator" size={24} weight="bold" />
+              <div>
+                <strong>正在打开工作区</strong>
+                <p>正在打开当前页面。</p>
+              </div>
+            </section>
+          </DelayedPending>
         )}
       >
         {renderPage()}

@@ -1,7 +1,7 @@
 /* DockStart Instrument Console theme
  * The shell owns the deep-blue visual weight; scientific inputs stay on calm,
- * high-contrast light surfaces. This file is imported last as the selected UI
- * convergence layer while legacy page classes are migrated incrementally.
+ * high-contrast surfaces. This file owns the shared shell theme while
+ * workflow-specific files remain explicit later layers in main.tsx.
  */
 
 :root {
@@ -19,6 +19,15 @@ body {
   background: var(--ds-bg-app);
 }
 
+.app-sidebar,
+.app-topbar,
+.app-statusbar,
+button,
+[data-tauri-drag-region] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 button,
 input,
 select,
@@ -34,11 +43,11 @@ select,
 textarea,
 summary {
   transition:
-    color 140ms ease,
-    background-color 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease,
-    opacity 140ms ease;
+    color var(--ds-motion-fast) var(--ds-ease-standard),
+    background-color var(--ds-motion-fast) var(--ds-ease-standard),
+    border-color var(--ds-motion-fast) var(--ds-ease-standard),
+    box-shadow var(--ds-motion-fast) var(--ds-ease-standard),
+    opacity var(--ds-motion-fast) var(--ds-ease-standard);
 }
 
 button:focus-visible,
@@ -77,7 +86,7 @@ summary:focus-visible {
   overflow: hidden;
   border: 1px solid var(--ds-window-border);
   background: var(--ds-nav-bg);
-  transition: grid-template-columns 180ms ease;
+  transition: grid-template-columns var(--ds-motion-base) var(--ds-ease-emphasized);
 }
 
 .dockstart-shell.sidebar-collapsed {
@@ -157,6 +166,11 @@ summary:focus-visible {
 
 .sidebar-group {
   gap: var(--ds-sidebar-item-gap);
+}
+
+.sidebar-nav-tooltip {
+  display: grid;
+  width: 100%;
 }
 
 .sidebar-group-title,
@@ -370,6 +384,10 @@ summary:focus-visible {
   gap: var(--ds-sidebar-item-gap);
 }
 
+.sidebar-collapsed .sidebar-nav-tooltip {
+  place-items: center;
+}
+
 .sidebar-collapsed .sidebar-nav-item,
 .sidebar-collapsed .sidebar-nav-item.descriptionless,
 .sidebar-collapsed .sidebar-nav-item.compact-disabled {
@@ -491,7 +509,7 @@ summary:focus-visible {
 
 .topbar-summary svg {
   flex: 0 0 auto;
-  color: var(--ds-success-on-dark);
+  color: var(--ds-brand-on-dark);
 }
 
 .topbar-summary span {
@@ -512,6 +530,19 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   gap: 3px;
+}
+
+.topbar-summary-tooltip {
+  display: flex;
+  min-width: 0;
+}
+
+.topbar-summary-tooltip .topbar-summary {
+  width: 100%;
+}
+
+.topbar-action-tooltip {
+  display: inline-flex;
 }
 
 .topbar-end {
@@ -573,6 +604,12 @@ summary:focus-visible {
   height: 100%;
   margin-left: 4px;
   border-left: 1px solid var(--ds-on-dark-border-subtle);
+}
+
+.window-control-tooltip {
+  display: grid;
+  width: 56px;
+  height: 100%;
 }
 
 .window-controls button {
@@ -639,6 +676,16 @@ summary:focus-visible {
   min-width: 0;
 }
 
+.statusbar-project-tooltip {
+  display: flex;
+  min-width: 0;
+}
+
+.statusbar-project-tooltip .statusbar-project {
+  width: 100%;
+  min-width: 0;
+}
+
 .statusbar-project,
 .statusbar-local {
   display: flex;
@@ -678,6 +725,29 @@ summary:focus-visible {
   padding: 18px clamp(16px, 2vw, 28px) 26px;
   scrollbar-color: var(--ds-scrollbar-on-light) var(--ds-color-transparent);
   scrollbar-width: thin;
+}
+
+.app-page-frame {
+  width: 100%;
+  min-height: 100%;
+  animation: ds-page-enter var(--ds-motion-base) var(--ds-ease-emphasized) both;
+}
+
+.ds-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes ds-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 .page-loading-state {
@@ -777,7 +847,7 @@ summary:focus-visible {
   grid-template-columns: minmax(0, 1fr) minmax(272px, var(--ds-rail-width));
   width: 100%;
   gap: var(--ds-body-gap);
-  align-items: stretch;
+  align-items: start;
 }
 
 .main-panel,
@@ -804,7 +874,12 @@ summary:focus-visible {
 }
 
 /* The contextual inspector is intentionally the third large navy surface. */
-.right-rail,
+.right-rail {
+  height: auto;
+  min-height: 0;
+  align-self: start;
+}
+
 .task-context,
 .context-panel {
   min-height: 100%;
@@ -915,52 +990,6 @@ summary:focus-visible {
 
 .toolchain-summary-list dd.error {
   color: var(--ds-danger-on-dark);
-}
-
-/* Controls */
-
-.primary-button,
-.secondary-button,
-.text-button,
-.action-button {
-  min-height: 38px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 680;
-}
-
-.primary-button {
-  border-color: var(--ds-brand-active);
-  background: var(--ds-brand);
-  color: var(--ds-text-on-dark);
-  box-shadow: var(--ds-shadow-brand);
-}
-
-.primary-button:hover:not(:disabled) {
-  background: var(--ds-brand-hover);
-  box-shadow: var(--ds-shadow-brand);
-}
-
-.secondary-button {
-  border-color: var(--ds-brand-border);
-  background: var(--ds-surface-raised);
-  color: var(--ds-brand-on-dark);
-}
-
-.secondary-button:hover:not(:disabled) {
-  border-color: var(--ds-brand);
-  background: var(--ds-surface-hover);
-}
-
-.text-button {
-  border-color: var(--ds-color-transparent);
-  background: var(--ds-color-transparent);
-  color: var(--ds-brand-on-dark);
-}
-
-.text-button:hover:not(:disabled) {
-  background: var(--ds-surface-hover);
-  color: var(--ds-text-on-dark);
 }
 
 input,
@@ -1183,8 +1212,7 @@ textarea:focus,
   box-shadow: none;
 }
 
-.error-recovery-panel,
-.error-panel {
+.error-recovery-panel {
   border-radius: 7px;
   box-shadow: none;
 }
@@ -1198,8 +1226,7 @@ textarea:focus,
 }
 
 .command-result-panel[role="alert"],
-.error-recovery-panel,
-.error-panel {
+.error-recovery-panel {
   border-left: var(--ds-callout-accent-width) solid var(--ds-danger);
 }
 
@@ -1254,8 +1281,7 @@ textarea:focus,
 
 .technical-details pre,
 .command-result-panel pre,
-.advanced-details pre,
-.error-panel pre {
+.advanced-details pre {
   border-radius: 6px;
   background: var(--ds-code-bg);
   color: var(--ds-code-text);
@@ -1382,6 +1408,70 @@ pre,
   min-width: 130px;
   border-top: 3px solid var(--ds-border-default);
   border-radius: 0 0 7px 7px;
+}
+
+.dashboard-utility-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+
+.dashboard-stage-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+}
+
+.dashboard-stage-grid .workflow-stage {
+  align-content: start;
+  min-width: 180px;
+  text-align: left;
+}
+
+.workflow-stage-summary {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.workflow-substeps {
+  display: grid;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-3);
+  padding-top: var(--ds-space-3);
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.workflow-substep {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px var(--ds-space-2);
+  align-items: start;
+  width: 100%;
+  min-height: 70px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-input);
+  color: var(--ds-text-primary);
+  padding: var(--ds-space-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.workflow-substep:hover,
+.workflow-substep:focus-visible {
+  border-color: var(--ds-brand-border);
+  background: var(--ds-surface-hover);
+}
+
+.workflow-substep > strong {
+  grid-column: 1 / -1;
+  font-size: var(--ds-text-xs);
+  font-weight: 560;
+  line-height: var(--ds-leading-normal);
+}
+
+.workflow-substep .status-badge {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .mode-tabs {
@@ -1943,7 +2033,7 @@ pre,
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  color: var(--ds-brand-light);
+  color: var(--ds-accent);
   font-size: 12px;
   font-weight: 720;
   transform: translateY(-50%);
@@ -2251,7 +2341,7 @@ pre,
 }
 
 .structure-candidate-preview-panel > header span {
-  color: var(--ds-brand-light);
+  color: var(--ds-accent);
   font-size: 11px;
   font-weight: 760;
   letter-spacing: 0.06em;
@@ -2328,6 +2418,12 @@ pre,
 
 /* Responsive desktop behavior */
 
+@media (max-width: 1500px) {
+  .dashboard-stage-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
 @media (max-width: 1240px) {
   :root {
     --ds-sidebar-width: 218px;
@@ -2338,7 +2434,7 @@ pre,
     grid-template-columns: minmax(230px, 1fr) auto;
   }
 
-  .topbar-summary {
+  .topbar-summary-tooltip {
     display: none;
   }
 
@@ -2369,6 +2465,32 @@ pre,
 
   .structure-source-import-button {
     min-width: 170px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .page-hero,
+  .page-body-grid,
+  .task-layout,
+  .step-task-layout,
+  .project-create-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-hero-actions {
+    justify-content: flex-start;
+  }
+
+  .next-step-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .next-step-strip > .button-row {
+    justify-content: flex-start;
+  }
+
+  .right-rail {
+    min-height: 0;
   }
 }
 
@@ -2432,6 +2554,10 @@ pre,
     display: none;
   }
 
+  .sidebar-release-info {
+    display: none;
+  }
+
   .sidebar-nav {
     gap: var(--ds-sidebar-group-gap);
     padding: 16px 8px;
@@ -2440,6 +2566,10 @@ pre,
   .sidebar-group {
     justify-items: center;
     gap: var(--ds-sidebar-item-gap);
+  }
+
+  .sidebar-nav-tooltip {
+    place-items: center;
   }
 
   .sidebar-nav-item,
@@ -2631,11 +2761,19 @@ pre,
   }
 }
 
+@media (max-width: 720px) {
+  .dashboard-stage-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

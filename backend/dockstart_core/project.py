@@ -934,9 +934,18 @@ def _import_pdbqt(
             # A manually imported PDBQT is a new active structure. Keep old
             # preparation records on disk for audit, but detach their current
             # project pointers so their method/evidence cannot be attributed
-            # to the newly imported bytes.
-            setattr(project.preparation, role, default_preparation_result(role))
-            project.latest_preparation[role] = ""
+            # to the newly imported bytes. A running preparation keeps its
+            # ownership until finalization so it can record the imported bytes
+            # as an output conflict and preserve the full verification audit.
+            active_preparation = getattr(project.preparation, role)
+            has_running_preparation = (
+                active_preparation.status == "running"
+                and bool(active_preparation.prep_id)
+                and project.latest_preparation.get(role) == active_preparation.prep_id
+            )
+            if not has_running_preparation:
+                setattr(project.preparation, role, default_preparation_result(role))
+                project.latest_preparation[role] = ""
 
             saved = save_project(project)
             if not saved.get("ok"):

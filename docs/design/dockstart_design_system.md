@@ -4,11 +4,11 @@
 
 **DockStart Instrument Console / 高端工业分子工作台**
 
-DockStart 是现代分子建模与对接实验工作台，不是营销页、后台模板或游戏式 dashboard。深蓝 Sidebar、Topbar、ContextPanel 与底部状态栏构成稳定的“仪器外壳”，冷灰蓝工作区和分级浅色表面承载文件、参数、日志、表格和 3D viewer。界面应专业、冷静、可信、低噪声、强引导、状态明确。
+DockStart 是现代分子建模与对接实验工作台，不是营销页、后台模板或游戏式 dashboard。默认暗色主题以深蓝应用壳和分级工作表面承载文件、参数、日志、表格与 3D viewer；亮色主题提供冷灰蓝日间工作环境。界面应专业、冷静、可信、低噪声、强引导、状态明确。
 
 深蓝覆盖原则：
-- 目标覆盖约 35%–40%，用于长时间工作时建立视觉锚点。
-- 深蓝只用于应用壳、上下文检查区和 Viewer 工作轨，不把数值表单、表格或日志正文整体反白。
+- 默认主题允许工作区使用深蓝分层，但应用壳、主面板、raised card、输入框和 Viewer 必须保持可辨认的亮度差。
+- 亮色主题只改变应用表面，不改变科学 Viewer 的深色画布语义。
 - 深色区域必须使用高对比文字，不使用灰字压在深蓝底上。
 - 不使用渐变、霓虹、发光、玻璃拟态或装饰纹理。
 
@@ -49,7 +49,7 @@ DockStart 是现代分子建模与对接实验工作台，不是营销页、后�
 
 规则：
 - 不在页面内临时发明颜色。
-- 三层浅色表面必须满足 `workspace < panel < raised/input`。
+- 工作区、panel、raised 与 input 必须形成稳定的视觉层级；不能只靠阴影区分。
 - 不使用纯白大面板、渐变大背景或重阴影。
 - 分子 cyan 和 Vina 蓝紫只能作为语义点缀。
 - 状态色只表达状态，不表达科学结论。
@@ -120,6 +120,29 @@ Spacing scale：
 - 优先用 border 和 background 区分层级。
 - 不做厚重卡片阴影。
 
+## 动效与等待反馈
+
+- 只使用 `--ds-motion-*` 与 `--ds-ease-*`；普通控件 120ms，页面单向进入 180ms。
+- 页面切换只做一次 `opacity + 4px` 入场，不保留旧页面，不给 3D 分子或科学数值添加装饰动画。
+- 约 230ms 内完成的页面加载或本地操作不显示 spinner，避免闪烁。
+- 阻塞式 loading 只用于会写文件、转换或需要锁定输入的操作；在线检索优先使用内联状态。
+- `prefers-reduced-motion` 下动画必须退化为单帧，信息不能只靠运动表达。
+
+## 可访问性与桌面交互
+
+- 图标按钮必须有稳定的 accessible name；折叠导航和窗口控件提供可聚焦 Tooltip。
+- 页面切换后主内容回到顶部、获得程序化焦点并更新窗口标题。
+- 日志、错误、路径、SHA256、命令和 Markdown 报告必须允许选择、右键与键盘复制。
+- 模态加载关闭后恢复触发焦点；多层 overlay 使用引用计数管理 `inert` 与滚动锁。
+- 同一颜色不能同时表示流程状态与科学结论；所有状态必须同时有文本。
+
+## 响应式工作区
+
+- 以 Windows 125% 缩放下的有效 CSS 宽度验收，不只按物理分辨率判断。
+- 通用双栏、Run 与 Result 在约 1180px 时收起右侧检查栏，避免主任务区被压缩到约 500px。
+- 960–980px 自动进入紧凑侧栏；此时不显示无效的手动折叠按钮。
+- sticky 操作栏在窄屏恢复为普通文档流，不能遮挡正文或最后一个表单控件。
+
 ## 组件层级
 
 ### AppShell
@@ -144,8 +167,8 @@ Spacing scale：
 显示：
 - 项目名称或“未加载项目”。
 - 当前工作流阶段。
-- 工具链简要状态。
-- 版本号。
+- 工作流摘要和项目记录更新时间。
+- 工具链、帮助和主题快捷入口。
 
 禁止“当前页面 / 当前项目”这种调试式标签。
 
@@ -155,7 +178,7 @@ Spacing scale：
 
 ### WorkflowRail / WorkflowTimeline
 
-用于 Dashboard 和运行流程：显示项目、原始结构、Vina 输入、Box、对接运行、结果报告。
+用于 Dashboard 和运行流程：顶层统一为结构准备、范围、运行、结果与报告四阶段；获取原始结构与转换 PDBQT 是结构准备的子状态。
 
 ### TaskCanvas
 
@@ -203,11 +226,11 @@ stdout、stderr、log、metadata、manifest、sha256、command preview 默认折
 
 ## 基础组件文件
 
-前端组件应逐步收敛到这些可复用 building blocks：
+前端组件应收敛到这些可复用 building blocks：
 
-- `Card`
-- `Panel`
 - `SectionHeader`
+- `SectionCard`
+- `StatusBadge`
 - `StatusPill`
 - `StatusCard`
 - `FileChip`
@@ -222,6 +245,17 @@ stdout、stderr、log、metadata、manifest、sha256、command preview 默认折
 - `WorkflowStepper`
 - `ContextPanel`
 - `AdvancedDetails`
+- `Tooltip`
+- `DelayedPending`
+- `PageShell` / `PageHero` / `BodyGrid` / `MainPanel` / `RightRail`
+
+样式所有权：
+
+- `tokens.css` 只定义主题与尺度 token。
+- `components.css` 是 Button、Status、EmptyState、Callout、Error 等共享原语的基础来源。
+- `layout.css` 与 `instrument-console.css` 分别承载结构和应用壳主题；上下文覆盖必须带明确父级。
+- 工作流样式由 `run-cockpit.css`、`workspace-console.css` 等功能文件负责，并在 `main.tsx` 统一声明导入顺序。
+- 不在组件模块内隐式导入 CSS，不保留未进入构建链的备用主题文件。
 
 ## 页面方向
 

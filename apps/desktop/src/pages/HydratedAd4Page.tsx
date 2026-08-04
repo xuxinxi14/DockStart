@@ -24,7 +24,7 @@ import {
 } from "../api/hydrated";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
-import ErrorPanel from "../components/ErrorPanel";
+import ErrorRecoveryPanel from "../components/ErrorRecoveryPanel";
 import HydratedProtocolScope from "../components/HydratedProtocolScope";
 import OperationLoadingDialog from "../components/OperationLoadingDialog";
 import {
@@ -1020,7 +1020,7 @@ export default function HydratedAd4Page({
               </section>
             ) : null}
 
-            {error ? <ErrorPanel error={error} /> : null}
+            {error ? <ErrorRecoveryPanel error={error} /> : null}
             {notice ? (
               <p
                 className="hydrated-inline-notice"

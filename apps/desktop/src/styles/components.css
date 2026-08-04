@@ -5,6 +5,43 @@ textarea {
   font: inherit;
 }
 
+.ds-tooltip-anchor {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.ds-tooltip {
+  position: fixed;
+  z-index: 2600;
+  max-width: min(280px, calc(100vw - 16px));
+  pointer-events: none;
+  border: 1px solid var(--ds-tooltip-border);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-tooltip-bg);
+  box-shadow: var(--ds-shadow-raised);
+  color: var(--ds-tooltip-text);
+  padding: 6px 9px;
+  font-size: var(--ds-text-xs);
+  font-weight: 620;
+  line-height: var(--ds-leading-normal);
+  overflow-wrap: anywhere;
+  animation: ds-tooltip-enter var(--ds-motion-fast) var(--ds-ease-standard) both;
+}
+
+.ds-tooltip-right {
+  transform: translateY(-50%);
+}
+
+.ds-tooltip-bottom {
+  transform: translateX(-50%);
+}
+
+@keyframes ds-tooltip-enter {
+  from {
+    opacity: 0;
+  }
+}
+
 .operation-loading-backdrop {
   position: fixed;
   inset: 0;
@@ -14,6 +51,7 @@ textarea {
   padding: var(--ds-space-5);
   background: rgba(1, 14, 27, 0.72);
   backdrop-filter: blur(3px);
+  animation: operation-backdrop-enter var(--ds-motion-base) var(--ds-ease-standard) both;
 }
 
 .navigation-guard-notice {
@@ -33,6 +71,7 @@ textarea {
   color: var(--ds-warning-text);
   font-size: var(--ds-text-md);
   line-height: var(--ds-leading-normal);
+  animation: operation-dialog-enter var(--ds-motion-base) var(--ds-ease-emphasized) both;
 }
 
 .navigation-guard-notice svg {
@@ -53,6 +92,7 @@ textarea {
   padding: var(--ds-space-5);
   color: var(--ds-text-primary);
   outline: none;
+  animation: operation-dialog-enter var(--ds-motion-base) var(--ds-ease-emphasized) both;
 }
 
 .operation-loading-dialog > .secondary-button,
@@ -108,9 +148,29 @@ textarea {
   }
 }
 
+@keyframes operation-backdrop-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes operation-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ds-tooltip,
+  .operation-loading-backdrop,
+  .operation-loading-dialog,
+  .navigation-guard-notice {
+    animation: none;
+  }
+
   .operation-loading-spinner {
-    animation-duration: 1800ms;
+    animation: none;
   }
 }
 
@@ -131,47 +191,65 @@ textarea {
 .primary-button,
 .secondary-button,
 .text-button {
-  min-height: 36px;
-  border-radius: var(--ds-radius-md);
-  padding: 0 var(--ds-space-4);
-  font-size: 14px;
-  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border-radius: 7px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 680;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  transition:
+    background var(--ds-motion-fast) var(--ds-ease-standard),
+    border-color var(--ds-motion-fast) var(--ds-ease-standard),
+    color var(--ds-motion-fast) var(--ds-ease-standard),
+    opacity var(--ds-motion-fast) var(--ds-ease-standard);
 }
 
 .primary-button {
-  border: 1px solid var(--ds-accent);
-  background: var(--ds-accent);
-  color: var(--ds-text-inverse);
+  border: 1px solid var(--ds-brand-active);
+  background: var(--ds-brand);
+  color: var(--ds-text-on-dark);
+  box-shadow: var(--ds-shadow-brand);
 }
 
 .primary-button:hover:not(:disabled) {
-  background: var(--ds-accent-hover);
-  border-color: var(--ds-accent-hover);
+  border-color: var(--ds-brand-hover);
+  background: var(--ds-brand-hover);
+  box-shadow: var(--ds-shadow-brand);
 }
 
 .secondary-button {
-  border: 1px solid var(--ds-border-strong);
-  background: var(--ds-surface);
-  color: var(--ds-accent);
+  border: 1px solid var(--ds-brand-border);
+  background: var(--ds-surface-raised);
+  color: var(--ds-brand-on-dark);
 }
 
 .secondary-button:hover:not(:disabled) {
-  background: var(--ds-accent-soft);
+  border-color: var(--ds-brand);
+  background: var(--ds-surface-hover);
 }
 
 .text-button {
   margin-bottom: 0;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ds-accent);
+  border: 1px solid var(--ds-color-transparent);
+  background: var(--ds-color-transparent);
+  color: var(--ds-brand-on-dark);
   padding: 0 var(--ds-space-2);
 }
 
 .text-button:hover:not(:disabled) {
-  background: var(--ds-accent-soft);
-  border-color: var(--ds-border);
+  border-color: var(--ds-color-transparent);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text-on-dark);
+}
+
+.primary-button svg,
+.secondary-button svg,
+.text-button svg {
+  flex: 0 0 auto;
 }
 
 .primary-button:disabled,
@@ -1033,8 +1111,7 @@ pre,
   text-align: center;
 }
 
-.command-result-panel details > summary,
-.error-panel details > summary {
+.command-result-panel details > summary {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1044,8 +1121,7 @@ pre,
 .raw-error pre,
 .technical-details pre,
 .command-result-panel pre,
-.log-preview-panel pre,
-.error-panel pre {
+.log-preview-panel pre {
   max-height: 240px;
   overflow: auto;
   margin: var(--ds-space-2) 0 0;
@@ -1433,6 +1509,17 @@ pre,
   display: grid;
   gap: var(--ds-space-3);
   padding: var(--ds-space-6);
+}
+
+.empty-state-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid var(--ds-molecule-border);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-molecule-soft);
+  color: var(--ds-molecule);
 }
 
 .empty-state h2 {
@@ -2722,8 +2809,6 @@ pre,
   }
 }
 
-.ds-card,
-.ds-panel,
 .status-card,
 .context-panel-shell,
 .advanced-details,
@@ -2736,18 +2821,11 @@ pre,
   box-shadow: var(--ds-shadow-soft);
 }
 
-.ds-card,
-.ds-panel,
 .status-card,
 .context-panel-shell,
 .error-recovery-panel,
 .notice {
   padding: var(--ds-space-4);
-}
-
-.ds-card.compact,
-.ds-panel.compact {
-  padding: var(--ds-space-3);
 }
 
 .section-header {
@@ -2960,6 +3038,15 @@ pre,
 .error-recovery-panel {
   border-color: var(--ds-danger-border);
   background: var(--ds-danger-soft);
+}
+
+.error-recovery-panel > code {
+  width: fit-content;
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-code-bg);
+  color: var(--ds-code-text);
+  padding: 3px 7px;
+  font-size: var(--ds-text-xs);
 }
 
 .workflow-timeline {

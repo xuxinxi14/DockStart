@@ -70,7 +70,7 @@ test("协议门禁同时检查评分协议、受体、任务类型和 Vina 能�
       capabilitySupported: false,
     }),
     [
-      "不支持 AutoDock4、AD4Zn 或预计算 maps",
+      "仅支持 Vina/Vinardo 或标准 AutoDock4 maps",
       "仅支持刚性受体",
       "仅支持全局对接",
       "当前 Vina 不支持一个 --ligand 后跟多个输入文件",
@@ -85,6 +85,6 @@ test("协议门禁同时检查评分协议、受体、任务类型和 Vina 能�
       capabilityChecked: true,
       capabilitySupported: true,
     }),
-    ["不支持 AutoDock4、AD4Zn 或预计算 maps"],
+    ["仅支持 Vina/Vinardo 或标准 AutoDock4 maps"],
   );
 });

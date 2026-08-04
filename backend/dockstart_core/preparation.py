@@ -1809,10 +1809,10 @@ def _finalize_preparation(
                     )
                 )
                 built["output_verification"] = output_verification
-                if not input_matches:
-                    error = stale_error
-                elif not output_matches:
+                if not output_matches:
                     error = output_conflict_error
+                elif not input_matches:
+                    error = stale_error
                 elif protocol_gate_error is not None:
                     error = copy.deepcopy(protocol_gate_error)
                 previous_output: bytes | None = None

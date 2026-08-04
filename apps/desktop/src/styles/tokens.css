@@ -41,6 +41,12 @@
   --ds-viewer-pose-input: #00FFFF;
   --ds-viewer-pose-optimized: #FFA500;
 
+  /* Theme-invariant overlay surface. Tooltips keep a dark, high-contrast
+     appearance even when the surrounding workspace uses the light theme. */
+  --ds-tooltip-bg: #0A2A45;
+  --ds-tooltip-border: rgba(190, 218, 239, 0.42);
+  --ds-tooltip-text: #FFFFFF;
+
   /* Borders and dividers. */
   --ds-border-strong: #6C8EA7;
   --ds-border-default: #4A718D;
@@ -142,6 +148,7 @@
   --ds-shadow-rail: 0 12px 32px rgba(0, 8, 18, 0.28);
   --ds-shadow-viewer: 0 12px 28px rgba(2, 19, 36, 0.18);
   --ds-shadow-brand: 0 2px 6px rgba(18, 69, 109, 0.18);
+  --ds-shadow-sticky: 0 -10px 24px rgba(0, 8, 18, 0.16);
 
   --ds-font-ui: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
   --ds-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
@@ -173,6 +180,16 @@
   --ds-radius-lg: 10px;
   --ds-radius-xl: 14px;
   --ds-radius-card: 10px;
+
+  /* Motion is brief and functional: enough to preserve spatial continuity
+     without animating scientific content or delaying user actions. */
+  --ds-motion-instant: 80ms;
+  --ds-motion-fast: 120ms;
+  --ds-motion-base: 180ms;
+  --ds-motion-slow: 240ms;
+  --ds-motion-tooltip-delay: 420ms;
+  --ds-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ds-ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   --ds-sidebar-width: 248px;
   --ds-sidebar-collapsed-width: 76px;
@@ -309,6 +326,7 @@
   --ds-shadow-soft: 0 1px 3px rgba(34, 72, 96, 0.16);
   --ds-shadow-panel: 0 2px 5px rgba(34, 72, 96, 0.15), 0 12px 30px rgba(34, 72, 96, 0.09);
   --ds-shadow-raised: 0 2px 5px rgba(34, 72, 96, 0.14);
+  --ds-shadow-sticky: 0 -10px 24px rgba(34, 72, 96, 0.10);
 
   --ds-bg-subtle: #D7E9F3;
   --ds-bg-panel: var(--ds-surface-panel);

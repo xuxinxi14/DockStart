@@ -7,7 +7,6 @@ import { startFlexibleReceptorTask, waitForBackgroundTask } from "../utils/backg
 import ActionButton from "./ActionButton";
 import AdvancedDetails from "./AdvancedDetails";
 import StatusBadge from "./StatusBadge";
-import "../styles/flexible-receptor.css";
 
 type FlexibleStatus = {
   ok: boolean;

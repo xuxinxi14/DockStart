@@ -17,6 +17,7 @@ import type { DockStartProject } from "../types";
 import { appVersion } from "../navigation/pages";
 import { navigationItems, resolveNavigationTarget, type NavigateHandler, type PageId } from "../navigation/pages";
 import type { WorkflowStep } from "../components/WorkflowStepper";
+import Tooltip from "../components/Tooltip";
 import { resolveSidebarNavigationState, type SidebarNavigationState } from "../utils/sidebarNavigationState";
 import { hydratedRunSummaries } from "../utils/hydratedWorkflow";
 
@@ -152,50 +153,60 @@ export default function Sidebar({
                 );
                 const itemLabel = item.label;
                 return (
-                  <button
-                    aria-current={active ? "page" : undefined}
-                    aria-label={itemLabel}
-                    className={`sidebar-nav-item ${active ? "active" : ""} ${state} ${
-                      requiresProjectBlocked ? "project-required" : ""
-                    }`.trim()}
-                    disabled={disabled}
+                  <Tooltip
+                    className="sidebar-nav-tooltip"
                     key={item.id}
-                    onClick={() => onNavigate(target)}
-                    title={`${itemLabel}：${requiresProjectBlocked ? "创建项目后启用" : item.description}`}
-                    type="button"
+                    label={`${itemLabel}：${requiresProjectBlocked ? "创建项目后启用" : item.description}`}
+                    placement="right"
                   >
-                    <span className="sidebar-nav-icon"><NavigationIcon page={item.id} /></span>
-                    <span className="sidebar-nav-copy">
-                      <strong>{itemLabel}</strong>
-                      <small>{requiresProjectBlocked ? "创建项目后启用" : item.description}</small>
-                    </span>
-                    <span className={`sidebar-nav-state ${state}`}><StateIcon state={state} /></span>
-                  </button>
+                    <button
+                      aria-current={active ? "page" : undefined}
+                      aria-label={`${itemLabel}，${
+                        state === "ready" ? "已完成" : state === "blocked" ? "需要处理" : "可进入"
+                      }`}
+                      className={`sidebar-nav-item ${active ? "active" : ""} ${state} ${
+                        requiresProjectBlocked ? "project-required" : ""
+                      }`.trim()}
+                      disabled={disabled}
+                      onClick={() => onNavigate(target)}
+                      type="button"
+                    >
+                      <span className="sidebar-nav-icon"><NavigationIcon page={item.id} /></span>
+                      <span className="sidebar-nav-copy">
+                        <strong>{itemLabel}</strong>
+                        <small>{requiresProjectBlocked ? "创建项目后启用" : item.description}</small>
+                      </span>
+                      <span className={`sidebar-nav-state ${state}`}><StateIcon state={state} /></span>
+                    </button>
+                  </Tooltip>
                 );
               })}
           </div>
         ))}
       </nav>
       <div className="sidebar-footer">
-        <div className="sidebar-release-info" title={distributionProfile.message}>
-          <span className="sidebar-version">v{appVersion}</span>
-          <span
-            aria-live="polite"
-            className={`sidebar-profile-badge ${distributionProfile.releaseProfile}`}
-          >
-            {distributionProfile.displayName}
-          </span>
-        </div>
+        <Tooltip disabled={collapsed} label={distributionProfile.message}>
+          <div className="sidebar-release-info">
+            <span className="sidebar-version">v{appVersion}</span>
+            <span
+              aria-live="polite"
+              className={`sidebar-profile-badge ${distributionProfile.releaseProfile}`}
+            >
+              {distributionProfile.displayName}
+            </span>
+          </div>
+        </Tooltip>
         {onToggleCollapsed ? (
-          <button
-            aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-            className="sidebar-collapse-button"
-            onClick={onToggleCollapsed}
-            title={collapsed ? "展开侧边栏" : "收起侧边栏"}
-            type="button"
-          >
-            <SidebarSimple aria-hidden="true" mirrored={!collapsed} size={20} />
-          </button>
+          <Tooltip label={collapsed ? "展开侧边栏" : "收起侧边栏"} placement="right">
+            <button
+              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+              className="sidebar-collapse-button"
+              onClick={onToggleCollapsed}
+              type="button"
+            >
+              <SidebarSimple aria-hidden="true" mirrored={!collapsed} size={20} />
+            </button>
+          </Tooltip>
         ) : null}
       </div>
     </aside>

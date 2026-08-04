@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
-import ErrorPanel from "../components/ErrorPanel";
+import ErrorRecoveryPanel from "../components/ErrorRecoveryPanel";
 import FilePathText from "../components/FilePathText";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import ScientificDisclaimer from "../components/ScientificDisclaimer";
@@ -34,6 +34,20 @@ type ProjectDashboardPageProps = {
 
 type UiState = "未开始" | "可进行" | "进行中" | "已完成" | "无需" | "缺失" | "失败" | "需检查";
 type StepperState = "not-started" | "active" | "done";
+type WorkflowSubstep = {
+  title: string;
+  state: UiState;
+  text: string;
+  target: PageId;
+};
+type WorkflowRow = {
+  title: string;
+  state: UiState;
+  text: string;
+  target: PageId;
+  runId?: string;
+  substeps?: WorkflowSubstep[];
+};
 type FirstRunToolchainSummary = {
   vinaStatus: ToolStatus;
   pythonStatus: ToolStatus;
@@ -41,7 +55,7 @@ type FirstRunToolchainSummary = {
   meekoStatus: ToolStatus;
 };
 
-const dockingStepperSteps = ["准备结构", "搜索范围", "运行对接", "查看结果"];
+const dockingStepperSteps = ["结构准备", "搜索范围", "运行", "结果与报告"];
 
 type DashboardTaskCopy = {
   stepperSteps: string[];
@@ -64,15 +78,15 @@ function dashboardTaskCopy(
 ): DashboardTaskCopy {
   if (intent === "score_only") {
     return {
-      stepperSteps: ["准备结构", "评价范围", "姿势评分", "查看结果"],
+      stepperSteps: ["结构准备", "评价范围", "运行", "结果与报告"],
       stepperLabel: "姿势评分流程进度",
-      rangeTitle: "3 设置评价范围",
+      rangeTitle: "2 评价范围",
       rangeText: isAd4Maps
         ? "使用当前 AutoDock4 maps 网格评价输入姿势"
         : autobox
           ? "围绕输入姿势自动建立评分网格"
           : "使用项目 Box 评价当前姿势",
-      runTitle: "4 评价当前姿势",
+      runTitle: "3 姿势评分",
       runText: "配置、能量项与运行记录",
       resultText: "evaluation.json 与 Markdown 实验记录",
       resultArtifactLabel: "评分结果",
@@ -83,15 +97,15 @@ function dashboardTaskCopy(
   }
   if (intent === "local_only") {
     return {
-      stepperSteps: ["准备结构", "优化范围", "局部优化", "查看结果"],
+      stepperSteps: ["结构准备", "优化范围", "运行", "结果与报告"],
       stepperLabel: "局部优化流程进度",
-      rangeTitle: "3 设置优化范围",
+      rangeTitle: "2 优化范围",
       rangeText: isAd4Maps
         ? "使用当前 AutoDock4 maps 网格进行局部优化"
         : autobox
           ? "围绕输入姿势自动建立优化网格"
           : "使用项目 Box 进行局部优化",
-      runTitle: "4 局部优化当前姿势",
+      runTitle: "3 局部优化",
       runText: "输入评分、优化后姿势与运行记录",
       resultText: "输入/优化后评分、位移与 Markdown 实验记录",
       resultArtifactLabel: "优化结果",
@@ -103,9 +117,9 @@ function dashboardTaskCopy(
   return {
     stepperSteps: dockingStepperSteps,
     stepperLabel: "对接流程进度",
-    rangeTitle: "3 设置搜索范围",
+    rangeTitle: "2 搜索范围",
     rangeText: "搜索范围中心与尺寸",
-    runTitle: "4 运行对接",
+    runTitle: "3 运行对接",
     runText: "配置、记录、执行",
     resultText: "scores、构象与 Markdown 实验记录",
     resultArtifactLabel: "对接结果",
@@ -194,13 +208,7 @@ function workflowRows(
   intent: ProjectTaskIntent = "dock",
   autobox = false,
   isAd4Maps = false,
-): Array<{
-  title: string;
-  state: UiState;
-  text: string;
-  target: PageId;
-  runId?: string;
-}> {
+): WorkflowRow[] {
   const receptorRaw = fileReady(workflow?.raw?.receptor);
   const ligandRaw = fileReady(workflow?.raw?.ligand);
   const receptorPrepared = fileReady(workflow?.prepared?.receptor);
@@ -212,18 +220,47 @@ function workflowRows(
   const run = runState(workflow, intent);
   const copy = dashboardTaskCopy(intent, autobox, isAd4Maps);
   const rangeReady = autobox || workflow?.box?.status === "ok";
+  const rawState: UiState = rawStageSkipped
+    ? "无需"
+    : rawInputsReady
+      ? "已完成"
+      : receptorRaw || ligandRaw
+        ? "需检查"
+        : "可进行";
+  const preparationState: UiState = preparedInputsReady
+    ? "已完成"
+    : receptorRaw || ligandRaw
+      ? "可进行"
+      : "缺失";
+  const structureState: UiState = preparedInputsReady
+    ? "已完成"
+    : rawInputsReady
+      ? "可进行"
+      : receptorRaw || ligandRaw
+        ? "需检查"
+        : "可进行";
   return [
     {
-      title: "1 获取结构",
-      state: rawStageSkipped ? "无需" : rawInputsReady ? "已完成" : receptorRaw || ligandRaw ? "需检查" : "可进行",
-      text: rawStageSkipped ? "PDBQT 已就绪，跳过原始结构" : "受体 / 配体 raw 文件",
-      target: "structure-fetch",
-    },
-    {
-      title: "2 转换为 PDBQT",
-      state: preparedInputsReady ? "已完成" : receptorRaw || ligandRaw ? "可进行" : "缺失",
-      text: rawStageSkipped ? "PDBQT 已就绪，无需格式转换" : "prepared receptor / ligand PDBQT",
-      target: "preparation",
+      title: "1 结构准备",
+      state: structureState,
+      text: preparedInputsReady
+        ? "受体与配体 PDBQT 已就绪"
+        : "取得可供当前任务使用的受体与配体 PDBQT",
+      target: isTerminalState(rawState) ? "preparation" : "structure-fetch",
+      substeps: [
+        {
+          title: "获取结构",
+          state: rawState,
+          text: rawStageSkipped ? "已直接导入 PDBQT，无需原始结构" : "获取或导入受体与配体原始结构",
+          target: "structure-fetch",
+        },
+        {
+          title: "转换 PDBQT",
+          state: preparationState,
+          text: rawStageSkipped ? "PDBQT 已就绪，无需格式转换" : "生成或导入 prepared PDBQT",
+          target: "preparation",
+        },
+      ],
     },
     {
       title: copy.rangeTitle,
@@ -239,7 +276,7 @@ function workflowRows(
       runId: typeof modeRun?.run_id === "string" ? modeRun.run_id : undefined,
     },
     {
-      title: "5 结果与报告",
+      title: "4 结果与报告",
       state: String(modeRun?.status ?? "") === "finished"
         ? "可进行"
         : "未开始",
@@ -755,16 +792,12 @@ export default function ProjectDashboardPage({
           ? workflow?.next_recommended_action || taskCopy.heroDescription
           : taskCopy.heroDescription}
         actions={
-          <>
-          <ActionButton onClick={() => void loadWorkflow()}>{isBusy ? "刷新中..." : "刷新状态"}</ActionButton>
-          <ActionButton onClick={() => onNavigate("project-create")}>创建项目</ActionButton>
           <ActionButton
             variant="primary"
             onClick={() => onNavigate(nextPage, { runId: nextRunId })}
           >
-            继续当前步骤
+            继续：{taskCopy.stepperSteps[dashboardStepperIndex]}
           </ActionButton>
-          </>
         }
       />
 
@@ -773,7 +806,19 @@ export default function ProjectDashboardPage({
           <div className="main-panel-content">
             <FilePathText value={project.project_dir} />
 
-            <SectionCard title="本次任务">
+            <div className="dashboard-utility-actions" role="group" aria-label="项目辅助操作">
+              <ActionButton variant="text" onClick={() => void loadWorkflow()}>
+                {isBusy ? "刷新中..." : "刷新状态"}
+              </ActionButton>
+              <ActionButton variant="text" onClick={() => onNavigate("project-create")}>
+                新建其他项目
+              </ActionButton>
+            </div>
+
+            <SectionCard
+              title="本次任务"
+              description="选择当前结构要执行的计算类型；切换任务不会把姿势评分解释为全局位点搜索。"
+            >
               <div className="project-task-switch" role="group" aria-label="切换运行任务类型">
                 {projectTaskOptions.map((option) => {
                   const active = taskIntent === option.id;
@@ -820,11 +865,39 @@ export default function ProjectDashboardPage({
               />
             </section>
 
-            <SectionCard title="工作流">
-              <div className="dashboard-timeline">
-                {rows.map((row) => (
+            <SectionCard
+              title="四阶段工作流"
+              description="依次确认结构、范围、运行记录和结果产物；状态异常时可直接进入对应阶段检查。"
+            >
+              <div className="dashboard-timeline dashboard-stage-grid">
+                {rows.map((row) => row.substeps ? (
+                  <article
+                    className="workflow-step workflow-stage workflow-stage-structure"
+                    key={row.title}
+                  >
+                    <div className="workflow-stage-summary">
+                      <span>{row.title}</span>
+                      <strong>{row.text}</strong>
+                      <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
+                    </div>
+                    <div className="workflow-substeps" aria-label="结构准备子状态">
+                      {row.substeps.map((substep) => (
+                        <button
+                          className="workflow-substep action-card"
+                          key={substep.title}
+                          type="button"
+                          onClick={() => onNavigate(substep.target)}
+                        >
+                          <span>{substep.title}</span>
+                          <strong>{substep.text}</strong>
+                          <StatusBadge tone={statusTone(substep.state)}>{substep.state}</StatusBadge>
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                ) : (
                   <button
-                    className="workflow-step action-card"
+                    className="workflow-step workflow-stage action-card"
                     key={row.title}
                     type="button"
                     onClick={() => onNavigate(row.target, { runId: row.runId })}
@@ -856,36 +929,70 @@ export default function ProjectDashboardPage({
               </div>
             </SectionCard>
 
-            <ErrorPanel error={workflow?.error ?? null} message={errorMessage} />
-            {rawError ? (
-              <details className="technical-details">
-                <summary>技术详情</summary>
-                <pre>{rawError}</pre>
-              </details>
-            ) : null}
+            <ErrorRecoveryPanel error={workflow?.error ?? null} message={errorMessage} rawError={rawError} />
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="当前状态">
+          <RightRailSection title="项目事实">
             <dl className="mode-context-list">
               <div>
-                <dt>当前步骤</dt>
-                <dd>{taskCopy.stepperSteps[dashboardStepperIndex]}</dd>
+                <dt>任务类型</dt>
+                <dd>{taskIntentLabel(taskIntent)}</dd>
               </div>
               <div>
-                <dt>下一步</dt>
-                <dd>{workflow?.next_recommended_action || "继续当前步骤"}</dd>
+                <dt>计算协议</dt>
+                <dd>{isAd4Maps ? "AutoDock4 maps" : "AutoDock Vina"}</dd>
+              </div>
+              <div>
+                <dt>结构输入</dt>
+                <dd>
+                  {fileReady(workflow?.prepared?.receptor) && fileReady(workflow?.prepared?.ligand)
+                    ? "受体 / 配体 PDBQT 已就绪"
+                    : "尚未完成结构准备"}
+                </dd>
+              </div>
+              <div>
+                <dt>范围来源</dt>
+                <dd>
+                  {isAd4Maps
+                    ? "AutoDock4 maps 网格"
+                    : taskAutobox
+                      ? "围绕输入姿势自动建立"
+                      : workflow?.box?.status === "ok"
+                        ? "项目 Box 已记录"
+                        : "项目 Box 尚未设置"}
+                </dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="项目目录">
-            <FilePathText value={project.project_dir} />
+          <RightRailSection title="最近运行">
+            <dl className="mode-context-list">
+              <div>
+                <dt>运行记录</dt>
+                <dd>{currentTaskRun?.run_id ? String(currentTaskRun.run_id) : "尚未创建"}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>
+                  <StatusBadge tone={statusTone(runState(workflow, taskIntent))}>
+                    {runState(workflow, taskIntent)}
+                  </StatusBadge>
+                </dd>
+              </div>
+            </dl>
           </RightRailSection>
 
-          <RightRailSection title="提示">
-            <p>切换任务后会进入运行工作台。姿势评分与局部优化只适用于单个配体。</p>
+          <RightRailSection title="需要注意">
+            {taskSwitchBlockedByActiveRun ? (
+              <p>当前运行尚未结束；等待完成或安全取消后，才能切换任务类型。</p>
+            ) : null}
+            <p>
+              {taskIntent === "dock"
+                ? "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+                : "姿势评分与局部优化只适用于单个配体，且不会搜索新的结合位点。"}
+            </p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>
