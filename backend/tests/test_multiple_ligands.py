@@ -288,6 +288,14 @@ class MultipleLigandParserTests(unittest.TestCase):
             },
         ]
 
+    def test_log_output_score_comparison_allows_only_display_rounding(self) -> None:
+        self.assertTrue(
+            multiple_ligands._vina_score_output_values_match(-17.65, -17.653)
+        )
+        self.assertFalse(
+            multiple_ligands._vina_score_output_values_match(-17.65, -17.656)
+        )
+
     def test_parser_preserves_joint_semantics_and_member_order(self) -> None:
         parsed = parse_multiple_ligand_output_text(JOINT_OUTPUT, self.members)
         self.assertTrue(parsed["ok"], parsed)

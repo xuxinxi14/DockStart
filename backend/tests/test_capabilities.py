@@ -127,6 +127,107 @@ class CapabilityProfileTests(unittest.TestCase):
         self.assertEqual(profile["recommended_mode"], "demo")
         self.assertIn("示例项目", profile["next_action"])
 
+    def test_profile_exposes_versioned_execution_contract_from_active_vina(self) -> None:
+        active_vina = tool("vina", "ok", "configured")
+        active_vina["version"] = "1.2.7"
+        active_vina["path"] = "mock-vina.exe"
+        active_vina["capabilities"] = {
+            "checked": True,
+            "features": {"multiple_ligands": {"supported": True}},
+        }
+        toolchain = toolchain_payload()
+        toolchain["active_vina"] = active_vina
+
+        with (
+            patch.object(capabilities, "get_toolchain_status", return_value=toolchain) as get_status,
+            patch.object(capabilities.viewer_adapter, "detect", return_value=ToolCheckResult("viewer", "3Dmol.js", "ok")),
+        ):
+            profile = capabilities.get_app_capability_profile()
+
+        get_status.assert_called_once_with()
+        for legacy_key in (
+            "ok",
+            "app_version",
+            "vina_status",
+            "python_status",
+            "rdkit_status",
+            "meeko_status",
+            "viewer_status",
+            "basic_mode_available",
+            "assisted_mode_available",
+            "demo_mode_available",
+            "recommended_mode",
+            "blocking_items",
+            "next_action",
+            "demo_projects",
+            "message",
+            "error",
+        ):
+            self.assertIn(legacy_key, profile)
+
+        contract = profile["execution_contract"]
+        self.assertEqual(contract["schema_version"], 1)
+        self.assertEqual(contract["maturity_scope"], "protocol")
+        self.assertEqual(len(contract["backends"]), 1)
+        backend = contract["backends"][0]
+        self.assertEqual(backend["backend_id"], "autodock_vina")
+        self.assertEqual(backend["adapter_key"], "vina")
+        self.assertTrue(backend["available"])
+        self.assertEqual(backend["runtime"]["version"], "1.2.7")
+        self.assertEqual(backend["runtime"]["path"], "mock-vina.exe")
+        self.assertIs(backend["capabilities"], active_vina["capabilities"])
+        self.assertNotIn("trids", json.dumps(contract).lower())
+
+        protocols = {item["protocol_id"]: item for item in contract["protocols"]}
+        self.assertEqual(
+            {protocol_id: item["maturity"] for protocol_id, item in protocols.items()},
+            {
+                "rigid_single": "stable",
+                "ad4zn_beta": "beta",
+                "hydrated_ad4_experimental": "experimental",
+                "simultaneous_multi_ligand": "experimental",
+            },
+        )
+        backend_ids = {item["backend_id"] for item in contract["backends"]}
+        for descriptor in protocols.values():
+            self.assertIn(descriptor["backend_id"], backend_ids)
+            self.assertEqual(descriptor["availability_scope"], "project_preflight")
+            self.assertNotIn("available", descriptor)
+
+    def test_execution_backend_descriptor_remains_when_vina_is_missing(self) -> None:
+        toolchain = toolchain_payload(vina="missing")
+        active_vina = toolchain["active_vina"]
+        assert isinstance(active_vina, dict)
+        for field in ("status", "version", "path", "source", "message"):
+            active_vina[field] = None
+        with (
+            patch.object(
+                capabilities,
+                "get_toolchain_status",
+                return_value=toolchain,
+            ),
+            patch.object(capabilities.viewer_adapter, "detect", return_value=ToolCheckResult("viewer", "3Dmol.js", "ok")),
+        ):
+            profile = capabilities.get_app_capability_profile()
+
+        contract = profile["execution_contract"]
+        self.assertEqual(len(contract["backends"]), 1)
+        self.assertEqual(contract["backends"][0]["backend_id"], "autodock_vina")
+        self.assertFalse(contract["backends"][0]["available"])
+        runtime = contract["backends"][0]["runtime"]
+        self.assertEqual(
+            runtime,
+            {
+                "status": "unknown",
+                "version": "",
+                "path": "",
+                "source": "unknown",
+                "message": "",
+            },
+        )
+        self.assertTrue(all(isinstance(value, str) for value in runtime.values()))
+        self.assertEqual(len(contract["protocols"]), 4)
+
     def test_minimum_requirements_allow_basic_mode_without_rdkit_meeko(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project_with_pdbqt(temp_dir)

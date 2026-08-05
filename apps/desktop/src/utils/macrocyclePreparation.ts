@@ -5,6 +5,7 @@ import type {
   MacrocycleSelection,
   MacrocycleStatusResponse,
 } from "../types";
+import { decodeIpcJsonResponse } from "../api/core.ts";
 
 export type MacrocycleInvoke = (
   command: string,
@@ -38,11 +39,7 @@ export function decodeMacrocycleResponse(
   payload: string,
   command: string,
 ): MacrocycleStatusResponse {
-  const parsed = JSON.parse(payload) as MacrocycleStatusResponse;
-  if (!parsed || typeof parsed !== "object" || typeof parsed.ok !== "boolean") {
-    throw new Error(`${command} 返回结果缺少布尔型 ok 字段。`);
-  }
-  return parsed;
+  return decodeIpcJsonResponse<MacrocycleStatusResponse>(payload, command);
 }
 
 export function createMacrocycleApi(invoke: MacrocycleInvoke) {

@@ -50,7 +50,7 @@ from dockstart_core.preparation_models import (
     PreparationTarget,
     default_preparation_result,
 )
-from dockstart_core.structure_review import build_structure_review
+from dockstart_core.structure_review import build_structure_review, format_structure_review_text
 from dockstart_core.toolchain import get_resolved_python
 
 SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol", ".mol2"}
@@ -234,8 +234,16 @@ def _normalize_target(target: str) -> PreparationTarget | None:
     return None
 
 
-def _load_project_model(project_dir: str) -> tuple[Any | None, dict[str, Any] | None]:
-    loaded = load_project(project_dir)
+def _load_project_model(
+    project_dir: str,
+    *,
+    persist_migration: bool = True,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    loaded = (
+        load_project(project_dir)
+        if persist_migration
+        else load_project(project_dir, persist_migration=False)
+    )
     if not loaded.get("ok"):
         return None, loaded
     return _project_from_dict(loaded["project"], Path(project_dir).expanduser()), None
@@ -2177,14 +2185,12 @@ def get_preparation_status(
 def get_structure_review_status(project_dir: str) -> dict[str, Any]:
     """Read structure facts without probing Python/RDKit/Meeko capabilities."""
 
-    project, project_error = _load_project_model(project_dir)
+    project, project_error = _load_project_model(project_dir, persist_migration=False)
     if project_error:
         return project_error
     assert project is not None
-    return {
-        "ok": True,
-        "project_dir": project.project_dir,
-        "structure_review": build_structure_review(
+    try:
+        structure_review = build_structure_review(
             project.project_dir,
             receptor_file=project.receptor.file,
             ligand_file=project.ligand.file,
@@ -2192,7 +2198,18 @@ def get_structure_review_status(project_dir: str) -> dict[str, Any]:
             ligand_raw_file=project.ligand.raw_file,
             receptor_metadata_file=project.preparation.receptor.metadata_file,
             ligand_metadata_file=project.preparation.ligand.metadata_file,
-        ),
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary must stay structured.
+        return _error(
+            "STRUCTURE_REVIEW_READ_ERROR",
+            "读取结构审查信息时发生错误，未读取不安全的候选文件。",
+            raw_error=str(exc),
+            suggestion="请检查项目内 raw/prepared 目录、文件权限和符号链接后重试。",
+        )
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "structure_review": structure_review,
         "error": None,
     }
 
@@ -3566,7 +3583,90 @@ def _print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
-def main() -> None:
+def _print_text(value: str) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    print(value)
+
+
+def _parse_structure_review_cli_args(
+    arguments: list[str],
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Parse structure-review options without argparse's English exits."""
+
+    project_dir = ""
+    output_format = "json"
+    format_seen = False
+    options_finished = False
+    index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if not options_finished and argument == "--":
+            options_finished = True
+            index += 1
+            continue
+        if not options_finished and argument == "--format":
+            if format_seen or index + 1 >= len(arguments):
+                return "", "json", _error(
+                    "STRUCTURE_REVIEW_FORMAT_INVALID",
+                    "结构审查输出格式无效，仅支持 json 或 text。",
+                    raw_error="--format 缺少值或被重复指定",
+                    suggestion="用法：structure-review <project_dir> [--format json|text]。",
+                )
+            output_format = str(arguments[index + 1]).strip().lower()
+            format_seen = True
+            index += 2
+            continue
+        if not options_finished and argument.startswith("--format="):
+            if format_seen:
+                return "", "json", _error(
+                    "STRUCTURE_REVIEW_FORMAT_INVALID",
+                    "结构审查输出格式无效，仅支持 json 或 text。",
+                    raw_error="--format 被重复指定",
+                    suggestion="用法：structure-review <project_dir> [--format json|text]。",
+                )
+            output_format = argument.partition("=")[2].strip().lower()
+            format_seen = True
+            index += 1
+            continue
+        if not options_finished and argument.startswith("--"):
+            return "", "json", _error(
+                "STRUCTURE_REVIEW_ARGS",
+                "结构审查命令包含未支持的参数。",
+                raw_error=argument,
+                suggestion="用法：structure-review <project_dir> [--format json|text]。",
+            )
+        if project_dir:
+            return "", "json", _error(
+                "STRUCTURE_REVIEW_ARGS",
+                "结构审查只能指定一个 project_dir。",
+                raw_error=argument,
+                suggestion="用法：structure-review <project_dir> [--format json|text]。",
+            )
+        project_dir = argument
+        index += 1
+
+    if output_format not in {"json", "text"}:
+        return "", "json", _error(
+            "STRUCTURE_REVIEW_FORMAT_INVALID",
+            "结构审查输出格式无效，仅支持 json 或 text。",
+            raw_error=output_format or "（空）",
+            suggestion="请使用 --format json 或 --format text。",
+        )
+    if not project_dir.strip():
+        return "", "json", _error(
+            "STRUCTURE_REVIEW_ARGS",
+            "读取结构信息需要 project_dir 参数。",
+            suggestion=(
+                "用法：structure-review <project_dir> [--format json|text]。"
+                if arguments
+                else ""
+            ),
+        )
+    return project_dir, output_format, None
+
+
+def main() -> int | None:
     command = sys.argv[1] if len(sys.argv) > 1 else "status"
 
     if command == "status":
@@ -3577,11 +3677,23 @@ def main() -> None:
         return
 
     if command == "structure-review":
-        if len(sys.argv) < 3:
-            _print_json(_error("STRUCTURE_REVIEW_ARGS", "读取结构信息需要 project_dir 参数。"))
-            return
-        _print_json(get_structure_review_status(sys.argv[2]))
-        return
+        project_dir, output_format, argument_error = _parse_structure_review_cli_args(
+            sys.argv[2:],
+        )
+        if argument_error:
+            _print_json(argument_error)
+            error = argument_error.get("error")
+            error_code = error.get("code") if isinstance(error, dict) else ""
+            # The pre-existing no-argument JSON error remains exit 0 for
+            # compatibility. New option/format errors are proper CLI failures.
+            return 0 if not sys.argv[2:] and error_code == "STRUCTURE_REVIEW_ARGS" else 2
+        payload = get_structure_review_status(project_dir)
+        if output_format == "text":
+            _print_text(format_structure_review_text(payload))
+            return 0 if payload.get("ok") is True else 1
+        else:
+            _print_json(payload)
+        return 0
 
     if command == "validate":
         if len(sys.argv) < 4:
@@ -3697,4 +3809,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

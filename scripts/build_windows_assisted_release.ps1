@@ -1,6 +1,8 @@
 param(
     [switch]$SkipTauriBuild,
-    [switch]$SkipPostInstallGate
+    [switch]$SkipPostInstallGate,
+    [switch]$AllowDirtyDevelopmentBuild,
+    [string]$SupersedesCandidate = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,14 +116,36 @@ $stageRoot = Join-Path $repoRoot ".release\assisted"
 $stageResources = Join-Path $stageRoot "resources"
 
 Write-Step "Check branch and clean worktree"
-# $branch = (& git -C $repoRoot branch --show-current).Trim()
-# if ($branch -ne "main") { throw "Release build must run on main. Current branch: $branch" }
-# $status = (& git -C $repoRoot status --short)
-# if ($status) {
-#     Write-Host $status
-#     throw "Working tree is not clean. Commit or discard changes before release build."
-# }
-Write-Host "Skipped branch check and clean worktree (temporary)"
+$branch = (& git -C $repoRoot branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
+    throw "Cannot resolve the current Git branch."
+}
+if ($branch -ne "main") {
+    throw "Release build must run on main. Current branch: $branch"
+}
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+$shortCommit = (& git -C $repoRoot rev-parse --short=8 HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-fA-F]{40}$' -or $shortCommit -notmatch '^[0-9a-fA-F]{7,12}$') {
+    throw "Cannot resolve a valid Git source commit."
+}
+$sourceCommit = $sourceCommit.ToLowerInvariant()
+$shortCommit = $shortCommit.ToLowerInvariant()
+$status = @(& git -C $repoRoot status --short --untracked-files=all)
+if ($LASTEXITCODE -ne 0) {
+    throw "Cannot inspect the Git working tree."
+}
+$dirtyEntries = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+$worktreeDirty = $dirtyEntries.Count -gt 0
+if ($worktreeDirty -and -not $AllowDirtyDevelopmentBuild) {
+    $dirtyEntries | ForEach-Object { Write-Host $_ }
+    throw "Working tree is not clean. Commit changes or explicitly use -AllowDirtyDevelopmentBuild for a non-publishable development candidate."
+}
+if ($worktreeDirty) {
+    Write-Host "Dirty development override accepted; this candidate will remain non-publishable." -ForegroundColor Yellow
+}
+else {
+    Write-Host "Branch: $branch; working tree: clean"
+}
 
 Write-Step "Check version consistency"
 $versions = [ordered]@{
@@ -140,6 +164,12 @@ if ($uniqueVersions.Count -ne 1) {
 }
 $appVersion = [string]$uniqueVersions[0]
 Write-Host "Version: $appVersion"
+$builtAt = (Get-Date).ToUniversalTime()
+$buildStamp = $builtAt.ToString("yyyyMMddTHHmmssZ")
+$dirtySuffix = if ($worktreeDirty) { "-dirty" } else { "" }
+$candidateId = "$appVersion-$shortCommit-$buildStamp$dirtySuffix"
+$supersedesCandidateValue = $SupersedesCandidate.Trim()
+Write-Host "Candidate: $candidateId"
 
 $safetyArguments = @(
     "scripts/check_release_build_safety.py",
@@ -148,8 +178,8 @@ $safetyArguments = @(
 foreach ($cleanupRoot in @(
     $stageRoot,
     $cargoTargetDir,
-    (Join-Path $repoRoot ".release\post-package-gate\$appVersion\assisted"),
-    (Join-Path $repoRoot ".release\artifacts\$appVersion\assisted"),
+    (Join-Path $repoRoot ".release\post-package-gate\$appVersion\$candidateId\assisted"),
+    (Join-Path $repoRoot ".release\artifacts\$appVersion\$candidateId\assisted"),
     (Join-Path $repoRoot ".release\install-gate")
 )) {
     $safetyArguments += @("--cleanup-root", $cleanupRoot)
@@ -258,8 +288,8 @@ Write-Step "Validate installer artifacts"
 $bundleDir = Join-Path $releaseDir "bundle"
 $tauriMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
 $tauriNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
-$expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_Assisted_x64_en-US.msi"
-$expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_Assisted_x64-setup.exe"
+$expectedMsi = Join-Path $bundleDir "msi\DockStart_${candidateId}_Assisted_x64_en-US.msi"
+$expectedNsis = Join-Path $bundleDir "nsis\DockStart_${candidateId}_Assisted_x64-setup.exe"
 foreach ($artifact in @($tauriMsi, $tauriNsis)) {
     if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
         throw "Expected Tauri release artifact is missing: $artifact"
@@ -271,7 +301,7 @@ foreach ($artifact in @($tauriMsi, $tauriNsis)) {
 # a possibly stale or registered installation directory.
 Write-Step "Extract MSI for the post-package Assisted gate"
 $postPackageGateRoot = Join-Path $repoRoot ".release\post-package-gate"
-$postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\assisted"
+$postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\$candidateId\assisted"
 $postPackagePrefix = [IO.Path]::GetFullPath($postPackageGateRoot).TrimEnd('\') + '\'
 $postPackageExtractFull = [IO.Path]::GetFullPath($postPackageExtract)
 if (-not $postPackageExtractFull.StartsWith($postPackagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -281,7 +311,7 @@ if (Test-Path -LiteralPath $postPackageExtractFull) {
     Remove-Item -LiteralPath $postPackageExtractFull -Recurse -Force
 }
 New-Item -ItemType Directory -Path $postPackageExtractFull -Force | Out-Null
-$postPackageLog = Join-Path $postPackageGateRoot "$appVersion-assisted-msiexec.log"
+$postPackageLog = Join-Path $postPackageGateRoot "$candidateId-assisted-msiexec.log"
 $msiArguments = @(
     "/a",
     "`"$tauriMsi`"",
@@ -324,7 +354,7 @@ if ($allInstallers.Count -ne 2) {
     throw "Assisted release bundle contains unexpected or stale installer artifacts."
 }
 $artifactArchiveRoot = Join-Path $repoRoot ".release\artifacts"
-$profileArtifactDir = Join-Path $artifactArchiveRoot "$appVersion\assisted"
+$profileArtifactDir = Join-Path $artifactArchiveRoot "$appVersion\$candidateId\assisted"
 $archivePrefix = [IO.Path]::GetFullPath($artifactArchiveRoot).TrimEnd('\') + '\'
 $profileArtifactFull = [IO.Path]::GetFullPath($profileArtifactDir)
 if (-not $profileArtifactFull.StartsWith($archivePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -348,30 +378,70 @@ $records = foreach ($artifact in @($archivedMsi, $archivedNsis)) {
         "sha256" = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 }
+$artifactSha256 = [ordered]@{}
+foreach ($record in @($records)) {
+    $artifactName = [string]$record.name
+    $artifactSha256[$artifactName] = [string]$record.sha256
+}
 $artifactManifest = [ordered]@{
     "app_version" = $appVersion
+    "candidate" = $true
+    "candidate_id" = $candidateId
+    "source_commit" = $sourceCommit
+    "source_branch" = $branch
+    "built_at" = $builtAt.ToString("o")
+    "profile" = "Assisted"
     "release_profile" = "assisted_stable"
-    "generated_at" = (Get-Date).ToUniversalTime().ToString("o")
+    "maturity" = "local_candidate"
+    "worktree_dirty" = $worktreeDirty
+    "supersedes_candidate" = $supersedesCandidateValue
     "development_gate" = "passed"
     "post_package_gate" = "passed"
     "post_install_gate" = "pending"
-    "release_status" = "incomplete"
+    "release_status" = "candidate_incomplete"
     "publishable" = $false
+    "gates" = [ordered]@{
+        "branch" = [ordered]@{
+            "status" = "passed"
+            "required" = "main"
+            "actual" = $branch
+        }
+        "worktree" = [ordered]@{
+            "status" = if ($worktreeDirty) { "development_override" } else { "passed" }
+            "dirty" = $worktreeDirty
+            "allow_dirty_development_build" = [bool]$AllowDirtyDevelopmentBuild
+        }
+        "development" = "passed"
+        "post_package" = "passed"
+        "post_install" = "pending"
+        "scientific_acceptance" = [ordered]@{
+            "ad4_flexible_1fpu" = "not_run_by_builder"
+            "ad4_multiple_ligands_5x72" = "not_run_by_builder"
+            "ad4_serial_screening" = "not_run_by_builder"
+        }
+    }
+    "artifact_sha256" = $artifactSha256
     "post_install_gate_result" = $null
     "artifacts" = @($records)
 }
 $artifactManifestPath = Join-Path $stageRoot "artifact-manifest.json"
-$artifactManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+$archivedArtifactManifestPath = Join-Path $profileArtifactFull "artifact-manifest.json"
+$artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 10
+$artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+$artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
 
 if ($SkipPostInstallGate) {
     Write-Step "Skip real post-install gate (development only)"
     $artifactManifest["post_install_gate"] = "pending"
-    $artifactManifest["release_status"] = "development_only"
+    $artifactManifest["release_status"] = "candidate_incomplete"
     $artifactManifest["publishable"] = $false
+    $artifactManifest["gates"]["post_install"] = "skipped_development_only"
     $artifactManifest["post_install_gate_result"] = [ordered]@{
         "skip_reason" = "SkipPostInstallGate was explicitly set. This artifact set is not releasable."
     }
-    $artifactManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 10
+    $artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
     $artifactManifest | ConvertTo-Json -Depth 8
     Write-Host "Installers were built for development, but the post-install gate is pending. Do not publish them." -ForegroundColor Yellow
     exit 0
@@ -379,7 +449,10 @@ if ($SkipPostInstallGate) {
 
 $installGateResultPath = Join-Path $repoRoot ".release\install-gate\post-install-gate.json"
 $artifactManifest["post_install_gate"] = "running"
-$artifactManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+$artifactManifest["gates"]["post_install"] = "running"
+$artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 10
+$artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+$artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
 $installGateStartedAt = (Get-Date).ToUniversalTime()
 
 try {
@@ -415,14 +488,16 @@ try {
     }
 
     $artifactManifest["post_install_gate"] = "passed"
-    $artifactManifest["release_status"] = "passed"
-    $artifactManifest["publishable"] = $true
+    $artifactManifest["release_status"] = "candidate_gates_passed"
+    $artifactManifest["publishable"] = $false
+    $artifactManifest["gates"]["post_install"] = "passed"
     $artifactManifest["post_install_gate_result"] = $installGateResult
 }
 catch {
     $artifactManifest["post_install_gate"] = "failed"
-    $artifactManifest["release_status"] = "failed"
+    $artifactManifest["release_status"] = "candidate_failed"
     $artifactManifest["publishable"] = $false
+    $artifactManifest["gates"]["post_install"] = "failed"
     $installGateResultItem = Get-Item -LiteralPath $installGateResultPath -ErrorAction SilentlyContinue
     if ($null -ne $installGateResultItem -and $installGateResultItem.LastWriteTimeUtc -ge $installGateStartedAt) {
         $artifactManifest["post_install_gate_result"] = Get-Content -LiteralPath $installGateResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -434,17 +509,22 @@ catch {
             "diagnostics" = ".release/install-gate/diagnostics"
         }
     }
-    $artifactManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 10
+    $artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
     throw
 }
 
-$artifactManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
-$artifactManifest | ConvertTo-Json -Depth 8
+$artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 10
+$artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+$artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
+$artifactManifestJson
 
 Write-Step "Done"
-Write-Host "Profile: Assisted Stable"
+Write-Host "Profile: Assisted candidate"
 Write-Host "Stage:   $stageRoot"
 Write-Host "Release: $releaseDir"
 Write-Host "Artifacts: $profileArtifactFull"
 Write-Host "Release gates: development=passed, post-package=passed, post-install=passed"
 Write-Host "The NSIS gate installed only below .release/install-gate and verified a clean uninstall."
+Write-Host "Candidate only: publishable=false" -ForegroundColor Yellow

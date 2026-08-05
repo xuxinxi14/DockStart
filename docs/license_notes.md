@@ -12,9 +12,9 @@
 | Tauri | 桌面应用壳 | Apache-2.0 / MIT | npm CLI + Rust crate | 是 | 需要本机具备 Rust/Tauri 构建环境 |
 | tauri-plugin-dialog | 原生文件/目录选择对话框（路径输入的“选择…”按钮） | Apache-2.0 / MIT（Tauri 官方插件） | Rust crate + npm 包，通过 capabilities 授权 `dialog:default` | 是 | 否 |
 | serde / serde_json | 后台任务事件的结构化序列化 | MIT OR Apache-2.0 | Rust crate，编译进桌面端 | 是 | 否 |
-| Python | 后端运行环境 | Python Software Foundation License | v0.10.2 的 Basic/Assisted profile 均随包提供独立 runtime；源码仓库不提交二进制 | 是 | 否 |
+| Python | 后端运行环境 | Python Software Foundation License | v0.14.2 的 Basic/Assisted 候选 profile 均从本地固定资源装配独立 runtime；源码仓库不提交二进制 | 是 | 否 |
 
-## v0.12.0 Basic Stable 分发边界
+## v0.14.2 Basic profile 候选分发边界
 
 | 名称 | 用途 | 许可证 | 集成方式 | 是否随包 | 是否需要用户自行安装 |
 | --- | --- | --- | --- | --- | --- |
@@ -23,12 +23,13 @@
 | RDKit | Assisted Mode 的配体读取与准备 | BSD-3-Clause | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 | Meeko | Assisted Mode 的 PDBQT 准备 | LGPL-2.1-or-later | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 
-v0.12.0 Basic Stable 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
+v0.14.2 Basic profile 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
 `Lib/site-packages`、Meeko/RDKit 命令行工具或 conda 环境。
 
-## Assisted Stable 分发边界
+## v0.14.2 Assisted profile 候选分发边界
 
-Assisted Stable 与 Basic Stable 是两个独立发布 profile。Assisted 安装包额外包含普通目录形式的
+Assisted 与 Basic 是两个独立发布 profile，不是成熟度标签。v0.14.2 仍是非最终本地候选；Assisted
+候选包额外包含普通目录形式的
 CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop.exe`：
 
 | 名称 | 固定版本 | 用途 | 许可证 | 集成方式 | 是否随 Assisted 包 |
@@ -68,7 +69,7 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 | AutoGrid4 4.2.6+ | 生成 AutoDock4 affinity maps；AD4Zn beta 要求 4.2.7 或更高版本 | GNU GPL | 外部命令行工具；仅从用户配置路径或 PATH 检测，通过 adapter 参数数组调用 | 否 | 是，仅 AutoDock4 maps / AD4Zn 协议 |
 | `AD4Zn.dat` | AD4Zn 专用 AutoGrid 非键参数 | GPL-2.0-or-later（文件头声明） | 用户从 AutoDock Vina v1.2.7 上游参考自行取得并在项目中选择；DockStart 复制到用户项目，记录本机来源路径、SHA256、许可证 ID、支持配置和上游参考 | 否 | 是，仅 AD4Zn beta |
 
-### v0.12.0 AutoGrid4 结论
+### v0.14.2 AutoGrid4 结论
 
 - 上游 AutoDock4 下载页将 AutoDock4/AutoGrid4 按 GNU GPL 提供；
 - DockStart 不复制、修改或重新分发 AutoGrid4 二进制；
@@ -79,27 +80,36 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 
 ### 当前源码 AD4Zn beta 的参数文件边界
 
-- AD4Zn beta 复用用户自行安装的 AutoGrid4，但硬性要求 AutoGrid4 4.2.7 或更高版本；标准 v0.12.0 AutoDock4 maps 工作流的 4.2.6 基线不等于满足 AD4Zn 门禁；
+- AD4Zn beta 复用用户自行安装的 AutoGrid4，但硬性要求 AutoGrid4 4.2.7 或更高版本；标准 AutoDock4 maps 工作流的 4.2.6 基线不等于满足 AD4Zn 门禁；
 - `AD4Zn.dat` 文件自身在文件头声明 GPL-2.0-or-later。它与 AutoDock Vina 仓库整体的 Apache-2.0 许可边界不同，不能仅按仓库级许可证处理；
 - DockStart 不在 Git、Basic 或 Assisted 资源中内置或重新分发 `AD4Zn.dat`，也不会静默下载。用户应从固定的 AutoDock Vina v1.2.7 根数据路径取得：<https://github.com/ccsb-scripps/AutoDock-Vina/blob/v1.2.7/data/AD4Zn.dat>；
 - 用户明确选择文件后，DockStart 会为可复现性把它复制到用户项目、maps 和 run 快照，并记录本机来源路径、文件 SHA256、GPL-2.0-or-later、受支持参数配置和固定上游参考；分享含该副本的项目时，分享者需要自行履行 GPL 再分发义务。这不改变 DockStart 自有 Apache-2.0 代码的许可证；
 - 若未来提供应用内下载、离线组件包或随包分发，必须先单独完成 GPL 源码提供、notice、修改说明和再分发方案审查，不能沿用当前“用户提供”结论；
-- 以上能力目前只存在于源码工作树，尚未重新打包或进入正式 Release。现有 v0.12.0 Basic/Assisted 安装包不包含 AD4Zn beta，也不包含 `AD4Zn.dat`。
+- v0.14.2 Basic/Assisted 候选包包含 AD4Zn beta 的 DockStart 源码入口，但不内置或重新分发 AutoGrid4、`AD4Zn.dat`。本轮仍未进入正式 Release，不能把入口存在表述为参数文件已获授权随包或科学能力已升为 Stable。
 
 ### 当前源码多配体共同对接的依赖边界
 
 - “多配体共同对接（实验性）”复用现有 AutoDock Vina 命令行适配器、PDBQT 输入、项目后端和 3Dmol.js，不引入新的 Python 包、Rust crate、npm 包或外部科研工具；
 - 最低运行门槛为 AutoDock Vina 1.2.0；Basic/Assisted 已有的 AutoDock Vina 1.2.7 仍按 Apache-2.0 分发，联合对接不会改变其许可证或分发方式；
 - 命令使用一个 `--ligand` 后跟两个用户已准备 PDBQT 路径，不复制第三方算法源码，也不修改 AutoDock Vina 的评分函数；
-- 2026-07-28 的官方 5X72 源码级验收只在临时目录取得并使用 AutoDock Vina 上游示例输入，未把这些文件提交到仓库或安装包；如果将来提交或分发任何示例文件，必须像其他科学夹具一样记录精确上游路径、版本、SHA256、用途和许可证，不能因它来自官方示例而省略来源记录；
-- 该能力目前只属于 v0.12.2 源码实验性闭环，尚未重新打包或进入正式 Release；现有 v0.12.0 Basic/Assisted 安装包不包含该入口。
+- v0.14.1 的 5X72 外部验收契约记录精确上游版本、路径、大小、SHA256、用途和 Apache-2.0 来源，但 receptor/P59/P69 输入仍由调用者提供，不提交到仓库或安装包；
+- v0.14.2 非最终 Basic/Assisted 候选包包含该实验入口，但不包含 5X72 receptor/P59/P69、AutoGrid4 或真实验收输出，也未进入正式 Release。
 
 ### 科学回归夹具
 
 `backend/tests/fixtures/scientific/` 保留 AutoDock Vina v1.2.7 官方示例中的
-1FPU 和 BACE_1 最小回归输入。上游仓库以 Apache-2.0 发布；每个夹具目录
-同时记录上游路径、用途、文件 SHA256、派生关系和工具版本。夹具只用于源码
-测试和人工验收，不会复制进 Basic/Assisted 安装包。
+1FPU 和 BACE_1 最小回归输入。上游仓库以 Apache-2.0 发布；每个已提交输入的夹具目录
+同时记录上游路径、用途、文件 SHA256、派生关系和工具版本。v0.14.1 新增的
+`flexible_ad4_1fpu`、`multiple_ligands_ad4_5x72` 与 `serial_screening_ad4` 目录是
+metadata-only 外部验收契约：除复用已经合规提交的 1FPU receptor 外，不包含 1IEP ligand、
+5X72 receptor/P59/P69、AutoGrid4 二进制或真实运行输出。夹具只用于源码测试和人工验收，
+不会复制进 Basic/Assisted 安装包。
+
+三条外部验收器不增加新的 Python、Rust 或 npm 运行时依赖，也不会联网下载上游输入。
+调用者必须显式提供契约匹配的文件和 AutoGrid4 SHA256；生成的 GPF、GLG、maps 与 run 只存在于
+验收器自建的临时项目，结束后清理，调用者指定的 `--output` 仅保存包含文件身份、命令和门禁结果的
+JSON 证据。AutoGrid4 仍按 GNU GPL 作为用户提供的外部工具，这一验收方式不构成 DockStart 对其
+二进制的复制或再分发。
 
 BACE_1 的 SDF 是由外部 Open Babel 2.3.2 从同目录官方 MOL2 机械转换得到，
 原始 MOL2 与转换命令模板一并保留。该派生文件不代表 DockStart 引入或分发
@@ -110,12 +120,12 @@ Open Babel；DockStart 仍不提供 Open Babel adapter，发布包也不包含�
 
 | 名称 | 当前状态 | 合规要求 |
 | --- | --- | --- |
-| AutoDock Vina | Basic/Assisted 已随包 | 继续保留许可证文本、版本、来源和修改说明 |
+| AutoDock Vina | Basic/Assisted profile 候选资源 | 继续保留许可证文本、版本、来源和修改说明 |
 | AutoGrid4 | 外部可选，不随包 | 保持 adapter 边界；若未来考虑分发，必须重新做 GPL 法律与源码提供方案审查 |
 | AD4Zn.dat | 用户提供，不随包 | 校验受支持的 v1.2.7 关键参数，记录本机来源、SHA256、许可证 ID 与固定上游参考；任何应用内下载或随包分发方案都需重新审查 GPL-2.0-or-later 边界 |
-| RDKit | Assisted 已随包 | 继续保留许可证文本、依赖说明和 wheel 来源；升级需重跑门禁 |
-| Meeko | Assisted 已随包 | 保持独立可替换、提供对应源码；修改或冻结前重新审查 LGPL |
-| Python 运行时 | Basic/Assisted 已随包 | 保留 Python 许可证、版本、来源和 SHA256；仓库不提交 runtime 二进制 |
+| RDKit | Assisted profile 候选资源 | 继续保留许可证文本、依赖说明和 wheel 来源；升级需重跑门禁 |
+| Meeko | Assisted profile 候选资源 | 保持独立可替换、提供对应源码；修改或冻结前重新审查 LGPL |
+| Python 运行时 | Basic/Assisted profile 候选资源 | 保留 Python 许可证、版本、来源和 SHA256；仓库不提交 runtime 二进制 |
 
 ## Bundled Python Runtime 当前状态
 
@@ -125,7 +135,7 @@ V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检�
 
 - `resources/python/` 当前只提交 `README.md`；
 - `resources/python/python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/` 等真实 runtime 文件被 `.gitignore` 忽略；
-- v0.12.0 Basic 发布使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
+- v0.14.2 Basic 候选构建使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
 - Basic stage 排除 `Lib/site-packages`、`Scripts`、`__pycache__`、`.pyc` 与 `.pyo`；
 - `scripts/prepare_bundled_python.py` 仍只用于准备本地构建输入，不直接定义稳定安装包内容；
 - 该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko；

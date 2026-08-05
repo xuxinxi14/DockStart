@@ -11,6 +11,7 @@ import json
 import math
 import re
 import shlex
+import stat
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -28,6 +29,16 @@ METAL_ELEMENTS = {
 }
 PDBQT_HYDROGEN_TYPES = {"H", "HD", "HS"}
 SDF_CHARGE_CODES = {1: 3, 2: 2, 3: 1, 5: -1, 6: -2, 7: -3}
+STRUCTURE_REVIEW_SCORE_DISCLAIMER = "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+STRUCTURE_REVIEW_PATH_REDACTION = "（字段包含绝对路径，已隐藏）"
+ABSOLUTE_PATH_IN_TEXT_PATTERN = re.compile(
+    r"(?:"
+    r"[A-Za-z]:[\\/][^\s\r\n]*"
+    r"|\\\\[^\\/\s\r\n]+[\\/][^\s\r\n]*"
+    r"|//[^/\s\r\n]+/[^\s\r\n]*"
+    r"|(?<![A-Za-z0-9_])/(?!/)[^/\s\r\n]+(?:/[^\s\r\n]*)*"
+    r")",
+)
 
 
 def _check(
@@ -56,13 +67,46 @@ def _check(
 def _safe_project_file(project_root: Path, relative_path: str) -> Path | None:
     if not relative_path:
         return None
-    supplied = Path(relative_path).expanduser()
-    candidate = supplied.resolve() if supplied.is_absolute() else (project_root / supplied).resolve()
     try:
-        candidate.relative_to(project_root)
-    except ValueError:
+        supplied = Path(relative_path).expanduser()
+        candidate = supplied if supplied.is_absolute() else project_root / supplied
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(project_root)
+        return resolved if stat.S_ISREG(resolved.stat().st_mode) else None
+    except (OSError, RuntimeError, ValueError):
         return None
-    return candidate if candidate.is_file() else None
+
+
+def _project_relative_location(project_root: Path, path: Path) -> str:
+    try:
+        relative = path.relative_to(project_root).as_posix()
+    except ValueError:
+        relative = path.name
+    return relative or "."
+
+
+def _record_path_issue(
+    issues: list[dict[str, str]] | None,
+    *,
+    role: str,
+    code: str,
+    location: str,
+    message: str,
+) -> None:
+    if issues is None:
+        return
+    issue = {
+        "role": role,
+        "code": code,
+        "location": location,
+        "message": message,
+    }
+    identity = (role, code, location)
+    if all(
+        (item.get("role"), item.get("code"), item.get("location")) != identity
+        for item in issues
+    ):
+        issues.append(issue)
 
 
 def _role_file_candidates(
@@ -72,6 +116,7 @@ def _role_file_candidates(
     suffixes: set[str],
     explicit_file: str = "",
     lineage_files: Iterable[str] = (),
+    path_issues: list[dict[str, str]] | None = None,
 ) -> list[tuple[Path, str]]:
     """Resolve recorded representations first, then one unambiguous role file.
 
@@ -98,15 +143,87 @@ def _role_file_candidates(
     role_tokens = {role, "receptor" if role == "receptor" else "ligand"}
     inferred: list[Path] = []
     for directory in (project_root, project_root / "raw", project_root / "prepared"):
-        if not directory.is_dir():
+        directory_location = _project_relative_location(project_root, directory)
+        try:
+            resolved_directory = directory.resolve(strict=True)
+        except FileNotFoundError:
             continue
-        for path in directory.iterdir():
-            if not path.is_file() or path.suffix.lower() not in suffixes or path.resolve() in seen:
+        except (OSError, RuntimeError):
+            _record_path_issue(
+                path_issues,
+                role=role,
+                code="STRUCTURE_REVIEW_PATH_READ_ERROR",
+                location=directory_location,
+                message="无法安全解析项目内候选目录，已跳过该位置。",
+            )
+            continue
+        try:
+            resolved_directory.relative_to(project_root)
+        except ValueError:
+            _record_path_issue(
+                path_issues,
+                role=role,
+                code="STRUCTURE_REVIEW_PATH_OUTSIDE_PROJECT",
+                location=directory_location,
+                message="项目内候选目录解析到项目目录之外，已拒绝并跳过。",
+            )
+            continue
+        try:
+            if not stat.S_ISDIR(resolved_directory.stat().st_mode):
+                continue
+            entries = list(directory.iterdir())
+        except (OSError, RuntimeError):
+            _record_path_issue(
+                path_issues,
+                role=role,
+                code="STRUCTURE_REVIEW_PATH_READ_ERROR",
+                location=directory_location,
+                message="无法安全枚举项目内候选目录，已跳过该位置。",
+            )
+            continue
+        for path in entries:
+            if path.suffix.lower() not in suffixes:
+                continue
+            path_location = _project_relative_location(project_root, path)
+            try:
+                resolved_path = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                _record_path_issue(
+                    path_issues,
+                    role=role,
+                    code="STRUCTURE_REVIEW_PATH_READ_ERROR",
+                    location=path_location,
+                    message="无法安全解析项目内结构候选，已跳过该文件。",
+                )
+                continue
+            try:
+                resolved_path.relative_to(project_root)
+            except ValueError:
+                _record_path_issue(
+                    path_issues,
+                    role=role,
+                    code="STRUCTURE_REVIEW_PATH_OUTSIDE_PROJECT",
+                    location=path_location,
+                    message="项目内结构候选解析到项目目录之外，已拒绝且未读取。",
+                )
+                continue
+            try:
+                is_file = stat.S_ISREG(resolved_path.stat().st_mode)
+            except OSError:
+                _record_path_issue(
+                    path_issues,
+                    role=role,
+                    code="STRUCTURE_REVIEW_PATH_READ_ERROR",
+                    location=path_location,
+                    message="无法安全检查项目内结构候选，已跳过该文件。",
+                )
+                continue
+            if not is_file or resolved_path in seen:
                 continue
             stem = path.stem.lower()
             parent = path.parent.name.lower()
             if any(token in stem for token in role_tokens) or parent == role:
-                inferred.append(path.resolve())
+                inferred.append(resolved_path)
     inferred = sorted(set(inferred))
     if len(inferred) == 1:
         candidates.append((inferred[0], "项目目录唯一候选"))
@@ -997,6 +1114,7 @@ def build_structure_review(
     project_root = Path(project_dir).expanduser().resolve()
     receptor_provenance = _load_preparation_provenance(project_root, receptor_metadata_file)
     ligand_provenance = _load_preparation_provenance(project_root, ligand_metadata_file)
+    path_issues: list[dict[str, str]] = []
 
     receptor_raw_candidates = _role_file_candidates(
         project_root,
@@ -1004,6 +1122,7 @@ def build_structure_review(
         suffixes={".pdb", ".cif", ".mmcif"},
         explicit_file=receptor_raw_file,
         lineage_files=[str(receptor_provenance.get("input_file") or "")],
+        path_issues=path_issues,
     )
     receptor_prepared_candidates = _role_file_candidates(
         project_root,
@@ -1011,6 +1130,7 @@ def build_structure_review(
         suffixes={".pdbqt"},
         explicit_file=receptor_file,
         lineage_files=[str(receptor_provenance.get("output_file") or "")],
+        path_issues=path_issues,
     )
     ligand_raw_candidates = _role_file_candidates(
         project_root,
@@ -1018,6 +1138,7 @@ def build_structure_review(
         suffixes={".sdf", ".mol"},
         explicit_file=ligand_raw_file,
         lineage_files=[str(ligand_provenance.get("input_file") or "")],
+        path_issues=path_issues,
     )
     ligand_prepared_candidates = _role_file_candidates(
         project_root,
@@ -1025,6 +1146,7 @@ def build_structure_review(
         suffixes={".pdbqt"},
         explicit_file=ligand_file,
         lineage_files=[str(ligand_provenance.get("output_file") or "")],
+        path_issues=path_issues,
     )
 
     receptor_raw_facts, receptor_raw_path, receptor_raw_resolution = _first_parsed(
@@ -1048,12 +1170,24 @@ def build_structure_review(
     receptor_prepared_evidence = str(receptor_prepared_path.relative_to(project_root).as_posix()) if receptor_prepared_path else ""
     ligand_raw_evidence = str(ligand_raw_path.relative_to(project_root).as_posix()) if ligand_raw_path else ""
     ligand_prepared_evidence = str(ligand_prepared_path.relative_to(project_root).as_posix()) if ligand_prepared_path else ""
-    checks = _receptor_checks(
+    checks = [
+        _check(
+            f"{issue.get('role') or 'structure'}_structure_path_safety_{index}",
+            str(issue.get("role") or "structure"),
+            "结构路径安全",
+            "warning",
+            str(issue.get("message") or "项目内结构候选路径无法安全读取，已跳过。"),
+            detail=str(issue.get("code") or "STRUCTURE_REVIEW_PATH_ERROR"),
+            evidence=str(issue.get("location") or ""),
+        )
+        for index, issue in enumerate(path_issues, 1)
+    ]
+    checks.extend(_receptor_checks(
         receptor_raw_facts,
         receptor_pdbqt_facts,
         receptor_raw_evidence,
         receptor_prepared_evidence,
-    )
+    ))
     checks.extend(_ligand_checks(ligand_raw_facts, ligand_pdbqt_facts, ligand_raw_evidence, ligand_prepared_evidence))
 
     return {
@@ -1103,3 +1237,155 @@ def build_structure_review(
         "warning_count": sum(item["status"] == "warning" for item in checks),
         "unknown_count": sum(item["status"] == "unknown" for item in checks),
     }
+
+
+def _text_safe_value(value: Any) -> str:
+    """Hide an entire untrusted field if it contains an absolute path."""
+
+    display = str(value or "").strip()
+    if display == "/" or ABSOLUTE_PATH_IN_TEXT_PATTERN.search(display):
+        return STRUCTURE_REVIEW_PATH_REDACTION
+    return display
+
+
+def _text_safe_path(value: Any) -> str:
+    """Return a project-relative display path and redact accidental absolutes."""
+
+    display = _text_safe_value(value)
+    if not display:
+        return ""
+    if display == STRUCTURE_REVIEW_PATH_REDACTION:
+        return display
+    display = display.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", display) or display.startswith("//") or Path(display).is_absolute():
+        return STRUCTURE_REVIEW_PATH_REDACTION
+    return display
+
+
+def _structure_review_project_label(project_dir: Any) -> str:
+    """Keep the useful project folder name without exposing its parent path."""
+
+    raw = str(project_dir or "").strip().rstrip("/\\")
+    if not raw:
+        return "（未命名项目）"
+    normalized = raw.replace("\\", "/")
+    return _text_safe_value(normalized.rsplit("/", 1)[-1]) or "（未命名项目）"
+
+
+def _format_review_evidence(value: Any) -> str:
+    safe_value = _text_safe_value(value)
+    if safe_value == STRUCTURE_REVIEW_PATH_REDACTION:
+        return safe_value
+    parts = [part.strip() for part in safe_value.split(";") if part.strip()]
+    return "; ".join(filter(None, (_text_safe_path(part) for part in parts)))
+
+
+def format_structure_review_text(payload: dict[str, Any]) -> str:
+    """Render a compact, path-safe Chinese summary for SSH and CI logs.
+
+    ``payload`` is the public result returned by ``get_structure_review_status``.
+    The formatter intentionally reuses existing checks instead of deriving new
+    chemistry or upgrading a file observation into scientific validation.
+    """
+
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        error = error if isinstance(error, dict) else {}
+        lines = [
+            "DockStart 结构审查失败",
+            f"错误码：{_text_safe_value(error.get('code') or 'STRUCTURE_REVIEW_ERROR')}",
+            f"说明：{_text_safe_value(error.get('message') or '无法读取结构审查结果。')}",
+        ]
+        suggestion = _text_safe_value(error.get("suggestion"))
+        if suggestion:
+            lines.append(f"建议：{suggestion}")
+        return "\n".join(lines)
+
+    review = payload.get("structure_review")
+    if not isinstance(review, dict):
+        return "\n".join(
+            [
+                "DockStart 结构审查失败",
+                "错误码：STRUCTURE_REVIEW_RESULT_INVALID",
+                "说明：结构审查结果格式无效。",
+            ],
+        )
+
+    checks = [item for item in review.get("checks", []) if isinstance(item, dict)]
+    warning_checks = [item for item in checks if item.get("status") == "warning"]
+    unknown_checks = [item for item in checks if item.get("status") == "unknown"]
+    observed_checks = [item for item in checks if item.get("status") == "ok"]
+    role_labels = {"receptor": "受体", "ligand": "配体"}
+
+    lines = [
+        "DockStart 结构审查摘要（只读）",
+        f"项目：{_structure_review_project_label(payload.get('project_dir'))}",
+        f"状态：警告 {len(warning_checks)} 项，未知 {len(unknown_checks)} 项",
+        "",
+        "结构文件（项目相对路径）",
+    ]
+    for role, role_label in role_labels.items():
+        role_payload = review.get(role)
+        role_payload = role_payload if isinstance(role_payload, dict) else {}
+        representations = [
+            item
+            for item in role_payload.get("representations", [])
+            if isinstance(item, dict)
+        ]
+        if not representations:
+            lines.append(f"- {role_label}：未找到可读取的项目内结构文件。")
+            continue
+        for item in representations:
+            display_path = _text_safe_path(item.get("file")) or "（路径未知）"
+            display_format = _text_safe_value(item.get("format") or "未知").upper()
+            source = _text_safe_value(item.get("source") or "来源未记录")
+            lines.append(
+                f"- {role_label}：{display_path}；格式：{display_format}；来源：{source}",
+            )
+
+    lines.extend(["", "可观察事实"])
+    if not observed_checks:
+        lines.append("- 没有可确认的文件事实。")
+    for item in observed_checks:
+        role_label = role_labels.get(str(item.get("role") or ""), "结构")
+        name = _text_safe_value(item.get("name") or item.get("key") or "未命名检查")
+        message = _text_safe_value(item.get("message"))
+        lines.append(f"- [{role_label}] {name}：{message}")
+        evidence = _format_review_evidence(item.get("evidence"))
+        if evidence:
+            lines.append(f"  证据：{evidence}")
+
+    lines.extend(["", "需人工复核"])
+    if not warning_checks:
+        lines.append("- [警告 / warning] 无。")
+    for item in warning_checks:
+        role_label = role_labels.get(str(item.get("role") or ""), "结构")
+        name = _text_safe_value(item.get("name") or item.get("key") or "未命名检查")
+        message = _text_safe_value(item.get("message"))
+        lines.append(f"- [警告 / warning][{role_label}] {name}：{message}")
+        evidence = _format_review_evidence(item.get("evidence"))
+        if evidence:
+            lines.append(f"  证据：{evidence}")
+    if not unknown_checks:
+        lines.append("- [未知 / unknown] 无。")
+    for item in unknown_checks:
+        role_label = role_labels.get(str(item.get("role") or ""), "结构")
+        name = _text_safe_value(item.get("name") or item.get("key") or "未命名检查")
+        message = _text_safe_value(item.get("message"))
+        lines.append(f"- [未知 / unknown][{role_label}] {name}：{message}")
+        evidence = _format_review_evidence(item.get("evidence"))
+        if evidence:
+            lines.append(f"  证据：{evidence}")
+
+    disclaimer = _text_safe_value(review.get("disclaimer"))
+    lines.extend(
+        [
+            "",
+            "科学边界",
+            "- 科学验证：否；本摘要只整理输入文件中可观察的事实。",
+            f"- {disclaimer}" if disclaimer else "- 本摘要不能替代人工结构检查。",
+            f"- {STRUCTURE_REVIEW_SCORE_DISCLAIMER}",
+            "- 本摘要不能证明真实结合、药效、安全性或临床价值。",
+        ],
+    )
+    return "\n".join(lines)

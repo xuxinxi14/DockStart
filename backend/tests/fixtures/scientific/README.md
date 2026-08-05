@@ -24,6 +24,9 @@ DockStart 运行时依赖，也不会随安装包分发。
 ## 使用边界
 
 - `flexible_1fpu` 用于验证默认严格失败、坏残基清单审阅以及明确确认后的 `--allow_bad_res`。
+- `flexible_ad4_1fpu` 是 1FPU / 1IEP 有限柔性标准 AD4 的离线外部验收合同，不提交 maps 或外部工具。
+- `multiple_ligands_ad4_5x72` 是固定顺序 P59 + P69 联合 AD4 的离线外部验收合同，只接受联合评分。
+- `serial_screening_ad4` 是 12 项固定工作负载、单一冻结 maps、取消/恢复/失败续跑/归档导出的离线可靠性门禁。
 - `flexible_mmcif_identity` 用于验证 author/label 残基身份、插入码、altloc、occupancy、model 与 Gemmi PDB 桥接。
 - `flexible_mmcif_1h4w` 用于在外部真实复杂 mmCIF 上复核同一身份链，并将 Meeko 不兼容明确报告为阻断。
 - `macrocycle_bace1` 用于验证 Meeko 大环自动断环、刚性对照、Vina/CLI 一致性和拓扑安全导出。

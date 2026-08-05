@@ -403,6 +403,46 @@ V0.3.8 增加真实工具链兼容性验收视角：如果当前解析到的 Pyt
 - 每次 preparation 都保留独立 metadata、stdout、stderr、command、input snapshot 和 output check。
 - prepared PDBQT 补齐后，V0.1 config/run/parse/report 流程不被破坏。
 
+## 无头结构审查文本 CLI Smoke Test
+
+### 测试目标
+
+验证结构审查可以在 SSH/CI 中以中文文本显示现有文件事实，同时对旧 schema 项目保持真正只读；该测试不调用 RDKit、Meeko 或 AutoDock Vina。
+
+### 自动化
+
+```powershell
+python -B -m unittest backend.tests.test_structure_review -v
+```
+
+自动化应覆盖默认 JSON 契约、`--format text`、非法格式中文结构化错误、Windows/UNC/POSIX 全字段路径脱敏、项目外真实 symlink/junction（Windows 无权限时允许跳过）、可移植的目录枚举失败，以及旧项目运行前后 `project.json` 字节和 SHA256 不变。
+
+### 手动步骤
+
+1. 复制一个可丢弃的 DockStart 项目，并记录 `project.json` 的 SHA256。
+2. 如需模拟旧项目，在副本中删除 `schema_version` 和 `revision`；不要改动原项目。
+3. 在仓库根目录设置 `$env:PYTHONPATH = (Resolve-Path .\backend)`。
+4. 运行 `python -B -m dockstart_core.preparation structure-review "<project_dir>" --format text`。
+5. 确认输出列出项目相对路径、文件格式、可观察事实、全部 `warning` / `unknown` 和科学免责声明。
+6. 确认输出没有完整项目绝对路径。
+7. 再次计算 `project.json` 的 SHA256，并与运行前比较。
+8. 确认没有新增 `project.json.schema-v*.bak*` 或 `.project.lock`。
+9. 省略 `--format text` 再运行一次，确认 stdout 仍是可解析 JSON。
+10. 使用 `--format yaml` 运行，确认得到 `STRUCTURE_REVIEW_FORMAT_INVALID` 中文结构化 JSON 错误、退出码为 `2`，且项目仍未改变。
+11. 对不存在或缺少 `project.json` 的目录运行文本格式，确认中文错误写入 stdout、stderr 没有 traceback，退出码为 `1`。
+12. 在可创建 symlink/junction 的临时目录中，让项目 `raw/` 指向项目外含结构文件的目录；确认外部结构未被读取，输出出现路径安全 warning。Windows 没有创建链接权限时记录跳过，并保留目录枚举异常的可移植自动回归。
+
+### 通过标准
+
+- 文本输出适合终端直接阅读，不泄露完整绝对路径；
+- 每条结论来自已有结构审查，不增加质子化、互变异构、链选择或药效推断；
+- warning 与 unknown 保持“需人工复核”的语义，不被升级为阻断或科学结论；
+- 旧 schema 的 `project.json` 运行前后字节和 SHA256 完全一致；
+- 默认 JSON 输出字段保持 `ok`、`project_dir`、`structure_review`、`error`；
+- 指向项目外的候选目录或文件不会被解析，枚举/resolve 异常不会产生 stderr traceback；
+- 文本成功、文本业务失败和非法格式的退出码分别为 `0`、`1`、`2`；
+- 非法格式在读取项目之前返回中文结构化错误。
+
 ## V0.3 当前仍不做
 
 - Open Babel；

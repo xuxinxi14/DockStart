@@ -1,7 +1,9 @@
 param(
     [ValidateSet("Basic", "Assisted")]
     [string]$Profile = "Basic",
-    [switch]$SkipTauriBuild
+    [switch]$SkipTauriBuild,
+    [switch]$AllowDirtyDevelopmentBuild,
+    [string]$SupersedesCandidate = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +12,12 @@ if ($Profile -eq "Assisted") {
     $assistedArguments = @()
     if ($SkipTauriBuild) {
         $assistedArguments += "-SkipTauriBuild"
+    }
+    if ($AllowDirtyDevelopmentBuild) {
+        $assistedArguments += "-AllowDirtyDevelopmentBuild"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SupersedesCandidate)) {
+        $assistedArguments += @("-SupersedesCandidate", $SupersedesCandidate)
     }
     & (Join-Path $PSScriptRoot "build_windows_assisted_release.ps1") @assistedArguments
     exit $LASTEXITCODE
@@ -149,19 +157,40 @@ $stageRoot = Join-Path $repoRoot ".release\basic"
 $stageResources = Join-Path $stageRoot "resources"
 
 Write-Step "Check branch"
-# $branch = (& git -C $repoRoot branch --show-current).Trim()
-# if ($branch -ne "main") {
-#     throw "Release build must run on main. Current branch: $branch"
-# }
-Write-Host "Skipped branch check (temporary)"
+$branch = (& git -C $repoRoot branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
+    throw "Cannot resolve the current Git branch."
+}
+if ($branch -ne "main") {
+    throw "Release build must run on main. Current branch: $branch"
+}
+Write-Host "Branch: $branch"
+
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+$shortCommit = (& git -C $repoRoot rev-parse --short=8 HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-fA-F]{40}$' -or $shortCommit -notmatch '^[0-9a-fA-F]{7,12}$') {
+    throw "Cannot resolve a valid Git source commit."
+}
+$sourceCommit = $sourceCommit.ToLowerInvariant()
+$shortCommit = $shortCommit.ToLowerInvariant()
 
 Write-Step "Check clean git status"
-# $status = (& git -C $repoRoot status --short)
-# if ($status) {
-#     Write-Host $status
-#     throw "Working tree is not clean. Commit or discard changes before release build."
-# }
-Write-Host "Skipped clean git status check (temporary)"
+$status = @(& git -C $repoRoot status --short --untracked-files=all)
+if ($LASTEXITCODE -ne 0) {
+    throw "Cannot inspect the Git working tree."
+}
+$dirtyEntries = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+$worktreeDirty = $dirtyEntries.Count -gt 0
+if ($worktreeDirty -and -not $AllowDirtyDevelopmentBuild) {
+    $dirtyEntries | ForEach-Object { Write-Host $_ }
+    throw "Working tree is not clean. Commit changes or explicitly use -AllowDirtyDevelopmentBuild for a non-publishable development candidate."
+}
+if ($worktreeDirty) {
+    Write-Host "Dirty development override accepted; this candidate will remain non-publishable." -ForegroundColor Yellow
+}
+else {
+    Write-Host "Working tree: clean"
+}
 
 Write-Step "Check version consistency"
 $versions = [ordered]@{
@@ -180,6 +209,12 @@ if (@($uniqueVersions).Count -ne 1) {
 }
 $appVersion = [string]$uniqueVersions[0]
 Write-Host "Version: $appVersion"
+$builtAt = (Get-Date).ToUniversalTime()
+$buildStamp = $builtAt.ToString("yyyyMMddTHHmmssZ")
+$dirtySuffix = if ($worktreeDirty) { "-dirty" } else { "" }
+$candidateId = "$appVersion-$shortCommit-$buildStamp$dirtySuffix"
+$supersedesCandidateValue = $SupersedesCandidate.Trim()
+Write-Host "Candidate: $candidateId"
 
 $safetyArguments = @(
     "scripts/check_release_build_safety.py",
@@ -188,8 +223,8 @@ $safetyArguments = @(
 foreach ($cleanupRoot in @(
     $stageRoot,
     $cargoTargetDir,
-    (Join-Path $repoRoot ".release\post-package-gate\$appVersion\basic"),
-    (Join-Path $repoRoot ".release\artifacts\$appVersion\basic")
+    (Join-Path $repoRoot ".release\post-package-gate\$appVersion\$candidateId\basic"),
+    (Join-Path $repoRoot ".release\artifacts\$appVersion\$candidateId\basic")
 )) {
     $safetyArguments += @("--cleanup-root", $cleanupRoot)
 }
@@ -234,16 +269,16 @@ $stagePycache = @(
 )
 
 if (-not $includesBundledVina) {
-    throw "Basic Stable requires bundled AutoDock Vina."
+    throw "The Basic profile requires bundled AutoDock Vina."
 }
 if (-not $includesBundledPython) {
-    throw "Basic Stable requires the bundled backend Python runtime."
+    throw "The Basic profile requires the bundled backend Python runtime."
 }
 if ($includesBundledRdkit -or $includesBundledMeeko -or (Test-Path -LiteralPath $sitePackagesPath)) {
-    throw "Basic Stable must not contain RDKit, Meeko, or Lib/site-packages."
+    throw "The Basic profile must not contain RDKit, Meeko, or Lib/site-packages."
 }
 if (Test-Path -LiteralPath $scriptsPath) {
-    throw "Basic Stable must not contain Python Scripts or Meeko preparation CLIs."
+    throw "The Basic profile must not contain Python Scripts or Meeko preparation CLIs."
 }
 if ($stageBytecode.Count -gt 0 -or $stagePycache.Count -gt 0) {
     throw "Basic stage contains generated Python bytecode/cache files."
@@ -343,8 +378,8 @@ else {
     $bundleDir = Join-Path $releaseDir "bundle"
     $tauriMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_x64_en-US.msi"
     $tauriNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_x64-setup.exe"
-    $expectedMsi = Join-Path $bundleDir "msi\DockStart_${appVersion}_Basic_x64_en-US.msi"
-    $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${appVersion}_Basic_x64-setup.exe"
+    $expectedMsi = Join-Path $bundleDir "msi\DockStart_${candidateId}_Basic_x64_en-US.msi"
+    $expectedNsis = Join-Path $bundleDir "nsis\DockStart_${candidateId}_Basic_x64-setup.exe"
     foreach ($artifact in @($tauriMsi, $tauriNsis)) {
         if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "Expected Tauri release artifact is missing: $artifact"
@@ -353,7 +388,7 @@ else {
 
     Write-Step "Extract MSI for the post-package Basic gate"
     $postPackageGateRoot = Join-Path $repoRoot ".release\post-package-gate"
-    $postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\basic"
+    $postPackageExtract = Join-Path $postPackageGateRoot "$appVersion\$candidateId\basic"
     $postPackagePrefix = [IO.Path]::GetFullPath($postPackageGateRoot).TrimEnd('\') + '\'
     $postPackageExtractFull = [IO.Path]::GetFullPath($postPackageExtract)
     if (-not $postPackageExtractFull.StartsWith($postPackagePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -363,7 +398,7 @@ else {
         Remove-Item -LiteralPath $postPackageExtractFull -Recurse -Force
     }
     New-Item -ItemType Directory -Path $postPackageExtractFull -Force | Out-Null
-    $postPackageLog = Join-Path $postPackageGateRoot "$appVersion-basic-msiexec.log"
+    $postPackageLog = Join-Path $postPackageGateRoot "$candidateId-basic-msiexec.log"
     $msiArguments = @(
         "/a",
         "`"$tauriMsi`"",
@@ -409,7 +444,7 @@ else {
     }
 
     $artifactArchiveRoot = Join-Path $repoRoot ".release\artifacts"
-    $profileArtifactDir = Join-Path $artifactArchiveRoot "$appVersion\basic"
+    $profileArtifactDir = Join-Path $artifactArchiveRoot "$appVersion\$candidateId\basic"
     $archivePrefix = [IO.Path]::GetFullPath($artifactArchiveRoot).TrimEnd('\') + '\'
     $profileArtifactFull = [IO.Path]::GetFullPath($profileArtifactDir)
     if (-not $profileArtifactFull.StartsWith($archivePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -437,21 +472,61 @@ else {
             "sha256" = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
+    $artifactSha256 = [ordered]@{}
+    foreach ($record in @($artifactRecords)) {
+        $artifactName = [string]$record.name
+        $artifactSha256[$artifactName] = [string]$record.sha256
+    }
     $artifactManifest = [ordered]@{
         "app_version" = $appVersion
+        "candidate" = $true
+        "candidate_id" = $candidateId
+        "source_commit" = $sourceCommit
+        "source_branch" = $branch
+        "built_at" = $builtAt.ToString("o")
+        "profile" = "Basic"
         "release_profile" = "basic_stable"
-        "generated_at" = (Get-Date).ToUniversalTime().ToString("o")
+        "maturity" = "local_candidate"
+        "worktree_dirty" = $worktreeDirty
+        "publishable" = $false
+        "release_status" = "candidate"
+        "supersedes_candidate" = $supersedesCandidateValue
+        "gates" = [ordered]@{
+            "branch" = [ordered]@{
+                "status" = "passed"
+                "required" = "main"
+                "actual" = $branch
+            }
+            "worktree" = [ordered]@{
+                "status" = if ($worktreeDirty) { "development_override" } else { "passed" }
+                "dirty" = $worktreeDirty
+                "allow_dirty_development_build" = [bool]$AllowDirtyDevelopmentBuild
+            }
+            "development" = "passed"
+            "post_package" = "passed"
+            "post_install" = "not_applicable_basic_candidate"
+            "scientific_acceptance" = [ordered]@{
+                "ad4_flexible_1fpu" = "not_run_by_builder"
+                "ad4_multiple_ligands_5x72" = "not_run_by_builder"
+                "ad4_serial_screening" = "not_run_by_builder"
+            }
+        }
+        "artifact_sha256" = $artifactSha256
         "artifacts" = @($artifactRecords)
     }
     $artifactManifestPath = Join-Path $stageRoot "artifact-manifest.json"
-    $artifactManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $archivedArtifactManifestPath = Join-Path $profileArtifactFull "artifact-manifest.json"
+    $artifactManifestJson = $artifactManifest | ConvertTo-Json -Depth 8
+    $artifactManifestJson | Set-Content -LiteralPath $artifactManifestPath -Encoding UTF8
+    $artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -Encoding UTF8
     $artifactManifest | ConvertTo-Json -Depth 6
     Write-Host "Artifact manifest: $artifactManifestPath"
     Write-Host "Archived artifacts: $profileArtifactFull"
+    Write-Host "Candidate only: publishable=false" -ForegroundColor Yellow
 }
 
 Write-Step "Done"
-Write-Host "Profile: Basic Stable"
+Write-Host "Profile: Basic candidate"
 Write-Host "Stage:   $stageRoot"
 Write-Host "Release: $releaseDir"
 Write-Host "Do not commit target/, dist/, installers, .release/, or bundle outputs."

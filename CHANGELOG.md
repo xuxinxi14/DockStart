@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.14.2
+
+- Repackaged the current stabilized source as isolated Windows x64 Basic and Assisted local candidates, without changing the docking algorithms, scientific protocol semantics, dependency set, license strategy, or user project schema.
+- Carried forward the read-only headless structure review, versioned AutoDock Vina execution contract, fail-closed frontend IPC validation, and schema-v2 AD4 evidence binding introduced after v0.14.1.
+- Kept AutoGrid4 and `AD4Zn.dat` user-supplied and outside both installers; all generated candidates remain unsigned, non-final, and non-publishable until their recorded release gates are satisfied.
+
+## v0.14.1
+
+- Added a read-only headless structure-review text mode for SSH/CI, with in-memory-only legacy migration, project-bound file discovery, path-safe Chinese diagnostics, and unchanged default JSON output.
+- Added a versioned execution capability contract for the existing AutoDock Vina backend, shared fail-closed frontend IPC decoding, and a static frontend-invoke/Tauri-handler registration guard without introducing a second docking backend.
+- Bound future AD4 gate evidence to the verifier, fixture contracts, Git/runtime context, and a deterministic backend source tree; added an exactly-three-gate bundle verifier while keeping the existing successful evidence explicitly `legacy_unbound`.
+- Added three independent, fail-closed external AD4 acceptance verifiers for official 1FPU flexible docking, official 5X72 two-ligand joint docking, and a fixed 12-item serial queue; their metadata-only contracts do not bundle AutoGrid4 or caller-supplied upstream inputs.
+- Replaced the hand-maintained frontend test list with deterministic recursive discovery and added `aria-describedby` linkage for available tooltips, including merged existing descriptions and disabled-control behavior.
+- Hardened Windows candidate generation with default `main`/clean-worktree gates, explicit dirty development override, commit-and-time candidate identities, per-artifact SHA256 records, and `publishable=false` candidate semantics.
+- Fixed responsive workflow cards so their lower edges stay aligned and returned the docking action bar to normal page flow to prevent the bottom UI from overlapping run history and scientific-boundary content.
+- Ran all three external AD4 gates with pinned official inputs, Vina 1.2.7, Meeko 0.7.1, and caller-supplied AutoGrid 4.2.6; fixed GPF evidence binding, the 1FPU reference seed, Vina table/PDBQT score-rounding reconciliation, screening resume preflight, and attempt-map-prefix auditing exposed by those runs.
+- Synchronized the seven authoritative version fields and release documentation to v0.14.1. This remains a non-final local candidate; no installer was rebuilt and no public release was created.
+
 ## v0.14.0
 
 - Added standard AutoDock4 finite-flexible docking: maps bind the rigid receptor component while each run freezes and loads the matching flexible side-chain PDBQT.

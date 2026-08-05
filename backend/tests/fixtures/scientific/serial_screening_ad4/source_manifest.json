@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ad4_serial_screening_5x72_external",
+  "distribution": "metadata_only",
+  "contains_autogrid_maps": false,
+  "contains_executables": false,
+  "network_policy": "offline_only",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "tag": "v1.2.7",
+    "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "source_example": "example/mulitple_ligands_docking/solution"
+  },
+  "source_files": {
+    "receptor_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_receptor.pdbqt",
+      "size_bytes": 118480,
+      "sha256": "25d4e9b5f3932bc2953152dffc2d9dadf13726ae029e5e88712a0dc9525361e6"
+    },
+    "ligand_p59_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_ligand_p59.pdbqt",
+      "size_bytes": 2345,
+      "sha256": "67cf462419372e365b8129bc1047f94598f3a1f3c495375781c1c1100e95c92e"
+    },
+    "ligand_p69_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_ligand_p69.pdbqt",
+      "size_bytes": 2344,
+      "sha256": "276a991d56ddc7778ed36c10aba6b7231de00b87294a7f77e2fceb9a96ae08e5"
+    }
+  },
+  "toolchain": {
+    "vina": {
+      "version": "1.2.7",
+      "size_bytes": 1233920,
+      "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+    },
+    "autogrid4": {
+      "minimum_version": "4.2.6",
+      "distribution": "caller_supplied_external_gpl_tool",
+      "identity_policy": "required_cli_sha256"
+    }
+  },
+  "workload": {
+    "ligand_count": 12,
+    "derivation": "prepend_one_unique_ascii_remark_to_alternating_exact_p59_p69_bytes_v1",
+    "source_order": [
+      "P59",
+      "P69",
+      "P59",
+      "P69",
+      "P59",
+      "P69",
+      "P59",
+      "P69",
+      "P59",
+      "P69",
+      "P59",
+      "P69"
+    ],
+    "purpose": "workflow_reliability_not_chemical_diversity_benchmark"
+  },
+  "protocol": {
+    "box": {
+      "center_x": -15.0,
+      "center_y": 15.0,
+      "center_z": 129.0,
+      "size_x": 30.0,
+      "size_y": 24.0,
+      "size_z": 24.0
+    },
+    "vina": {
+      "scoring": "ad4",
+      "exhaustiveness": 4,
+      "max_evals": 0,
+      "num_modes": 3,
+      "min_rmsd": 1.0,
+      "energy_range": 4,
+      "cpu": 1,
+      "spacing": 0.375,
+      "verbosity": 1,
+      "no_refine": false,
+      "force_even_voxels": false,
+      "seed": 20260805
+    },
+    "max_retries": 0,
+    "top_n": 11,
+    "map_atom_type_policy": "one_frozen_exact_union_reused_by_every_attempt"
+  },
+  "fault_injection": {
+    "request_cancel_while_item_order_is_running": 3,
+    "tamper_one_frozen_map_before_first_resume": true,
+    "intentionally_fail_item_order": 7,
+    "failed_item_exit_code": 97
+  },
+  "acceptance": {
+    "first_terminal_status": "canceled",
+    "tampered_resume_error_code": "SCREENING_RESUME_ERROR",
+    "final_status": "completed_with_failures",
+    "succeeded_count": 11,
+    "failed_count": 1,
+    "attempt_count": 12,
+    "archive_and_zip_required": true
+  },
+  "scientific_boundaries": [
+    "The 12 inputs alternate two official chemotypes with unique audit remarks; this is a deterministic workflow test, not a diverse screening study.",
+    "DockStart serial screening launches independent Vina runs that reuse one frozen AD4 map set; it does not jointly score the ligand library.",
+    "Docking scores provide only structural ranking hypotheses and do not replace experimental validation."
+  ]
+}

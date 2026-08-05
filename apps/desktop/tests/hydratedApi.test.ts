@@ -88,3 +88,16 @@ test("hydrated response decoder preserves structured business errors", () => {
     /缺少布尔型 ok 字段/,
   );
 });
+
+test("hydrated response decoder rejects business failures without an error object", () => {
+  for (const payload of [
+    '{"ok":false}',
+    '{"ok":false,"error":null}',
+    '{"ok":false,"error":[]}',
+  ]) {
+    assert.throws(
+      () => decodeHydratedResponse(payload, "get_hydrated_status"),
+      /业务失败响应的 error 必须是非 null、非数组的 JSON 对象/,
+    );
+  }
+});

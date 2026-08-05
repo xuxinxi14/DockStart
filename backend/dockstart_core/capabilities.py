@@ -14,6 +14,13 @@ from dockstart_core.toolchain import get_toolchain_status
 
 ModeName = str
 
+_EXECUTION_PROTOCOLS: tuple[tuple[str, str], ...] = (
+    ("rigid_single", "stable"),
+    ("ad4zn_beta", "beta"),
+    ("hydrated_ad4_experimental", "experimental"),
+    ("simultaneous_multi_ligand", "experimental"),
+)
+
 
 def _ok_tool(tool: dict[str, Any] | None) -> bool:
     return bool(tool and tool.get("status") == "ok")
@@ -27,6 +34,50 @@ def _demo_project_candidates() -> list[dict[str, Any]]:
 
 def _demo_available() -> bool:
     return bool(_demo_project_candidates())
+
+
+def _runtime_string(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
+def _build_execution_contract(active_vina: dict[str, Any] | None) -> dict[str, Any]:
+    """Describe executable backends without replacing project-level preflight."""
+
+    vina = active_vina if isinstance(active_vina, dict) else {}
+    capabilities = vina.get("capabilities")
+    return {
+        "schema_version": 1,
+        # A stable protocol descriptor does not declare the current app build a
+        # Stable Release.  Runtime and project readiness remain separate gates.
+        "maturity_scope": "protocol",
+        "backends": [
+            {
+                "backend_id": "autodock_vina",
+                "adapter_key": "vina",
+                "label": "AutoDock Vina",
+                "available": _ok_tool(vina),
+                "runtime": {
+                    "status": _runtime_string(vina.get("status"), "unknown"),
+                    "version": _runtime_string(vina.get("version")),
+                    "path": _runtime_string(vina.get("path")),
+                    "source": _runtime_string(vina.get("source"), "unknown"),
+                    "message": _runtime_string(vina.get("message")),
+                },
+                "capabilities": capabilities if isinstance(capabilities, dict) else {},
+            }
+        ],
+        "protocols": [
+            {
+                "protocol_id": protocol_id,
+                "backend_id": "autodock_vina",
+                "maturity": maturity,
+                "availability_scope": "project_preflight",
+            }
+            for protocol_id, maturity in _EXECUTION_PROTOCOLS
+        ],
+    }
 
 
 def _build_mode_summary(toolchain: dict[str, Any]) -> dict[str, Any]:
@@ -101,6 +152,7 @@ def get_app_capability_profile() -> dict[str, Any]:
     toolchain = get_toolchain_status()
     viewer_status = viewer_adapter.detect().to_dict()
     mode_summary = _build_mode_summary(toolchain)
+    active_vina = toolchain.get("active_vina")
 
     return {
         "ok": True,
@@ -117,6 +169,9 @@ def get_app_capability_profile() -> dict[str, Any]:
         "blocking_items": mode_summary["blocking_items"],
         "next_action": mode_summary["next_action"],
         "demo_projects": _demo_project_candidates(),
+        "execution_contract": _build_execution_contract(
+            active_vina if isinstance(active_vina, dict) else None
+        ),
         "message": "DockStart 运行模式能力已读取。",
         "error": None,
     }

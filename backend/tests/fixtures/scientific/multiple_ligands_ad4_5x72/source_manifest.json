@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ad4_multiple_ligands_5x72_external",
+  "distribution": "metadata_only",
+  "contains_autogrid_maps": false,
+  "contains_executables": false,
+  "network_policy": "offline_only",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "tag": "v1.2.7",
+    "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "tutorial": "example/mulitple_ligands_docking/mulitple_ligands_docking_ad4.py"
+  },
+  "source_files": {
+    "receptor_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_receptor.pdbqt",
+      "size_bytes": 118480,
+      "sha256": "25d4e9b5f3932bc2953152dffc2d9dadf13726ae029e5e88712a0dc9525361e6"
+    },
+    "ligand_p59_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_ligand_p59.pdbqt",
+      "size_bytes": 2345,
+      "sha256": "67cf462419372e365b8129bc1047f94598f3a1f3c495375781c1c1100e95c92e"
+    },
+    "ligand_p69_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/mulitple_ligands_docking/solution/5x72_ligand_p69.pdbqt",
+      "size_bytes": 2344,
+      "sha256": "276a991d56ddc7778ed36c10aba6b7231de00b87294a7f77e2fceb9a96ae08e5"
+    }
+  },
+  "toolchain": {
+    "vina": {
+      "version": "1.2.7",
+      "size_bytes": 1233920,
+      "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+    },
+    "autogrid4": {
+      "minimum_version": "4.2.6",
+      "distribution": "caller_supplied_external_gpl_tool",
+      "identity_policy": "required_cli_sha256"
+    }
+  },
+  "protocol": {
+    "member_order": [
+      "P59",
+      "P69"
+    ],
+    "box": {
+      "center_x": -15.0,
+      "center_y": 15.0,
+      "center_z": 129.0,
+      "size_x": 30.0,
+      "size_y": 24.0,
+      "size_z": 24.0
+    },
+    "vina": {
+      "exhaustiveness": 32,
+      "num_modes": 9,
+      "energy_range": 4,
+      "cpu": 1,
+      "seed": 20260805
+    },
+    "map_atom_type_policy": "exact_union_of_ordered_members",
+    "required_command": [
+      "one --ligand followed by ordered P59 and P69 snapshots",
+      "--maps",
+      "--scoring ad4"
+    ]
+  },
+  "acceptance": {
+    "best_joint_affinity_kcal_mol": {
+      "minimum": -20.5,
+      "maximum": -15.0
+    },
+    "score_scope": "joint_two_ligand_pose",
+    "per_member_affinity_available": false,
+    "minimum_joint_pose_count": 1
+  },
+  "scientific_boundaries": [
+    "The Vina score belongs to the complete ordered P59 plus P69 joint pose and cannot be split into member affinities.",
+    "This gate verifies DockStart's simultaneous two-ligand AD4 workflow, not a general cooperativity model.",
+    "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+  ]
+}

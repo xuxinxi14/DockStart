@@ -7,11 +7,12 @@ import type {
   HydratedRunPrepareResponse,
   HydratedStatusResponse,
 } from "../types";
+import {
+  decodeIpcJsonResponse,
+  type JsonCommandInvoke,
+} from "./core.ts";
 
-export type HydratedInvoke = (
-  command: string,
-  args?: Record<string, unknown>,
-) => Promise<string>;
+export type HydratedInvoke = JsonCommandInvoke;
 
 export type HydratedDesktopApi = {
   getStatus(projectDir: string): Promise<HydratedStatusResponse>;
@@ -35,25 +36,7 @@ export function decodeHydratedResponse<T extends { ok: boolean }>(
   rawPayload: string,
   command: string,
 ): T {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawPayload);
-  } catch (error) {
-    throw new Error(
-      `${command} 返回了无效 JSON：${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    typeof (parsed as { ok?: unknown }).ok !== "boolean"
-  ) {
-    throw new Error(`${command} 返回的数据缺少布尔型 ok 字段。`);
-  }
-  return parsed as T;
+  return decodeIpcJsonResponse<T>(rawPayload, command);
 }
 
 export function createHydratedApi(

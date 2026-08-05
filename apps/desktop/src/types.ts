@@ -222,6 +222,39 @@ export type CapabilityBlockingItem = {
   message: string;
 };
 
+export type ExecutionProtocolMaturity = "stable" | "beta" | "experimental";
+
+export type ExecutionBackendRuntime = {
+  status: string;
+  version: string;
+  path: string;
+  source: string;
+  message: string;
+};
+
+export type ExecutionBackendDescriptor = {
+  backend_id: string;
+  adapter_key: string;
+  label: string;
+  available: boolean;
+  runtime: ExecutionBackendRuntime;
+  capabilities: Record<string, unknown>;
+};
+
+export type ExecutionProtocolDescriptor = {
+  protocol_id: string;
+  backend_id: string;
+  maturity: ExecutionProtocolMaturity;
+  availability_scope: "project_preflight";
+};
+
+export type ExecutionContract = {
+  schema_version: 1;
+  maturity_scope: "protocol";
+  backends: ExecutionBackendDescriptor[];
+  protocols: ExecutionProtocolDescriptor[];
+};
+
 export type AppCapabilityProfile = {
   ok: boolean;
   app_version: string;
@@ -242,6 +275,7 @@ export type AppCapabilityProfile = {
     project_json: string;
     exists: boolean;
   }>;
+  execution_contract: ExecutionContract;
   message: string;
   error?: {
     code: string;

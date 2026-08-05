@@ -1,4 +1,5 @@
 import {
+  cloneElement,
   useCallback,
   useEffect,
   useId,
@@ -6,14 +7,18 @@ import {
   useRef,
   useState,
   type FocusEvent,
-  type ReactNode,
+  type ReactElement,
 } from "react";
 import { createPortal } from "react-dom";
+import { isTooltipAvailable, mergeAriaDescribedBy } from "./tooltipAccessibility";
 
 type TooltipPlacement = "right" | "bottom";
 
 type TooltipProps = {
-  children: ReactNode;
+  children: ReactElement<{
+    "aria-describedby"?: string;
+    disabled?: boolean;
+  }>;
   label: string;
   placement?: TooltipPlacement;
   className?: string;
@@ -38,6 +43,11 @@ export default function Tooltip({
   delay = 420,
 }: TooltipProps) {
   const tooltipId = useId();
+  const available = isTooltipAvailable({
+    disabled,
+    childDisabled: children.props.disabled === true,
+    label,
+  });
   const anchorRef = useRef<HTMLSpanElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const showTimerRef = useRef<number | null>(null);
@@ -64,7 +74,7 @@ export default function Tooltip({
 
   const show = useCallback((immediate: boolean) => {
     clearShowTimer();
-    if (disabled || !label.trim()) return;
+    if (!available) return;
     const openTooltip = () => {
       updatePosition();
       setOpen(true);
@@ -74,7 +84,7 @@ export default function Tooltip({
       return;
     }
     showTimerRef.current = window.setTimeout(openTooltip, delay);
-  }, [clearShowTimer, delay, disabled, label, updatePosition]);
+  }, [available, clearShowTimer, delay, updatePosition]);
 
   const hide = useCallback(() => {
     clearShowTimer();
@@ -122,9 +132,9 @@ export default function Tooltip({
   }, [hide, open, updatePosition]);
 
   useEffect(() => {
-    if (disabled) hide();
+    if (!available) hide();
     return clearShowTimer;
-  }, [clearShowTimer, disabled, hide]);
+  }, [available, clearShowTimer, hide]);
 
   function handleBlur(event: FocusEvent<HTMLSpanElement>) {
     if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
@@ -145,7 +155,14 @@ export default function Tooltip({
         onPointerLeave={hide}
         ref={anchorRef}
       >
-        {children}
+        {available
+          ? cloneElement(children, {
+              "aria-describedby": mergeAriaDescribedBy(
+                children.props["aria-describedby"],
+                tooltipId,
+              ),
+            })
+          : children}
       </span>
       {open
         ? createPortal(

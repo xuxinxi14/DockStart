@@ -4,9 +4,11 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from typing import Any, Iterator, Mapping
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "scientific"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _sha256(path: Path) -> str:
@@ -17,12 +19,44 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _manifest_paths() -> list[Path]:
+    return sorted(
+        [
+            *FIXTURE_ROOT.glob("*/fixture_manifest.json"),
+            *FIXTURE_ROOT.glob("*/source_manifest.json"),
+        ],
+        key=lambda value: value.as_posix(),
+    )
+
+
+def _repository_records(value: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield only source-manifest records explicitly distributed in this repo."""
+
+    if isinstance(value, Mapping):
+        if isinstance(value.get("repository_path"), str):
+            yield value
+        for child in value.values():
+            yield from _repository_records(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _repository_records(child)
+
+
 class ScientificFixtureIntegrityTests(unittest.TestCase):
     def test_manifest_declared_files_have_expected_hashes(self) -> None:
-        for manifest_path in FIXTURE_ROOT.glob("*/fixture_manifest.json"):
+        manifests = _manifest_paths()
+        self.assertTrue(manifests)
+        for manifest_path in manifests:
             with self.subTest(manifest=manifest_path.parent.name):
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                for name, record in manifest["files"].items():
+                self.assertIsInstance(manifest, dict)
+                self.assertIn(manifest.get("schema_version"), {1, 2})
+                self.assertTrue(str(manifest.get("fixture_id") or ""))
+
+                declared_files = manifest.get("files")
+                if not isinstance(declared_files, Mapping):
+                    declared_files = {}
+                for name, record in declared_files.items():
                     expected = str(record.get("sha256") or "")
                     if not expected:
                         continue
@@ -30,6 +64,41 @@ class ScientificFixtureIntegrityTests(unittest.TestCase):
                     self.assertTrue(path.is_file(), path)
                     self.assertEqual(_sha256(path), expected)
                     self.assertEqual(path.stat().st_size, record["size_bytes"])
+
+                for record in _repository_records(manifest):
+                    relative = Path(str(record["repository_path"]))
+                    self.assertFalse(relative.is_absolute(), relative)
+                    path = (REPOSITORY_ROOT / relative).resolve(strict=True)
+                    path.relative_to(REPOSITORY_ROOT.resolve(strict=True))
+                    self.assertTrue(path.is_file(), path)
+                    self.assertEqual(_sha256(path), str(record["sha256"]))
+                    self.assertEqual(path.stat().st_size, int(record["size_bytes"]))
+
+    def test_metadata_only_manifests_require_only_explicit_repository_files(self) -> None:
+        flexible_manifest = json.loads(
+            (
+                FIXTURE_ROOT / "flexible_ad4_1fpu" / "source_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        serial_manifest = json.loads(
+            (
+                FIXTURE_ROOT / "serial_screening_ad4" / "source_manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(flexible_manifest["distribution"], "metadata_only")
+        self.assertEqual(
+            [record["repository_path"] for record in _repository_records(flexible_manifest)],
+            [
+                "backend/tests/fixtures/scientific/flexible_1fpu/1fpu_receptorH.pdb",
+                "backend/tests/fixtures/scientific/flexible_1fpu/expected_bad_residues.json",
+            ],
+        )
+        self.assertTrue(
+            flexible_manifest["source_files"]["ligand_pdbqt"]["caller_supplied"]
+        )
+        self.assertEqual(serial_manifest["distribution"], "metadata_only")
+        self.assertEqual(list(_repository_records(serial_manifest)), [])
 
     def test_1fpu_review_fixture_selects_existing_thr315(self) -> None:
         fixture = FIXTURE_ROOT / "flexible_1fpu"

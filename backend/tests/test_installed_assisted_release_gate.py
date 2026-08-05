@@ -68,7 +68,7 @@ class InstalledAssistedReleaseGateTests(unittest.TestCase):
         self.assertEqual(uninstall_command[1], "/S")
         self.assertEqual(uninstall_command[-1], f"_?={install_root}")
 
-    def test_assisted_build_defaults_to_real_install_gate(self) -> None:
+    def test_assisted_build_defaults_to_real_install_gate_but_stays_candidate(self) -> None:
         build_script = (REPO_ROOT / "scripts" / "build_windows_assisted_release.ps1").read_text(encoding="utf-8")
         self.assertIn("verify_installed_assisted_release.py", build_script)
         self.assertIn('"cargo test"', build_script)
@@ -76,7 +76,8 @@ class InstalledAssistedReleaseGateTests(unittest.TestCase):
         self.assertIn('$artifactManifest["post_install_gate"] = "pending"', build_script)
         self.assertIn('$artifactManifest["publishable"] = $false', build_script)
         self.assertIn('$artifactManifest["post_install_gate"] = "passed"', build_script)
-        self.assertIn('$artifactManifest["publishable"] = $true', build_script)
+        self.assertIn('$artifactManifest["release_status"] = "candidate_gates_passed"', build_script)
+        self.assertNotIn('$artifactManifest["publishable"] = $true', build_script)
 
 
 if __name__ == "__main__":

@@ -801,7 +801,21 @@ def create_project(project_name: str, base_dir: str) -> dict[str, Any]:
         )
 
 
-def load_project(project_dir: str) -> dict[str, Any]:
+def load_project(
+    project_dir: str,
+    *,
+    persist_migration: bool = True,
+) -> dict[str, Any]:
+    """Load a project, optionally migrating only the in-memory representation.
+
+    Normal application opens keep the historical behaviour and persist a safe
+    schema migration with a backup.  Read-only callers such as the headless
+    structure review pass ``persist_migration=False``; that path deliberately
+    avoids the project lock as well, because acquiring it can create a lock
+    file.  Atomic project writes mean a lock-free reader still observes either
+    the complete old document or the complete new document.
+    """
+
     try:
         path = Path(project_dir).expanduser().resolve()
         project_json = _project_json_path(path)
@@ -819,19 +833,29 @@ def load_project(project_dir: str) -> dict[str, Any]:
                 raw_error=str(project_json),
                 suggestion="请恢复项目根目录中的普通 project.json 文件。",
             )
-        with _project_lock(path):
+        if persist_migration:
+            with _project_lock(path):
+                data, migrated, backup_path = _read_and_migrate_project_unlocked(
+                    path,
+                    persist_migration=True,
+                )
+        else:
             data, migrated, backup_path = _read_and_migrate_project_unlocked(
                 path,
-                persist_migration=True,
+                persist_migration=False,
             )
         project = _project_from_dict(data, path)
         warnings = []
         message = "项目读取成功。"
         if migrated:
-            message = "项目已迁移到当前数据格式并完成读取。"
-            warnings.append(
-                f"迁移前 project.json 已备份到 {backup_path.name if backup_path else '备份文件'}。",
-            )
+            if persist_migration:
+                message = "项目已迁移到当前数据格式并完成读取。"
+                warnings.append(
+                    f"迁移前 project.json 已备份到 {backup_path.name if backup_path else '备份文件'}。",
+                )
+            else:
+                message = "项目已按当前数据格式只读解析；project.json 未被改写。"
+                warnings.append("旧项目字段仅在内存中迁移，本次读取不会创建迁移备份或写回项目。")
         return _success(project, message, warnings)
     except ProjectSchemaError as exc:
         return _error(

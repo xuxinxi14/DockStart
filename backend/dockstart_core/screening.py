@@ -9540,6 +9540,22 @@ def resume_screening(project_dir: str) -> dict[str, Any]:
         state = _read_state(root)
         if state["status"] in {"completed", "completed_with_failures"}:
             return _error("SCREENING_ALREADY_FINISHED", "批量筛选已经完成，不能恢复。")
+        execution_preflight = _validate_screening_execution_state(root, state)
+        if not execution_preflight.get("ok"):
+            detail = execution_preflight.get("error") or {}
+            return _error(
+                "SCREENING_RESUME_ERROR",
+                "恢复批量筛选前的冻结输入与工具复核失败。",
+                json.dumps(
+                    {
+                        "preflight_code": detail.get("code"),
+                        "message": detail.get("message"),
+                        "raw_error": detail.get("raw_error"),
+                    },
+                    ensure_ascii=False,
+                ),
+                "请恢复任务创建时的冻结输入、AD4 maps 与 Vina 后再恢复。",
+            )
         limits = _validated_resource_limits(
             state.get("resource_limits")
             if "resource_limits" in state

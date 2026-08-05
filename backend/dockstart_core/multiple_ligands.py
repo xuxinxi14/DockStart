@@ -83,6 +83,10 @@ RECOMMENDED_MIN_EXHAUSTIVENESS = 32
 BOX_FIT_EPSILON_ANGSTROM = 1e-6
 BRANCH_AXIS_MIN_LENGTH_ANGSTROM = 1e-6
 OUTPUT_GRID_EPSILON_ANGSTROM = 0.000501
+# Vina's terminal table uses fewer significant digits than the PDBQT
+# ``REMARK VINA RESULT`` record. Half of the terminal table's 0.01 unit is
+# therefore the largest difference explainable by display rounding.
+VINA_SCORE_OUTPUT_ROUNDING_TOLERANCE = Decimal("0.005")
 GRID_MEMORY_WARNING_BYTES = 512 * 1024 * 1024
 GRID_MEMORY_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024
 CONFIG_FLOAT_SERIALIZATION = "python_float_17g_round_trip_v1"
@@ -146,6 +150,16 @@ def _pdbqt_keyword(line: str) -> str:
 def _pdbqt_atom_type(line: str) -> str:
     tokens = str(line or "").split()
     return tokens[-1].upper() if tokens else ""
+
+
+def _vina_score_output_values_match(log_value: Any, output_value: Any) -> bool:
+    try:
+        difference = abs(
+            Decimal(str(log_value)) - Decimal(str(output_value))
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    return difference <= VINA_SCORE_OUTPUT_ROUNDING_TOLERANCE
 
 
 def _pdbqt_atom_is_hydrogen(line: str) -> bool:
@@ -6325,7 +6339,10 @@ def _execute_multiple_ligand_run_impl(
                 ("rmsd_lb", "rmsd_lb"),
                 ("rmsd_ub", "rmsd_ub"),
             ):
-                if abs(float(score[key]) - float(model[model_key])) > 0.002:
+                if not _vina_score_output_values_match(
+                    score[key],
+                    model[model_key],
+                ):
                     return _mark_failed(
                         project_root,
                         run_id,

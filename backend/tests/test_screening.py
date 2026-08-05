@@ -471,6 +471,21 @@ class ScreeningWorkflowTests(unittest.TestCase):
         self.assertNotIn("receptor =", config)
         self.assertNotIn("center_x =", config)
 
+        canceled = request_screening_cancel(str(project))
+        self.assertTrue(canceled["ok"], canceled)
+        map_record = state["inputs"]["ad4_maps"]["files"][0]
+        map_path = project / map_record["relative_path"]
+        original_map = map_path.read_bytes()
+        try:
+            map_path.write_bytes(original_map + b"\nmap tamper\n")
+            blocked = resume_screening(str(project))
+        finally:
+            map_path.write_bytes(original_map)
+        self.assertFalse(blocked["ok"])
+        self.assertEqual(blocked["error"]["code"], "SCREENING_RESUME_ERROR")
+        resumed = resume_screening(str(project))
+        self.assertTrue(resumed["ok"], resumed)
+
         finished = run_screening(
             str(project),
             runner=_successful_runner([]),

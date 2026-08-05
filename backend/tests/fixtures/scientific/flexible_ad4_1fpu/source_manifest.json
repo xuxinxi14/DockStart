@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "fixture_id": "ad4_flexible_1fpu_external",
+  "distribution": "metadata_only",
+  "contains_autogrid_maps": false,
+  "contains_executables": false,
+  "network_policy": "offline_only",
+  "upstream": {
+    "project": "AutoDock Vina",
+    "tag": "v1.2.7",
+    "repository": "https://github.com/ccsb-scripps/AutoDock-Vina",
+    "tutorial": "example/flexible_docking/flex_docking_ad4.py"
+  },
+  "source_files": {
+    "receptor_h_pdb": {
+      "repository_path": "backend/tests/fixtures/scientific/flexible_1fpu/1fpu_receptorH.pdb",
+      "upstream_path": "example/flexible_docking/data/1fpu_receptorH.pdb",
+      "size_bytes": 352277,
+      "sha256": "896980690302f6b10c5d96d6f76d0a59d5127b76b231d00665b48ceaa15a80da"
+    },
+    "ligand_pdbqt": {
+      "caller_supplied": true,
+      "upstream_path": "example/flexible_docking/data/1iep_ligand.pdbqt",
+      "size_bytes": 3630,
+      "sha256": "37a20e58e77072c6b3ff07f285a345e647dd4e564af316a06e49518b15b7aa61"
+    }
+  },
+  "preparation_contract": {
+    "meeko_version": "0.7.1",
+    "selected_flexible_residues": [
+      "A:315"
+    ],
+    "review_policy": "strict_first_then_exact_explicit_acknowledgement",
+    "bad_residue_contract": {
+      "repository_path": "backend/tests/fixtures/scientific/flexible_1fpu/expected_bad_residues.json",
+      "size_bytes": 1019,
+      "sha256": "a4dd7b239bd5ffb4d9d3d0a1fb44b59878ff1a2781ba61cff9c06df4aaa48b3f"
+    },
+    "output_sha256": {
+      "rigid_pdbqt": "f5a1a804b9855f634b1c9aa42a8edf0ea271802318adc0397a074f868686ebb8",
+      "flex_pdbqt": "d2efb4f8ea622aeb0445cc59336ca361f96c96f08a694915c5febd569c562d6e",
+      "receptor_json": "2e6055a9428c8d3ad13b936d3536f2219c5e776547a613cb89cd9ecdf24e4132"
+    }
+  },
+  "toolchain": {
+    "vina": {
+      "version": "1.2.7",
+      "size_bytes": 1233920,
+      "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+    },
+    "autogrid4": {
+      "minimum_version": "4.2.6",
+      "distribution": "caller_supplied_external_gpl_tool",
+      "identity_policy": "required_cli_sha256"
+    }
+  },
+  "protocol": {
+    "box": {
+      "center_x": 15.19,
+      "center_y": 53.903,
+      "center_z": 16.917,
+      "size_x": 20.0,
+      "size_y": 20.0,
+      "size_z": 20.0
+    },
+    "vina": {
+      "exhaustiveness": 32,
+      "num_modes": 9,
+      "energy_range": 4,
+      "cpu": 1,
+      "seed": 711073774
+    },
+    "required_command": [
+      "--config with frozen ligand",
+      "--flex",
+      "--maps",
+      "--scoring ad4"
+    ]
+  },
+  "acceptance": {
+    "best_affinity_kcal_mol": {
+      "minimum": -16.0,
+      "maximum": -12.0
+    },
+    "first_pose_no_fit_heavy_atom_rmsd_max_angstrom": 2.5,
+    "required_flexible_output_marker": "BEGIN_RES THR A 315",
+    "score_scope": "joint_ligand_plus_flexible_receptor_system"
+  },
+  "scientific_boundaries": [
+    "The score belongs to the complete ligand plus flexible-receptor system under this frozen AD4 protocol.",
+    "Pose recovery and docking score are software acceptance evidence, not proof of binding or efficacy.",
+    "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+  ]
+}

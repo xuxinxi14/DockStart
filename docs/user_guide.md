@@ -264,6 +264,36 @@ V0.3.6 的完整工作流可以理解为：
 
 自动准备不保证 protonation、电荷、构象、缺失残基、水、金属、辅因子或链选择一定正确，也不等于药效判断。
 
+### 4.1 在 SSH 或 CI 中只读审查结构
+
+源码环境提供不启动桌面界面、也不探测 RDKit/Meeko 的结构审查命令。默认输出保持原有 JSON 契约：
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path .\backend)
+python -B -m dockstart_core.preparation structure-review "<project_dir>"
+```
+
+需要便于终端阅读的中文摘要时，显式选择文本格式：
+
+```powershell
+python -B -m dockstart_core.preparation structure-review "<project_dir>" --format text
+```
+
+文本摘要包括：
+
+- 受体和配体的项目相对路径、格式与记录来源；
+- 已有结构审查中可以直接从文件观察到的保守事实；
+- 全部 `warning` 和 `unknown` 项及其项目内证据路径；
+- 科学免责声明。
+
+该命令只读取 `project.json` 和项目内结构文件。即使打开的是缺少当前 schema 字段的旧项目，也只在内存中迁移，不写回 `project.json`、不创建迁移备份或项目锁文件。目录推断会先确认解析后的目录和文件仍位于项目根目录内；指向项目外的 symlink/junction 会被拒绝并显示为非阻断的路径安全 warning，目录枚举失败也会转为结构化检查项，不会把 traceback 写到 stderr。
+
+文本格式只显示项目文件夹名和项目相对路径，不显示完整绝对路径。文件来源、检查名称、检查消息、证据、错误说明、修复建议或免责声明等任意动态字段只要包含 Windows、UNC 或 POSIX 绝对路径，整个字段都会替换为固定的隐藏提示。默认 JSON 仍保留既有机器可读契约。
+
+`--format` 只接受 `json` 或 `text`。文本审查成功时退出码为 `0`，项目读取等业务失败时为 `1`；非法或重复的 `--format` 返回错误码 `STRUCTURE_REVIEW_FORMAT_INVALID` 的中文结构化 JSON，并使用退出码 `2`。为兼容既有调用，省略 project_dir 的旧 JSON 参数错误仍保持退出码 `0`。
+
+这份摘要不是结构修复、质子化判断、链选择、辅因子处理或科学验证，也不会运行 AutoDock Vina。Docking score 仅供结构结合趋势参考，不能替代实验验证。
+
 ## 5. 导入 receptor.pdbqt
 
 用户需要输入：

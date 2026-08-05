@@ -7,6 +7,7 @@ import type {
 import {
   buildReviewedMacrocyclePreparationOptions,
   createMacrocycleApi,
+  decodeMacrocycleResponse,
   extractMacrocyclePreparationEvidence,
   macrocycleReviewMatchesOptions,
   normalizeMacrocycleReviewOptions,
@@ -218,6 +219,39 @@ test("macrocycle API maps review, candidate, rigid and reset to controlled Tauri
       args: { projectDir: "D:\\project" },
     },
   ]);
+});
+
+test("macrocycle IPC decoder preserves business failures and rejects invalid JSON", () => {
+  assert.deepEqual(
+    decodeMacrocycleResponse(
+      '{"ok":false,"error":{"code":"MACROCYCLE_REVIEW_REQUIRED","message":"请先完成大环复核"}}',
+      "get_macrocycle_status",
+    ),
+    {
+      ok: false,
+      error: {
+        code: "MACROCYCLE_REVIEW_REQUIRED",
+        message: "请先完成大环复核",
+      },
+    },
+  );
+  assert.throws(
+    () => decodeMacrocycleResponse("not-json", "get_macrocycle_status"),
+    /IPC 契约错误：get_macrocycle_status 返回了无效 JSON/,
+  );
+});
+
+test("macrocycle IPC decoder rejects incomplete or mistyped business errors", () => {
+  for (const payload of [
+    '{"ok":false,"error":{"message":"失败"}}',
+    '{"ok":false,"error":{"code":"FAILED"}}',
+    '{"ok":false,"error":{"code":"FAILED","message":"失败","suggestion":false}}',
+  ]) {
+    assert.throws(
+      () => decodeMacrocycleResponse(payload, "get_macrocycle_status"),
+      /IPC 契约错误：get_macrocycle_status 业务失败响应/,
+    );
+  }
 });
 
 test("evidence view compares expected and actual bonds and records G count", () => {
