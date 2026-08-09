@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import type {
@@ -16,6 +16,7 @@ import OperationLoadingDialog from "./OperationLoadingDialog";
 import PathInput from "./PathInput";
 import StatusBadge from "./StatusBadge";
 import VinaMapsPanel from "./VinaMapsPanel";
+import { mapsProjectContextKey } from "../utils/mapsContext";
 
 type AutoGridMapsPanelProps = {
   project: DockStartProject;
@@ -90,15 +91,19 @@ export default function AutoGridMapsPanel({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [busyAction, setBusyAction] = useState<"" | "load" | "switch" | "generate" | "import">("");
+  const loadRequestRef = useRef(0);
+  const mapsContextKey = useMemo(() => mapsProjectContextKey(project), [project]);
 
   const load = useCallback(async () => {
     if (!isAd4 || isAd4Zn) return;
+    const requestId = ++loadRequestRef.current;
     setBusyAction((current) => current || "load");
     try {
       const [defaultsRaw, statusRaw] = await Promise.all([
         invoke<string>("get_autogrid_maps_defaults", { projectDir: project.project_dir }),
         invoke<string>("get_autogrid_maps_status", { projectDir: project.project_dir }),
       ]);
+      if (requestId !== loadRequestRef.current) return;
       const defaultsResponse = JSON.parse(defaultsRaw) as AutoGridMapsDefaultsResponse;
       const statusResponse = JSON.parse(statusRaw) as AutoGridMapsStatusResponse;
       setStatus(statusResponse);
@@ -111,12 +116,15 @@ export default function AutoGridMapsPanel({
         setRawError(error.detail);
       }
     } catch (error) {
+      if (requestId !== loadRequestRef.current) return;
       setMessage("无法读取 AutoDock4 maps 状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusyAction((current) => (current === "load" ? "" : current));
+      if (requestId === loadRequestRef.current) {
+        setBusyAction((current) => (current === "load" ? "" : current));
+      }
     }
-  }, [isAd4, isAd4Zn, project.project_dir]);
+  }, [isAd4, isAd4Zn, mapsContextKey, project.project_dir]);
 
   useEffect(() => {
     setDefaults(null);
@@ -133,6 +141,9 @@ export default function AutoGridMapsPanel({
     } else {
       setBusyAction((current) => (current === "load" ? "" : current));
     }
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [isAd4, isAd4Zn, load]);
 
   const parsedGrid = useMemo(() => parseGridForm(form), [form]);

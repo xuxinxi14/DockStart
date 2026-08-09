@@ -1,4 +1,4 @@
-# Assisted Stable source bundle
+# Assisted candidate source bundle
 
 The release stage copies the exact archives listed in `SOURCE_MANIFEST.json`
 to `resources/sources/` after SHA256 verification.

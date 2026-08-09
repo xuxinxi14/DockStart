@@ -31,6 +31,7 @@ from dockstart_core.flexible_movement import (
     analyze_flexible_movement,
     canonical_flexible_movement_json,
 )
+from dockstart_core.persistence import atomic_write_bytes as _atomic_write_bytes
 from dockstart_core.persistence import atomic_write_text as _atomic_write_text
 from dockstart_core.pose_comparison import compare_local_only_poses
 from dockstart_core.preparation_models import (
@@ -230,6 +231,25 @@ class ProjectSchemaError(ValueError):
         self.code = code
         self.message = message
         self.raw_error = raw_error
+
+
+class ProjectFileSafetyError(RuntimeError):
+    """Raised when a project file path cannot be accessed without following links."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class _FilePublication:
+    """Rollback evidence for one atomically published project file."""
+
+    path: Path
+    published_bytes: bytes
+    previous_existed: bool
+    previous_bytes: bytes
+    parent_identity: tuple[int, int]
 
 
 @dataclass
@@ -437,6 +457,278 @@ def _preparation_target_lock(project_dir: str | Path, target: str) -> Iterator[N
 
     with _exclusive_file_lock(_preparation_target_lock_path(project_dir, target)):
         yield
+
+
+def _is_reparse_or_symlink(path: Path) -> bool:
+    """Inspect one lexical component without following it."""
+
+    try:
+        details = os.lstat(path)
+    except OSError:
+        return False
+    attributes = int(getattr(details, "st_file_attributes", 0) or 0)
+    reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0) or 0)
+    return stat.S_ISLNK(details.st_mode) or bool(attributes & reparse_flag)
+
+
+def _directory_identity(path: Path) -> tuple[int, int]:
+    """Return a no-follow directory identity suitable for a short transaction."""
+
+    details = os.lstat(path)
+    if _is_reparse_or_symlink(path) or not stat.S_ISDIR(details.st_mode):
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_PATH_UNSAFE",
+            f"项目存储目录不是普通目录，或属于符号链接、junction/reparse point：{path}",
+        )
+    return int(details.st_dev), int(details.st_ino)
+
+
+def _safe_project_storage_file(
+    project_path: Path,
+    relative_path: str | Path,
+    storage_root: str,
+) -> tuple[Path, tuple[int, int]]:
+    """Resolve one fixed project file without following any lexical component.
+
+    The caller receives the identity of the immediate parent directory and must
+    keep checking it around publication/deletion.  This prevents a project
+    ``raw``/``prepared`` directory from being silently redirected through a
+    symlink, Windows junction, or another reparse point.
+    """
+
+    project_root = project_path.expanduser().resolve(strict=True)
+    relative = Path(relative_path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or relative.parts[0] != storage_root
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_PATH_OUTSIDE_ROOT",
+            f"项目文件必须位于 {storage_root}/ 目录：{relative_path}",
+        )
+
+    candidate = Path(os.path.abspath(project_root / relative))
+    try:
+        candidate.relative_to(project_root)
+    except ValueError as exc:
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_PATH_OUTSIDE_ROOT",
+            f"项目文件路径越出项目目录：{relative_path}",
+        ) from exc
+
+    current = project_root
+    for index, part in enumerate(relative.parts):
+        current = current / part
+        if not os.path.lexists(current):
+            if index < len(relative.parts) - 1:
+                raise ProjectFileSafetyError(
+                    "PROJECT_STORAGE_PATH_MISSING",
+                    f"项目存储目录不存在：{current}",
+                )
+            continue
+        details = os.lstat(current)
+        if _is_reparse_or_symlink(current):
+            raise ProjectFileSafetyError(
+                "PROJECT_STORAGE_PATH_UNSAFE",
+                f"项目路径包含符号链接、junction 或 reparse point：{current}",
+            )
+        if index < len(relative.parts) - 1 and not stat.S_ISDIR(details.st_mode):
+            raise ProjectFileSafetyError(
+                "PROJECT_STORAGE_PATH_UNSAFE",
+                f"项目路径中的目录组件不是普通目录：{current}",
+            )
+
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(project_root)
+    except ValueError as exc:
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_PATH_OUTSIDE_ROOT",
+            f"项目文件重解析到项目目录之外：{relative_path}",
+        ) from exc
+    if resolved != candidate.absolute():
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_PATH_UNSAFE",
+            f"项目文件路径被重解析到其他位置：{relative_path}",
+        )
+
+    parent_identity = _directory_identity(candidate.parent)
+    return candidate, parent_identity
+
+
+def _assert_directory_identity(path: Path, expected: tuple[int, int]) -> None:
+    observed = _directory_identity(path)
+    if observed != expected:
+        raise ProjectFileSafetyError(
+            "PROJECT_STORAGE_DIRECTORY_CHANGED",
+            f"项目存储目录在文件操作期间发生替换：{path}",
+        )
+
+
+def _existing_file_snapshot_for_publication(path: Path) -> tuple[bool, bytes]:
+    """Read an existing target while rejecting links and shared hardlinks."""
+
+    if not os.path.lexists(path):
+        return False, b""
+    details = os.lstat(path)
+    if _is_reparse_or_symlink(path) or not stat.S_ISREG(details.st_mode):
+        raise ProjectFileSafetyError(
+            "PROJECT_FILE_TARGET_UNSAFE",
+            f"目标路径不是普通文件，或属于符号链接、junction/reparse point：{path}",
+        )
+    if int(getattr(details, "st_nlink", 1) or 1) > 1:
+        raise ProjectFileSafetyError(
+            "PROJECT_FILE_TARGET_HARDLINKED",
+            f"目标文件存在多个硬链接，DockStart 不会替换或删除它：{path}",
+        )
+    snapshot = _read_file_snapshot_no_follow(path)
+    after = os.lstat(path)
+    if (
+        _is_reparse_or_symlink(path)
+        or not stat.S_ISREG(after.st_mode)
+        or int(getattr(after, "st_nlink", 1) or 1) > 1
+        or (details.st_dev, details.st_ino) != (after.st_dev, after.st_ino)
+    ):
+        raise ProjectFileSafetyError(
+            "PROJECT_FILE_TARGET_CHANGED",
+            f"目标文件在安全检查期间发生变化：{path}",
+        )
+    return True, snapshot
+
+
+def _read_external_file_snapshot_no_follow(path: Path) -> bytes:
+    """Read a user-selected file while rejecting linked path components."""
+
+    lexical = Path(os.path.abspath(path.expanduser()))
+    anchor = Path(lexical.anchor)
+    current = anchor
+    parent_identities: list[tuple[Path, tuple[int, int]]] = []
+    relative_parts = lexical.parts[1:] if lexical.anchor else lexical.parts
+    for index, part in enumerate(relative_parts):
+        current = current / part
+        details = os.lstat(current)
+        if _is_reparse_or_symlink(current):
+            raise OSError(f"源路径包含符号链接、junction 或 reparse point：{current}")
+        if index < len(relative_parts) - 1:
+            if not stat.S_ISDIR(details.st_mode):
+                raise OSError(f"源路径目录组件不是普通目录：{current}")
+            parent_identities.append(
+                (current, (int(details.st_dev), int(details.st_ino)))
+            )
+
+    snapshot = _read_file_snapshot_no_follow(lexical)
+    for parent, expected in parent_identities:
+        details = os.lstat(parent)
+        if (
+            _is_reparse_or_symlink(parent)
+            or not stat.S_ISDIR(details.st_mode)
+            or (int(details.st_dev), int(details.st_ino)) != expected
+        ):
+            raise OSError(f"源路径目录在读取过程中发生替换：{parent}")
+    return snapshot
+
+
+def _atomic_create_bytes_no_replace(
+    path: Path,
+    payload: bytes,
+    parent_identity: tuple[int, int],
+) -> None:
+    """Publish sibling-temporary bytes only if the destination is still absent."""
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        _assert_directory_identity(path.parent, parent_identity)
+        # Linking a fully flushed sibling temporary file is an atomic
+        # create-if-absent operation on the same volume.  Unlike an existence
+        # check followed by os.replace, it cannot overwrite a concurrently
+        # created target.
+        os.link(temporary_path, path, follow_symlinks=False)
+        temporary_path.unlink()
+        temporary_path = None
+        _assert_directory_identity(path.parent, parent_identity)
+    finally:
+        if temporary_path is not None and os.path.lexists(temporary_path):
+            temporary_path.unlink(missing_ok=True)
+
+
+def _publish_project_file_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    overwrite: bool,
+    parent_identity: tuple[int, int],
+) -> _FilePublication:
+    """Atomically publish bytes and retain enough evidence for safe rollback."""
+
+    _assert_directory_identity(path.parent, parent_identity)
+    previous_existed, previous_bytes = _existing_file_snapshot_for_publication(path)
+    if previous_existed and not overwrite:
+        raise FileExistsError(str(path))
+
+    if overwrite:
+        _atomic_write_bytes(path, payload)
+    else:
+        _atomic_create_bytes_no_replace(path, payload, parent_identity)
+
+    _assert_directory_identity(path.parent, parent_identity)
+    published = _read_file_snapshot_no_follow(path)
+    details = os.lstat(path)
+    if published != payload:
+        raise ProjectFileSafetyError(
+            "PROJECT_FILE_PUBLICATION_MISMATCH",
+            f"项目文件发布后的字节与输入快照不一致：{path}",
+        )
+    if int(getattr(details, "st_nlink", 1) or 1) > 1:
+        raise ProjectFileSafetyError(
+            "PROJECT_FILE_TARGET_HARDLINKED",
+            f"项目文件发布后出现多个硬链接，已拒绝继续提交：{path}",
+        )
+    return _FilePublication(
+        path=path,
+        published_bytes=payload,
+        previous_existed=previous_existed,
+        previous_bytes=previous_bytes,
+        parent_identity=parent_identity,
+    )
+
+
+def _rollback_file_publication(publication: _FilePublication) -> str:
+    """Restore a file only while it still contains this transaction's bytes."""
+
+    try:
+        _assert_directory_identity(publication.path.parent, publication.parent_identity)
+        exists, current_bytes = _existing_file_snapshot_for_publication(publication.path)
+        if not exists or current_bytes != publication.published_bytes:
+            raise ProjectFileSafetyError(
+                "PROJECT_FILE_ROLLBACK_CONFLICT",
+                f"目标文件已被其他操作修改，DockStart 不会用旧内容覆盖它：{publication.path}",
+            )
+        if publication.previous_existed:
+            _atomic_write_bytes(publication.path, publication.previous_bytes)
+            restored = _read_file_snapshot_no_follow(publication.path)
+            if restored != publication.previous_bytes:
+                raise OSError("恢复后的文件内容与事务前快照不一致")
+        else:
+            publication.path.unlink()
+            if os.path.lexists(publication.path):
+                raise OSError("新建文件回滚后仍然存在")
+        _assert_directory_identity(publication.path.parent, publication.parent_identity)
+        return ""
+    except Exception as exc:  # noqa: BLE001 - append rollback evidence to caller error.
+        return str(exc)
 
 
 def _deep_overlay(base: Any, updates: Any) -> Any:
@@ -930,6 +1222,24 @@ def _import_pdbqt(
     if not validation.get("ok"):
         return validation
 
+    source = Path(str(validation["path"])).expanduser()
+    try:
+        source_payload = _read_external_file_snapshot_no_follow(source)
+    except OSError as exc:
+        return _error(
+            "PDBQT_SOURCE_UNSAFE",
+            "PDBQT 源文件不是稳定的普通文件，已拒绝导入。",
+            raw_error=str(exc),
+            suggestion="请选择不经过符号链接、junction 或 reparse point 的普通 PDBQT 文件。",
+        )
+    if not source_payload:
+        return _error(
+            "PDBQT_FILE_EMPTY",
+            "PDBQT 文件为空，无法导入。",
+            raw_error=str(source),
+            suggestion="请确认该文件是 AutoDock Vina 可用的非空 PDBQT 文件。",
+        )
+
     try:
         # Use the same target lock as preparation claim/finalize. If an import
         # races final publication, either preparation observes the imported
@@ -941,42 +1251,83 @@ def _import_pdbqt(
                 return loaded
             project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
             target_relative = f"prepared/{role}.pdbqt"
-            target_path = Path(project.project_dir).expanduser() / "prepared" / f"{role}.pdbqt"
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            source = Path(source_path).expanduser()
-            shutil.copy2(source, target_path)
-
-            file_ref = getattr(project, role)
-            human_label = _normalize_pdbqt_source_label(source_label, source.name)
-            file_ref.source = "local"
-            file_ref.source_id = human_label
-            file_ref.query_type = "local_file"
-            file_ref.downloaded_at = _now_iso()
-            file_ref.raw_file = ""
-            file_ref.file = target_relative
-
-            # A manually imported PDBQT is a new active structure. Keep old
-            # preparation records on disk for audit, but detach their current
-            # project pointers so their method/evidence cannot be attributed
-            # to the newly imported bytes. A running preparation keeps its
-            # ownership until finalization so it can record the imported bytes
-            # as an output conflict and preserve the full verification audit.
-            active_preparation = getattr(project.preparation, role)
-            has_running_preparation = (
-                active_preparation.status == "running"
-                and bool(active_preparation.prep_id)
-                and project.latest_preparation.get(role) == active_preparation.prep_id
+            project_path = Path(project.project_dir).expanduser().resolve(strict=True)
+            target_path, parent_identity = _safe_project_storage_file(
+                project_path,
+                target_relative,
+                "prepared",
             )
-            if not has_running_preparation:
-                setattr(project.preparation, role, default_preparation_result(role))
-                project.latest_preparation[role] = ""
+            publication = _publish_project_file_bytes(
+                target_path,
+                source_payload,
+                overwrite=True,
+                parent_identity=parent_identity,
+            )
+            rollback_required = True
+            try:
+                file_ref = getattr(project, role)
+                human_label = _normalize_pdbqt_source_label(source_label, source.name)
+                file_ref.source = "local"
+                file_ref.source_id = human_label
+                file_ref.query_type = "local_file"
+                file_ref.downloaded_at = _now_iso()
+                file_ref.raw_file = ""
+                file_ref.file = target_relative
 
-            saved = save_project(project)
-            if not saved.get("ok"):
-                return saved
+                # A manually imported PDBQT is a new active structure. Keep old
+                # preparation records on disk for audit, but detach their current
+                # project pointers so their method/evidence cannot be attributed
+                # to the newly imported bytes. A running preparation keeps its
+                # ownership until finalization so it can record the imported bytes
+                # as an output conflict and preserve the full verification audit.
+                active_preparation = getattr(project.preparation, role)
+                has_running_preparation = (
+                    active_preparation.status == "running"
+                    and bool(active_preparation.prep_id)
+                    and project.latest_preparation.get(role) == active_preparation.prep_id
+                )
+                if not has_running_preparation:
+                    setattr(project.preparation, role, default_preparation_result(role))
+                    project.latest_preparation[role] = ""
 
-            label = "受体" if role == "receptor" else "配体"
-            return _success(project, f"{label} PDBQT 已导入。")
+                saved = save_project(project)
+                if not saved.get("ok"):
+                    rollback_error = _rollback_file_publication(publication)
+                    rollback_required = False
+                    if rollback_error:
+                        failed = copy.deepcopy(saved)
+                        error = failed.get("error") if isinstance(failed.get("error"), dict) else {}
+                        raw_error = str(error.get("raw_error") or "")
+                        error["raw_error"] = (
+                            f"{raw_error}; PDBQT rollback failed: {rollback_error}"
+                            if raw_error
+                            else f"PDBQT rollback failed: {rollback_error}"
+                        )
+                        error["suggestion"] = (
+                            "project.json 提交失败且 prepared 文件无法自动恢复；"
+                            "请停止运行并人工核对 project.json 与 prepared/ 内容。"
+                        )
+                        failed["error"] = error
+                        return failed
+                    return saved
+
+                rollback_required = False
+                label = "受体" if role == "receptor" else "配体"
+                return _success(project, f"{label} PDBQT 已导入。")
+            finally:
+                if rollback_required:
+                    rollback_error = _rollback_file_publication(publication)
+                    if rollback_error:
+                        raise RuntimeError(
+                            f"PDBQT 导入异常且 prepared 文件回滚失败：{rollback_error}"
+                        )
+    except ProjectFileSafetyError as exc:
+        return _error(
+            exc.code,
+            "prepared PDBQT 目标路径不安全，已拒绝导入。",
+            str(exc),
+            "请恢复项目内普通的 prepared/ 目录和文件，移除符号链接、junction 或硬链接后重试。",
+        )
     except Exception as exc:  # noqa: BLE001 - return structured errors.
         return _error(
             "PDBQT_IMPORT_ERROR",
@@ -2328,8 +2679,9 @@ def _validate_frozen_pose_input_attestation(
     return None
 
 
-def update_vina_run_protocol(
-    project_dir: str,
+def _apply_vina_run_protocol(
+    project_path: Path,
+    project: DockStartProject,
     run_mode: str,
     autobox: bool,
     confirm_pose_context: bool = False,
@@ -2355,99 +2707,122 @@ def update_vina_run_protocol(
             raw_error=repr(confirm_pose_context),
         )
 
+    if (
+        _project_grid_source(project) == "precomputed_maps"
+        and normalized_mode != "dock"
+    ):
+        return _error(
+            "VINA_MAPS_RUN_MODE_UNSUPPORTED",
+            "Vina/Vinardo 预计算 maps 当前只支持全局对接。",
+            raw_error=f"run_mode={normalized_mode}",
+            suggestion="请先将网格来源切换回受体，再选择仅评分或局部优化。",
+        )
+    protocol = project.preserved_data.get("docking_protocol")
+    next_protocol = copy.deepcopy(protocol) if isinstance(protocol, dict) else {}
+    next_protocol["run_mode"] = normalized_mode
+    next_protocol["autobox"] = (
+        bool(autobox)
+        if normalized_mode != "dock"
+        and _project_scoring_protocol(project) != "ad4_maps"
+        else False
+    )
+    project.preserved_data["docking_protocol"] = next_protocol
+    if normalized_mode != "dock" and confirm_pose_context:
+        receptor_inputs = _active_receptor_inputs(
+            project_path,
+            project,
+        )
+        if not receptor_inputs.get("ok"):
+            return receptor_inputs
+        receptor_path, receptor_error = _project_relative_file(
+            project_path,
+            str(receptor_inputs.get("receptor_file") or ""),
+            "receptor",
+        )
+        ligand_path, ligand_error = _project_relative_file(
+            project_path,
+            project.ligand.file,
+            "ligand",
+        )
+        flex_file = str(receptor_inputs.get("flex_file") or "")
+        flex_path: Path | None = None
+        flex_error: dict[str, Any] | None = None
+        if flex_file:
+            flex_path, flex_error = _project_relative_file(
+                project_path,
+                flex_file,
+                "flex",
+            )
+        if receptor_error:
+            return receptor_error
+        if ligand_error:
+            return ligand_error
+        if flex_error:
+            return flex_error
+        if (
+            receptor_path is None
+            or ligand_path is None
+            or (flex_file and flex_path is None)
+            or receptor_path.stat().st_size <= 0
+            or ligand_path.stat().st_size <= 0
+            or (flex_path is not None and flex_path.stat().st_size <= 0)
+        ):
+            return _error(
+                "POSE_INPUT_ATTESTATION_INPUT_EMPTY",
+                "运行受体、柔性侧链或配体 PDBQT 为空，不能记录输入姿势坐标系确认。",
+                suggestion="请恢复非空的运行受体、柔性侧链与配体 PDBQT。",
+            )
+        pose_input_attestation = {
+            "version": POSE_INPUT_ATTESTATION_VERSION,
+            "confirmed_at": _now_iso(),
+            "receptor_sha256": _sha256_file(receptor_path),
+            "ligand_sha256": _sha256_file(ligand_path),
+            "claim": POSE_INPUT_ATTESTATION_CLAIM,
+        }
+        if flex_path is not None:
+            pose_input_attestation["flex_sha256"] = _sha256_file(flex_path)
+        next_protocol["pose_input_attestation"] = pose_input_attestation
+    return {
+        "ok": True,
+        "run_mode": normalized_mode,
+        "autobox": next_protocol["autobox"],
+        "pose_input_attestation": _validate_current_pose_input_attestation(
+            project_path,
+            project,
+        ),
+        "error": None,
+    }
+
+
+def update_vina_run_protocol(
+    project_dir: str,
+    run_mode: str,
+    autobox: bool,
+    confirm_pose_context: bool = False,
+) -> dict[str, Any]:
     loaded = load_project(project_dir)
     if not loaded.get("ok"):
         return loaded
     try:
         project_path = Path(project_dir).expanduser().resolve()
         project = _project_from_dict(loaded["project"], project_path)
-        if (
-            _project_grid_source(project) == "precomputed_maps"
-            and normalized_mode != "dock"
-        ):
-            return _error(
-                "VINA_MAPS_RUN_MODE_UNSUPPORTED",
-                "Vina/Vinardo 预计算 maps 当前只支持全局对接。",
-                raw_error=f"run_mode={normalized_mode}",
-                suggestion="请先将网格来源切换回受体，再选择仅评分或局部优化。",
-            )
-        protocol = project.preserved_data.get("docking_protocol")
-        next_protocol = copy.deepcopy(protocol) if isinstance(protocol, dict) else {}
-        next_protocol["run_mode"] = normalized_mode
-        next_protocol["autobox"] = (
-            bool(autobox)
-            if normalized_mode != "dock"
-            and _project_scoring_protocol(project) != "ad4_maps"
-            else False
+        applied = _apply_vina_run_protocol(
+            project_path,
+            project,
+            run_mode,
+            autobox,
+            confirm_pose_context,
         )
-        project.preserved_data["docking_protocol"] = next_protocol
-        if normalized_mode != "dock":
-            if confirm_pose_context:
-                receptor_inputs = _active_receptor_inputs(
-                    project_path,
-                    project,
-                )
-                if not receptor_inputs.get("ok"):
-                    return receptor_inputs
-                receptor_path, receptor_error = _project_relative_file(
-                    project_path,
-                    str(receptor_inputs.get("receptor_file") or ""),
-                    "receptor",
-                )
-                ligand_path, ligand_error = _project_relative_file(
-                    project_path,
-                    project.ligand.file,
-                    "ligand",
-                )
-                flex_file = str(receptor_inputs.get("flex_file") or "")
-                flex_path: Path | None = None
-                flex_error: dict[str, Any] | None = None
-                if flex_file:
-                    flex_path, flex_error = _project_relative_file(
-                        project_path,
-                        flex_file,
-                        "flex",
-                    )
-                if receptor_error:
-                    return receptor_error
-                if ligand_error:
-                    return ligand_error
-                if flex_error:
-                    return flex_error
-                if (
-                    receptor_path is None
-                    or ligand_path is None
-                    or (flex_file and flex_path is None)
-                    or receptor_path.stat().st_size <= 0
-                    or ligand_path.stat().st_size <= 0
-                    or (flex_path is not None and flex_path.stat().st_size <= 0)
-                ):
-                    return _error(
-                        "POSE_INPUT_ATTESTATION_INPUT_EMPTY",
-                        "运行受体、柔性侧链或配体 PDBQT 为空，不能记录输入姿势坐标系确认。",
-                        suggestion="请恢复非空的运行受体、柔性侧链与配体 PDBQT。",
-                    )
-                pose_input_attestation = {
-                    "version": POSE_INPUT_ATTESTATION_VERSION,
-                    "confirmed_at": _now_iso(),
-                    "receptor_sha256": _sha256_file(receptor_path),
-                    "ligand_sha256": _sha256_file(ligand_path),
-                    "claim": POSE_INPUT_ATTESTATION_CLAIM,
-                }
-                if flex_path is not None:
-                    pose_input_attestation["flex_sha256"] = _sha256_file(flex_path)
-                next_protocol["pose_input_attestation"] = pose_input_attestation
+        if not applied.get("ok"):
+            return applied
         saved = save_project(project)
         if not saved.get("ok"):
             return saved
         return {
             **saved,
-            "run_mode": normalized_mode,
-            "autobox": next_protocol["autobox"],
-            "pose_input_attestation": _validate_current_pose_input_attestation(
-                project_path,
-                project,
-            ),
+            "run_mode": applied["run_mode"],
+            "autobox": applied["autobox"],
+            "pose_input_attestation": applied["pose_input_attestation"],
             "message": "运行任务类型已保存。",
         }
     except Exception as exc:  # noqa: BLE001 - return structured errors.
@@ -2456,6 +2831,111 @@ def update_vina_run_protocol(
             "保存运行任务类型时发生错误。",
             raw_error=str(exc),
             suggestion="请确认 project.json 可写。",
+        )
+
+
+def update_run_settings(
+    project_dir: str,
+    box: dict[str, Any],
+    vina: dict[str, Any],
+    run_mode: str,
+    autobox: bool,
+    confirm_pose_context: bool = False,
+) -> dict[str, Any]:
+    """Atomically update Box, Vina parameters, and the run protocol.
+
+    All validation is completed against one loaded project revision before the
+    single :func:`save_project` call.  A validation error or revision conflict
+    therefore cannot leave a subset of the three settings persisted.
+    """
+
+    box_validation = validate_box_params(box)
+    if not box_validation.get("ok"):
+        return box_validation
+
+    loaded = load_project(project_dir)
+    if not loaded.get("ok"):
+        return loaded
+    try:
+        project_path = Path(project_dir).expanduser().resolve()
+        project = _project_from_dict(loaded["project"], project_path)
+    except Exception as exc:  # noqa: BLE001 - return structured errors.
+        return _error(
+            "PROJECT_CONFIG_INVALID",
+            "项目配置格式不完整，无法保存运行设置。",
+            raw_error=str(exc),
+            suggestion="请检查 project.json 中的 box、vina 和 docking_protocol 字段。",
+        )
+
+    merged_vina = {**asdict(project.vina), **vina} if isinstance(vina, dict) else vina
+    vina_validation = validate_vina_params(merged_vina)
+    if not vina_validation.get("ok"):
+        return vina_validation
+
+    try:
+        parsed_box = box_validation["box"]
+        project.box = BoxSettings(
+            center_x=parsed_box["center_x"],
+            center_y=parsed_box["center_y"],
+            center_z=parsed_box["center_z"],
+            size_x=parsed_box["size_x"],
+            size_y=parsed_box["size_y"],
+            size_z=parsed_box["size_z"],
+        )
+        parsed_vina = vina_validation["vina"]
+        project.vina = VinaSettings(
+            scoring=parsed_vina["scoring"],
+            exhaustiveness=parsed_vina["exhaustiveness"],
+            max_evals=parsed_vina["max_evals"],
+            num_modes=parsed_vina["num_modes"],
+            min_rmsd=parsed_vina["min_rmsd"],
+            energy_range=parsed_vina["energy_range"],
+            spacing=parsed_vina["spacing"],
+            unbound_energy=parsed_vina["unbound_energy"],
+            no_refine=parsed_vina["no_refine"],
+            force_even_voxels=parsed_vina["force_even_voxels"],
+            verbosity=parsed_vina["verbosity"],
+            cpu=parsed_vina["cpu"],
+            seed=parsed_vina["seed"],
+        )
+        applied = _apply_vina_run_protocol(
+            project_path,
+            project,
+            run_mode,
+            autobox,
+            confirm_pose_context,
+        )
+        if not applied.get("ok"):
+            return applied
+
+        saved = save_project(project)
+        if not saved.get("ok"):
+            return saved
+        warnings = list(
+            dict.fromkeys(
+                [
+                    *box_validation.get("warnings", []),
+                    *vina_validation.get("warnings", []),
+                ]
+            )
+        )
+        response = _success(project, "运行设置已原子保存。", warnings)
+        response.update(
+            {
+                "box": asdict(project.box),
+                "vina": asdict(project.vina),
+                "run_mode": applied["run_mode"],
+                "autobox": applied["autobox"],
+                "pose_input_attestation": applied["pose_input_attestation"],
+            }
+        )
+        return response
+    except Exception as exc:  # noqa: BLE001 - return structured errors.
+        return _error(
+            "RUN_SETTINGS_UPDATE_ERROR",
+            "保存运行设置时发生错误，未提交部分更新。",
+            raw_error=str(exc),
+            suggestion="请重新读取项目后再保存 Box、Vina 参数和运行任务类型。",
         )
 
 
@@ -18664,6 +19144,55 @@ def main() -> None:
             _print_json(_error("VINA_JSON_INVALID", "Vina 参数不是有效 JSON。", str(exc)))
             return
         _print_json(update_vina_params(sys.argv[2], vina))
+        return
+
+    if command == "update-run-settings":
+        if len(sys.argv) < 7:
+            _print_json(
+                _error(
+                    "RUN_SETTINGS_ARGS",
+                    "保存运行设置需要 project_dir、box JSON、vina JSON、run_mode 和 autobox 参数。",
+                )
+            )
+            return
+        try:
+            box = json.loads(sys.argv[3])
+        except json.JSONDecodeError as exc:
+            _print_json(_error("BOX_JSON_INVALID", "Box 参数不是有效 JSON。", str(exc)))
+            return
+        try:
+            vina = json.loads(sys.argv[4])
+        except json.JSONDecodeError as exc:
+            _print_json(_error("VINA_JSON_INVALID", "Vina 参数不是有效 JSON。", str(exc)))
+            return
+        try:
+            autobox = json.loads(sys.argv[6])
+        except json.JSONDecodeError as exc:
+            _print_json(_error("VINA_AUTOBOX_JSON_INVALID", "autobox 不是有效 JSON。", str(exc)))
+            return
+        confirm_pose_context: Any = False
+        if len(sys.argv) >= 8:
+            try:
+                confirm_pose_context = json.loads(sys.argv[7])
+            except json.JSONDecodeError as exc:
+                _print_json(
+                    _error(
+                        "POSE_INPUT_CONFIRMATION_JSON_INVALID",
+                        "confirm_pose_context 不是有效 JSON。",
+                        str(exc),
+                    )
+                )
+                return
+        _print_json(
+            update_run_settings(
+                sys.argv[2],
+                box,
+                vina,
+                sys.argv[5],
+                autobox,
+                confirm_pose_context,
+            )
+        )
         return
 
     if command == "update-run-protocol":

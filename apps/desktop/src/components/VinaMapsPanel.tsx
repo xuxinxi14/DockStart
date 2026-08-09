@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CheckCircle,
@@ -18,6 +18,7 @@ import {
   vinaMapsGridSummary,
   type RawMapsConfirmations,
 } from "../utils/vinaMaps";
+import { mapsProjectContextKey } from "../utils/mapsContext";
 import ActionButton from "./ActionButton";
 import AdvancedDetails from "./AdvancedDetails";
 import OperationLoadingDialog from "./OperationLoadingDialog";
@@ -80,14 +81,18 @@ export default function VinaMapsPanel({
     useState<RawMapsConfirmations>(emptyConfirmations);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const loadRequestRef = useRef(0);
+  const mapsContextKey = useMemo(() => mapsProjectContextKey(project), [project]);
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setBusyAction((current) => current || "load");
     try {
       const raw = await invoke<string>("get_vina_maps_status", {
         projectDir: project.project_dir,
       });
       const response = JSON.parse(raw) as VinaMapsStatusResponse;
+      if (requestId !== loadRequestRef.current) return;
       setStatus(response);
       if (!response.ok) {
         const error = responseError(response);
@@ -95,12 +100,15 @@ export default function VinaMapsPanel({
         setRawError(error.detail);
       }
     } catch (error) {
+      if (requestId !== loadRequestRef.current) return;
       setMessage("无法读取 Vina maps 状态。");
       setRawError(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusyAction((current) => (current === "load" ? "" : current));
+      if (requestId === loadRequestRef.current) {
+        setBusyAction((current) => (current === "load" ? "" : current));
+      }
     }
-  }, [project.project_dir]);
+  }, [mapsContextKey, project.project_dir]);
 
   useEffect(() => {
     setStatus(null);
@@ -110,6 +118,9 @@ export default function VinaMapsPanel({
     setMessage("");
     setRawError("");
     void load();
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [load]);
 
   const gridSource: VinaMapsGridSource =

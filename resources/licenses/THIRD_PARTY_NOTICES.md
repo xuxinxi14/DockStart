@@ -61,9 +61,9 @@ runtime source/version metadata with the packaged application.
 
 ## Bundled Python Packages
 
-DockStart v0.12.0 has two isolated Windows release profiles. Basic Stable uses a
+DockStart v0.14.3 has two isolated Windows candidate profiles. Basic uses a
 backend-only Python runtime and excludes `Lib/site-packages` and `Scripts`.
-Assisted Stable adds the following pinned, ordinary-directory Python packages
+Assisted adds the following pinned, ordinary-directory Python packages
 for local PDBQT preparation. They are not frozen into `dockstart-desktop.exe`:
 
 - RDKit 2026.3.3

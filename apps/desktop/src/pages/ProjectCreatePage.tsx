@@ -204,7 +204,7 @@ function demoToolHint(demo: DemoProjectSummary): string {
     return "无需工具链，可直接查看示例结果。";
   }
   if (tools.includes("rdkit") || tools.includes("meeko") || tools.includes("python")) {
-    return "Assisted Stable 已随附 Python、RDKit / Meeko；检测失败时仍可使用参考 PDBQT 继续。";
+    return "Assisted 本地候选已随附 Python、RDKit / Meeko；检测失败时仍可使用参考 PDBQT 继续。";
   }
   if (tools.includes("vina")) {
     return "运行对接前需要配置 AutoDock Vina。";

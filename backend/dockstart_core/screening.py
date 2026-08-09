@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
 import hashlib
 import io
 import json
@@ -20,11 +21,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from adapters import vina_adapter
 from dockstart_core.advanced_protocols import (
@@ -66,6 +69,8 @@ STAGING_MUTATION_LOCK_RELATIVE_PATH = Path(
     "screening",
     ".staging-mutation.lock",
 )
+STATE_MUTATION_LOCK_RELATIVE_PATH = Path("screening", ".state-mutation.lock")
+EXECUTION_OWNER_LOCK_RELATIVE_PATH = Path("screening", ".execution-owner.lock")
 ARCHIVE_RELATIVE_PATH = Path("screening", "archive")
 ACTIVE_JOB_NAMES = ("inputs", "attempts", "results")
 TERMINAL_SCREENING_STATUSES = frozenset({"completed", "completed_with_failures", "canceled"})
@@ -101,6 +106,8 @@ SCORE_ROW = re.compile(
 )
 
 Runner = Callable[..., Any]
+_EXECUTION_PROCESS_LOCKS_GUARD = threading.Lock()
+_EXECUTION_PROCESS_LOCKS: dict[str, threading.Lock] = {}
 
 SCREENING_VINA_DEFAULTS: dict[str, Any] = {
     "max_evals": 0,
@@ -211,6 +218,106 @@ def _serialized_staging_mutation(function: Callable[..., dict[str, Any]]):
                 "批量配体 staging 协调失败。",
                 str(exc),
                 "请确认项目目录可写且没有异常的链接或重解析点后重试。",
+            )
+
+    return wrapped
+
+
+def _execution_process_lock(lock_path: Path) -> threading.Lock:
+    key = str(lock_path.resolve(strict=False))
+    with _EXECUTION_PROCESS_LOCKS_GUARD:
+        return _EXECUTION_PROCESS_LOCKS.setdefault(key, threading.Lock())
+
+
+@contextmanager
+def _try_screening_execution_lock(root: Path) -> Iterator[bool]:
+    """Try to claim the one allowed screening executor without waiting.
+
+    The in-process lock makes thread behavior deterministic; the byte lock is
+    released by the operating system if a GUI/CLI process crashes.  Holding it
+    for the whole run prevents two launchers from creating the same attempt or
+    mutating the queue concurrently.
+    """
+
+    lock_path = root / EXECUTION_OWNER_LOCK_RELATIVE_PATH
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.is_symlink() or lock_path.resolve(strict=False) != lock_path.absolute():
+        raise RuntimeError(f"批量筛选执行锁路径不安全：{lock_path}")
+    process_lock = _execution_process_lock(lock_path)
+    if not process_lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        with lock_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            acquired = False
+            if sys.platform == "win32":
+                import msvcrt
+
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+            else:
+                import fcntl
+
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                except BlockingIOError:
+                    acquired = False
+            if not acquired:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                handle.seek(0)
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        process_lock.release()
+
+
+def _serialized_screening_execution(function: Callable[..., dict[str, Any]]):
+    """Reject a second run/resume while another executor owns the queue."""
+
+    @wraps(function)
+    def wrapped(
+        project_dir: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        try:
+            root = _project_root(project_dir)
+            with _try_screening_execution_lock(root) as acquired:
+                if not acquired:
+                    return _error(
+                        "SCREENING_EXECUTION_ACTIVE",
+                        "另一个 DockStart 进程正在执行或恢复该批量筛选。",
+                        suggestion=(
+                            "请等待当前执行结束；如进程异常退出，操作系统会自动释放执行锁。"
+                        ),
+                    )
+                return function(str(root), *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - public workflow boundary.
+            return _error(
+                "SCREENING_EXECUTION_LOCK_ERROR",
+                "批量筛选执行权协调失败。",
+                str(exc),
+                "请确认项目 screening 目录可写且没有异常链接后重试。",
             )
 
     return wrapped
@@ -1361,9 +1468,80 @@ def _state_path(root: Path) -> Path:
     return root / STATE_RELATIVE_PATH
 
 
-def _write_state(root: Path, state: dict[str, Any]) -> None:
+def _state_mutation_lock_path(root: Path) -> Path:
+    return root / STATE_MUTATION_LOCK_RELATIVE_PATH
+
+
+def _state_revision(state: dict[str, Any]) -> int:
+    value = state.get("state_revision", 0)
+    if isinstance(value, bool):
+        raise ValueError("screening.json 的 state_revision 必须是非负整数。")
+    try:
+        revision = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("screening.json 的 state_revision 必须是非负整数。") from exc
+    if revision < 0 or str(value).strip() not in {str(revision), f"{revision}.0"}:
+        raise ValueError("screening.json 的 state_revision 必须是非负整数。")
+    return revision
+
+
+def _write_state_unlocked(
+    root: Path,
+    state: dict[str, Any],
+    *,
+    allow_cancel_reset: bool = False,
+    merge_cancel_conflict: bool = False,
+) -> None:
+    """Publish state while detecting stale writers and preserving cancellation."""
+
+    path = _state_path(root)
+    expected_revision = _state_revision(state)
+    current: dict[str, Any] | None = None
+    if path.is_file():
+        current = _read_state(root)
+        if str(current.get("screening_id") or "") != str(
+            state.get("screening_id") or ""
+        ):
+            raise RuntimeError(
+                "screening.json 已切换为其他任务，已拒绝用旧任务状态覆盖。"
+            )
+        current_revision = _state_revision(current)
+        if current_revision != expected_revision:
+            # A cancel request is the sole mutation allowed to cross the
+            # long-running executor boundary.  Merge it monotonically; any
+            # other unseen state mutation is a conflict and must not be lost.
+            if not (
+                merge_cancel_conflict
+                and current.get("cancel_requested")
+            ):
+                raise RuntimeError(
+                    "screening.json 已被其他进程更新，已拒绝用陈旧状态覆盖。"
+                )
+            state["cancel_requested"] = True
+            expected_revision = current_revision
+        if current.get("cancel_requested") and not allow_cancel_reset:
+            state["cancel_requested"] = True
+            if state.get("status") == "running":
+                state["status"] = "cancel_requested"
+    state["state_revision"] = expected_revision + 1
     state["updated_at"] = _now_iso()
-    atomic_write_json(_state_path(root), state)
+    atomic_write_json(path, state)
+
+
+def _write_state(
+    root: Path,
+    state: dict[str, Any],
+    *,
+    allow_cancel_reset: bool = False,
+    merge_cancel_conflict: bool = False,
+) -> None:
+    with _exclusive_file_lock(_state_mutation_lock_path(root)):
+        _write_state_unlocked(
+            root,
+            state,
+            allow_cancel_reset=allow_cancel_reset,
+            merge_cancel_conflict=merge_cancel_conflict,
+        )
 
 
 def _read_state(root: Path) -> dict[str, Any]:
@@ -1375,6 +1553,7 @@ def _read_state(root: Path) -> dict[str, Any]:
         raise ValueError("screening.json 的 schema 版本不受支持。")
     if not isinstance(state.get("items"), list) or not isinstance(state.get("queue"), list):
         raise ValueError("screening.json 缺少有效的 items 或 queue。")
+    _state_revision(state)
     return state
 
 
@@ -9414,6 +9593,7 @@ def compare_screening_archives(
         )
 
 
+@_serialized_screening_execution
 def archive_screening(project_dir: str) -> dict[str, Any]:
     """Archive a terminal job and clear only its active workspace."""
 
@@ -9505,23 +9685,24 @@ def request_screening_cancel(project_dir: str) -> dict[str, Any]:
 
     try:
         root = _project_root(project_dir)
-        state = _read_state(root)
-        if state["status"] in {"completed", "completed_with_failures", "canceled"}:
-            return {
-                "ok": True,
-                "screening": state,
-                "message": "任务已经处于终止状态，无需取消。",
-                "error": None,
-            }
-        state["cancel_requested"] = True
-        if state["status"] in {"ready", "interrupted"}:
-            state["status"] = "canceled"
-            state["finished_at"] = _now_iso()
-            message = "批量筛选尚未运行，已立即取消。"
-        else:
-            state["status"] = "cancel_requested"
-            message = "已请求取消；当前配体完成后停止队列。"
-        _write_state(root, state)
+        with _exclusive_file_lock(_state_mutation_lock_path(root)):
+            state = _read_state(root)
+            if state["status"] in {"completed", "completed_with_failures", "canceled"}:
+                return {
+                    "ok": True,
+                    "screening": state,
+                    "message": "任务已经处于终止状态，无需取消。",
+                    "error": None,
+                }
+            state["cancel_requested"] = True
+            if state["status"] in {"ready", "interrupted"}:
+                state["status"] = "canceled"
+                state["finished_at"] = _now_iso()
+                message = "批量筛选尚未运行，已立即取消。"
+            else:
+                state["status"] = "cancel_requested"
+                message = "已请求取消；当前配体完成后停止队列。"
+            _write_state_unlocked(root, state)
         return {
             "ok": True,
             "screening": state,
@@ -9532,79 +9713,178 @@ def request_screening_cancel(project_dir: str) -> dict[str, Any]:
         return _error("SCREENING_CANCEL_ERROR", "请求取消批量筛选失败。", str(exc))
 
 
+def _write_existing_attempt_record(root: Path, attempt: dict[str, Any]) -> None:
+    directory_value = str(attempt.get("directory") or "")
+    logical = PurePosixPath(directory_value)
+    if not (
+        directory_value
+        and "\\" not in directory_value
+        and ":" not in directory_value
+        and not logical.is_absolute()
+        and ".." not in logical.parts
+        and logical.parts[:2] == ("screening", "attempts")
+    ):
+        return
+    attempt_json = root.joinpath(*logical.parts) / "attempt.json"
+    resolved_attempt_json = attempt_json.resolve(strict=True)
+    resolved_attempt_json.relative_to(root)
+    if not resolved_attempt_json.is_file():
+        raise ValueError("attempt.json 不是普通文件。")
+    atomic_write_json(resolved_attempt_json, attempt)
+
+
+def _latest_active_attempt(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a live latest Vina attempt regardless of the parent item status."""
+
+    tools = state.get("tools") if isinstance(state.get("tools"), dict) else {}
+    vina_tool = tools.get("vina") if isinstance(tools.get("vina"), dict) else {}
+    for item in state.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        attempts = [
+            attempt
+            for attempt in (item.get("attempts") or [])
+            if isinstance(attempt, dict)
+        ]
+        if not attempts:
+            continue
+        latest = attempts[-1]
+        if latest.get("status") not in {"running", "interrupted"} and latest.get(
+            "finished_at"
+        ) not in {None, ""}:
+            continue
+        try:
+            pid = int(latest.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid <= 0:
+            continue
+        recorded_identity = (
+            latest.get("process_identity")
+            if isinstance(latest.get("process_identity"), dict)
+            else None
+        )
+        vina_snapshot = (
+            latest.get("vina_snapshot")
+            if isinstance(latest.get("vina_snapshot"), dict)
+            else {}
+        )
+        expected_executable = str(
+            vina_snapshot.get("path") or vina_tool.get("path") or ""
+        )
+        if recorded_identity and expected_executable:
+            verification = vina_adapter.verify_process_identity(
+                pid,
+                expected_executable,
+                recorded_identity,
+            )
+            if verification.get("ok"):
+                return {
+                    "item_id": str(item.get("item_id") or ""),
+                    "pid": pid,
+                    "identity_status": "verified",
+                }
+            # A readable, different identity means that the old PID was
+            # reused.  An unreadable live PID remains conservatively active.
+            if verification.get("running") and verification.get("identity") is None:
+                return {
+                    "item_id": str(item.get("item_id") or ""),
+                    "pid": pid,
+                    "identity_status": "unverified",
+                }
+            continue
+        if vina_adapter.is_process_running(pid):
+            return {
+                "item_id": str(item.get("item_id") or ""),
+                "pid": pid,
+                "identity_status": "legacy_pid_only",
+            }
+    return None
+
+
+@_serialized_screening_execution
 def resume_screening(project_dir: str) -> dict[str, Any]:
     """Recover canceled or interrupted items into their original stable order."""
 
     try:
         root = _project_root(project_dir)
-        state = _read_state(root)
-        if state["status"] in {"completed", "completed_with_failures"}:
-            return _error("SCREENING_ALREADY_FINISHED", "批量筛选已经完成，不能恢复。")
-        execution_preflight = _validate_screening_execution_state(root, state)
-        if not execution_preflight.get("ok"):
-            detail = execution_preflight.get("error") or {}
-            return _error(
-                "SCREENING_RESUME_ERROR",
-                "恢复批量筛选前的冻结输入与工具复核失败。",
-                json.dumps(
-                    {
-                        "preflight_code": detail.get("code"),
-                        "message": detail.get("message"),
-                        "raw_error": detail.get("raw_error"),
-                    },
-                    ensure_ascii=False,
-                ),
-                "请恢复任务创建时的冻结输入、AD4 maps 与 Vina 后再恢复。",
+        with _exclusive_file_lock(_state_mutation_lock_path(root)):
+            state = _read_state(root)
+            if state["status"] in {"completed", "completed_with_failures"}:
+                return _error("SCREENING_ALREADY_FINISHED", "批量筛选已经完成，不能恢复。")
+            execution_preflight = _validate_screening_execution_state(root, state)
+            if not execution_preflight.get("ok"):
+                detail = execution_preflight.get("error") or {}
+                return _error(
+                    "SCREENING_RESUME_ERROR",
+                    "恢复批量筛选前的冻结输入与工具复核失败。",
+                    json.dumps(
+                        {
+                            "preflight_code": detail.get("code"),
+                            "message": detail.get("message"),
+                            "raw_error": detail.get("raw_error"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "请恢复任务创建时的冻结输入、AD4 maps 与 Vina 后再恢复。",
+                )
+            limits = _validated_resource_limits(
+                state.get("resource_limits")
+                if "resource_limits" in state
+                else None
             )
-        limits = _validated_resource_limits(
-            state.get("resource_limits")
-            if "resource_limits" in state
-            else None
-        )
-        _verify_frozen_resource_limits_hash(state, limits)
-        resource_state = _validate_screening_resource_state(state, limits)
-        state["resource_limits"] = limits.to_dict()
-        state["max_retries"] = resource_state["max_retries"]
-        state["top_n"] = resource_state["top_n"]
-        for item in state["items"]:
-            if item.get("status") != "running":
-                continue
-            running_attempt = next(
-                (
-                    attempt
-                    for attempt in reversed(item.get("attempts") or [])
-                    if attempt.get("status") == "running"
-                ),
-                None,
-            )
-            try:
-                pid = int((running_attempt or {}).get("pid") or 0)
-            except (TypeError, ValueError):
-                pid = 0
-            if pid > 0 and vina_adapter.is_process_running(pid):
+            _verify_frozen_resource_limits_hash(state, limits)
+            resource_state = _validate_screening_resource_state(state, limits)
+            state["resource_limits"] = limits.to_dict()
+            state["max_retries"] = resource_state["max_retries"]
+            state["top_n"] = resource_state["top_n"]
+            active_attempt = _latest_active_attempt(state)
+            if active_attempt is not None:
                 return _error(
                     "SCREENING_PROCESS_ACTIVE",
                     "检测到原批量筛选 Vina 进程仍在运行，已拒绝重复启动。",
-                    f"item={item.get('item_id')}, pid={pid}",
+                    (
+                        f"item={active_attempt['item_id']}, pid={active_attempt['pid']}, "
+                        f"identity={active_attempt['identity_status']}"
+                    ),
                     "请等待当前配体结束后再恢复；不要同时启动第二个筛选进程。",
                 )
-        max_attempts = state["max_retries"] + 1
-        recoverable: list[dict[str, Any]] = []
-        for item in state["items"]:
-            if item["status"] == "running":
-                item["status"] = "interrupted"
-                item["last_error"] = "上次运行在状态持久化前中断。"
-            if item["status"] in {"pending", "interrupted"}:
-                if int(item.get("attempt_count") or 0) < max_attempts:
-                    item["status"] = "pending"
-                    recoverable.append(item)
-                else:
-                    item["status"] = "failed"
-        state["queue"] = [item["item_id"] for item in sorted(recoverable, key=lambda row: int(row["order"]))]
-        state["cancel_requested"] = False
-        state["status"] = "ready"
-        state["finished_at"] = None
-        _write_state(root, state)
+            max_attempts = state["max_retries"] + 1
+            recoverable: list[dict[str, Any]] = []
+            recovered_at = _now_iso()
+            for item in state["items"]:
+                attempts = [
+                    attempt
+                    for attempt in (item.get("attempts") or [])
+                    if isinstance(attempt, dict)
+                ]
+                latest_attempt = attempts[-1] if attempts else None
+                if latest_attempt is not None and latest_attempt.get("status") == "running":
+                    latest_attempt.update(
+                        {
+                            "status": "interrupted",
+                            "finished_at": recovered_at,
+                            "error": "上次运行在状态持久化前中断。",
+                        }
+                    )
+                    _write_existing_attempt_record(root, latest_attempt)
+                if item["status"] == "running":
+                    item["status"] = "interrupted"
+                    item["last_error"] = "上次运行在状态持久化前中断。"
+                if item["status"] in {"pending", "interrupted"}:
+                    if int(item.get("attempt_count") or 0) < max_attempts:
+                        item["status"] = "pending"
+                        recoverable.append(item)
+                    else:
+                        item["status"] = "failed"
+            state["queue"] = [
+                item["item_id"]
+                for item in sorted(recoverable, key=lambda row: int(row["order"]))
+            ]
+            state["cancel_requested"] = False
+            state["status"] = "ready"
+            state["finished_at"] = None
+            _write_state_unlocked(root, state, allow_cancel_reset=True)
         return {
             "ok": True,
             "screening": state,
@@ -9703,6 +9983,7 @@ def _refresh_cancel(root: Path, state: dict[str, Any]) -> None:
         return
     if current.get("cancel_requested"):
         state["cancel_requested"] = True
+        state["state_revision"] = _state_revision(current)
 
 
 def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runner: Runner) -> bool:
@@ -9903,6 +10184,7 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
             "checked_at": None,
         },
         "pid": None,
+        "process_identity": None,
         "exit_code": None,
         "best_affinity_kcal_mol": None,
         "output_file": "",
@@ -9913,15 +10195,18 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
     item["status"] = "running"
     item.setdefault("attempts", []).append(attempt_record)
     atomic_write_json(attempt_dir / "attempt.json", attempt_record)
-    _write_state(root, state)
+    _write_state(root, state, merge_cancel_conflict=True)
 
     def on_started(pid: int) -> None:
         attempt_record["pid"] = int(pid)
+        attempt_record["process_identity"] = vina_adapter.get_process_identity(
+            int(pid)
+        )
         atomic_write_json(attempt_dir / "attempt.json", attempt_record)
         _refresh_cancel(root, state)
         if state.get("cancel_requested"):
             state["status"] = "cancel_requested"
-        _write_state(root, state)
+        _write_state(root, state, merge_cancel_conflict=True)
 
     try:
         returned = runner(
@@ -9967,7 +10252,7 @@ def _attempt_item(root: Path, state: dict[str, Any], item: dict[str, Any], runne
         item["status"] = "interrupted"
         item["last_error"] = str(exc)
         atomic_write_json(attempt_dir / "attempt.json", attempt_record)
-        _write_state(root, state)
+        _write_state(root, state, merge_cancel_conflict=True)
         raise
     affinity = _best_affinity(log_path)
     success = exit_code == 0 and output_path.is_file() and output_path.stat().st_size > 0 and affinity is not None
@@ -11559,11 +11844,12 @@ def _persist_interrupted_run_failure(
             except (OSError, RuntimeError, ValueError):
                 pass
     try:
-        _write_state(root, persisted)
+        _write_state(root, persisted, merge_cancel_conflict=True)
     except Exception:
         pass
 
 
+@_serialized_screening_execution
 def run_screening(
     project_dir: str,
     *,
@@ -11590,7 +11876,7 @@ def run_screening(
         active_runner = runner or _default_runner
         state["status"] = "running"
         state["started_at"] = state.get("started_at") or _now_iso()
-        _write_state(root, state)
+        _write_state(root, state, merge_cancel_conflict=True)
         processed = 0
         max_attempts = state["max_retries"] + 1
 
@@ -11611,7 +11897,7 @@ def run_screening(
             if not succeeded and int(item["attempt_count"]) < max_attempts:
                 item["status"] = "pending"
                 state["queue"].append(item_id)
-            _write_state(root, state)
+            _write_state(root, state, merge_cancel_conflict=True)
             if max_items is not None and processed >= max_items and state["queue"]:
                 state["status"] = "interrupted"
                 state["finished_at"] = _now_iso()
@@ -11659,7 +11945,7 @@ def run_screening(
                 ],
                 "artifacts": [],
             }
-        _write_state(root, state)
+        _write_state(root, state, merge_cancel_conflict=True)
         return {
             "ok": True,
             "project_dir": str(root),

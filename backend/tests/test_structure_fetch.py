@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
+import unittest.mock
 import urllib.error
 from pathlib import Path
 
@@ -12,6 +15,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from dockstart_core.project import _project_from_dict, create_project, load_project, save_project  # noqa: E402
+from dockstart_core import project as project_module  # noqa: E402
+from dockstart_core import structure_fetch as structure_fetch_module  # noqa: E402
 from dockstart_core.structure_fetch import (  # noqa: E402
     clear_ligand_raw_record,
     clear_receptor_raw_record,
@@ -143,7 +148,12 @@ class StructureFetchTests(unittest.TestCase):
             target = project_dir / "raw" / "receptor_1HSG.pdb"
             target.write_bytes(b"old")
 
-            result = fetch_pdb_structure(str(project_dir), "1HSG", overwrite=False, fetcher=self._fetcher(b"new"))
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                overwrite=False,
+                fetcher=self._fetcher(b"HEADER NEW\n"),
+            )
 
             self.assertFalse(result["ok"])
             self.assertEqual(result["error"]["code"], "RAW_FILE_EXISTS")
@@ -155,22 +165,31 @@ class StructureFetchTests(unittest.TestCase):
             target = project_dir / "raw" / "receptor_1HSG.pdb"
             target.write_bytes(b"old")
 
-            result = fetch_pdb_structure(str(project_dir), "1HSG", overwrite=True, fetcher=self._fetcher(b"new"))
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                overwrite=True,
+                fetcher=self._fetcher(b"HEADER NEW\n"),
+            )
 
             self.assertTrue(result["ok"])
-            self.assertEqual(target.read_bytes(), b"new")
+            self.assertEqual(target.read_bytes(), b"HEADER NEW\n")
 
     def test_fetch_pubchem_ligand_writes_sdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
 
-            result = fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"aspirin sdf\n"))
+            result = fetch_pubchem_ligand(
+                str(project_dir),
+                "2244",
+                fetcher=self._fetcher(b"aspirin sdf\nM  END\n$$$$\n"),
+            )
 
             target = project_dir / "raw" / "ligand_2244.sdf"
             self.assertTrue(result["ok"])
             self.assertEqual(result["raw_file"], "raw/ligand_2244.sdf")
             self.assertEqual(result["project"]["ligand"]["file"], "")
-            self.assertEqual(target.read_bytes(), b"aspirin sdf\n")
+            self.assertEqual(target.read_bytes(), b"aspirin sdf\nM  END\n$$$$\n")
 
     def test_fetch_pubchem_ligand_by_name_writes_sdf(self) -> None:
         seen_urls: list[str] = []
@@ -178,7 +197,7 @@ class StructureFetchTests(unittest.TestCase):
         def fetcher(url: str, timeout: int) -> bytes:
             self.assertGreater(timeout, 0)
             seen_urls.append(url)
-            return b"aspirin sdf by name\n"
+            return b"aspirin sdf by name\nM  END\n$$$$\n"
 
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
@@ -196,7 +215,7 @@ class StructureFetchTests(unittest.TestCase):
             self.assertIn("/compound/name/aspirin/SDF", seen_urls[0])
             self.assertEqual(result["query_type"], "name")
             self.assertEqual(result["raw_file"], "raw/ligand_name_aspirin.sdf")
-            self.assertEqual(target.read_bytes(), b"aspirin sdf by name\n")
+            self.assertEqual(target.read_bytes(), b"aspirin sdf by name\nM  END\n$$$$\n")
             self.assertEqual(loaded["ligand"]["source"], "pubchem")
             self.assertEqual(loaded["ligand"]["source_id"], "aspirin")
             self.assertEqual(loaded["ligand"]["query_type"], "name")
@@ -426,7 +445,11 @@ class StructureFetchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
 
-            result = fetch_pubchem_ligand(str(project_dir), 2244, fetcher=self._fetcher(b"sdf\n"))
+            result = fetch_pubchem_ligand(
+                str(project_dir),
+                2244,
+                fetcher=self._fetcher(b"ligand sdf\nM  END\n$$$$\n"),
+            )
             loaded = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
 
         self.assertTrue(result["ok"])
@@ -504,7 +527,11 @@ class StructureFetchTests(unittest.TestCase):
             save_project_response = save_project(_project_from_dict(project, project_dir))
             self.assertTrue(save_project_response["ok"], save_project_response)
 
-            result = fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
+            result = fetch_pubchem_ligand(
+                str(project_dir),
+                "2244",
+                fetcher=self._fetcher(b"ligand sdf\nM  END\n$$$$\n"),
+            )
             prepared_exists = (project_dir / "prepared" / "custom_ligand.pdbqt").is_file()
 
         self.assertTrue(result["ok"])
@@ -527,7 +554,7 @@ class StructureFetchTests(unittest.TestCase):
                 str(project_dir),
                 "1HSG",
                 overwrite=False,
-                fetcher=self._fetcher(b"replacement raw\n"),
+                fetcher=self._fetcher(b"HEADER REPLACEMENT\n"),
             )
             loaded = load_project(str(project_dir))["project"]
             target_content = target.read_bytes()
@@ -543,7 +570,11 @@ class StructureFetchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
             fetch_pdb_structure(str(project_dir), "1HSG", fetcher=self._fetcher(b"HEADER\n"))
-            fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
+            fetch_pubchem_ligand(
+                str(project_dir),
+                "2244",
+                fetcher=self._fetcher(b"ligand sdf\nM  END\n$$$$\n"),
+            )
 
             result = get_raw_files_status(str(project_dir))
 
@@ -612,7 +643,11 @@ class StructureFetchTests(unittest.TestCase):
     def test_clear_ligand_raw_record_preserves_prepared_file_reference_and_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_dir = self._create_project(temp_dir)
-            fetch_pubchem_ligand(str(project_dir), "2244", fetcher=self._fetcher(b"sdf\n"))
+            fetch_pubchem_ligand(
+                str(project_dir),
+                "2244",
+                fetcher=self._fetcher(b"ligand sdf\nM  END\n$$$$\n"),
+            )
             prepared = project_dir / "prepared" / "ligand.pdbqt"
             prepared.write_text("prepared ligand\n", encoding="utf-8")
             loaded_project = load_project(str(project_dir))["project"]
@@ -665,6 +700,240 @@ class StructureFetchTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertEqual(result["error"]["code"], "RAW_DELETE_OUTSIDE_RAW_DIR")
             self.assertTrue(prepared.exists())
+
+    def test_local_raw_import_rolls_back_new_file_when_project_save_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            source = Path(temp_dir) / "ligand.sdf"
+            source.write_text("local ligand\n", encoding="utf-8")
+            target = project_dir / "raw" / "ligand_ligand.sdf"
+            project_before = (project_dir / "project.json").read_bytes()
+            conflict = project_module._error(
+                "PROJECT_SAVE_CONFLICT",
+                "project.json 已被其他操作更新。",
+            )
+
+            with unittest.mock.patch.object(
+                structure_fetch_module,
+                "save_project",
+                return_value=conflict,
+            ):
+                result = import_ligand_raw_file(str(project_dir), str(source))
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PROJECT_SAVE_CONFLICT")
+            self.assertFalse(target.exists())
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_raw_overwrite_rolls_back_old_bytes_when_project_save_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            target = project_dir / "raw" / "receptor_1HSG.pdb"
+            target.write_bytes(b"HEADER OLD\n")
+            project_before = (project_dir / "project.json").read_bytes()
+            conflict = project_module._error(
+                "PROJECT_SAVE_CONFLICT",
+                "project.json 已被其他操作更新。",
+            )
+
+            with unittest.mock.patch.object(
+                structure_fetch_module,
+                "save_project",
+                return_value=conflict,
+            ):
+                result = fetch_pdb_structure(
+                    str(project_dir),
+                    "1HSG",
+                    overwrite=True,
+                    fetcher=self._fetcher(b"HEADER NEW\n"),
+                )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PROJECT_SAVE_CONFLICT")
+            self.assertEqual(target.read_bytes(), b"HEADER OLD\n")
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_clear_raw_delete_rolls_back_file_when_project_save_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            fetched = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                fetcher=self._fetcher(b"HEADER ORIGINAL\n"),
+            )
+            self.assertTrue(fetched["ok"], fetched)
+            target = project_dir / "raw" / "receptor_1HSG.pdb"
+            project_before = (project_dir / "project.json").read_bytes()
+            conflict = project_module._error(
+                "PROJECT_SAVE_CONFLICT",
+                "project.json 已被其他操作更新。",
+            )
+
+            with unittest.mock.patch.object(
+                structure_fetch_module,
+                "save_project",
+                return_value=conflict,
+            ):
+                result = clear_receptor_raw_record(str(project_dir), delete_file=True)
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PROJECT_SAVE_CONFLICT")
+            self.assertEqual(target.read_bytes(), b"HEADER ORIGINAL\n")
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_raw_overwrite_rejects_hardlink_target_without_touching_external_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            external = Path(temp_dir) / "external_receptor.pdb"
+            external.write_bytes(b"HEADER EXTERNAL\n")
+            target = project_dir / "raw" / "receptor_1HSG.pdb"
+            try:
+                os.link(external, target)
+            except OSError as exc:
+                self.skipTest(f"当前文件系统不支持硬链接测试：{exc}")
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                overwrite=True,
+                fetcher=self._fetcher(b"HEADER NEW\n"),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PROJECT_FILE_TARGET_HARDLINKED")
+            self.assertEqual(external.read_bytes(), b"HEADER EXTERNAL\n")
+            self.assertEqual(target.read_bytes(), b"HEADER EXTERNAL\n")
+
+    def test_raw_directory_symlink_is_rejected_without_writing_outside_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            raw_dir = project_dir / "raw"
+            outside = Path(temp_dir) / "outside"
+            outside.mkdir()
+            raw_dir.rmdir()
+            try:
+                raw_dir.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                raw_dir.mkdir()
+                self.skipTest(f"当前环境不允许创建目录符号链接：{exc}")
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                fetcher=self._fetcher(b"HEADER NEW\n"),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "PROJECT_STORAGE_PATH_UNSAFE")
+            self.assertFalse((outside / "receptor_1HSG.pdb").exists())
+
+    def test_overwrite_false_cannot_replace_concurrently_created_raw_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            project_before = (project_dir / "project.json").read_bytes()
+            original_create = project_module._atomic_create_bytes_no_replace
+
+            def create_racer(path: Path, payload: bytes, parent_identity: tuple[int, int]) -> None:
+                path.write_bytes(b"HEADER RACER\n")
+                original_create(path, payload, parent_identity)
+
+            with unittest.mock.patch.object(
+                project_module,
+                "_atomic_create_bytes_no_replace",
+                side_effect=create_racer,
+            ):
+                result = fetch_pdb_structure(
+                    str(project_dir),
+                    "1HSG",
+                    overwrite=False,
+                    fetcher=self._fetcher(b"HEADER DOWNLOADED\n"),
+                )
+
+            target = project_dir / "raw" / "receptor_1HSG.pdb"
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "RAW_FILE_EXISTS")
+            self.assertEqual(target.read_bytes(), b"HEADER RACER\n")
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_download_rejects_html_error_page_before_raw_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            project_before = (project_dir / "project.json").read_bytes()
+
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                fetcher=self._fetcher(b"<!doctype html><html>not found</html>"),
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "STRUCTURE_DOWNLOAD_FORMAT_INVALID")
+            self.assertFalse((project_dir / "raw" / "receptor_1HSG.pdb").exists())
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_download_enforces_actual_byte_limit_for_custom_fetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            with unittest.mock.patch.object(
+                structure_fetch_module,
+                "MAX_STRUCTURE_DOWNLOAD_BYTES",
+                16,
+            ):
+                result = fetch_pdb_structure(
+                    str(project_dir),
+                    "1HSG",
+                    fetcher=self._fetcher(b"HEADER TOO LARGE\n"),
+                )
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "STRUCTURE_DOWNLOAD_TOO_LARGE")
+
+    def test_download_enforces_wall_clock_deadline_for_custom_fetcher(self) -> None:
+        def slow_fetcher(_url: str, _timeout: float) -> bytes:
+            time.sleep(0.3)
+            return b"HEADER LATE\n"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = self._create_project(temp_dir)
+            started = time.monotonic()
+            result = fetch_pdb_structure(
+                str(project_dir),
+                "1HSG",
+                fetcher=slow_fetcher,
+                timeout=0.02,
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "STRUCTURE_DOWNLOAD_TIMEOUT")
+            self.assertLess(elapsed, 0.2)
+
+    def test_network_reader_rejects_oversized_content_length_before_read(self) -> None:
+        class OversizedResponse:
+            headers = {"Content-Length": "17"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _size: int) -> bytes:
+                self.fail("oversized declared response must not be read")
+
+        response = OversizedResponse()
+        response.fail = self.fail
+        with unittest.mock.patch.object(
+            structure_fetch_module,
+            "MAX_STRUCTURE_DOWNLOAD_BYTES",
+            16,
+        ), unittest.mock.patch.object(
+            structure_fetch_module.urllib.request,
+            "urlopen",
+            return_value=response,
+        ):
+            with self.assertRaises(structure_fetch_module._StructureDownloadTooLarge):
+                structure_fetch_module._fetch_bytes("https://files.rcsb.org/download/1HSG.pdb", 1)
 
     def test_structure_fetch_does_not_import_processing_or_docking_adapters(self) -> None:
         import dockstart_core.structure_fetch as structure_fetch

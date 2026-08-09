@@ -25,7 +25,7 @@ import type {
   ToolCheckResult,
 } from "../types";
 import {
-  cancelQueuedBackgroundTask,
+  cancelBackgroundTask,
   findActiveBackgroundTask,
   startPreparationTask,
   waitForBackgroundTask,
@@ -824,18 +824,19 @@ export default function PreparationPage({
     }
   };
 
-  const cancelQueuedPreparation = async () => {
-    if (!activeTask || activeTask.status !== "queued") return;
+  const cancelPreparation = async () => {
+    if (!activeTask || ["cancelled", "failed", "finished"].includes(activeTask.status)) return;
     try {
-      const cancelled = await cancelQueuedBackgroundTask(activeTask.task_id);
+      const wasQueued = activeTask.status === "queued";
+      const cancelled = await cancelBackgroundTask(activeTask.task_id);
       setActiveTask(cancelled);
       setMessage(
-        cancelled.status === "cancelled"
+        wasQueued
           ? (cancelled.message || "排队中的结构准备任务已取消。")
-          : "任务已经开始执行，不能再从队列取消。",
+          : "正在终止结构准备工具进程；现有 preparation 日志会保留，随后请刷新状态。",
       );
     } catch (error) {
-      setMessage("无法取消排队中的结构准备任务。");
+      setMessage("无法取消结构准备任务。");
       setRawError(error instanceof Error ? error.message : String(error));
     }
   };
@@ -1401,8 +1402,12 @@ export default function PreparationPage({
           ? "正在检测 Python、RDKit 与 Meeko。"
           : activeTask?.progress.message || message || "结构转换任务正在本机运行。"}
         detail="转换完成后仍需人工检查结构与化学状态。"
-        actionLabel={activeTask?.status === "queued" ? "取消排队" : undefined}
-        onAction={activeTask?.status === "queued" ? () => void cancelQueuedPreparation() : undefined}
+        actionLabel={activeTask && !["cancelled", "failed", "finished"].includes(activeTask.status)
+          ? (activeTask.status === "queued" ? "取消排队" : "终止准备")
+          : undefined}
+        onAction={activeTask && !["cancelled", "failed", "finished"].includes(activeTask.status)
+          ? () => void cancelPreparation()
+          : undefined}
       />
       <PageHero
         eyebrow="格式转换 · PDBQT PREPARATION"
@@ -1412,8 +1417,10 @@ export default function PreparationPage({
         actions={(
           <>
             <ActionButton onClick={onBack}>在线搜索并下载</ActionButton>
-            {activeTask?.status === "queued" ? (
-              <ActionButton onClick={() => void cancelQueuedPreparation()}>取消排队</ActionButton>
+            {activeTask && !["cancelled", "failed", "finished"].includes(activeTask.status) ? (
+              <ActionButton onClick={() => void cancelPreparation()}>
+                {activeTask.status === "queued" ? "取消排队" : "终止准备"}
+              </ActionButton>
             ) : null}
             <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新状态"}</ActionButton>
           </>
@@ -1503,7 +1510,7 @@ export default function PreparationPage({
             {files?.receptor_raw?.status === "ok" || files?.ligand_raw?.status === "ok" ? (
               <>
                 <p className="preparation-profile-hint">
-                  Assisted Stable 随附 RDKit / Meeko；Basic Stable 默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
+                  Assisted 本地候选随附 RDKit / Meeko；Basic 本地候选默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
                 </p>
                 <p>{tools ? "转换工具状态已读取。" : "开始转换时会自动检查所需工具。"}</p>
                 <ActionButton disabled={isCheckingTools || interactionBusy} onClick={() => void checkConversionTools()}>

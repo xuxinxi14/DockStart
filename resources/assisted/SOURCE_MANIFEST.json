@@ -12,9 +12,9 @@
     "license": "Python Software Foundation License",
     "expected_executable_sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
     "expected_base_runtime": {
-      "sha256": "a0083111583074ffca8fd382cd59519d0d641360bf50be8880238a4d0dd6cdd7",
+      "sha256": "8ba6bdba81eeeab40a4714a654a653e84a5e1c21b33357d6d9c969225f77d812",
       "file_count": 823,
-      "size_bytes": 36796445,
+      "size_bytes": 36796475,
       "scope": "minimal CPython runtime after ensurepip/site-packages/Scripts exclusion and Assisted README override, before pinned wheel extraction"
     }
   },

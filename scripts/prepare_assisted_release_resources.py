@@ -1,4 +1,4 @@
-"""Assemble DockStart Assisted Stable from a pinned offline wheelhouse."""
+"""Assemble the DockStart Assisted candidate from a pinned offline wheelhouse."""
 
 from __future__ import annotations
 
@@ -414,11 +414,12 @@ def prepare_assisted_release_resources(
     }
     manifest: dict[str, Any] = {
         "schema_version": 1,
-        "toolchain_name": "DockStart Assisted Stable",
+        "toolchain_name": "DockStart Assisted",
         "release_profile": "assisted_stable",
         "status": "ready",
+        "maturity": "local_candidate",
         "description": (
-            "DockStart Assisted Stable includes Vina and a separate, replaceable CPython 3.11 "
+            "DockStart Assisted candidate includes Vina and a separate, replaceable CPython 3.11 "
             "runtime with pinned RDKit/Meeko dependencies for offline PDBQT preparation."
         ),
         "prepared_at": timestamp,
@@ -497,7 +498,7 @@ def prepare_assisted_release_resources(
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare DockStart Assisted Stable release resources.")
+    parser = argparse.ArgumentParser(description="Prepare DockStart Assisted candidate resources.")
     parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--target-root", default="")
     parser.add_argument("--wheelhouse", default="")

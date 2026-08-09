@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v0.14.2-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v0.14.3-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,7 +31,7 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码版本为 **v0.14.2 本地候选**，不是最终版，也尚未声明为正式 Stable Release。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。v0.14.2 会重新生成本地 Basic 与 Assisted 候选安装包；安装包不提交到 Git 仓库，请以候选 manifest 中的门禁状态和 SHA256 为准。只有后续明确发布到 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 的产物才属于公开 Release。
+> 当前源码版本为 **v0.14.3 本地候选**，不是最终版，也尚未声明为正式 Stable Release。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。v0.14.3 会重新生成本地 Basic 与 Assisted 候选安装包；安装包不提交到 Git 仓库，请以候选 manifest 中的门禁状态和 SHA256 为准。只有后续明确发布到 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 的产物才属于公开 Release。
 
 > v0.14.1 在标准 AutoDock4 maps 协议中补齐有限柔性单配体、刚性串行批量和刚性双配体共同对接，并为 1FPU、5X72 与固定 12 项串行队列提供三条独立外部验收器。验收器会固定输入与工具 SHA256、命令、maps 和结果证据，但仍需维护者提供官方输入和 AutoGrid4 后实际运行，源码存在不等于门禁已经通过。批量队列复用一组冻结 maps，但每个配体独立运行和排名；共同对接则让两个配体在一次 Vina 搜索中产生联合评分，不能拆成两个成员 affinity。两条刚性多配体路径都会先验证 maps 覆盖全部配体原子类型。AD4Zn beta 与水合 AD4 Experimental 仍是隔离的单配体子协议，不能与这些标准 AD4 扩展组合。
 
@@ -49,7 +49,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 
 | | Basic profile | Assisted profile |
 | --- | --- | --- |
-| 当前成熟度 | v0.14.2 本地候选 | v0.14.2 本地候选 |
+| 当前成熟度 | v0.14.3 本地候选 | v0.14.3 本地候选 |
 | 适合谁 | 已有受体和配体 PDBQT | 只有受体 PDB/CIF 与配体 SDF/MOL/MOL2 |
 | 内置 AutoDock Vina | 是，1.2.7 | 是，1.2.7 |
 | 内置后端 Python | 是，精简运行时 | 是，独立 CPython 3.11 运行时 |
@@ -163,7 +163,7 @@ Box 的“定位到受体”只使用受体原子坐标范围的几何中心，�
 | --- | --- | --- |
 | Vina 输入 | PDBQT | Basic 与 Assisted 均支持 |
 | 受体 raw | PDB、CIF | Assisted 可尝试准备 PDBQT |
-| 配体 raw | SDF、MOL | Assisted 可尝试准备 PDBQT |
+| 配体 raw | SDF、MOL、单分子 MOL2 | Assisted 可尝试准备 PDBQT；批量/多记录 MOL2 不支持 |
 | 结构搜索与下载 | RCSB PDB ID/关键词、PubChem CID/名称 | 候选预览与下载需要网络；不会默认选择首项 |
 | 3D 查看 | PDB、PDBQT、CIF、SDF、MOL 等 | 取决于 3Dmol.js 对格式的解析能力 |
 | 对接输出 | PDBQT、CSV、Markdown | pose、scores 与实验记录 |
@@ -173,7 +173,7 @@ Box 的“定位到受体”只使用受体原子坐标范围的几何中心，�
 
 当前不提供：
 
-- MOL2/SMILES 自动准备；
+- SMILES 自动准备，以及批量/多记录 MOL2 自动准备；
 - 复杂受体修复、可靠的质子化/电荷判断或自动链选择；
 - pocket prediction 或真实结合位点识别；
 - PLIP/ProLIF 相互作用分析；
@@ -233,8 +233,8 @@ my_project/
 ### 环境
 
 - Windows 10/11 x64；
-- Node.js 与 npm（建议使用当前 LTS）；
-- Rust stable 与 Tauri Windows 构建依赖；
+- Node.js 24.14.1 与 npm（版本由 `.node-version` 固定）；
+- Rust 1.90.0 与 Tauri Windows 构建依赖（版本由 `rust-toolchain.toml` 固定）；
 - Python 3.11+。
 
 ### 开发启动
@@ -260,17 +260,12 @@ npm run dev
 在仓库根目录执行：
 
 ```powershell
-# 后端测试
-python -m unittest discover -s backend/tests
-
-# 前端生产构建
-cd apps\desktop
-npm run build
-cd ..\..
-
-# Rust/Tauri 检查
-cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+# 干净安装前端依赖，并统一运行后端、前端、TypeScript/Vite、Rust fmt/check/test/clippy
+powershell -ExecutionPolicy Bypass -File scripts\check_all.ps1
 ```
+
+普通源码克隆不包含发布 runtime；相关集成测试会明确跳过。发布构建会以
+`DOCKSTART_REQUIRE_RELEASE_RESOURCES=1` 强制检查本地固定的 Python/Vina 资源，资源缺失时失败关闭。
 
 生成 Windows 发布候选：
 
@@ -282,7 +277,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Prof
 powershell -ExecutionPolicy Bypass -File scripts\build_windows_release.ps1 -Profile Assisted
 ```
 
-Assisted 构建依赖维护者事先准备的固定离线 wheelhouse 与对应源码归档；这些大型资源不提交到 Git，发布构建本身不会联网。构建、安装态门禁和校验要求见 [Windows 打包说明](docs/release/windows_packaging.md)、[Assisted profile 说明](docs/release/assisted_stable.md) 与 [发布检查表](docs/release/release_checklist.md)。
+Assisted 构建依赖维护者事先准备的固定离线 wheelhouse 与对应源码归档；这些大型资源不提交到 Git，科学 Python runtime 的装配过程不会联网。统一源码门禁中的 `npm ci` 与漏洞审计会访问锁定的官方 npm registry。构建、安装态门禁和校验要求见 [Windows 打包说明](docs/release/windows_packaging.md)、[Assisted profile 说明](docs/release/assisted_stable.md) 与 [发布检查表](docs/release/release_checklist.md)。
 
 ## 仓库结构
 

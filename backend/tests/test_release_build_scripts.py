@@ -37,6 +37,52 @@ class ReleaseBuildScriptTests(unittest.TestCase):
             script.index('"Prepare deterministic offline Assisted stage"'),
         )
 
+    def test_both_builders_use_the_same_locked_development_gate_and_recheck_provenance(self) -> None:
+        for name in ("build_windows_release.ps1", "build_windows_assisted_release.ps1"):
+            with self.subTest(name=name):
+                script = self._read_script(name)
+                self.assertIn('scripts\\check_all.ps1', script)
+                self.assertIn('"-RequireReleaseResources"', script)
+                self.assertIn('cargo metadata --locked', script)
+                self.assertIn('"--", "--locked"', script)
+                self.assertIn('Recheck source state before recording provenance', script)
+                self.assertIn('branch --show-current', script)
+                self.assertIn('rev-parse HEAD', script)
+                self.assertIn('$finalSourceCommit -cne $sourceCommit', script)
+                self.assertIn('Get-SourceStateFingerprint', script)
+                self.assertIn('"source_state_sha256" = $initialSourceStateSha256', script)
+                self.assertIn('"tool_versions" = $toolVersions', script)
+                self.assertIn('"lockfiles_sha256" = $lockfileSha256', script)
+                self.assertIn('CARGO_BUILD_JOBS', script)
+
+    def test_assisted_post_install_gate_uses_and_rehashes_archived_installer(self) -> None:
+        script = self._read_script("build_windows_assisted_release.ps1")
+
+        self.assertIn('"--installer", $archivedNsis', script)
+        self.assertNotIn('"--installer", $expectedNsis', script)
+        self.assertIn('Archived installer changed during the post-install gate', script)
+        self.assertGreater(
+            script.rindex('Get-SourceStateFingerprint $repoRoot'),
+            script.index('verify_installed_assisted_release.py'),
+        )
+
+    def test_unified_gate_covers_backend_frontend_rust_and_dependency_audit(self) -> None:
+        script = self._read_script("check_all.ps1")
+
+        for expected in (
+            '"compileall"',
+            '"unittest"',
+            '"test:frontend:async"',
+            '"audit"',
+            '"fmt"',
+            '"check"',
+            '"test"',
+            '"clippy"',
+            '"--locked"',
+            '"DOCKSTART_REQUIRE_RELEASE_RESOURCES"',
+        ):
+            self.assertIn(expected, script)
+
 
 if __name__ == "__main__":
     unittest.main()

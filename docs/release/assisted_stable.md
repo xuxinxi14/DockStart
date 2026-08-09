@@ -1,6 +1,6 @@
-# DockStart v0.14.2 Assisted profile 发布门禁
+# DockStart v0.14.3 Assisted profile 发布门禁
 
-Assisted Stable 是第二阶段能力，不修改 AutoDock Vina 算法。它只把现有
+Assisted 候选 profile 是第二阶段能力，不修改 AutoDock Vina 算法。它只把现有
 PDB/SDF/MOL → PDBQT 最小准备流程放入可复现、离线、可替换的 Python 工具链。
 
 ## 发布边界
@@ -80,7 +80,7 @@ Rust/Tauri 构建输出固定隔离在 `.release/cargo-target/assisted/`。正�
 只生成开发产物时可显式使用 `-SkipPostInstallGate`，但仍必须通过所有清理根的路径重叠检查。
 
 只有三道结果均为 `passed` 且 artifact manifest 中 `publishable` 为 `true`，才可以发布
-Assisted Stable。`-SkipTauriBuild` 只用于本地开发，会跳过打包后门禁，不能作为发布证据。
+Assisted 候选 profile。`-SkipTauriBuild` 只用于本地开发，会跳过打包后门禁，不能作为发布证据。
 若只需要生成开发用安装包，可直接调用 Assisted 构建脚本并显式跳过真实安装：
 
 ```powershell

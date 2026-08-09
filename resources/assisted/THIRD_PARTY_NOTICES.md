@@ -1,4 +1,4 @@
-# DockStart Assisted Stable - Third Party Notices
+# DockStart Assisted candidate profile - Third Party Notices
 
 This notice applies only to the `assisted_stable` distribution profile. The
 Basic profile does not distribute RDKit, Meeko, or these scientific Python

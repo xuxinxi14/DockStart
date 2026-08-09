@@ -6,8 +6,8 @@
 
 当前创建项目页按用户手上的输入文件提供三种入口：
 
-- **已有 PDBQT（直接使用）**：你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径，对应 Basic Stable 的核心能力。
-- **PDB/CIF + SDF/MOL（准备并转换）**：你只有受体 PDB/CIF 与配体 SDF/MOL；Assisted Stable 已随附固定 Python + RDKit + Meeko，可离线尝试准备并转换为 PDBQT。兼容的用户配置 Python 仍优先。
+- **已有 PDBQT（直接使用）**：你已经准备好 `receptor.pdbqt` 和 `ligand.pdbqt`，只需要配置 AutoDock Vina。这是最低依赖路径，对应 Basic profile 的核心能力。
+- **PDB/CIF + SDF/MOL/MOL2（准备并转换）**：你只有受体 PDB/CIF 与配体 SDF/MOL/单分子 MOL2；Assisted profile 已随附固定 Python + RDKit + Meeko，可离线尝试准备并转换为 PDBQT。兼容的用户配置 Python 仍优先。
 - **示例项目（快速体验）**：复制内置小型项目，先熟悉完整操作路径。示例只用于流程演示，不用于科研结论。
 
 如果随附或用户配置的 RDKit/Meeko 检测失败，Assisted Mode 会不可用，但 Basic Mode 仍然可以继续，只要 Vina 和已经准备好的 PDBQT 可用。
@@ -330,12 +330,12 @@ prepared/ligand.pdbqt
 
 `project.json` 会记录 ligand 的来源和项目内路径。
 
-如果你已有 `ligand.raw_file`，且文件是 SDF 或 MOL，可以先在 PreparationPage 尝试“准备 ligand PDBQT”。MOL2 和 SMILES 当前仍不支持自动准备。
+如果你已有 `ligand.raw_file`，且文件是 SDF、MOL 或单分子 MOL2，可以先在 PreparationPage 尝试“准备 ligand PDBQT”。SMILES 以及批量/多记录 MOL2 当前仍不支持自动准备。
 
 常见错误：
 
 - 文件不存在或为空；
-- 误导入 PDB、SDF、MOL2：V0.1 不做自动格式转换，请先在外部工具中准备 PDBQT。
+- 把不受支持的配体 PDB、SMILES 或批量/多记录 MOL2 当作 prepared PDBQT 导入；请改用受支持的 raw 格式，或先在外部工具中准备 PDBQT。
 
 ## 7. 设置 Box 参数
 

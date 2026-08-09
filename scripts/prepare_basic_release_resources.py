@@ -44,6 +44,63 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _ordered_tree_fingerprint(path: Path) -> dict[str, Any]:
+    """Hash a materialized runtime tree without timestamps or absolute paths."""
+
+    if not path.is_dir():
+        raise BasicReleasePreparationError(f"Runtime tree is missing: {path}")
+    files = sorted(
+        (item for item in path.rglob("*") if item.is_file()),
+        key=lambda item: (
+            item.relative_to(path).as_posix().casefold(),
+            item.relative_to(path).as_posix(),
+        ),
+    )
+    digest = hashlib.sha256()
+    total_size = 0
+    for item in files:
+        relative = item.relative_to(path).as_posix()
+        size = item.stat().st_size
+        total_size += size
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(size).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(_sha256(item).encode("ascii"))
+        digest.update(b"\n")
+    return {
+        "sha256": digest.hexdigest(),
+        "file_count": len(files),
+        "size_bytes": total_size,
+    }
+
+
+def _expected_runtime_fingerprint(source_manifest: dict[str, Any]) -> dict[str, Any]:
+    pinned = source_manifest.get("expected_basic_runtime")
+    if not isinstance(pinned, dict):
+        raise BasicReleasePreparationError(
+            "Source toolchain manifest must pin expected_basic_runtime.",
+        )
+    sha256 = str(pinned.get("sha256") or "").strip().lower()
+    file_count = pinned.get("file_count")
+    size_bytes = pinned.get("size_bytes")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", sha256) is None
+        or type(file_count) is not int
+        or file_count <= 0
+        or type(size_bytes) is not int
+        or size_bytes <= 0
+    ):
+        raise BasicReleasePreparationError(
+            "expected_basic_runtime must contain a SHA256, positive file_count, and positive size_bytes.",
+        )
+    return {
+        "sha256": sha256,
+        "file_count": file_count,
+        "size_bytes": size_bytes,
+    }
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -219,6 +276,7 @@ def prepare_basic_release_resources(
         raise BasicReleasePreparationError(
             "Source toolchain manifest must pin bundled_vina and bundled_python.",
         )
+    expected_basic_runtime = _expected_runtime_fingerprint(source_manifest)
     if not source_vina.is_file():
         raise BasicReleasePreparationError(f"Bundled AutoDock Vina is missing: {source_vina}")
     if not source_python_exe.is_file():
@@ -247,6 +305,13 @@ def prepare_basic_release_resources(
     )
     _copy_tree(source_resources / "examples", target / "examples")
     _copy_minimal_python(source_python, target / "python")
+    basic_runtime_fingerprint = _ordered_tree_fingerprint(target / "python")
+    if basic_runtime_fingerprint != expected_basic_runtime:
+        raise BasicReleasePreparationError(
+            "Staged Basic Python runtime does not match expected_basic_runtime: "
+            f"expected={expected_basic_runtime}, actual={basic_runtime_fingerprint}. "
+            "Review the runtime tree and update the source manifest only for an intentional toolchain change.",
+        )
     _copy_tree(root / "backend" / "adapters", stage_root / "backend" / "adapters", runtime_tree=True)
     _copy_tree(
         root / "backend" / "dockstart_core",
@@ -298,12 +363,15 @@ def prepare_basic_release_resources(
         "toolchain_name": "DockStart Basic",
         "release_profile": "basic_stable",
         "status": "ready",
+        "maturity": "local_candidate",
+        "resources_committed": False,
         "description": (
-            "DockStart Basic 稳定包随附 AutoDock Vina 与仅用于 DockStart 后端的 Python runtime；"
+            "DockStart Basic 候选 profile 随附 AutoDock Vina 与仅用于 DockStart 后端的 Python runtime；"
             "不随附 RDKit、Meeko 或其科学计算依赖。"
         ),
         "includes_bundled_rdkit": False,
         "includes_bundled_meeko": False,
+        "expected_basic_runtime": basic_runtime_fingerprint,
         "bundled_vina": {
             "name": "AutoDock Vina",
             "version": vina_version,
@@ -324,6 +392,9 @@ def prepare_basic_release_resources(
             "bundled": True,
             "includes_site_packages": False,
             "sha256": _sha256(stage_python),
+            "runtime_tree_sha256": basic_runtime_fingerprint["sha256"],
+            "runtime_file_count": basic_runtime_fingerprint["file_count"],
+            "runtime_size_bytes": basic_runtime_fingerprint["size_bytes"],
             "prepared_at": timestamp,
         },
         "tools": {
@@ -367,6 +438,12 @@ def prepare_basic_release_resources(
 
     runtime_probe = _validate_basic_runtime(stage_python) if validate_runtime else {"skipped": True}
     _remove_generated_bytecode(stage_root)
+    final_runtime_fingerprint = _ordered_tree_fingerprint(target / "python")
+    if final_runtime_fingerprint != expected_basic_runtime:
+        raise BasicReleasePreparationError(
+            "Final Basic Python runtime changed after validation: "
+            f"expected={expected_basic_runtime}, actual={final_runtime_fingerprint}.",
+        )
     file_count, size_bytes = _tree_stats(stage_root)
     return {
         "ok": True,
@@ -381,6 +458,7 @@ def prepare_basic_release_resources(
         "vina_version": vina_version,
         "excluded_packages": list(EXCLUDED_BASIC_PACKAGES),
         "runtime_probe": runtime_probe,
+        "basic_runtime_fingerprint": final_runtime_fingerprint,
         "dependency_license_counts": dependency_bom.get("counts") if dependency_bom else None,
         "file_count": file_count,
         "size_bytes": size_bytes,

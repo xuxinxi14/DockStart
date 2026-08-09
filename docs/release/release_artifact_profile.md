@@ -4,7 +4,7 @@ DockStart v0.12.0 保留两个隔离的 Windows x86_64 发布 profile。二者�
 AutoDock Vina 1.2.7、DockStart 后端和小型示例，但 Python 工具链边界不同。
 安装包文件名必须包含 `Basic` 或 `Assisted`；两个 profile 使用同一应用身份，不能并行安装。
 
-## Basic Stable
+## Basic profile
 
 ```json
 {
@@ -19,11 +19,11 @@ AutoDock Vina 1.2.7、DockStart 后端和小型示例，但 Python 工具链边�
 }
 ```
 
-Basic Stable 面向已有 `prepared/receptor.pdbqt` 与 `prepared/ligand.pdbqt` 的用户。
+Basic profile 面向已有 `prepared/receptor.pdbqt` 与 `prepared/ligand.pdbqt` 的用户。内部兼容标识仍为 `basic_stable`，成熟度由独立的 `maturity` 字段表达。
 它可离线完成对接箱体设置、Vina 参数配置、真实 Vina 运行、结果解析和 Markdown 报告导出。
 其 Python runtime 必须排除 `Lib/site-packages`、`Scripts`、RDKit、Meeko 和 Python bytecode。
 
-## Assisted Stable
+## Assisted profile
 
 ```json
 {
@@ -39,7 +39,7 @@ Basic Stable 面向已有 `prepared/receptor.pdbqt` 与 `prepared/ligand.pdbqt` 
 }
 ```
 
-Assisted Stable 在独立、可替换的 CPython 3.11 runtime 中固定 RDKit 2026.3.3、
+Assisted profile 在独立、可替换的 CPython 3.11 runtime 中固定 RDKit 2026.3.3、
 Meeko 0.7.1 及其审计后的依赖，可离线从 PDB 受体与 SDF/MOL 配体尝试生成 PDBQT。
 它不会把 Meeko 冻结进 `dockstart-desktop.exe`，也不会在应用运行时联网安装包。
 

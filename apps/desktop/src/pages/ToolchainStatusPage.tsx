@@ -684,7 +684,7 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
               <p className="placeholder-note">
                 {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
-                  ? "Assisted Stable 已随附固定 RDKit/Meeko；兼容的用户配置 Python 仍优先。运行时不会联网改环境。"
+                  ? "Assisted 本地候选已随附固定 RDKit/Meeko；兼容的用户配置 Python 仍优先。运行时不会联网改环境。"
                   : "当前安装包不含 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。"}
               </p>
             </article>

@@ -10,26 +10,10 @@ import {
   type ProjectTaskIntent,
   type StartMode,
 } from "./navigation/pages";
-import BoxSetupPage from "./pages/BoxSetupPage";
 import HelpPage from "./pages/HelpPage";
-import HydratedAd4Page from "./pages/HydratedAd4Page";
-import ImportPdbqtPage from "./pages/ImportPdbqtPage";
-import PreparationPage from "./pages/PreparationPage";
 import ProjectCreatePage from "./pages/ProjectCreatePage";
 import ProjectDashboardPage from "./pages/ProjectDashboardPage";
-import ReportPage from "./pages/ReportPage";
-import ResultPage from "./pages/ResultPage";
 import RunRequiredPage from "./pages/RunRequiredPage";
-import BatchResultsPage from "./pages/BatchResultsPage";
-import RunExecutePage from "./pages/RunExecutePage";
-import RunPreparePage from "./pages/RunPreparePage";
-import SettingsPage from "./pages/SettingsPage";
-import StructureFetchPage from "./pages/StructureFetchPage";
-import ToolCheckPage from "./pages/ToolCheckPage";
-const ToolchainStatusPage = lazy(() => import("./pages/ToolchainStatusPage"));
-
-import VinaConfigPage from "./pages/VinaConfigPage";
-import VinaParamPage from "./pages/VinaParamPage";
 import type { DockStartProject, ProjectWorkflowStatusResponse } from "./types";
 import { listenForBackgroundTaskUpdates } from "./utils/backgroundTasks";
 import {
@@ -40,6 +24,22 @@ import {
 import { taskIntentFromProject, workflowRunForTask } from "./utils/vinaTask";
 import { getWorkflowSummary } from "./utils/workflowSummary";
 import { buildWorkflowSteps } from "./utils/workflowSteps";
+
+const BatchResultsPage = lazy(() => import("./pages/BatchResultsPage"));
+const BoxSetupPage = lazy(() => import("./pages/BoxSetupPage"));
+const HydratedAd4Page = lazy(() => import("./pages/HydratedAd4Page"));
+const ImportPdbqtPage = lazy(() => import("./pages/ImportPdbqtPage"));
+const PreparationPage = lazy(() => import("./pages/PreparationPage"));
+const ReportPage = lazy(() => import("./pages/ReportPage"));
+const ResultPage = lazy(() => import("./pages/ResultPage"));
+const RunExecutePage = lazy(() => import("./pages/RunExecutePage"));
+const RunPreparePage = lazy(() => import("./pages/RunPreparePage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const StructureFetchPage = lazy(() => import("./pages/StructureFetchPage"));
+const ToolCheckPage = lazy(() => import("./pages/ToolCheckPage"));
+const ToolchainStatusPage = lazy(() => import("./pages/ToolchainStatusPage"));
+const VinaConfigPage = lazy(() => import("./pages/VinaConfigPage"));
+const VinaParamPage = lazy(() => import("./pages/VinaParamPage"));
 
 function projectStateKey(project: DockStartProject): string {
   return `${project.project_dir}\u0000${project.updated_at ?? ""}`;

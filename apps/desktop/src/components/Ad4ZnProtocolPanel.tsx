@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import type {
@@ -7,6 +7,7 @@ import type {
   AutoGridMapsStatusResponse,
   DockStartProject,
 } from "../types";
+import { mapsProjectContextKey } from "../utils/mapsContext";
 import ActionButton from "./ActionButton";
 import AdvancedDetails from "./AdvancedDetails";
 import OperationLoadingDialog from "./OperationLoadingDialog";
@@ -139,6 +140,8 @@ export default function Ad4ZnProtocolPanel({
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
   const [busyAction, setBusyAction] = useState<BusyAction>("");
+  const loadRequestRef = useRef(0);
+  const mapsContextKey = useMemo(() => mapsProjectContextKey(project), [project]);
 
   const applyStatus = useCallback((response: Ad4ZnStatusResponse) => {
     setStatus(response);
@@ -156,6 +159,7 @@ export default function Ad4ZnProtocolPanel({
   }, []);
 
   const load = useCallback(async (preserveFeedback = false) => {
+    const requestId = ++loadRequestRef.current;
     setBusyAction((current) => current || "load");
     if (!preserveFeedback) {
       setMessage("");
@@ -166,6 +170,7 @@ export default function Ad4ZnProtocolPanel({
         invoke<string>("get_ad4zn_status", { projectDir: project.project_dir }),
         invoke<string>("get_autogrid_maps_status", { projectDir: project.project_dir }),
       ]);
+      if (requestId !== loadRequestRef.current) return;
 
       let nextProtocolStatus: Ad4ZnStatusResponse | null = null;
       let nextMapsStatus: AutoGridMapsStatusResponse | null = null;
@@ -205,16 +210,22 @@ export default function Ad4ZnProtocolPanel({
 
       onProtocolStatus(nextProtocolStatus, nextMapsStatus);
     } catch (error) {
+      if (requestId !== loadRequestRef.current) return;
       setMessage("无法读取 AD4Zn 协议状态。");
       setRawError(error instanceof Error ? error.message : String(error));
       onProtocolStatus(null, null);
     } finally {
-      setBusyAction((current) => (current === "load" ? "" : current));
+      if (requestId === loadRequestRef.current) {
+        setBusyAction((current) => (current === "load" ? "" : current));
+      }
     }
-  }, [applyStatus, onProtocolStatus, project.project_dir]);
+  }, [applyStatus, mapsContextKey, onProtocolStatus, project.project_dir]);
 
   useEffect(() => {
     void load();
+    return () => {
+      loadRequestRef.current += 1;
+    };
   }, [load, refreshToken]);
 
   useEffect(() => {

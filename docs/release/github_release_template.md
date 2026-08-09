@@ -4,8 +4,8 @@
 
 DockStart v0.10.2 是计划发布的首个公开稳定版。它把 AutoDock Vina 的本地对接步骤整理为中文桌面工作流，并提供两个不能并行安装的 Windows x64 profile：
 
-- **Basic Stable**：适合已经有 receptor/ligand PDBQT 的用户；
-- **Assisted Stable**：额外随附独立、可替换的 CPython 3.11、RDKit 2026.3.3 与 Meeko 0.7.1，可离线尝试把受体 PDB/CIF 和配体 SDF/MOL 准备并转换为 PDBQT。
+- **Basic profile**：适合已经有 receptor/ligand PDBQT 的用户；
+- **Assisted profile**：额外随附独立、可替换的 CPython 3.11、RDKit 2026.3.3 与 Meeko 0.7.1，可离线尝试把受体 PDB/CIF 和配体 SDF/MOL/单分子 MOL2 准备并转换为 PDBQT。
 
 安装包 Author / Publisher：`XinXi Xu`。
 

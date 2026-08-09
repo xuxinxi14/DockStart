@@ -44,7 +44,7 @@ import type {
   VinaRunMode,
 } from "../types";
 import {
-  cancelQueuedBackgroundTask,
+  cancelBackgroundTask,
   findActiveBackgroundTask,
   startVinaRunTask,
   waitForBackgroundTask,
@@ -868,33 +868,23 @@ export default function RunPreparePage({
     });
     if (!nextBox || !nextVina) throw new Error("Box 或 Vina 参数格式无效，请检查高亮字段。");
     setStage("saving");
-    const boxPayload = await invoke<string>("update_box_params", {
+    const payload = await invoke<string>("update_run_settings", {
       projectDir: project.project_dir,
       boxJson: JSON.stringify(nextBox),
-    });
-    const boxResponse = parseProjectResponse(boxPayload);
-    if (!boxResponse.ok || !boxResponse.project) throw new Error(boxResponse.error?.message ?? "搜索范围保存失败。");
-    const vinaPayload = await invoke<string>("update_vina_params", {
-      projectDir: project.project_dir,
       vinaJson: JSON.stringify(nextVina),
-    });
-    const vinaResponse = parseProjectResponse(vinaPayload);
-    if (!vinaResponse.ok || !vinaResponse.project) throw new Error(vinaResponse.error?.message ?? "Vina 参数保存失败。");
-    const protocolPayload = await invoke<string>("update_vina_run_protocol", {
-      projectDir: project.project_dir,
       runMode,
       autobox: runMode === "dock" || isAd4Maps ? false : autobox,
       confirmPoseContext: false,
     });
-    const protocolResponse = parseProjectResponse(protocolPayload);
-    if (!protocolResponse.ok || !protocolResponse.project) {
-      throw new Error(protocolResponse.error?.message ?? "运行任务类型保存失败。");
+    const response = parseProjectResponse(payload);
+    if (!response.ok || !response.project) {
+      throw new Error(response.error?.message ?? "运行设置保存失败，项目未被部分修改。");
     }
-    const nextProject = projectFromResponse(protocolResponse, projectFromResponse(vinaResponse, boxResponse.project));
+    const nextProject = projectFromResponse(response, project);
     commitProject(nextProject, true);
     if (announce) setMessage("搜索范围、任务类型与 Vina 参数已保存。正在重新检查…");
     return nextProject;
-  }, [activeRunBlocked, autobox, boxForm, boxRequired, commitProject, isAd4Maps, project.box, project.docking_protocol?.engine, project.project_dir, receptorMode, runMode, vinaForm]);
+  }, [activeRunBlocked, autobox, boxForm, boxRequired, commitProject, isAd4Maps, project, receptorMode, runMode, vinaForm]);
 
   const runWorkflow = async () => {
     if (!preflight?.ready || !formIsValid || isBusy) return;
@@ -1034,7 +1024,7 @@ export default function RunPreparePage({
     if (!activeRunId || !running) return;
     if (activeBackgroundTask?.status === "queued") {
       try {
-        const cancelled = await cancelQueuedBackgroundTask(activeBackgroundTask.task_id);
+        const cancelled = await cancelBackgroundTask(activeBackgroundTask.task_id);
         setActiveBackgroundTask(cancelled);
         if (cancelled.status === "cancelled") {
           setStage("cancelled");
@@ -1048,12 +1038,22 @@ export default function RunPreparePage({
     }
     setStage("cancelling");
     setMessage(`正在终止 ${activeRunId}…`);
+    const forceStopWrapper = async (): Promise<boolean> => {
+      if (!activeBackgroundTask?.task_id) return false;
+      const cancelled = await cancelBackgroundTask(activeBackgroundTask.task_id);
+      setActiveBackgroundTask(cancelled);
+      setStage(cancelled.status === "cancelled" ? "cancelled" : "cancelling");
+      setMessage("安全取消接口未能完成，已终止本次后台工具进程树；现有日志仍会保留。");
+      return true;
+    };
     try {
       const payload = await invoke<string>("cancel_vina_run", { projectDir: project.project_dir, runId: activeRunId });
       const parsed = parseRuntime(payload);
       if (!parsed.ok) {
-        setStage("running");
-        setMessage(parsed.error?.message || "取消请求失败，运行状态将继续刷新。");
+        if (!(await forceStopWrapper())) {
+          setStage("running");
+          setMessage(parsed.error?.message || "取消请求失败，运行状态将继续刷新。");
+        }
         setRawError(parsed.error?.raw_error || parsed.error?.suggestion || "");
         return;
       }
@@ -1062,6 +1062,18 @@ export default function RunPreparePage({
       setStage(parsed.stage || "cancelling");
       setMessage(parsed.message || "取消请求已发送。");
     } catch (error) {
+      try {
+        if (await forceStopWrapper()) {
+          setRawError(error instanceof Error ? error.message : String(error));
+          return;
+        }
+      } catch (forceError) {
+        setRawError([
+          error instanceof Error ? error.message : String(error),
+          forceError instanceof Error ? forceError.message : String(forceError),
+        ].join("\n"));
+        return;
+      }
       setRawError(error instanceof Error ? error.message : String(error));
     }
   };

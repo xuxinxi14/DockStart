@@ -256,6 +256,40 @@ class ReleaseBuildSafetyTests(unittest.TestCase):
                     require_no_existing_install=True,
                 )
 
+    def test_require_no_existing_install_rejects_nonempty_default_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            repo = self._temporary_repo(root)
+            local_app_data = root / "LocalAppData"
+            stale_install = local_app_data / "DockStart"
+            stale_install.mkdir(parents=True)
+            (stale_install / "uninstall.exe").write_bytes(b"stale")
+
+            with self.assertRaises(MODULE.ReleaseBuildSafetyError):
+                MODULE.validate_release_build_safety(
+                    repo,
+                    [repo / ".release" / "install-gate"],
+                    [],
+                    require_no_existing_install=True,
+                    environ={"LOCALAPPDATA": str(local_app_data)},
+                )
+
+    def test_empty_default_install_directory_is_reported_but_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            repo = self._temporary_repo(root)
+            local_app_data = root / "LocalAppData"
+            (local_app_data / "DockStart").mkdir(parents=True)
+
+            result = MODULE.validate_release_build_safety(
+                repo,
+                [repo / ".release" / "install-gate"],
+                [],
+                require_no_existing_install=True,
+                environ={"LOCALAPPDATA": str(local_app_data)},
+            )
+            self.assertEqual(result["nonempty_default_install_directories"], [])
+
     def test_uninstall_string_fallback_expands_environment_and_uses_parent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)

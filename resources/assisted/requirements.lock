@@ -1,4 +1,4 @@
-# DockStart Assisted Stable; Windows x86_64, CPython 3.11 only.
+# DockStart Assisted candidate; Windows x86_64, CPython 3.11 only.
 # The stage builder does not resolve dependencies. Every wheel must match
 # SOURCE_MANIFEST.json by filename and SHA256 before extraction.
 meeko==0.7.1 --hash=sha256:e50f5fdb9f94f44e6ee20616936cf033be9c93c7825bd69493a9cd9a3c5dc28d

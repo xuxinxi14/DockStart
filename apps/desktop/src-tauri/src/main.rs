@@ -6,7 +6,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{Read, Seek, SeekFrom},
     path::{Component, Path, PathBuf},
-    process::Command,
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex, OnceLock,
@@ -23,6 +23,8 @@ use tauri::Emitter;
 use tauri::Manager;
 
 const RESOURCE_DIR_ENV_VAR: &str = "DOCKSTART_RESOURCE_DIR";
+const DEV_BACKEND_DIR_ENV_VAR: &str = "DOCKSTART_DEV_BACKEND_DIR";
+const ALLOW_DEV_BACKEND_DISCOVERY_ENV_VAR: &str = "DOCKSTART_ALLOW_DEV_BACKEND_DISCOVERY";
 const SETTINGS_ENV_VAR: &str = "DOCKSTART_SETTINGS_PATH";
 const PREPARATION_TOOLS_SNAPSHOT_ENV_VAR: &str = "DOCKSTART_PREPARATION_TOOLS_JSON";
 const RUNTIME_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
@@ -36,15 +38,96 @@ const MAX_MARKDOWN_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const BACKGROUND_TASK_EVENT: &str = "dockstart-background-task";
 const MAX_CONCURRENT_BACKGROUND_TASKS: usize = 2;
 const MAX_QUEUED_BACKGROUND_TASKS: usize = 32;
+const MANAGED_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[cfg(windows)]
+struct ProcessTreeGuard {
+    job: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateJobObjectW(
+        job_attributes: *const std::ffi::c_void,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn AssignProcessToJobObject(job: *mut std::ffi::c_void, process: *mut std::ffi::c_void) -> i32;
+    fn TerminateJobObject(job: *mut std::ffi::c_void, exit_code: u32) -> i32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    fn GetLastError() -> u32;
+}
+
+#[cfg(windows)]
+impl ProcessTreeGuard {
+    fn attach(child: &Child) -> Result<Self, String> {
+        use std::os::windows::io::AsRawHandle;
+
+        // SAFETY: null security/name pointers request an unnamed job with
+        // default security. The returned handle is owned by this guard.
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            // SAFETY: GetLastError has no preconditions.
+            return Err(format!(
+                "无法创建 Windows 进程作业，错误码 {}。",
+                unsafe { GetLastError() }
+            ));
+        }
+        // SAFETY: both handles are valid here; the child remains alive while
+        // it is attached and the job handle is closed by Drop.
+        if unsafe { AssignProcessToJobObject(job, child.as_raw_handle()) } == 0 {
+            // SAFETY: `job` was created successfully above and is closed once.
+            let error = unsafe { GetLastError() };
+            unsafe { CloseHandle(job) };
+            return Err(format!(
+                "无法把后台工具加入 Windows 进程作业，错误码 {error}。"
+            ));
+        }
+        Ok(Self { job })
+    }
+
+    fn terminate(&self) {
+        // SAFETY: the guard owns a live job handle until Drop. Terminating an
+        // already-finished job is harmless and ensures descendants do not
+        // outlive the Python wrapper.
+        unsafe {
+            TerminateJobObject(self.job, 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTreeGuard {
+    fn drop(&mut self) {
+        // SAFETY: this is the unique owned handle returned by CreateJobObjectW.
+        unsafe {
+            CloseHandle(self.job);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+struct ProcessTreeGuard;
+
+#[cfg(not(windows))]
+impl ProcessTreeGuard {
+    fn attach(_child: &Child) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn terminate(&self) {}
+}
+
 fn distribution_manifest_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Ok(resource_dir) = env::var(RESOURCE_DIR_ENV_VAR) {
-        let resource_dir = PathBuf::from(resource_dir);
+    if let Some(resource_dir) = env::var_os(RESOURCE_DIR_ENV_VAR)
+        .map(PathBuf::from)
+        .and_then(|path| fs::canonicalize(path).ok())
+    {
         candidates.push(
             resource_dir
                 .join("resources")
@@ -59,9 +142,11 @@ fn distribution_manifest_candidates() -> Vec<PathBuf> {
         }
     }
 
-    if let Ok(current_dir) = env::current_dir() {
-        for ancestor in current_dir.ancestors().take(6) {
-            candidates.push(ancestor.join("resources").join("toolchain_manifest.json"));
+    if development_backend_discovery_enabled() {
+        if let Ok(current_dir) = env::current_dir() {
+            for ancestor in current_dir.ancestors().take(6) {
+                candidates.push(ancestor.join("resources").join("toolchain_manifest.json"));
+            }
         }
     }
 
@@ -99,7 +184,7 @@ fn distribution_profile_from_manifest(manifest_path: &Path) -> Result<serde_json
         "release_profile": release_profile,
         "display_name": display_name,
         "manifest_file": manifest_path.to_string_lossy(),
-        "message": format!("当前安装为 DockStart {display_name} Stable。"),
+        "message": format!("当前安装为 DockStart {display_name} · 本地候选。"),
         "error": serde_json::Value::Null,
     }))
 }
@@ -1092,6 +1177,43 @@ async fn update_vina_run_protocol(
         Err(error) => {
             fallback_project_error_json("运行任务类型保存任务异常结束。", &error.to_string())
         }
+    }
+}
+
+#[tauri::command]
+async fn update_run_settings(
+    project_dir: String,
+    box_json: String,
+    vina_json: String,
+    run_mode: String,
+    autobox: bool,
+    confirm_pose_context: Option<bool>,
+) -> String {
+    let task = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let _guard_lock = project_run_guard_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = inspect_project_run_guard(&project_dir, true)?;
+        if guard.blocked {
+            return Ok(project_run_guard_error_json(&guard));
+        }
+        run_backend_module(
+            "dockstart_core.project",
+            vec![
+                "update-run-settings".to_string(),
+                project_dir,
+                box_json,
+                vina_json,
+                run_mode,
+                autobox.to_string(),
+                confirm_pose_context.unwrap_or(false).to_string(),
+            ],
+        )
+    });
+    match task.await {
+        Ok(Ok(payload)) => payload,
+        Ok(Err(error)) => fallback_project_error_json("无法原子保存运行设置。", &error),
+        Err(error) => fallback_project_error_json("运行设置保存任务异常结束。", &error.to_string()),
     }
 }
 
@@ -2144,6 +2266,7 @@ async fn stage_screening_inputs(project_dir: String, files: Vec<String>) -> Stri
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn create_screening(
     project_dir: String,
     receptor_file: String,
@@ -2469,6 +2592,7 @@ struct BackgroundTaskRecord {
     finished_at: Option<Instant>,
     result_json: String,
     error: String,
+    cancel_requested: bool,
 }
 
 #[derive(Default)]
@@ -2520,6 +2644,18 @@ fn background_task_registry() -> &'static (Mutex<BackgroundTaskRegistry>, Condva
             Condvar::new(),
         )
     })
+}
+
+fn background_task_cancel_requested(task_id: &str) -> bool {
+    let (mutex, _) = background_task_registry();
+    let registry = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    registry
+        .tasks
+        .get(task_id)
+        .map(|record| record.cancel_requested)
+        .unwrap_or(true)
 }
 
 fn project_run_guard_failure(project_dir: &str, error: &str) -> ProjectRunGuardPayload {
@@ -3315,12 +3451,10 @@ fn watch_vina_progress(
             } else {
                 (28, "AutoDock Vina 已启动，正在初始化计算。")
             }
+        } else if is_multiple_ligand {
+            (18, "正在等待多配体共同对接写入运行进度。")
         } else {
-            if is_multiple_ligand {
-                (18, "正在等待多配体共同对接写入运行进度。")
-            } else {
-                (18, "正在等待 AutoDock Vina 写入运行进度。")
-            }
+            (18, "正在等待 AutoDock Vina 写入运行进度。")
         };
 
         let record = {
@@ -3463,7 +3597,9 @@ fn run_background_job(job: QueuedBackgroundJob) {
         match cached_preparation_tools(&spec.project_dir) {
             Ok(tools) => {
                 let tools_json = tools.to_string();
-                run_backend_module_with_env(
+                run_backend_module_managed_with_env(
+                    &task_id,
+                    &spec.kind,
                     &spec.module,
                     spec.args.clone(),
                     &[(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR, tools_json.as_str())],
@@ -3471,10 +3607,22 @@ fn run_background_job(job: QueuedBackgroundJob) {
             }
             // A cache failure must not make preparation less reliable than
             // before. The backend can still perform its own fresh probe.
-            Err(_) => run_backend_module(&spec.module, spec.args.clone()),
+            Err(_) => run_backend_module_managed_with_env(
+                &task_id,
+                &spec.kind,
+                &spec.module,
+                spec.args.clone(),
+                &[],
+            ),
         }
     } else {
-        run_backend_module(&spec.module, spec.args.clone())
+        run_backend_module_managed_with_env(
+            &task_id,
+            &spec.kind,
+            &spec.module,
+            spec.args.clone(),
+            &[],
+        )
     };
     watcher_stop.store(true, Ordering::Release);
     if let Some(watcher) = watcher {
@@ -3529,7 +3677,20 @@ fn run_background_job(job: QueuedBackgroundJob) {
                 record.message = record.progress_message.clone();
                 record.result_json = payload;
             }
-            Err(error) => {
+            Err(ManagedProcessError::Cancelled) => {
+                record.status = "cancelled".to_string();
+                record.stage = "cancelled".to_string();
+                record.progress_message = "任务已取消，后台工具进程树已经终止。".to_string();
+                record.message = record.progress_message.clone();
+            }
+            Err(ManagedProcessError::TimedOut(timeout)) => {
+                record.status = "failed".to_string();
+                record.stage = "failed".to_string();
+                record.progress_message = "后台工具运行超时，进程树已经终止。".to_string();
+                record.message = record.progress_message.clone();
+                record.error = ManagedProcessError::TimedOut(timeout).message();
+            }
+            Err(ManagedProcessError::Failed(error)) => {
                 record.status = "failed".to_string();
                 record.stage = "failed".to_string();
                 record.progress_message = spec.fallback_message.clone();
@@ -3602,6 +3763,7 @@ fn start_background_job(app: tauri::AppHandle, spec: BackgroundJobSpec) -> Strin
             finished_at: None,
             result_json: String::new(),
             error: String::new(),
+            cancel_requested: false,
         };
         registry
             .active_by_key
@@ -3773,6 +3935,7 @@ fn start_screening_task(app: tauri::AppHandle, project_dir: String) -> String {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn start_flexible_receptor_task(
     app: tauri::AppHandle,
     project_dir: String,
@@ -4121,21 +4284,37 @@ fn cancel_background_task(app: tauri::AppHandle, task_id: String) -> String {
         let Some(snapshot) = registry.tasks.get(&task_id).cloned() else {
             return background_task_error_json(&task_id, "没有找到该后台任务。", "TASK_NOT_FOUND");
         };
-        if snapshot.status != "queued" {
+        if is_terminal_task_status(&snapshot.status) {
             return background_task_status_json(&snapshot, false);
         }
-        registry.queue.retain(|job| job.task_id != task_id);
-        registry.active_by_key.remove(&snapshot.key);
-        let record = registry
+        if snapshot.status == "queued" {
+            registry.queue.retain(|job| job.task_id != task_id);
+            registry.active_by_key.remove(&snapshot.key);
+            let record = registry
+                .tasks
+                .get_mut(&task_id)
+                .expect("queued task disappeared");
+            record.status = "cancelled".to_string();
+            record.stage = "cancelled".to_string();
+            record.finished_at = Some(Instant::now());
+            record.cancel_requested = true;
+            record.message = "排队中的任务已取消。".to_string();
+            record.progress_message = record.message.clone();
+        } else {
+            let record = registry
+                .tasks
+                .get_mut(&task_id)
+                .expect("running task disappeared");
+            record.cancel_requested = true;
+            record.stage = "cancelling".to_string();
+            record.message = "正在终止后台工具进程；现有日志和项目记录会保留。".to_string();
+            record.progress_message = record.message.clone();
+        }
+        let cancelled = registry
             .tasks
-            .get_mut(&task_id)
-            .expect("queued task disappeared");
-        record.status = "cancelled".to_string();
-        record.stage = "cancelled".to_string();
-        record.finished_at = Some(Instant::now());
-        record.message = "排队中的任务已取消。".to_string();
-        record.progress_message = record.message.clone();
-        let cancelled = record.clone();
+            .get(&task_id)
+            .expect("cancelled task disappeared")
+            .clone();
         wake.notify_all();
         cancelled
     };
@@ -4916,6 +5095,60 @@ fn run_backend_module_with_env(
     result
 }
 
+fn run_backend_module_managed_with_env(
+    task_id: &str,
+    kind: &str,
+    module: &str,
+    args: Vec<String>,
+    extra_env: &[(&str, &str)],
+) -> Result<String, ManagedProcessError> {
+    let invalidation = backend_command_invalidation(module, &args);
+    invalidate_backend_cache(invalidation);
+    let result = (|| {
+        let backend_dir = find_backend_dir().ok_or_else(|| {
+            ManagedProcessError::Failed(
+                "未找到 DockStart 本地服务文件。请重新安装或恢复完整应用目录。".to_string(),
+            )
+        })?;
+        let timeout = background_job_timeout(kind);
+        let mut errors = Vec::new();
+        for python in python_candidates(&backend_dir) {
+            if background_task_cancel_requested(task_id) {
+                return Err(ManagedProcessError::Cancelled);
+            }
+            let mut command = build_python_module_command_with_env(
+                &backend_dir,
+                &python,
+                module,
+                &args,
+                extra_env,
+            );
+            #[cfg(windows)]
+            command.creation_flags(CREATE_NO_WINDOW);
+            match run_captured_command_managed(&mut command, timeout, || {
+                background_task_cancel_requested(task_id)
+            }) {
+                Ok(output) => match classify_structured_backend_output(
+                    output.status.success(),
+                    &output.stdout,
+                    &output.stderr,
+                ) {
+                    Ok(payload) => return Ok(payload),
+                    Err(error) => errors.push(format!("{python}: {error}")),
+                },
+                Err(ManagedProcessError::Failed(error)) => {
+                    errors.push(format!("{python}: {error}"));
+                }
+                Err(error @ ManagedProcessError::Cancelled)
+                | Err(error @ ManagedProcessError::TimedOut(_)) => return Err(error),
+            }
+        }
+        Err(ManagedProcessError::Failed(errors.join("\n")))
+    })();
+    invalidate_backend_cache(invalidation);
+    result
+}
+
 fn run_backend_module_uncached(module: &str, args: Vec<String>) -> Result<String, String> {
     run_backend_module_uncached_with_env(module, args, &[])
 }
@@ -4985,6 +5218,169 @@ where
     Err(errors.join("\n"))
 }
 
+#[derive(Debug)]
+struct CapturedProcessOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ManagedProcessError {
+    Cancelled,
+    TimedOut(Duration),
+    Failed(String),
+}
+
+impl ManagedProcessError {
+    fn message(&self) -> String {
+        match self {
+            Self::Cancelled => "后台任务已取消，工具进程树已经终止。".to_string(),
+            Self::TimedOut(timeout) => format!(
+                "后台工具超过 {} 秒仍未结束，已终止进程树。",
+                timeout.as_secs()
+            ),
+            Self::Failed(error) => error.clone(),
+        }
+    }
+}
+
+fn read_process_pipe<T>(mut pipe: T) -> Result<Vec<u8>, String>
+where
+    T: Read,
+{
+    let mut content = Vec::new();
+    pipe.read_to_end(&mut content)
+        .map_err(|error| format!("无法读取后台工具输出：{error}"))?;
+    Ok(content)
+}
+
+fn join_process_pipe(
+    reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+) -> Result<Vec<u8>, ManagedProcessError> {
+    match reader {
+        Some(reader) => reader
+            .join()
+            .map_err(|_| ManagedProcessError::Failed("后台工具输出读取线程异常结束。".to_string()))?
+            .map_err(ManagedProcessError::Failed),
+        None => Ok(Vec::new()),
+    }
+}
+
+fn finish_captured_process(
+    status: ExitStatus,
+    stdout_reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+    stderr_reader: Option<std::thread::JoinHandle<Result<Vec<u8>, String>>>,
+) -> Result<CapturedProcessOutput, ManagedProcessError> {
+    let stdout = join_process_pipe(stdout_reader)?;
+    let stderr = join_process_pipe(stderr_reader)?;
+    Ok(CapturedProcessOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn run_captured_command_managed<F>(
+    command: &mut Command,
+    timeout: Duration,
+    mut should_cancel: F,
+) -> Result<CapturedProcessOutput, ManagedProcessError>
+where
+    F: FnMut() -> bool,
+{
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| ManagedProcessError::Failed(error.to_string()))?;
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|stdout| std::thread::spawn(move || read_process_pipe(stdout)));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|stderr| std::thread::spawn(move || read_process_pipe(stderr)));
+    let process_tree = match ProcessTreeGuard::attach(&child) {
+        Ok(process_tree) => process_tree,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = join_process_pipe(stdout_reader);
+            let _ = join_process_pipe(stderr_reader);
+            return Err(ManagedProcessError::Failed(error));
+        }
+    };
+    let started_at = Instant::now();
+
+    loop {
+        if should_cancel() {
+            process_tree.terminate();
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = join_process_pipe(stdout_reader);
+            let _ = join_process_pipe(stderr_reader);
+            return Err(ManagedProcessError::Cancelled);
+        }
+        if started_at.elapsed() >= timeout {
+            process_tree.terminate();
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = join_process_pipe(stdout_reader);
+            let _ = join_process_pipe(stderr_reader);
+            return Err(ManagedProcessError::TimedOut(timeout));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // The Python wrapper should not leave scientific-tool
+                // descendants behind after returning. Terminating the now
+                // otherwise-empty job closes that final lifecycle gap.
+                process_tree.terminate();
+                return finish_captured_process(status, stdout_reader, stderr_reader);
+            }
+            Ok(None) => std::thread::sleep(MANAGED_PROCESS_POLL_INTERVAL),
+            Err(error) => {
+                process_tree.terminate();
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = join_process_pipe(stdout_reader);
+                let _ = join_process_pipe(stderr_reader);
+                return Err(ManagedProcessError::Failed(error.to_string()));
+            }
+        }
+    }
+}
+
+fn backend_module_timeout(module: &str, args: &[String]) -> Duration {
+    let command = args.first().map(String::as_str).unwrap_or("");
+    if (module == "dockstart_core.project" && command == "execute-run")
+        || (module == "dockstart_core.multiple_ligands" && command == "run")
+        || (module == "dockstart_core.screening" && command == "run")
+    {
+        Duration::from_secs(48 * 60 * 60)
+    } else if module == "dockstart_core.preparation"
+        && matches!(command, "prepare-ligand" | "prepare-receptor")
+        || module == "dockstart_core.flexible_receptor" && command == "prepare"
+    {
+        Duration::from_secs(6 * 60 * 60)
+    } else if module == "dockstart_core.structure_fetch"
+        && matches!(command, "fetch-pdb" | "fetch-pubchem" | "preview")
+    {
+        Duration::from_secs(20 * 60)
+    } else {
+        Duration::from_secs(2 * 60 * 60)
+    }
+}
+
+fn background_job_timeout(kind: &str) -> Duration {
+    match kind {
+        "vina" | "multiple-ligand" | "screening" => Duration::from_secs(48 * 60 * 60),
+        "preparation" | "flexible_receptor" => Duration::from_secs(6 * 60 * 60),
+        "structure-fetch" => Duration::from_secs(20 * 60),
+        _ => Duration::from_secs(2 * 60 * 60),
+    }
+}
+
 fn run_python_screening_archive_export(
     backend_dir: &Path,
     python: &str,
@@ -5001,7 +5397,12 @@ fn run_python_screening_archive_export(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output = run_captured_command_managed(
+        &mut command,
+        backend_module_timeout("dockstart_core.screening", args),
+        || false,
+    )
+    .map_err(|error| error.message())?;
     classify_screening_archive_export_output(
         output.status.success(),
         &output.stdout,
@@ -5020,7 +5421,9 @@ fn run_python_json_module(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output =
+        run_captured_command_managed(&mut command, backend_module_timeout(module, args), || false)
+            .map_err(|error| error.message())?;
     classify_structured_backend_output(output.status.success(), &output.stdout, &output.stderr)
 }
 
@@ -5073,7 +5476,9 @@ fn run_python_module_with_env(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|error| error.to_string())?;
+    let output =
+        run_captured_command_managed(&mut command, backend_module_timeout(module, args), || false)
+            .map_err(|error| error.message())?;
     classify_structured_backend_output(output.status.success(), &output.stdout, &output.stderr)
 }
 
@@ -5416,6 +5821,7 @@ fn backend_command_invalidation(module: &str, args: &[String]) -> CacheInvalidat
                     | "import-ligand"
                     | "update-box"
                     | "update-vina"
+                    | "update-run-settings"
                     | "update-run-protocol"
                     | "generate-config"
                     | "prepare-run"
@@ -5477,38 +5883,95 @@ fn json_string_value(content: &str, key: &str) -> Option<String> {
     None
 }
 
-fn find_backend_dir() -> Option<PathBuf> {
-    let mut starts = Vec::new();
+fn development_backend_discovery_enabled() -> bool {
+    cfg!(debug_assertions)
+        || env::var(ALLOW_DEV_BACKEND_DISCOVERY_ENV_VAR)
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false)
+}
 
-    if let Ok(resource_dir) = env::var(RESOURCE_DIR_ENV_VAR) {
-        starts.push(PathBuf::from(resource_dir));
+fn canonical_backend_dir(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    is_backend_dir(&canonical).then_some(canonical)
+}
+
+fn backend_beneath_resource_root(resource_root: &Path) -> Option<PathBuf> {
+    let canonical_root = fs::canonicalize(resource_root).ok()?;
+    let canonical_backend = canonical_backend_dir(&canonical_root.join("backend"))?;
+    if canonical_backend.parent() != Some(canonical_root.as_path())
+        || !canonical_backend.starts_with(&canonical_root)
+    {
+        return None;
     }
+    Some(canonical_backend)
+}
 
-    if let Ok(current_dir) = env::current_dir() {
-        starts.push(current_dir);
-    }
-
-    if let Ok(current_exe) = env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            starts.push(parent.to_path_buf());
+fn find_backend_dir_from_paths(
+    resource_root: Option<&Path>,
+    explicit_dev_backend: Option<&Path>,
+    development_starts: &[PathBuf],
+    allow_development_discovery: bool,
+) -> Option<PathBuf> {
+    if let Some(resource_root) = resource_root {
+        if let Some(backend) = backend_beneath_resource_root(resource_root) {
+            return Some(backend);
         }
     }
 
-    for start in starts {
+    if !allow_development_discovery {
+        return None;
+    }
+
+    if let Some(explicit_backend) = explicit_dev_backend {
+        if let Some(backend) = canonical_backend_dir(explicit_backend) {
+            return Some(backend);
+        }
+    }
+
+    for start in development_starts {
         for ancestor in start.ancestors() {
-            let backend_dir = ancestor.join("backend");
-            if is_backend_dir(&backend_dir) {
-                return Some(backend_dir);
+            if let Some(backend) = canonical_backend_dir(&ancestor.join("backend")) {
+                return Some(backend);
             }
         }
     }
-
     None
 }
 
+fn find_backend_dir() -> Option<PathBuf> {
+    let resource_root = env::var_os(RESOURCE_DIR_ENV_VAR).map(PathBuf::from);
+    let explicit_dev_backend = env::var_os(DEV_BACKEND_DIR_ENV_VAR).map(PathBuf::from);
+    let allow_development_discovery = development_backend_discovery_enabled();
+    let mut development_starts = Vec::new();
+    if allow_development_discovery {
+        if let Ok(current_dir) = env::current_dir() {
+            development_starts.push(current_dir);
+        }
+        if let Ok(current_exe) = env::current_exe() {
+            if let Some(parent) = current_exe.parent() {
+                development_starts.push(parent.to_path_buf());
+            }
+        }
+    }
+    find_backend_dir_from_paths(
+        resource_root.as_deref(),
+        explicit_dev_backend.as_deref(),
+        &development_starts,
+        allow_development_discovery,
+    )
+}
+
 fn is_backend_dir(path: &Path) -> bool {
-    path.join("dockstart_core").join("tool_check.py").exists()
-        && path.join("adapters").join("__init__.py").exists()
+    path.is_dir()
+        && path.join("dockstart_core").join("__init__.py").is_file()
+        && path.join("dockstart_core").join("project.py").is_file()
+        && path.join("dockstart_core").join("tool_check.py").is_file()
+        && path.join("adapters").join("__init__.py").is_file()
 }
 
 fn fallback_check_error_json(message: &str, raw_error: &str) -> String {
@@ -5647,6 +6110,7 @@ fn main() {
             update_box_params,
             get_vina_params,
             update_vina_params,
+            update_run_settings,
             update_vina_run_protocol,
             get_vina_config_preview,
             generate_vina_config,
@@ -5776,6 +6240,7 @@ mod tests {
         let basic = distribution_profile_from_manifest(&manifest).unwrap();
         assert_eq!(basic["release_profile"], "basic_stable");
         assert_eq!(basic["display_name"], "Basic");
+        assert_eq!(basic["message"], "当前安装为 DockStart Basic · 本地候选。");
 
         fs::write(&manifest, br#"{"release_profile":"assisted_stable"}"#).unwrap();
         let assisted = distribution_profile_from_manifest(&manifest).unwrap();
@@ -5784,6 +6249,77 @@ mod tests {
 
         fs::write(&manifest, br#"{"release_profile":"custom"}"#).unwrap();
         assert!(distribution_profile_from_manifest(&manifest).is_err());
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    fn create_test_backend(root: &Path) -> PathBuf {
+        let backend = root.join("backend");
+        fs::create_dir_all(backend.join("dockstart_core")).unwrap();
+        fs::create_dir_all(backend.join("adapters")).unwrap();
+        fs::write(backend.join("dockstart_core").join("__init__.py"), b"").unwrap();
+        fs::write(backend.join("dockstart_core").join("project.py"), b"").unwrap();
+        fs::write(backend.join("dockstart_core").join("tool_check.py"), b"").unwrap();
+        fs::write(backend.join("adapters").join("__init__.py"), b"").unwrap();
+        fs::canonicalize(backend).unwrap()
+    }
+
+    #[test]
+    fn release_backend_discovery_does_not_fall_back_to_working_directory() {
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-backend-trust-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let missing_resource_root = test_root.join("packaged-resources");
+        let development_root = test_root.join("attacker-controlled");
+        fs::create_dir_all(&missing_resource_root).unwrap();
+        let development_backend = create_test_backend(&development_root);
+
+        assert_eq!(
+            find_backend_dir_from_paths(
+                Some(&missing_resource_root),
+                None,
+                std::slice::from_ref(&development_root),
+                false,
+            ),
+            None,
+        );
+        assert_eq!(
+            find_backend_dir_from_paths(
+                Some(&missing_resource_root),
+                None,
+                &[development_root],
+                true,
+            ),
+            Some(development_backend),
+        );
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
+    fn packaged_backend_must_be_the_direct_canonical_resource_child() {
+        let test_root = env::temp_dir().join(format!(
+            "dockstart-packaged-backend-{}-{}",
+            std::process::id(),
+            BACKGROUND_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&test_root).unwrap();
+        let expected = create_test_backend(&test_root);
+        let unrelated_root = test_root.join("unrelated");
+        let unrelated = create_test_backend(&unrelated_root);
+
+        assert_eq!(
+            find_backend_dir_from_paths(Some(&test_root), Some(&unrelated), &[], false),
+            Some(expected),
+        );
+        assert_eq!(
+            find_backend_dir_from_paths(None, Some(&unrelated), &[], false),
+            None,
+        );
+        assert_eq!(
+            find_backend_dir_from_paths(None, Some(&unrelated), &[], true),
+            Some(unrelated),
+        );
         let _ = fs::remove_dir_all(test_root);
     }
 
@@ -6015,6 +6551,53 @@ mod tests {
         assert_eq!(
             environment.get("PYTHONDONTWRITEBYTECODE"),
             Some(&Some("1".to_string())),
+        );
+    }
+
+    #[test]
+    fn managed_process_test_child() {
+        if env::var("DOCKSTART_TEST_MANAGED_PROCESS_CHILD").as_deref() == Ok("1") {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
+
+    #[test]
+    fn managed_process_honors_running_cancellation() {
+        let mut command = Command::new(env::current_exe().unwrap());
+        command
+            .arg("--exact")
+            .arg("tests::managed_process_test_child")
+            .arg("--nocapture")
+            .env("DOCKSTART_TEST_MANAGED_PROCESS_CHILD", "1");
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let polls = AtomicUsize::new(0);
+        let started = Instant::now();
+        let result = run_captured_command_managed(&mut command, Duration::from_secs(10), || {
+            polls.fetch_add(1, Ordering::Relaxed) >= 2
+        });
+
+        assert_eq!(result.unwrap_err(), ManagedProcessError::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn managed_process_timeouts_are_conservative_for_scientific_runs() {
+        assert_eq!(
+            background_job_timeout("structure-fetch"),
+            Duration::from_secs(20 * 60)
+        );
+        assert_eq!(
+            background_job_timeout("preparation"),
+            Duration::from_secs(6 * 60 * 60)
+        );
+        assert_eq!(
+            background_job_timeout("vina"),
+            Duration::from_secs(48 * 60 * 60)
+        );
+        assert_eq!(
+            backend_module_timeout("dockstart_core.project", &["execute-run".to_string()]),
+            Duration::from_secs(48 * 60 * 60)
         );
     }
 
@@ -6372,9 +6955,9 @@ mod tests {
             baseline.clone(),
             comparison,
         ]));
-        assert!(!are_safe_screening_archive_comparison_ids(&[
-            baseline.clone(),
-        ]));
+        assert!(!are_safe_screening_archive_comparison_ids(
+            std::slice::from_ref(&baseline)
+        ));
         assert!(!are_safe_screening_archive_comparison_ids(&[
             baseline.clone(),
             baseline,
@@ -6885,6 +7468,7 @@ mod tests {
             finished_at: Some(Instant::now()),
             result_json: "{\"ok\":false,\"message\":\"line\\nnext\"}".to_string(),
             error: "bad\u{0007}".to_string(),
+            cancel_requested: false,
         };
         let serialized = background_task_status_json(&record, false);
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();

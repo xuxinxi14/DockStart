@@ -10,7 +10,7 @@ import VinaWorkflowBar from "../components/VinaWorkflowBar";
 import WarningCallout from "../components/WarningCallout";
 import type { DockStartProject, ProjectResponse, RunFileStatus, RunRuntimeStatusResponse } from "../types";
 import {
-  cancelQueuedBackgroundTask,
+  cancelBackgroundTask,
   findActiveBackgroundTask,
   startVinaRunTask,
   waitForBackgroundTask,
@@ -284,20 +284,29 @@ export default function RunExecutePage({
     if (!runIsActive) return;
     try {
       if (activeTask?.status === "queued") {
-        const cancelled = await cancelQueuedBackgroundTask(activeTask.task_id);
+        const cancelled = await cancelBackgroundTask(activeTask.task_id);
         setActiveTask(cancelled);
         if (cancelled.status === "cancelled") {
           setMessage("Vina 任务尚未启动，已从后台队列取消。");
           return;
         }
       }
+      const forceStopWrapper = async (): Promise<boolean> => {
+        if (!activeTask?.task_id) return false;
+        const cancelled = await cancelBackgroundTask(activeTask.task_id);
+        setActiveTask(cancelled);
+        setMessage("安全取消接口未能完成，已终止本次后台工具进程树；现有日志仍会保留。");
+        return true;
+      };
       const payload = await invoke<string>("cancel_vina_run", {
         projectDir: project.project_dir,
         runId,
       });
       const parsed = JSON.parse(payload) as Partial<ProjectResponse>;
       if (!parsed.ok) {
-        setMessage(parsed.error?.message || "取消请求失败，后台运行仍会继续。");
+        if (!(await forceStopWrapper())) {
+          setMessage(parsed.error?.message || "取消请求失败，后台运行仍会继续。");
+        }
         setRawError(parsed.error?.raw_error || parsed.error?.suggestion || "");
         return;
       }
@@ -308,6 +317,19 @@ export default function RunExecutePage({
       if (parsed.metadata) setMetadata(parsed.metadata);
       setMessage(parsed.message || "取消请求已发送，正在等待 Vina 安全退出。");
     } catch (error) {
+      try {
+        if (activeTask?.task_id) {
+          const cancelled = await cancelBackgroundTask(activeTask.task_id);
+          setActiveTask(cancelled);
+          setMessage("安全取消接口异常，已终止本次后台工具进程树；现有日志仍会保留。");
+        }
+      } catch (forceError) {
+        setRawError([
+          error instanceof Error ? error.message : String(error),
+          forceError instanceof Error ? forceError.message : String(forceError),
+        ].join("\n"));
+        return;
+      }
       setRawError(error instanceof Error ? error.message : String(error));
     }
   };

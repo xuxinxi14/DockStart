@@ -71,7 +71,7 @@ class InstalledAssistedReleaseGateTests(unittest.TestCase):
     def test_assisted_build_defaults_to_real_install_gate_but_stays_candidate(self) -> None:
         build_script = (REPO_ROOT / "scripts" / "build_windows_assisted_release.ps1").read_text(encoding="utf-8")
         self.assertIn("verify_installed_assisted_release.py", build_script)
-        self.assertIn('"cargo test"', build_script)
+        self.assertIn("scripts\\check_all.ps1", build_script)
         self.assertIn('[switch]$SkipPostInstallGate', build_script)
         self.assertIn('$artifactManifest["post_install_gate"] = "pending"', build_script)
         self.assertIn('$artifactManifest["publishable"] = $false', build_script)

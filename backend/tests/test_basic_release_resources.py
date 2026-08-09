@@ -65,6 +65,10 @@ class BasicReleaseResourceTests(unittest.TestCase):
             (runtime / "Lib" / "site-packages" / "meeko" / "__init__.py").write_text("", encoding="utf-8")
             (runtime / "Scripts" / "mk_prepare_ligand.py").write_text("", encoding="utf-8")
             (runtime / "README.md").write_text("runtime", encoding="utf-8")
+            with tempfile.TemporaryDirectory(dir=root) as expected_runtime_dir:
+                expected_runtime = Path(expected_runtime_dir) / "python"
+                MODULE._copy_minimal_python(runtime, expected_runtime)
+                expected_fingerprint = MODULE._ordered_tree_fingerprint(expected_runtime)
             (resources / "toolchain_manifest.json").write_text(
                 json.dumps(
                     {
@@ -78,6 +82,7 @@ class BasicReleaseResourceTests(unittest.TestCase):
                             "source": "test Python",
                             "sha256": hashlib.sha256(b"python").hexdigest(),
                         },
+                        "expected_basic_runtime": expected_fingerprint,
                     },
                 ),
                 encoding="utf-8",
@@ -104,10 +109,58 @@ class BasicReleaseResourceTests(unittest.TestCase):
             self.assertTrue((stage / "licenses" / "DockStart-Apache-2.0.txt").is_file())
             manifest = json.loads((stage / "toolchain_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["release_profile"], "basic_stable")
+            self.assertEqual(manifest["maturity"], "local_candidate")
+            self.assertFalse(manifest["resources_committed"])
             self.assertFalse(manifest["includes_bundled_rdkit"])
             self.assertFalse(manifest["includes_bundled_meeko"])
             self.assertEqual(manifest["bundled_python"]["role"], "backend_runtime")
             self.assertNotIn("packages", manifest["bundled_python"])
+            self.assertEqual(manifest["expected_basic_runtime"], expected_fingerprint)
+            self.assertEqual(result["basic_runtime_fingerprint"], expected_fingerprint)
+            self.assertEqual(
+                {
+                    "sha256": manifest["bundled_python"]["runtime_tree_sha256"],
+                    "file_count": manifest["bundled_python"]["runtime_file_count"],
+                    "size_bytes": manifest["bundled_python"]["runtime_size_bytes"],
+                },
+                expected_fingerprint,
+            )
+
+            (runtime / "Lib" / "json.py").write_text("# tampered", encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.BasicReleasePreparationError,
+                "expected_basic_runtime",
+            ):
+                MODULE.prepare_basic_release_resources(
+                    root,
+                    validate_runtime=False,
+                    generate_dependency_licenses=False,
+                    prepared_at="2026-07-13T00:00:00+00:00",
+                )
+
+    def test_runtime_fingerprint_is_independent_of_file_creation_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first = root / "first"
+            second = root / "second"
+            files = {
+                "python.exe": b"python",
+                "Lib/json.py": b"# stdlib",
+                "DLLs/_ssl.pyd": b"ssl",
+            }
+            for relative_path, content in files.items():
+                path = first / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            for relative_path, content in reversed(list(files.items())):
+                path = second / relative_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            self.assertEqual(
+                MODULE._ordered_tree_fingerprint(first),
+                MODULE._ordered_tree_fingerprint(second),
+            )
 
     def test_staging_target_must_remain_under_release_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

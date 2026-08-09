@@ -215,6 +215,49 @@ def _paths_overlap(first: Path, second: Path) -> bool:
     return _is_same_or_descendant(first, second) or _is_same_or_descendant(second, first)
 
 
+def default_install_directories(
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> list[Path]:
+    """Return canonical default DockStart install directories.
+
+    The real NSIS gate rejects non-empty default locations even when the
+    registry is already clean.  The pre-build safety gate must enforce the
+    same condition so a stale uninstaller or partial installation is reported
+    before an expensive release build begins.
+    """
+
+    lookup = _environment_lookup(environ)
+    directories: list[Path] = []
+    seen: set[str] = set()
+    for variable in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)"):
+        raw_base = lookup.get(variable.casefold(), "").strip()
+        if not raw_base:
+            continue
+        base = normalize_absolute_path(
+            raw_base,
+            label=f"{variable} default install root",
+            environ=environ,
+        )
+        candidate = (base / "DockStart").resolve(strict=False)
+        identity = os.path.normcase(str(candidate))
+        if identity not in seen:
+            seen.add(identity)
+            directories.append(candidate)
+    return directories
+
+
+def _path_has_entries_or_is_not_directory(path: Path) -> bool:
+    if not path.exists():
+        return False
+    if not path.is_dir():
+        return True
+    try:
+        return next(path.iterdir(), None) is not None
+    except OSError as exc:
+        raise ReleaseBuildSafetyError(f"Cannot inspect default DockStart install directory: {path}") from exc
+
+
 def _resolve_repo_and_cleanup_roots(
     repo_root: str | Path,
     cleanup_roots: Sequence[str | Path],
@@ -308,9 +351,19 @@ def validate_release_build_safety(
     installations = [
         resolve_registry_installation(record, environ=environ) for record in registry_records
     ]
+    nonempty_default_directories = [
+        path
+        for path in default_install_directories(environ=environ)
+        if _path_has_entries_or_is_not_directory(path)
+    ]
 
-    if require_no_existing_install and installations:
+    if require_no_existing_install and (installations or nonempty_default_directories):
         locations = sorted({str(item.install_root) for item in installations})
+        locations.extend(
+            str(path)
+            for path in nonempty_default_directories
+            if str(path) not in locations
+        )
         raise ReleaseBuildSafetyError(
             "检测到现有 DockStart 安装；当前门禁要求系统中不能存在任何安装："
             + json.dumps(locations, ensure_ascii=False),
@@ -341,6 +394,9 @@ def validate_release_build_safety(
                 "path_source": item.path_source,
             }
             for item in installations
+        ],
+        "nonempty_default_install_directories": [
+            str(path) for path in nonempty_default_directories
         ],
     }
 

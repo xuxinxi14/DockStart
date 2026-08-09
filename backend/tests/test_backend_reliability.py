@@ -39,9 +39,11 @@ from dockstart_core.project import (  # noqa: E402
 from dockstart_core.settings import (  # noqa: E402
     SETTINGS_ENV_VAR,
     DockStartSettings,
+    SettingsFileError,
     ToolPaths,
     load_settings,
     save_settings,
+    update_tool_path,
 )
 
 
@@ -987,6 +989,86 @@ class BackendReliabilityTests(unittest.TestCase):
                 loaded = load_settings()
                 self.assertEqual(loaded.tool_paths.vina, "old-vina")
                 self.assertEqual(loaded.tool_paths.python, "old-python")
+
+    def test_settings_update_waits_for_cross_process_lock_and_merges_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            with patch.dict(os.environ, {SETTINGS_ENV_VAR: str(settings_path)}):
+                save_settings(
+                    DockStartSettings(
+                        tool_paths=ToolPaths(
+                            vina="old-vina",
+                            python="old-python",
+                            autogrid4="old-autogrid",
+                        )
+                    )
+                )
+                script = "\n".join(
+                    [
+                        "import sys, time",
+                        f"sys.path.insert(0, {str(BACKEND_ROOT)!r})",
+                        (
+                            "from dockstart_core.settings import "
+                            "_load_settings_unlocked, _save_settings_unlocked, "
+                            "_settings_file_lock, get_settings_path"
+                        ),
+                        "with _settings_file_lock():",
+                        "    path = get_settings_path()",
+                        "    settings = _load_settings_unlocked(path)",
+                        "    settings.tool_paths.vina = 'process-vina'",
+                        "    _save_settings_unlocked(path, settings)",
+                        "    print('LOCKED', flush=True)",
+                        "    time.sleep(1.0)",
+                    ]
+                )
+                process = subprocess.Popen(
+                    [sys.executable, "-I", "-B", "-c", script],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    env=dict(os.environ),
+                )
+                try:
+                    self.assertEqual(
+                        process.stdout.readline().strip(),  # type: ignore[union-attr]
+                        "LOCKED",
+                    )
+                    started = time.monotonic()
+                    update_tool_path("python", "new-python")
+                    elapsed = time.monotonic() - started
+                    self.assertGreaterEqual(elapsed, 0.6)
+                finally:
+                    process.wait(timeout=5)
+                    stderr_text = (
+                        process.stderr.read() if process.stderr is not None else ""
+                    )
+                    if process.stdout is not None:
+                        process.stdout.close()
+                    if process.stderr is not None:
+                        process.stderr.close()
+                    if process.returncode != 0:
+                        self.fail(stderr_text)
+
+                loaded = load_settings()
+
+            self.assertEqual(loaded.tool_paths.vina, "process-vina")
+            self.assertEqual(loaded.tool_paths.python, "new-python")
+            self.assertEqual(loaded.tool_paths.autogrid4, "old-autogrid")
+
+    def test_damaged_settings_are_not_silently_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            damaged = b'{"tool_paths": '
+            settings_path.write_bytes(damaged)
+            with patch.dict(os.environ, {SETTINGS_ENV_VAR: str(settings_path)}):
+                with self.assertRaises(SettingsFileError) as raised:
+                    update_tool_path("vina", "new-vina")
+                with self.assertRaises(SettingsFileError):
+                    save_settings(DockStartSettings())
+
+            self.assertEqual(raised.exception.code, "SETTINGS_JSON_INVALID")
+            self.assertEqual(settings_path.read_bytes(), damaged)
 
 
 if __name__ == "__main__":

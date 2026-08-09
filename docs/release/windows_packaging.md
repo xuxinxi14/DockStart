@@ -1,18 +1,18 @@
 # Windows Packaging
 
-本文档定义 DockStart v0.14.2 Windows x86_64 的可重复发布入口。正式候选构建脚本只能在干净的
+本文档定义 DockStart v0.14.3 Windows x86_64 的可重复发布入口。正式候选构建脚本只能在干净的
 `main` 分支运行，并从白名单 stage 生成 MSI 与 NSIS；禁止直接把开发目录中的
 `resources/python` 或旧 `target/release` 内容复制进安装包。
 
 ## Profile 选择
 
-Basic Stable：已有 receptor/ligand PDBQT 的最小依赖闭环。
+Basic 候选 profile：已有 receptor/ligand PDBQT 的最小依赖闭环。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Basic
 ```
 
-Assisted Stable：额外包含固定、离线、可替换的 RDKit/Meeko 工具链。
+Assisted 候选 profile：额外包含固定、离线、可替换的 RDKit/Meeko 工具链。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Profile Assisted
@@ -58,7 +58,8 @@ wheel、source archive、runtime、stage 与 installer 都被 Git 忽略。
 
 1. 检查 `main`、干净工作树和七处版本一致；
 2. 从空目录生成对应白名单 stage，校验 Vina/Python/package/license SHA256；
-3. 运行 Python 全量测试、前端生产构建、Cargo check/test；
+3. 通过 `scripts/check_all.ps1` 运行 hermetic 后端测试、全部前端测试、TypeScript/Vite、
+   `cargo fmt/check/test/clippy --locked`，并强制校验本地发布 runtime；
 4. 通过注册表与路径重叠检查后，只清理 `.release/cargo-target/<profile>/release/` 内已验证的旧资源和 bundle；
 5. 用对应 `tauri.basic.conf.json` 或 `tauri.assisted.conf.json` 生成 MSI/NSIS；
 6. 对打包后的 `.release/cargo-target/<profile>/release/` 执行真实流程回归；

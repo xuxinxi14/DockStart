@@ -39,6 +39,7 @@ from dockstart_core.project import (  # noqa: E402
     load_run_metadata,
     load_project,
     prepare_vina_run,
+    update_run_settings,
     update_project_run_summary,
     update_box_params,
     update_vina_params,
@@ -552,6 +553,69 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(project["ligand"]["source"], "local")
             self.assertEqual(project["ligand"]["source_id"], "source_ligand.pdbqt")
 
+    def test_import_pdbqt_rejects_existing_hardlink_target_without_touching_external_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            source = Path(temp_dir) / "source_ligand.pdbqt"
+            source.write_bytes(b"REMARK new ligand\n")
+            external = Path(temp_dir) / "external_ligand.pdbqt"
+            external.write_bytes(b"REMARK external original\n")
+            target = project_dir / "prepared" / "ligand.pdbqt"
+            try:
+                os.link(external, target)
+            except OSError as exc:
+                self.skipTest(f"当前文件系统不支持硬链接测试：{exc}")
+            project_before = (project_dir / "project.json").read_bytes()
+
+            response = import_ligand_pdbqt(str(project_dir), str(source))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "PROJECT_FILE_TARGET_HARDLINKED")
+            self.assertEqual(external.read_bytes(), b"REMARK external original\n")
+            self.assertEqual(target.read_bytes(), b"REMARK external original\n")
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_import_pdbqt_rolls_back_prepared_file_when_project_save_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            target = project_dir / "prepared" / "ligand.pdbqt"
+            target.write_bytes(b"REMARK old ligand\n")
+            source = Path(temp_dir) / "source_ligand.pdbqt"
+            source.write_bytes(b"REMARK new ligand\n")
+            project_before = (project_dir / "project.json").read_bytes()
+            conflict = project_module._error(
+                "PROJECT_SAVE_CONFLICT",
+                "project.json 已被其他操作更新。",
+            )
+
+            with unittest.mock.patch.object(project_module, "save_project", return_value=conflict):
+                response = import_ligand_pdbqt(str(project_dir), str(source))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "PROJECT_SAVE_CONFLICT")
+            self.assertEqual(target.read_bytes(), b"REMARK old ligand\n")
+            self.assertEqual((project_dir / "project.json").read_bytes(), project_before)
+
+    def test_import_pdbqt_rejects_symlink_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            real_source = Path(temp_dir) / "real_ligand.pdbqt"
+            real_source.write_bytes(b"REMARK ligand\n")
+            linked_source = Path(temp_dir) / "linked_ligand.pdbqt"
+            try:
+                linked_source.symlink_to(real_source)
+            except OSError as exc:
+                self.skipTest(f"当前环境不允许创建符号链接：{exc}")
+
+            response = import_ligand_pdbqt(str(project_dir), str(linked_source))
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "PDBQT_SOURCE_UNSAFE")
+            self.assertFalse((project_dir / "prepared" / "ligand.pdbqt").exists())
+
     def test_import_pdbqt_preserves_explicit_display_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             project_response = create_project("demo_project", temp_dir)
@@ -934,6 +998,142 @@ class ProjectTests(unittest.TestCase):
 
             self.assertFalse(response["ok"])
             self.assertEqual(response["error"]["code"], "VINA_SCORING_INVALID")
+
+    def test_update_run_settings_commits_box_vina_and_protocol_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            before = load_project(str(project_dir))["project"]
+            box = {
+                "center_x": 1.5,
+                "center_y": -2,
+                "center_z": 3,
+                "size_x": 24,
+                "size_y": 26,
+                "size_z": 28,
+            }
+
+            with unittest.mock.patch.object(
+                project_module,
+                "save_project",
+                wraps=project_module.save_project,
+            ) as save_mock:
+                response = update_run_settings(
+                    str(project_dir),
+                    box,
+                    {"scoring": "vinardo", "exhaustiveness": 16, "seed": 42},
+                    "local_only",
+                    True,
+                )
+
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(save_mock.call_count, 1)
+            loaded = load_project(str(project_dir))["project"]
+            self.assertEqual(loaded["revision"], before["revision"] + 1)
+            self.assertEqual(loaded["box"], box)
+            self.assertEqual(loaded["vina"]["scoring"], "vinardo")
+            self.assertEqual(loaded["vina"]["exhaustiveness"], 16)
+            self.assertEqual(loaded["vina"]["seed"], 42)
+            self.assertEqual(loaded["docking_protocol"]["run_mode"], "local_only")
+            self.assertTrue(loaded["docking_protocol"]["autobox"])
+
+    def test_update_run_settings_validation_failure_persists_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            before = (project_dir / "project.json").read_bytes()
+
+            with unittest.mock.patch.object(project_module, "save_project") as save_mock:
+                response = update_run_settings(
+                    str(project_dir),
+                    {
+                        "center_x": 10,
+                        "center_y": 11,
+                        "center_z": 12,
+                        "size_x": 30,
+                        "size_y": 30,
+                        "size_z": 30,
+                    },
+                    {"exhaustiveness": 0},
+                    "dock",
+                    False,
+                )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "VINA_PARAM_POSITIVE_REQUIRED")
+            save_mock.assert_not_called()
+            self.assertEqual((project_dir / "project.json").read_bytes(), before)
+
+    def test_update_run_settings_save_conflict_persists_no_partial_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            before = (project_dir / "project.json").read_bytes()
+            conflict = project_module._error(
+                "PROJECT_SAVE_CONFLICT",
+                "project.json 已被其他操作更新。",
+            )
+
+            with unittest.mock.patch.object(project_module, "save_project", return_value=conflict):
+                response = update_run_settings(
+                    str(project_dir),
+                    {
+                        "center_x": 10,
+                        "center_y": 11,
+                        "center_z": 12,
+                        "size_x": 30,
+                        "size_y": 30,
+                        "size_z": 30,
+                    },
+                    {"exhaustiveness": 16},
+                    "dock",
+                    False,
+                )
+
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "PROJECT_SAVE_CONFLICT")
+            self.assertEqual((project_dir / "project.json").read_bytes(), before)
+
+    def test_update_run_settings_cli_updates_all_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_response = create_project("demo_project", temp_dir)
+            project_dir = Path(project_response["project_dir"])
+            box = {
+                "center_x": 4,
+                "center_y": 5,
+                "center_z": 6,
+                "size_x": 22,
+                "size_y": 23,
+                "size_z": 24,
+            }
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dockstart_core.project",
+                    "update-run-settings",
+                    str(project_dir),
+                    json.dumps(box),
+                    json.dumps({"exhaustiveness": 12, "seed": 7}),
+                    "dock",
+                    "false",
+                ],
+                cwd=BACKEND_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertTrue(payload["ok"], payload)
+            loaded = load_project(str(project_dir))["project"]
+            self.assertEqual(loaded["box"], box)
+            self.assertEqual(loaded["vina"]["exhaustiveness"], 12)
+            self.assertEqual(loaded["vina"]["seed"], 7)
+            self.assertEqual(loaded["docking_protocol"]["run_mode"], "dock")
+            self.assertFalse(loaded["docking_protocol"]["autobox"])
 
     def test_exhaustiveness_must_be_positive_integer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

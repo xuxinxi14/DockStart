@@ -57,7 +57,7 @@ function Assert-CargoTargetDirectory {
     Push-Location $WorkingDirectory
     try {
         [Environment]::SetEnvironmentVariable("CARGO_TARGET_DIR", $expectedFull, "Process")
-        $metadataText = (& cargo metadata --manifest-path $ManifestPath --format-version 1 --no-deps | Out-String)
+        $metadataText = (& cargo metadata --locked --manifest-path $ManifestPath --format-version 1 --no-deps | Out-String)
         if ($LASTEXITCODE -ne 0) {
             throw "cargo metadata failed while validating the isolated release target."
         }
@@ -107,6 +107,36 @@ function Remove-ReleasePath {
     }
 }
 
+function Get-SourceStateFingerprint {
+    param([string]$RepoRoot)
+
+    $diffText = (& git -C $RepoRoot diff --binary --no-ext-diff HEAD | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot capture the Git diff for release provenance."
+    }
+    $untracked = @(& git -C $RepoRoot ls-files --others --exclude-standard | Sort-Object)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot enumerate untracked files for release provenance."
+    }
+    $records = foreach ($relativePath in $untracked) {
+        $fullPath = Join-Path $RepoRoot ([string]$relativePath)
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "Untracked release source is not a regular file: $relativePath"
+        }
+        "$relativePath`t$((Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+    }
+    $payload = $diffText + "`n--UNTRACKED--`n" + ([string]::Join("`n", @($records)))
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString(
+            $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($payload))
+        )).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $desktopDir = Join-Path $repoRoot "apps\desktop"
 $tauriDir = Join-Path $desktopDir "src-tauri"
@@ -136,6 +166,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 $dirtyEntries = @($status | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
 $worktreeDirty = $dirtyEntries.Count -gt 0
+$initialStatusFingerprint = [string]::Join("`n", @($dirtyEntries))
+$initialSourceStateSha256 = Get-SourceStateFingerprint $repoRoot
 if ($worktreeDirty -and -not $AllowDirtyDevelopmentBuild) {
     $dirtyEntries | ForEach-Object { Write-Host $_ }
     throw "Working tree is not clean. Commit changes or explicitly use -AllowDirtyDevelopmentBuild for a non-publishable development candidate."
@@ -163,6 +195,17 @@ if ($uniqueVersions.Count -ne 1) {
     throw "Version numbers are not consistent."
 }
 $appVersion = [string]$uniqueVersions[0]
+$lockfileSha256 = [ordered]@{
+    "apps/desktop/package-lock.json" = (Get-FileHash -LiteralPath (Join-Path $desktopDir "package-lock.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+    "apps/desktop/src-tauri/Cargo.lock" = (Get-FileHash -LiteralPath (Join-Path $tauriDir "Cargo.lock") -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$toolVersions = [ordered]@{
+    "python" = ((& python --version 2>&1) | Out-String).Trim()
+    "node" = ((& node --version 2>&1) | Out-String).Trim()
+    "npm" = ((& npm.cmd --version 2>&1) | Out-String).Trim()
+    "rustc" = ((& rustc --version 2>&1) | Out-String).Trim()
+    "cargo" = ((& cargo --version 2>&1) | Out-String).Trim()
+}
 Write-Host "Version: $appVersion"
 $builtAt = (Get-Date).ToUniversalTime()
 $buildStamp = $builtAt.ToString("yyyyMMddTHHmmssZ")
@@ -193,6 +236,19 @@ Write-Step "Validate isolated Cargo target"
 Assert-CargoTargetDirectory `
     (Join-Path $tauriDir "Cargo.toml") `
     $cargoTargetDir `
+    $repoRoot
+
+Invoke-Checked `
+    "Unified development gate" `
+    "powershell.exe" `
+    @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $repoRoot "scripts\check_all.ps1"),
+        "-RepoRoot", $repoRoot,
+        "-CargoTargetDirectory", $cargoTargetDir,
+        "-RequireReleaseResources"
+    ) `
     $repoRoot
 
 Invoke-Checked `
@@ -243,6 +299,8 @@ $artifactProfile = [ordered]@{
     "app_version" = $appVersion
     "build_type" = "assisted_distributable"
     "release_profile" = "assisted_stable"
+    "maturity" = "local_candidate"
+    "candidate" = $true
     "includes_bundled_vina" = $true
     "includes_bundled_python" = $true
     "includes_bundled_rdkit" = $true
@@ -261,11 +319,6 @@ Invoke-Checked `
     @("scripts/verify_assisted_release.py", $stageRoot, "--gate", "development") `
     $repoRoot
 
-Invoke-Checked "Python unittest" "python" @("-m", "unittest", "discover", "-s", "backend/tests") $repoRoot
-Invoke-Checked "npm run build" "npm.cmd" @("run", "build") $desktopDir
-Invoke-Checked "cargo check" "cargo" @("check", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml") $repoRoot $cargoTargetDir
-Invoke-Checked "cargo test" "cargo" @("test", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml") $repoRoot $cargoTargetDir
-
 if ($SkipTauriBuild) {
     Write-Step "Skip Tauri build"
     Write-Host "Gate 1 passed. Tauri build and Gate 2 were explicitly skipped."
@@ -277,12 +330,24 @@ foreach ($relativePath in @("backend", "frontend", "examples", "resources", "Doc
     Remove-ReleasePath $releaseDir (Join-Path $releaseDir $relativePath)
 }
 
-Invoke-Checked `
-    "Build DockStart Assisted desktop installers" `
-    "npm.cmd" `
-    @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.assisted.conf.json", "--bundles", "msi,nsis", "--ci") `
-    $desktopDir `
-    $cargoTargetDir
+# Release linking has a substantially higher memory peak than the source
+# gate. Default to one Cargo worker so a 16 GiB packaging host remains
+# deterministic; an operator may explicitly provide a different value.
+$previousCargoBuildJobs = [Environment]::GetEnvironmentVariable("CARGO_BUILD_JOBS", "Process")
+if ([string]::IsNullOrWhiteSpace($previousCargoBuildJobs)) {
+    [Environment]::SetEnvironmentVariable("CARGO_BUILD_JOBS", "1", "Process")
+}
+try {
+    Invoke-Checked `
+        "Build DockStart Assisted desktop installers" `
+        "npm.cmd" `
+        @("run", "tauri", "--", "build", "--config", "src-tauri/tauri.assisted.conf.json", "--bundles", "msi,nsis", "--ci", "--", "--locked") `
+        $desktopDir `
+        $cargoTargetDir
+}
+finally {
+    [Environment]::SetEnvironmentVariable("CARGO_BUILD_JOBS", $previousCargoBuildJobs, "Process")
+}
 
 Write-Step "Validate installer artifacts"
 $bundleDir = Join-Path $releaseDir "bundle"
@@ -383,18 +448,47 @@ foreach ($record in @($records)) {
     $artifactName = [string]$record.name
     $artifactSha256[$artifactName] = [string]$record.sha256
 }
+Write-Step "Recheck source state before recording provenance"
+$finalBranch = (& git -C $repoRoot branch --show-current).Trim()
+$finalSourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0 -or $finalBranch -cne $branch -or $finalSourceCommit -cne $sourceCommit) {
+    throw "The Git branch or HEAD changed during the release build; refusing to publish stale provenance."
+}
+$finalStatus = @(& git -C $repoRoot status --short --untracked-files=all)
+if ($LASTEXITCODE -ne 0) {
+    throw "Cannot recheck the Git working tree before provenance publication."
+}
+$finalDirtyEntries = @($finalStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+$finalStatusFingerprint = [string]::Join("`n", @($finalDirtyEntries))
+if ($finalStatusFingerprint -cne $initialStatusFingerprint) {
+    throw "The Git working tree changed during the release build; refusing to publish a stale manifest."
+}
+$finalSourceStateSha256 = Get-SourceStateFingerprint $repoRoot
+if ($finalSourceStateSha256 -ne $initialSourceStateSha256) {
+    throw "Source bytes changed during the release build; refusing to publish a stale manifest."
+}
+foreach ($lockEntry in $lockfileSha256.GetEnumerator()) {
+    $currentHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot $lockEntry.Key) -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($currentHash -ne [string]$lockEntry.Value) {
+        throw "Lock file changed during the release build: $($lockEntry.Key)"
+    }
+}
+
 $artifactManifest = [ordered]@{
     "app_version" = $appVersion
     "candidate" = $true
     "candidate_id" = $candidateId
     "source_commit" = $sourceCommit
     "source_branch" = $branch
+    "source_state_sha256" = $initialSourceStateSha256
     "built_at" = $builtAt.ToString("o")
     "profile" = "Assisted"
     "release_profile" = "assisted_stable"
     "maturity" = "local_candidate"
     "worktree_dirty" = $worktreeDirty
     "supersedes_candidate" = $supersedesCandidateValue
+    "tool_versions" = $toolVersions
+    "lockfiles_sha256" = $lockfileSha256
     "development_gate" = "passed"
     "post_package_gate" = "passed"
     "post_install_gate" = "pending"
@@ -432,6 +526,13 @@ $artifactManifestJson | Set-Content -LiteralPath $archivedArtifactManifestPath -
 
 if ($SkipPostInstallGate) {
     Write-Step "Skip real post-install gate (development only)"
+    foreach ($artifact in @($archivedMsi, $archivedNsis)) {
+        $artifactName = Split-Path -Leaf $artifact
+        $currentHash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentHash -ne [string]$artifactSha256[$artifactName]) {
+            throw "Archived installer changed after provenance capture: $artifactName"
+        }
+    }
     $artifactManifest["post_install_gate"] = "pending"
     $artifactManifest["release_status"] = "candidate_incomplete"
     $artifactManifest["publishable"] = $false
@@ -462,7 +563,7 @@ try {
         @(
             "scripts/verify_installed_assisted_release.py",
             "--repo-root", $repoRoot,
-            "--installer", $expectedNsis
+            "--installer", $archivedNsis
         ) `
         $repoRoot
 
@@ -473,9 +574,10 @@ try {
     if ([string]$installGateResult.status -ne "passed") {
         throw "The post-install gate result is not passed."
     }
-    $expectedNsisHash = (Get-FileHash -LiteralPath $expectedNsis -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ([string]$installGateResult.installer_sha256 -ne $expectedNsisHash) {
-        throw "The post-install gate result does not belong to the NSIS artifact built in this run."
+    $archivedNsisName = Split-Path -Leaf $archivedNsis
+    $archivedNsisHash = [string]$artifactSha256[$archivedNsisName]
+    if ([string]$installGateResult.installer_sha256 -ne $archivedNsisHash) {
+        throw "The post-install gate result does not belong to the archived NSIS artifact recorded in this run."
     }
     if ([string]$installGateResult.install_root -ne ".release/install-gate/installed") {
         throw "The post-install gate did not use the required isolated install directory."
@@ -485,6 +587,36 @@ try {
     }
     if ($installGateResult.uninstall.clean -ne $true -or $installGateResult.uninstall.install_directory_removed -ne $true) {
         throw "The post-install gate did not prove a clean silent uninstall."
+    }
+
+    foreach ($artifact in @($archivedMsi, $archivedNsis)) {
+        $artifactName = Split-Path -Leaf $artifact
+        $currentHash = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentHash -ne [string]$artifactSha256[$artifactName]) {
+            throw "Archived installer changed during the post-install gate: $artifactName"
+        }
+    }
+    $finalBranch = (& git -C $repoRoot branch --show-current).Trim()
+    $finalSourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0 -or $finalBranch -cne $branch -or $finalSourceCommit -cne $sourceCommit) {
+        throw "The Git branch or HEAD changed during the post-install gate."
+    }
+    $finalStatus = @(& git -C $repoRoot status --short --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot recheck the Git working tree after the post-install gate."
+    }
+    $finalDirtyEntries = @($finalStatus | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ([string]::Join("`n", @($finalDirtyEntries)) -cne $initialStatusFingerprint) {
+        throw "The Git working tree changed during the post-install gate."
+    }
+    if ((Get-SourceStateFingerprint $repoRoot) -ne $initialSourceStateSha256) {
+        throw "Source bytes changed during the post-install gate."
+    }
+    foreach ($lockEntry in $lockfileSha256.GetEnumerator()) {
+        $currentHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot $lockEntry.Key) -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentHash -ne [string]$lockEntry.Value) {
+            throw "Lock file changed during the post-install gate: $($lockEntry.Key)"
+        }
     }
 
     $artifactManifest["post_install_gate"] = "passed"

@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -5164,6 +5165,208 @@ class ScreeningWorkflowTests(unittest.TestCase):
         self.assertEqual(canceled["screening"]["status"], "canceled")
         archived = archive_screening(str(self.root))
         self.assertTrue(archived["ok"], archived)
+
+    def test_concurrent_run_has_single_execution_owner_and_single_attempt(self) -> None:
+        self.assertTrue(
+            self.create(ligand_files=["prepared/alpha.pdbqt"])["ok"]
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def blocking_runner(**kwargs):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            entered.set()
+            self.assertTrue(release.wait(5))
+            kwargs["output_path"].write_text(_pdbqt(), encoding="utf-8")
+            kwargs["log_path"].write_text(
+                "   1      -7.00      0.000      0.000\n",
+                encoding="utf-8",
+            )
+            return {"exit_code": 0}
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(
+                run_screening,
+                str(self.root),
+                runner=blocking_runner,
+            )
+            self.assertTrue(entered.wait(2))
+            duplicate = run_screening(
+                str(self.root),
+                runner=blocking_runner,
+            )
+            self.assertFalse(duplicate["ok"])
+            self.assertEqual(
+                duplicate["error"]["code"],
+                "SCREENING_EXECUTION_ACTIVE",
+            )
+            release.set()
+            first = first_future.result(timeout=5)
+
+        self.assertTrue(first["ok"], first)
+        self.assertEqual(calls, 1)
+        persisted = json.loads(
+            (self.root / "screening" / "screening.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(persisted["items"][0]["attempt_count"], 1)
+        self.assertEqual(len(persisted["items"][0]["attempts"]), 1)
+
+    def test_execution_owner_lock_blocks_across_processes(self) -> None:
+        self.assertTrue(
+            self.create(ligand_files=["prepared/alpha.pdbqt"])["ok"]
+        )
+        script = "\n".join(
+            [
+                "import sys, time",
+                "from pathlib import Path",
+                f"sys.path.insert(0, {str(BACKEND_ROOT)!r})",
+                "from dockstart_core.screening import _try_screening_execution_lock",
+                f"root = Path({str(self.root)!r})",
+                "with _try_screening_execution_lock(root) as acquired:",
+                "    print('LOCKED' if acquired else 'FAILED', flush=True)",
+                "    if acquired:",
+                "        time.sleep(1.0)",
+            ]
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-B", "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        try:
+            self.assertEqual(
+                process.stdout.readline().strip(),  # type: ignore[union-attr]
+                "LOCKED",
+            )
+            blocked = run_screening(
+                str(self.root),
+                runner=_successful_runner([]),
+            )
+            self.assertFalse(blocked["ok"])
+            self.assertEqual(
+                blocked["error"]["code"],
+                "SCREENING_EXECUTION_ACTIVE",
+            )
+        finally:
+            process.wait(timeout=5)
+            stderr_text = (
+                process.stderr.read() if process.stderr is not None else ""
+            )
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+            if process.returncode != 0:
+                self.fail(stderr_text)
+
+        persisted = json.loads(
+            (self.root / "screening" / "screening.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(persisted["status"], "ready")
+        self.assertEqual(persisted["items"][0]["attempt_count"], 0)
+
+    def test_cancel_request_is_not_lost_by_running_state_snapshot(self) -> None:
+        self.assertTrue(self.create()["ok"])
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_runner(**kwargs):
+            entered.set()
+            self.assertTrue(release.wait(5))
+            kwargs["output_path"].write_text(_pdbqt(), encoding="utf-8")
+            kwargs["log_path"].write_text(
+                "   1      -7.00      0.000      0.000\n",
+                encoding="utf-8",
+            )
+            return {"exit_code": 0}
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                run_screening,
+                str(self.root),
+                runner=blocking_runner,
+            )
+            self.assertTrue(entered.wait(2))
+            canceled = request_screening_cancel(str(self.root))
+            self.assertTrue(canceled["ok"], canceled)
+            self.assertTrue(canceled["screening"]["cancel_requested"])
+            self.assertEqual(canceled["screening"]["status"], "cancel_requested")
+            release.set()
+            result = future.result(timeout=5)
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["screening"]["cancel_requested"])
+        self.assertEqual(result["screening"]["status"], "canceled")
+        self.assertEqual(result["screening"]["queue"], ["ligand_0002"])
+        self.assertEqual(result["screening"]["items"][1]["attempt_count"], 0)
+
+    def test_stale_non_cancel_state_write_is_rejected(self) -> None:
+        self.assertTrue(self.create()["ok"])
+        first = screening._read_state(self.root)
+        stale = screening._read_state(self.root)
+        first["status"] = "running"
+        screening._write_state(self.root, first)
+        stale["status"] = "interrupted"
+
+        with self.assertRaisesRegex(RuntimeError, "陈旧状态"):
+            screening._write_state(self.root, stale)
+
+        persisted = screening._read_state(self.root)
+        self.assertEqual(persisted["status"], "running")
+        self.assertEqual(
+            persisted["state_revision"],
+            first["state_revision"],
+        )
+
+    def test_resume_checks_latest_interrupted_attempt_even_if_item_not_running(self) -> None:
+        self.assertTrue(self.create()["ok"])
+        state_path = self.root / "screening" / "screening.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["status"] = "interrupted"
+        state["items"][0]["status"] = "interrupted"
+        state["items"][0]["attempt_count"] = 1
+        state["items"][0]["attempts"] = [
+            {
+                "attempt": 1,
+                "status": "interrupted",
+                "pid": 4242,
+                "finished_at": "2026-08-09T00:00:00+00:00",
+                "process_identity": {
+                    "pid": 4242,
+                    "executable_path": str(self.vina.resolve()),
+                    "creation_token": "test-token",
+                },
+                "vina_snapshot": {"path": str(self.vina.resolve())},
+            }
+        ]
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        verification = {
+            "ok": True,
+            "running": True,
+            "identity": state["items"][0]["attempts"][0]["process_identity"],
+            "message": "Vina 进程身份已确认。",
+        }
+        with patch(
+            "dockstart_core.screening.vina_adapter.verify_process_identity",
+            return_value=verification,
+        ) as verify:
+            response = resume_screening(str(self.root))
+
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["error"]["code"], "SCREENING_PROCESS_ACTIVE")
+        verify.assert_called_once()
+        unchanged = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(unchanged["items"][0]["status"], "interrupted")
 
     def test_resume_refuses_while_recorded_pid_is_alive(self) -> None:
         self.assertTrue(self.create()["ok"])

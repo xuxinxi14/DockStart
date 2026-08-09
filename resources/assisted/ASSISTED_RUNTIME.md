@@ -1,6 +1,6 @@
 # Replaceable Assisted Python runtime
 
-DockStart Assisted Stable uses a separate CPython 3.11 runtime in this
+The DockStart Assisted candidate profile uses a separate CPython 3.11 runtime in this
 directory. Meeko and its dependencies remain ordinary packages under
 `Lib/site-packages`; they are not linked into or frozen inside the DockStart
 executable.

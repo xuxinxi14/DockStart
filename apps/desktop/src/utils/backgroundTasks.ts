@@ -180,11 +180,15 @@ export async function findActiveBackgroundTask(
   throw new Error(status.message || status.error || "无法查询活动后台任务。");
 }
 
-export async function cancelQueuedBackgroundTask(taskId: string): Promise<BackgroundTaskStatus> {
+export async function cancelBackgroundTask(taskId: string): Promise<BackgroundTaskStatus> {
   const payload = await invoke<string>("cancel_background_task", { taskId });
   const status = normalizeTaskStatus(payload);
-  if (!status.ok) throw new Error(status.message || status.error || "无法取消排队任务。");
+  if (!status.ok) throw new Error(status.message || status.error || "无法取消后台任务。");
   return status;
+}
+
+export async function cancelQueuedBackgroundTask(taskId: string): Promise<BackgroundTaskStatus> {
+  return cancelBackgroundTask(taskId);
 }
 
 export function isTerminalBackgroundTask(status: BackgroundTaskStatus): boolean {

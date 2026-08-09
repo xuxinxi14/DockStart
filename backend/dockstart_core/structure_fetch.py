@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import math
+import os
 import queue
 import re
+import stat
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -18,8 +22,23 @@ from typing import Any
 from urllib.parse import quote
 
 from dockstart_core import __version__
-from dockstart_core.persistence import atomic_write_bytes
-from dockstart_core.project import _error, _now_iso, _project_from_dict, _success, load_project, save_project
+from dockstart_core.project import (
+    ProjectFileSafetyError,
+    _assert_directory_identity,
+    _error,
+    _existing_file_snapshot_for_publication,
+    _now_iso,
+    _preparation_target_lock,
+    _project_from_dict,
+    _publish_project_file_bytes,
+    _read_external_file_snapshot_no_follow,
+    _read_file_snapshot_no_follow,
+    _rollback_file_publication,
+    _safe_project_storage_file,
+    _success,
+    load_project,
+    save_project,
+)
 
 PDB_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{4}$")
 SUPPORTED_PDB_FORMATS = {"pdb", "cif"}
@@ -30,11 +49,20 @@ DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_SEARCH_LIMIT = 8
 MAX_SEARCH_LIMIT = 20
 MAX_SEARCH_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_STRUCTURE_DOWNLOAD_BYTES = 256 * 1024 * 1024
+STRUCTURE_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 Fetcher = Callable[[str, int | float], bytes]
 
 
 class _SearchResponseTooLarge(RuntimeError):
+    def __init__(self, observed_size: int, source: str) -> None:
+        super().__init__(f"{source}={observed_size}")
+        self.observed_size = observed_size
+        self.source = source
+
+
+class _StructureDownloadTooLarge(RuntimeError):
     def __init__(self, observed_size: int, source: str) -> None:
         super().__init__(f"{source}={observed_size}")
         self.observed_size = observed_size
@@ -59,6 +87,13 @@ class _SearchDeadline:
 
     def timeout_error(self) -> TimeoutError:
         return TimeoutError(f"结构搜索超过总时限：{self.timeout_seconds:g} 秒")
+
+
+class _DownloadDeadline(_SearchDeadline):
+    """Hard wall-clock budget for one structure-file download."""
+
+    def timeout_error(self) -> TimeoutError:
+        return TimeoutError(f"结构下载超过总时限：{self.timeout_seconds:g} 秒")
 
 
 def validate_pdb_id(pdb_id: str) -> dict[str, Any]:
@@ -163,10 +198,41 @@ def _validate_search_query(query: str, provider_name: str) -> dict[str, Any]:
     return {"ok": True, "query": value, "error": None}
 
 
-def _fetch_bytes(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes:
+def _fetch_bytes(url: str, timeout: int | float = DEFAULT_TIMEOUT_SECONDS) -> bytes:
+    """Read one fixed-endpoint structure response with hard byte/time limits."""
+
+    deadline = _DownloadDeadline(timeout)
     request = urllib.request.Request(url, headers={"User-Agent": f"DockStart/{__version__}"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed HTTPS endpoints only.
-        return response.read()
+    with urllib.request.urlopen(request, timeout=deadline.remaining()) as response:  # noqa: S310 - fixed HTTPS endpoints only.
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except (TypeError, ValueError):
+                declared_size = -1
+            if declared_size > MAX_STRUCTURE_DOWNLOAD_BYTES:
+                raise _StructureDownloadTooLarge(declared_size, "content_length")
+
+        chunks: list[bytes] = []
+        observed_size = 0
+        while True:
+            if deadline.remaining() <= 0:
+                raise deadline.timeout_error()
+            chunk = response.read(
+                min(
+                    STRUCTURE_DOWNLOAD_CHUNK_BYTES,
+                    MAX_STRUCTURE_DOWNLOAD_BYTES - observed_size + 1,
+                )
+            )
+            if not chunk:
+                break
+            observed_size += len(chunk)
+            if observed_size > MAX_STRUCTURE_DOWNLOAD_BYTES:
+                raise _StructureDownloadTooLarge(observed_size, "actual_bytes")
+            chunks.append(chunk)
+        if deadline.remaining() <= 0:
+            raise deadline.timeout_error()
+        return b"".join(chunks)
 
 
 def _fetch_search_bytes(
@@ -247,8 +313,52 @@ def _fetch_search_bytes_with_deadline(
 
 
 def _download(url: str, fetcher: Fetcher | None, timeout: int) -> tuple[bytes | None, dict[str, Any] | None]:
+    deadline = _DownloadDeadline(timeout)
+    result_queue: queue.Queue[tuple[bool, bytes | Exception]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            data = (fetcher or _fetch_bytes)(url, deadline.remaining())
+            if not isinstance(data, bytes):
+                raise TypeError(f"下载器必须返回 bytes，实际为 {type(data).__name__}")
+            if len(data) > MAX_STRUCTURE_DOWNLOAD_BYTES:
+                raise _StructureDownloadTooLarge(len(data), "actual_bytes")
+        except Exception as exc:  # noqa: BLE001 - re-raised on the caller thread.
+            result_queue.put((False, exc))
+        else:
+            result_queue.put((True, data))
+
     try:
-        data = (fetcher or _fetch_bytes)(url, timeout)
+        thread = threading.Thread(
+            target=worker,
+            name="dockstart-structure-download",
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=deadline.remaining())
+        if thread.is_alive():
+            raise deadline.timeout_error()
+        try:
+            succeeded, payload = result_queue.get_nowait()
+        except queue.Empty as exc:
+            raise RuntimeError("结构下载线程没有返回结果。") from exc
+        if not succeeded:
+            assert isinstance(payload, Exception)
+            raise payload
+        assert isinstance(payload, bytes)
+        data = payload
+        if deadline.remaining() <= 0:
+            raise deadline.timeout_error()
+    except _StructureDownloadTooLarge as exc:
+        return None, _error(
+            "STRUCTURE_DOWNLOAD_TOO_LARGE",
+            "下载的原始结构文件超过 256 MiB 安全上限，已停止读取。",
+            raw_error=(
+                f"{exc.source}={exc.observed_size} bytes; "
+                f"limit={MAX_STRUCTURE_DOWNLOAD_BYTES} bytes"
+            ),
+            suggestion="请从官方来源手动下载并核对文件；超大结构不应直接通过当前下载入口导入。",
+        )
     except urllib.error.HTTPError as exc:
         return None, _error(
             "STRUCTURE_DOWNLOAD_HTTP_ERROR",
@@ -286,6 +396,63 @@ def _download(url: str, fetcher: Fetcher | None, timeout: int) -> tuple[bytes | 
             suggestion="请确认 ID 和格式是否正确。",
         )
     return data, None
+
+
+def _validate_downloaded_structure(data: bytes, file_format: str) -> dict[str, Any]:
+    """Reject obvious error pages or payloads that are not the requested format."""
+
+    if not data or b"\x00" in data[: 1024 * 1024]:
+        return _error(
+            "STRUCTURE_DOWNLOAD_FORMAT_INVALID",
+            "下载结果不是可识别的文本结构文件。",
+            raw_error=f"format={file_format}; size={len(data)}",
+            suggestion="远端服务可能返回了错误页面，请稍后重试或手动下载并导入。",
+        )
+    try:
+        sample = data[: 4 * 1024 * 1024].decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return _error(
+            "STRUCTURE_DOWNLOAD_FORMAT_INVALID",
+            "下载结果不是有效的 UTF-8 文本结构文件。",
+            raw_error=str(exc),
+            suggestion="请从官方结构页面手动下载对应格式并核对文件。",
+        )
+
+    normalized = sample.lstrip()
+    lowered = normalized[:4096].casefold()
+    if (
+        lowered.startswith("<!doctype html")
+        or lowered.startswith("<html")
+        or lowered.startswith("<?xml")
+        or lowered.startswith("{")
+        or lowered.startswith("[")
+    ):
+        return _error(
+            "STRUCTURE_DOWNLOAD_FORMAT_INVALID",
+            "远端服务返回的内容不是请求的结构文件。",
+            raw_error=f"format={file_format}; prefix={normalized[:80]!r}",
+            suggestion="请确认结构 ID 或名称有效，稍后重试，或手动下载后导入。",
+        )
+
+    valid = False
+    if file_format == "pdb":
+        valid = re.search(
+            r"(?m)^(?:HEADER|TITLE |COMPND|SOURCE|KEYWDS|EXPDTA|AUTHOR|REMARK|DBREF |SEQRES|CRYST1|MODEL |ATOM  |HETATM)",
+            sample,
+        ) is not None
+    elif file_format == "cif":
+        valid = re.search(r"(?m)^data_[^\s]+", sample) is not None
+    elif file_format == "sdf":
+        valid = re.search(r"(?m)^M  END\s*$", sample) is not None
+
+    if not valid:
+        return _error(
+            "STRUCTURE_DOWNLOAD_FORMAT_INVALID",
+            f"下载结果不符合 {file_format.upper()} 文件的最小结构特征。",
+            raw_error=f"format={file_format}; size={len(data)}",
+            suggestion="请确认远端条目存在且格式正确，或手动下载后导入。",
+        )
+    return {"ok": True, "format": file_format, "size_bytes": len(data), "error": None}
 
 
 def _fetch_json(
@@ -398,16 +565,121 @@ def _preparation_running_error(project: Any, target: str) -> dict[str, Any] | No
     )
 
 
-def _write_raw_file(target_path: Path, data: bytes, overwrite: bool) -> dict[str, Any]:
-    if target_path.exists() and not overwrite:
+def _append_rollback_failure(
+    result: dict[str, Any],
+    rollback_error: str,
+    operation: str,
+) -> dict[str, Any]:
+    failed = copy.deepcopy(result)
+    error = failed.get("error") if isinstance(failed.get("error"), dict) else {}
+    raw_error = str(error.get("raw_error") or "")
+    detail = f"{operation} rollback failed: {rollback_error}"
+    error["raw_error"] = f"{raw_error}; {detail}" if raw_error else detail
+    error["suggestion"] = (
+        "project.json 提交失败且 raw 文件无法自动恢复；"
+        "请停止格式转换并人工核对 project.json 与 raw/ 目录。"
+    )
+    failed["error"] = error
+    return failed
+
+
+def _commit_raw_file(
+    project_dir: str,
+    *,
+    role: str,
+    relative_file: str,
+    payload: bytes,
+    overwrite: bool,
+    source: str,
+    source_id: str,
+    query_type: str,
+    message: str,
+    exists_code: str = "RAW_FILE_EXISTS",
+    exists_message: str = "raw 文件已存在，当前设置不会覆盖。",
+    exists_suggestion: str = "如需重新下载，请开启 overwrite。",
+) -> dict[str, Any]:
+    """Publish one raw file and its project reference as a rollback transaction."""
+
+    if role not in {"receptor", "ligand"}:
+        return _error("RAW_ROLE_INVALID", "raw 记录类型无效。")
+    try:
+        with _preparation_target_lock(project_dir, role):
+            project, project_error = _load_project_for_raw(project_dir)
+            if project_error:
+                return project_error
+            assert project is not None
+            running_error = _preparation_running_error(project, role)
+            if running_error:
+                return running_error
+
+            project_path = Path(project.project_dir).expanduser().resolve(strict=True)
+            target_path, parent_identity = _safe_project_storage_file(
+                project_path,
+                relative_file,
+                "raw",
+            )
+            try:
+                publication = _publish_project_file_bytes(
+                    target_path,
+                    payload,
+                    overwrite=overwrite,
+                    parent_identity=parent_identity,
+                )
+            except FileExistsError:
+                return _error(
+                    exists_code,
+                    exists_message,
+                    raw_error=str(target_path),
+                    suggestion=exists_suggestion,
+                )
+            rollback_required = True
+            try:
+                file_ref = getattr(project, role)
+                file_ref.source = source
+                file_ref.source_id = source_id
+                file_ref.query_type = query_type
+                file_ref.downloaded_at = _now_iso()
+                file_ref.raw_file = relative_file
+                _invalidate_prepared_reference(file_ref)
+
+                saved = save_project(project)
+                if not saved.get("ok"):
+                    rollback_error = _rollback_file_publication(publication)
+                    rollback_required = False
+                    return (
+                        _append_rollback_failure(saved, rollback_error, "raw publication")
+                        if rollback_error
+                        else saved
+                    )
+                rollback_required = False
+                return {
+                    **_success(project, message),
+                    "source": source,
+                    "source_id": source_id,
+                    "query_type": query_type,
+                    "raw_file": relative_file,
+                }
+            finally:
+                if rollback_required:
+                    rollback_error = _rollback_file_publication(publication)
+                    if rollback_error:
+                        raise RuntimeError(
+                            f"raw 文件事务异常且回滚失败：{rollback_error}"
+                        )
+    except ProjectFileSafetyError as exc:
         return _error(
-            "RAW_FILE_EXISTS",
-            "raw 文件已存在，当前设置不会覆盖。",
-            raw_error=str(target_path),
-            suggestion="如需重新下载，请开启 overwrite。",
+            exc.code,
+            "项目 raw 路径不安全，已拒绝写入。",
+            raw_error=str(exc),
+            suggestion="请恢复项目内普通的 raw/ 目录和文件，移除符号链接、junction 或硬链接后重试。",
         )
-    atomic_write_bytes(target_path, data)
-    return {"ok": True, "path": str(target_path), "error": None}
+    except Exception as exc:  # noqa: BLE001 - return UI-safe errors.
+        return _error(
+            "RAW_FILE_WRITE_ERROR",
+            "写入项目 raw 文件时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认项目 raw/ 目录可写且没有被其他程序替换。",
+        )
 
 
 def _validate_local_raw_file(
@@ -471,58 +743,43 @@ def _import_local_raw_file(project_dir: str, source_path: str, role: str) -> dic
     if not validation.get("ok"):
         return validation
 
-    project, project_error = _load_project_for_raw(project_dir)
-    if project_error:
-        return project_error
-    assert project is not None
-    running_error = _preparation_running_error(project, role)
-    if running_error:
-        return running_error
-
     source = Path(str(validation["path"]))
     file_format = str(validation["format"])
-    project_path = Path(project.project_dir).expanduser()
     relative_file = Path("raw", f"{role}_{_safe_file_slug(source.stem)}.{file_format}").as_posix()
-    target_path = project_path / relative_file
-
-    if target_path.exists():
-        return _error(
-            "LOCAL_RAW_FILE_EXISTS",
-            "项目 raw/ 目录中已经存在同名文件，DockStart 不会覆盖。",
-            raw_error=str(target_path),
-            suggestion="请更换项目名称、保存目录，或先清理已有 raw 文件。",
-        )
-
     try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes(target_path, source.read_bytes())
-        file_ref = project.receptor if is_receptor else project.ligand
-        file_ref.source = "local_file"
-        file_ref.source_id = source.name
-        file_ref.query_type = "local_file"
-        file_ref.downloaded_at = _now_iso()
-        file_ref.raw_file = relative_file
-        _invalidate_prepared_reference(file_ref)
-
-        saved = save_project(project)
-        if not saved.get("ok"):
-            return saved
-
-        return {
-            **_success(project, f"{label}已复制到 raw/ 目录。"),
-            "source": "local_file",
-            "source_id": source.name,
-            "query_type": "local_file",
-            "format": file_format,
-            "raw_file": relative_file,
-        }
-    except Exception as exc:  # noqa: BLE001 - UI needs structured errors.
+        payload = _read_external_file_snapshot_no_follow(source)
+    except OSError as exc:
         return _error(
-            "LOCAL_RAW_IMPORT_ERROR",
-            "导入本地原始结构文件时发生错误。",
+            "LOCAL_RAW_SOURCE_UNSAFE",
+            f"{label}源文件不是稳定的普通文件，已拒绝导入。",
             raw_error=str(exc),
-            suggestion="请确认项目目录可写，源文件未被其他程序锁定。",
+            suggestion="请选择不经过符号链接、junction 或 reparse point 的普通结构文件。",
         )
+    if not payload:
+        return _error(
+            "LOCAL_RAW_FILE_EMPTY",
+            f"{label}文件为空。",
+            raw_error=str(source),
+            suggestion="请确认该文件是有效的结构文件。",
+        )
+
+    result = _commit_raw_file(
+        project_dir,
+        role=role,
+        relative_file=relative_file,
+        payload=payload,
+        overwrite=False,
+        source="local_file",
+        source_id=source.name,
+        query_type="local_file",
+        message=f"{label}已复制到 raw/ 目录。",
+        exists_code="LOCAL_RAW_FILE_EXISTS",
+        exists_message="项目 raw/ 目录中已经存在同名文件，DockStart 不会覆盖。",
+        exists_suggestion="请更换文件名，或先清理已有 raw 文件。",
+    )
+    if result.get("ok"):
+        result["format"] = file_format
+    return result
 
 
 def import_receptor_raw_file(project_dir: str, source_path: str) -> dict[str, Any]:
@@ -996,38 +1253,30 @@ def fetch_pdb_structure(
 
     normalized_pdb_id = validation["pdb_id"]
     relative_file = Path("raw", f"receptor_{normalized_pdb_id}.{file_format}").as_posix()
-    project_path = Path(project.project_dir).expanduser()
-    target_path = project_path / relative_file
     url = _rcsb_url(normalized_pdb_id, file_format)
 
     data, download_error = _download(url, fetcher, timeout)
     if download_error:
         return download_error
     assert data is not None
+    format_validation = _validate_downloaded_structure(data, file_format)
+    if not format_validation.get("ok"):
+        return format_validation
 
-    write_result = _write_raw_file(target_path, data, overwrite)
-    if not write_result.get("ok"):
-        return write_result
-
-    project.receptor.source = "rcsb_pdb"
-    project.receptor.source_id = normalized_pdb_id
-    project.receptor.query_type = "pdb_id"
-    project.receptor.downloaded_at = _now_iso()
-    project.receptor.raw_file = relative_file
-    _invalidate_prepared_reference(project.receptor)
-
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    return {
-        **_success(project, "RCSB PDB 原始受体结构已下载到 raw/ 目录。"),
-        "source": "rcsb_pdb",
-        "source_id": normalized_pdb_id,
-        "format": file_format,
-        "raw_file": relative_file,
-        "url": url,
-    }
+    result = _commit_raw_file(
+        project_dir,
+        role="receptor",
+        relative_file=relative_file,
+        payload=data,
+        overwrite=overwrite,
+        source="rcsb_pdb",
+        source_id=normalized_pdb_id,
+        query_type="pdb_id",
+        message="RCSB PDB 原始受体结构已下载到 raw/ 目录。",
+    )
+    if result.get("ok"):
+        result.update({"format": file_format, "url": url})
+    return result
 
 
 def fetch_pubchem_ligand(
@@ -1087,50 +1336,28 @@ def fetch_pubchem_ligand(
     if running_error:
         return running_error
 
-    project_path = Path(project.project_dir).expanduser()
-    target_path = project_path / relative_file
-
     data, download_error = _download(url, fetcher, timeout)
     if download_error:
         return download_error
     assert data is not None
+    format_validation = _validate_downloaded_structure(data, file_format)
+    if not format_validation.get("ok"):
+        return format_validation
 
-    write_result = _write_raw_file(target_path, data, overwrite)
-    if not write_result.get("ok"):
-        return write_result
-
-    project.ligand.source = "pubchem"
-    project.ligand.source_id = source_id
-    project.ligand.query_type = normalized_query_type
-    project.ligand.downloaded_at = _now_iso()
-    project.ligand.raw_file = relative_file
-    _invalidate_prepared_reference(project.ligand)
-
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    return {
-        **_success(project, "PubChem 原始配体 SDF 已下载到 raw/ 目录。"),
-        "source": "pubchem",
-        "source_id": source_id,
-        "query_type": normalized_query_type,
-        "format": file_format,
-        "raw_file": relative_file,
-        "url": url,
-    }
-
-
-def _is_relative_to(path: Path, parent: Path) -> bool:
-    try:
-        path.relative_to(parent)
-        return True
-    except ValueError:
-        return False
-
-
-def _modified_at(path: Path) -> str:
-    return datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
+    result = _commit_raw_file(
+        project_dir,
+        role="ligand",
+        relative_file=relative_file,
+        payload=data,
+        overwrite=overwrite,
+        source="pubchem",
+        source_id=source_id,
+        query_type=normalized_query_type,
+        message="PubChem 原始配体 SDF 已下载到 raw/ 目录。",
+    )
+    if result.get("ok"):
+        result.update({"format": file_format, "url": url})
+    return result
 
 
 def _raw_file_status(project_path: Path, file_ref: Any, key: str, name: str) -> dict[str, Any]:
@@ -1164,24 +1391,54 @@ def _raw_file_status(project_path: Path, file_ref: Any, key: str, name: str) -> 
         }
 
     path = project_path / relative_file
-    raw_dir = project_path / "raw"
-    resolved_path = path.resolve()
-    resolved_raw_dir = raw_dir.resolve()
-    is_inside_raw = _is_relative_to(resolved_path, resolved_raw_dir)
-    exists = path.exists()
-    is_file = path.is_file()
-    size = path.stat().st_size if exists and is_file else 0
-    non_empty = size > 0
-    modified_at = _modified_at(path) if exists and is_file else ""
-    if not is_inside_raw:
+    exists = False
+    is_file = False
+    size = 0
+    non_empty = False
+    modified_at = ""
+    absolute_path = str(path.absolute())
+    path_safe = False
+    hardlinked = False
+    safety_error = ""
+    try:
+        path, parent_identity = _safe_project_storage_file(
+            project_path,
+            relative_file,
+            "raw",
+        )
+        absolute_path = str(path.absolute())
+        path_safe = True
+        exists = os.path.lexists(path)
+        if exists:
+            details = os.lstat(path)
+            is_file = stat.S_ISREG(details.st_mode)
+            hardlinked = is_file and int(getattr(details, "st_nlink", 1) or 1) > 1
+            size = int(details.st_size) if is_file else 0
+            non_empty = size > 0
+            modified_at = (
+                datetime.fromtimestamp(details.st_mtime, UTC)
+                .replace(microsecond=0)
+                .isoformat()
+                if is_file
+                else ""
+            )
+        _assert_directory_identity(path.parent, parent_identity)
+    except (ProjectFileSafetyError, OSError) as exc:
+        path_safe = False
+        safety_error = str(exc)
+
+    if not path_safe:
         status = "error"
-        message = f"{name} raw 记录不在项目 raw/ 目录内。"
+        message = f"{name} raw 路径不安全或越出项目 raw/ 目录。"
     elif not exists:
         status = "missing"
         message = f"{name} raw 文件不存在。"
     elif not is_file:
         status = "error"
-        message = f"{name} raw 路径不是文件。"
+        message = f"{name} raw 路径不是普通文件。"
+    elif hardlinked:
+        status = "error"
+        message = f"{name} raw 文件存在多个硬链接，已标记为不安全。"
     elif not non_empty:
         status = "empty"
         message = f"{name} raw 文件为空。"
@@ -1203,12 +1460,12 @@ def _raw_file_status(project_path: Path, file_ref: Any, key: str, name: str) -> 
         "size": size,
         "size_bytes": size,
         "modified_at": modified_at,
-        "absolute_path": str(resolved_path),
-        "record_consistent": is_inside_raw and exists and is_file and non_empty,
+        "absolute_path": absolute_path,
+        "record_consistent": path_safe and exists and is_file and not hardlinked and non_empty,
         "non_empty": non_empty,
         "status": status,
         "message": message,
-        "raw_error": "" if status == "ok" else str(path),
+        "raw_error": "" if status == "ok" else (safety_error or str(path)),
     }
 
 
@@ -1234,62 +1491,187 @@ def get_raw_files_status(project_dir: str) -> dict[str, Any]:
     }
 
 
+def _stage_raw_file_deletion(
+    target_path: Path,
+    parent_identity: tuple[int, int],
+) -> dict[str, Any] | None:
+    """Move a raw file to a sibling tombstone before committing project.json."""
+
+    existed, snapshot = _existing_file_snapshot_for_publication(target_path)
+    if not existed:
+        return None
+    _assert_directory_identity(target_path.parent, parent_identity)
+    tombstone: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{target_path.name}.delete-",
+            suffix=".tmp",
+            dir=target_path.parent,
+            delete=False,
+        ) as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+            tombstone = Path(handle.name)
+        os.replace(target_path, tombstone)
+        _assert_directory_identity(target_path.parent, parent_identity)
+        if _read_file_snapshot_no_follow(tombstone) != snapshot:
+            raise OSError("raw 删除暂存文件与原文件快照不一致")
+        return {
+            "target": target_path,
+            "tombstone": tombstone,
+            "snapshot": snapshot,
+            "parent_identity": parent_identity,
+        }
+    except Exception:
+        if tombstone is not None and os.path.lexists(tombstone) and not os.path.lexists(target_path):
+            try:
+                os.replace(tombstone, target_path)
+            except OSError:
+                pass
+        elif tombstone is not None and os.path.lexists(tombstone):
+            try:
+                tombstone.unlink()
+            except OSError:
+                pass
+        raise
+
+
+def _rollback_staged_raw_deletion(staged: dict[str, Any]) -> str:
+    try:
+        target = Path(staged["target"])
+        tombstone = Path(staged["tombstone"])
+        snapshot = bytes(staged["snapshot"])
+        parent_identity = staged["parent_identity"]
+        _assert_directory_identity(target.parent, parent_identity)
+        if os.path.lexists(target):
+            raise OSError("raw 原路径已被其他操作占用，拒绝覆盖")
+        existed, current = _existing_file_snapshot_for_publication(tombstone)
+        if not existed or current != snapshot:
+            raise OSError("raw 删除暂存文件已发生变化")
+        os.replace(tombstone, target)
+        _assert_directory_identity(target.parent, parent_identity)
+        if _read_file_snapshot_no_follow(target) != snapshot:
+            raise OSError("raw 文件回滚后的字节不一致")
+        return ""
+    except Exception as exc:  # noqa: BLE001 - caller records rollback diagnostics.
+        return str(exc)
+
+
+def _finalize_staged_raw_deletion(staged: dict[str, Any]) -> str:
+    try:
+        tombstone = Path(staged["tombstone"])
+        snapshot = bytes(staged["snapshot"])
+        parent_identity = staged["parent_identity"]
+        _assert_directory_identity(tombstone.parent, parent_identity)
+        existed, current = _existing_file_snapshot_for_publication(tombstone)
+        if not existed or current != snapshot:
+            raise OSError("raw 删除暂存文件已发生变化，未自动删除")
+        tombstone.unlink()
+        _assert_directory_identity(tombstone.parent, parent_identity)
+        return ""
+    except Exception as exc:  # noqa: BLE001 - committed project remains authoritative.
+        return str(exc)
+
+
 def _clear_raw_record(project_dir: str, role: str, delete_file: bool = False) -> dict[str, Any]:
     if role not in {"receptor", "ligand"}:
         return _error("RAW_ROLE_INVALID", "raw 记录类型无效。")
 
-    project, project_error = _load_project_for_raw(project_dir)
-    if project_error:
-        return project_error
-    assert project is not None
+    try:
+        with _preparation_target_lock(project_dir, role):
+            project, project_error = _load_project_for_raw(project_dir)
+            if project_error:
+                return project_error
+            assert project is not None
+            running_error = _preparation_running_error(project, role)
+            if running_error:
+                return running_error
 
-    project_path = Path(project.project_dir).expanduser()
-    raw_dir = (project_path / "raw").resolve()
-    file_ref = getattr(project, role)
-    raw_file = str(file_ref.raw_file or "")
-    deleted_file = ""
+            project_path = Path(project.project_dir).expanduser().resolve(strict=True)
+            file_ref = getattr(project, role)
+            raw_file = str(file_ref.raw_file or "")
+            deleted_file = ""
+            staged: dict[str, Any] | None = None
 
-    if delete_file and raw_file:
-        target_path = (project_path / raw_file).resolve()
-        if not _is_relative_to(target_path, raw_dir):
-            return _error(
-                "RAW_DELETE_OUTSIDE_RAW_DIR",
-                "为了保护项目文件，只允许删除项目 raw/ 目录下的 raw 文件。",
-                raw_error=str(target_path),
-                suggestion="请先检查 project.json 中的 raw_file 记录是否正确。",
-            )
-        if target_path.exists():
-            if not target_path.is_file():
-                return _error(
-                    "RAW_DELETE_TARGET_NOT_FILE",
-                    "raw_file 指向的路径不是文件，DockStart 不会删除它。",
-                    raw_error=str(target_path),
-                    suggestion="请手动检查 raw/ 目录内容。",
+            if delete_file and raw_file:
+                try:
+                    target_path, parent_identity = _safe_project_storage_file(
+                        project_path,
+                        raw_file,
+                        "raw",
+                    )
+                except ProjectFileSafetyError as exc:
+                    code = (
+                        "RAW_DELETE_OUTSIDE_RAW_DIR"
+                        if exc.code == "PROJECT_STORAGE_PATH_OUTSIDE_ROOT"
+                        else "RAW_DELETE_PATH_UNSAFE"
+                    )
+                    return _error(
+                        code,
+                        "为了保护项目文件，只允许删除项目 raw/ 目录中的普通文件。",
+                        raw_error=str(exc),
+                        suggestion="请先检查 project.json 中的 raw_file 记录以及 raw/ 目录是否含链接。",
+                    )
+                staged = _stage_raw_file_deletion(target_path, parent_identity)
+                if staged is not None:
+                    deleted_file = str(target_path)
+            rollback_required = staged is not None
+            try:
+                file_ref.source = ""
+                file_ref.source_id = ""
+                file_ref.query_type = ""
+                file_ref.downloaded_at = ""
+                file_ref.raw_file = ""
+
+                saved = save_project(project)
+                if not saved.get("ok"):
+                    if staged is not None:
+                        rollback_error = _rollback_staged_raw_deletion(staged)
+                        rollback_required = False
+                        if rollback_error:
+                            return _append_rollback_failure(saved, rollback_error, "raw deletion")
+                    return saved
+
+                rollback_required = False
+                cleanup_warning = _finalize_staged_raw_deletion(staged) if staged is not None else ""
+                label = "受体" if role == "receptor" else "配体"
+                response = get_raw_files_status(project.project_dir)
+                if not response.get("ok"):
+                    return response
+                response.update(
+                    {
+                        "message": f"{label} raw 记录已清除。" + (" raw 文件也已删除。" if deleted_file else ""),
+                        "deleted_file": deleted_file,
+                    },
                 )
-            target_path.unlink()
-            deleted_file = str(target_path)
-
-    file_ref.source = ""
-    file_ref.source_id = ""
-    file_ref.query_type = ""
-    file_ref.downloaded_at = ""
-    file_ref.raw_file = ""
-
-    saved = save_project(project)
-    if not saved.get("ok"):
-        return saved
-
-    label = "受体" if role == "receptor" else "配体"
-    response = get_raw_files_status(project.project_dir)
-    if not response.get("ok"):
-        return response
-    response.update(
-        {
-            "message": f"{label} raw 记录已清除。" + (" raw 文件也已删除。" if deleted_file else ""),
-            "deleted_file": deleted_file,
-        },
-    )
-    return response
+                if cleanup_warning:
+                    response.setdefault("warnings", []).append(
+                        "raw 记录已提交，但删除暂存文件清理失败；请关闭 DockStart 后检查 raw/ 中的隐藏 .delete-*.tmp 文件。"
+                    )
+                    response["cleanup_error"] = cleanup_warning
+                return response
+            finally:
+                if rollback_required and staged is not None:
+                    rollback_error = _rollback_staged_raw_deletion(staged)
+                    if rollback_error:
+                        raise RuntimeError(
+                            f"raw 清除事务异常且文件回滚失败：{rollback_error}"
+                        )
+    except ProjectFileSafetyError as exc:
+        return _error(
+            exc.code,
+            "项目 raw 路径不安全，已拒绝清除。",
+            raw_error=str(exc),
+            suggestion="请恢复普通的 raw/ 目录和文件，移除符号链接、junction 或硬链接后重试。",
+        )
+    except Exception as exc:  # noqa: BLE001 - UI needs structured errors.
+        return _error(
+            "RAW_CLEAR_ERROR",
+            "清除 raw 记录时发生错误，project.json 未提交不完整状态。",
+            raw_error=str(exc),
+            suggestion="请确认项目目录可写，并检查 raw/ 目录是否被其他程序占用。",
+        )
 
 
 def clear_receptor_raw_record(project_dir: str, delete_file: bool = False) -> dict[str, Any]:

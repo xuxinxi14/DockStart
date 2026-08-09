@@ -112,7 +112,7 @@ DockStart V0.3 可以在工具链能力可确认时尝试使用 RDKit/Meeko 自�
 
 原因包括许可证、分发方式、依赖体积和维护成本都需要单独评估。
 
-v0.10.2 Basic Stable 不内置 Meeko/RDKit；Assisted Stable 则把固定版本作为独立、可替换的 Python runtime 随包提供。源码仓库不提交 runtime 二进制或 wheel，发布时从固定离线 wheelhouse 装配并校验 SHA256。应用运行时不会联网安装这些包或修改系统 Python。Meeko 的 LGPL、对应源码、依赖来源、包体积和升级兼容性仍需在每次版本更新时重新审查。
+Basic profile 不内置 Meeko/RDKit；Assisted profile 则把固定版本作为独立、可替换的 Python runtime 随包提供。源码仓库不提交 runtime 二进制或 wheel，发布时从固定离线 wheelhouse 装配并校验 SHA256。应用运行时不会联网安装这些包或修改系统 Python。Meeko 的 LGPL、对应源码、依赖来源、包体积和升级兼容性仍需在每次版本更新时重新审查。profile 名称不代表当前构建已经达到正式 Stable Release。
 
 ## 9. DockStart 当前不保证外部 PDBQT 的科学正确性
 

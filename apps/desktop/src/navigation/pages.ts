@@ -37,7 +37,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "0.14.2";
+export const appVersion = "0.14.3";
 
 export const navigationItems: NavigationItem[] = [
   {

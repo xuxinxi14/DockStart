@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.14.3
+
+- Hardened PDBQT and raw-structure publication with no-follow project paths, hard-link rejection, bounded downloads, atomic replacement, and rollback when `project.json` revision commits fail.
+- Added serialized screening ownership/cancellation state and locked settings updates to prevent duplicate attempts, stale cancellation overwrites, and concurrent configuration loss.
+- Restricted release backend discovery to trusted application resources, added bounded/cancellable Python child-process execution with Windows process-tree cleanup, and made run settings a single project transaction.
+- Refreshed maps state from the complete scientific context, separated Basic/Assisted profile names from local-candidate maturity, and lazily loaded workflow pages to reduce the initial frontend bundle.
+- Added a clean-clone-aware unified Python/frontend/Rust gate, Windows CI, pinned Node/Rust toolchains, locked Cargo provenance, official npm registry resolution, and dependency audit fixes.
+- Kept the AutoDock Vina algorithms, scientific protocol semantics, runtime dependency set, license strategy, and user project schema unchanged; v0.14.3 remains a non-final local candidate.
+
 ## v0.14.2
 
 - Repackaged the current stabilized source as isolated Windows x64 Basic and Assisted local candidates, without changing the docking algorithms, scientific protocol semantics, dependency set, license strategy, or user project schema.

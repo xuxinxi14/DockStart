@@ -2,18 +2,20 @@
   "schema_version": 1,
   "toolchain_name": "DockStart Basic",
   "release_profile": "basic_stable",
-  "status": "ready",
-  "description": "DockStart Basic 稳定发布边界：随附 AutoDock Vina 与仅用于 DockStart 后端的精简 Python runtime，不随附 RDKit、Meeko 或其科学计算依赖。",
+  "status": "source_template",
+  "maturity": "local_candidate",
+  "resources_committed": false,
+  "description": "DockStart Basic 候选 profile 的源码模板；发布时必须从本地固定资源重新装配并校验 AutoDock Vina 与精简 Python runtime。源码仓库不提交这些二进制，也不随附 RDKit、Meeko 或其科学计算依赖。",
   "includes_bundled_rdkit": false,
   "includes_bundled_meeko": false,
   "vina": {
-    "exists": true,
+    "exists": false,
     "path": "resources/vina/vina.exe",
     "version": "1.2.7",
     "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
     "source_label": "local AutoDock Vina 1.2.7 release artifact",
     "prepared_at": "2026-06-29T10:15:56.721579+00:00",
-    "dry_run": false
+    "dry_run": true
   },
   "bundled_vina": {
     "name": "AutoDock Vina",
@@ -21,7 +23,7 @@
     "binary_path": "resources/vina/vina.exe",
     "license": "Apache-2.0",
     "source": "local AutoDock Vina 1.2.7 release artifact",
-    "bundled": true,
+    "bundled": false,
     "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5",
     "prepared_at": "2026-06-29T10:15:56.721579+00:00"
   },
@@ -32,10 +34,15 @@
     "binary_path": "resources/python/python.exe",
     "license": "Python Software Foundation License",
     "source": "local CPython 3.11.15 backend runtime",
-    "bundled": true,
+    "bundled": false,
     "includes_site_packages": false,
     "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
     "prepared_at": "2026-06-29T10:19:08.155892+00:00"
+  },
+  "expected_basic_runtime": {
+    "sha256": "c4a2a1bc10a5cd22286e0a2f0b72f4eb4640ed2b9fdd28eea69c0cdd86a642dd",
+    "file_count": 822,
+    "size_bytes": 36796672
   },
   "tools": {
     "vina": {

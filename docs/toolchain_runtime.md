@@ -1,6 +1,6 @@
 # DockStart Toolchain Runtime
 
-本文档说明 DockStart Python runtime 的设计和边界。v0.10.2 Basic Stable 随附精简后端 runtime；Assisted Stable 额外随附固定、独立、可替换的 RDKit/Meeko 工具链，并保留用户配置优先级。
+本文档说明 DockStart Python runtime 的设计和边界。Basic profile 随附精简后端 runtime；Assisted profile 额外随附固定、独立、可替换的 RDKit/Meeko 工具链，并保留用户配置优先级。profile 名称与版本成熟度分开记录。
 
 ## 为什么需要 Python runtime
 
@@ -42,7 +42,7 @@ configured > bundled > current_environment
 - `configured`：用户在设置页中配置的 Python 路径。
 - `current_environment`：当前运行 DockStart 后端的 Python 环境。
 
-v0.10.2 Basic 分发包的轻量 Python 只运行 DockStart 后端，不含 RDKit/Meeko。Assisted Stable 已提供离线 fallback；独立 conda 环境只在用户需要替换版本或自管工具链时推荐。
+Basic 分发包的轻量 Python 只运行 DockStart 后端，不含 RDKit/Meeko。Assisted profile 已提供离线 fallback；独立 conda 环境只在用户需要替换版本或自管工具链时推荐。
 
 ## 推荐的 RDKit/Meeko conda 环境
 
