@@ -1,5 +1,6 @@
 import { ArrowCounterClockwise, Crosshair, MouseScroll } from "@phosphor-icons/react";
 import type { DockStartProject } from "../types";
+import FieldHint from "./FieldHint";
 import StatusBadge from "./StatusBadge";
 
 export type RunBoxFieldKey = keyof DockStartProject["box"];
@@ -85,7 +86,14 @@ export default function RunBoxInspector({
     <aside className={`run-box-inspector ${className}`.trim()} aria-label="搜索范围参数">
       <div className="run-inspector-title">
         <div>
-          <span>Docking box</span>
+          <span className="field-hint-row">
+            Docking box
+            <FieldHint
+              subject="搜索范围（Box）"
+              placement="bottom"
+              label="搜索范围（Box）是 Vina 的搜索空间，用中心点（center）和边长（size）描述，单位均为 Å。它限定了 Vina 在哪里寻找可能的结合构象，并不等同于真实结合位点本身。Box 过小可能遗漏合理构象，过大则会扩大搜索范围和计算成本。"
+            />
+          </span>
           <strong>{volume.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} Å³</strong>
         </div>
         <StatusBadge tone={volume > 27000 ? "warning" : "ok"}>
@@ -210,7 +218,7 @@ export default function RunBoxInspector({
         {placementMessage ? <p className="run-box-placement-message" aria-live="polite">{placementMessage}</p> : null}
       </div>
 
-      <p>搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋。</p>
+      <p>搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋；点击上方“?”查看完整说明。</p>
     </aside>
   );
 }

@@ -5529,9 +5529,78 @@ fn python_candidates(backend_dir: &Path) -> Vec<String> {
         push_python_candidate(&mut candidates, PathBuf::from(configured_python));
     }
 
+    #[cfg(debug_assertions)]
+    for candidate in dev_python3_discovery_candidates() {
+        push_python_candidate(&mut candidates, candidate);
+    }
+
     candidates.push("python".to_string());
     candidates.push("python3".to_string());
     candidates
+}
+
+/// Development-only discovery of a usable Python 3 interpreter.
+///
+/// In a development checkout there is neither a bundled Python nor a settings
+/// file, so `python_candidates` would otherwise fall back to the bare `python`
+/// / `python3` commands. On machines that also carry AutoDockTools / MGLTools,
+/// the bare `python` command can resolve to the bundled Python 2.7, which
+/// cannot run this Python 3-only backend. Prefer the Windows Python Launcher
+/// (`py -3`), which resolves a Python 3 interpreter regardless of PATH order.
+#[cfg(debug_assertions)]
+fn dev_python3_discovery_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    // 1. Windows Python Launcher: `py -3` resolves an actual Python 3 binary.
+    #[cfg(windows)]
+    if let Some(path) = python3_via_py_launcher() {
+        candidates.push(path);
+    }
+
+    // 2. Fall back to Python 3 executables that happen to be on PATH. This is
+    //    a best-effort, version-agnostic probe; it never selects a specific
+    //    hard-coded installation path.
+    for name in ["python3", "python3.exe"] {
+        if let Some(path) = first_executable_on_path(&[name]) {
+            candidates.push(path);
+        }
+    }
+
+    candidates
+}
+
+/// Ask the Windows Python Launcher (`py -3`) for the absolute path of the
+/// Python 3 interpreter it would run. Returns `None` when the launcher is
+/// missing, fails, or reports no usable interpreter.
+#[cfg(all(debug_assertions, windows))]
+fn python3_via_py_launcher() -> Option<PathBuf> {
+    let mut launcher = None;
+    if let Some(windows_dir) = env::var_os("WINDIR") {
+        let candidate = PathBuf::from(&windows_dir).join("py.exe");
+        if candidate.is_file() {
+            launcher = Some(candidate);
+        }
+    }
+    if launcher.is_none() {
+        launcher = first_executable_on_path(&["py.exe", "py"]);
+    }
+    let launcher = launcher?;
+
+    let output = Command::new(&launcher)
+        .args(["-3", "-c", "import sys; print(sys.executable)"])
+        .env("PYTHONIOENCODING", "utf-8")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let executable = stdout.trim();
+    if executable.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(executable);
+    path.is_file().then_some(path)
 }
 
 fn bundled_python_candidates(backend_dir: &Path) -> Vec<PathBuf> {

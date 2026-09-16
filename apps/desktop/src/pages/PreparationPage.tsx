@@ -5,6 +5,7 @@ import { CheckCircle, FileArrowUp, Info } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import FieldHint from "../components/FieldHint";
 import MacrocycleBondSelector from "../components/MacrocycleBondSelector";
 import { BodyGrid, MainPanel, PageHero, PageShell, RightRail, RightRailSection } from "../components/layout/PageLayout";
 import OperationLoadingDialog from "../components/OperationLoadingDialog";
@@ -1413,7 +1414,16 @@ export default function PreparationPage({
         eyebrow="格式转换 · PDBQT PREPARATION"
         title="格式转换与 PDBQT 准备"
         titleId="preparation-title"
-        description="将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。"
+        description={(
+          <>
+            将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。
+            <FieldHint
+              placement="bottom"
+              subject="PDB 与 PDBQT 的区别"
+              label="PDB 是结构文件；PDBQT 是供 AutoDock/Vina 使用的准备后文件，包含对接所需的原子类型、电荷等信息，以及配体可旋转键信息。原始文件与准备后的对接输入文件不是一回事。"
+            />
+          </>
+        )}
         actions={(
           <>
             <ActionButton onClick={onBack}>在线搜索并下载</ActionButton>

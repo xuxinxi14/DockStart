@@ -10,7 +10,8 @@ type PageHeroProps = {
   eyebrow?: string;
   title: string;
   titleId?: string;
-  description: string;
+  /** 页面级描述。可以是纯文本，也可以内嵌“?”提示等行内元素。 */
+  description: ReactNode;
   actions?: ReactNode;
 };
 

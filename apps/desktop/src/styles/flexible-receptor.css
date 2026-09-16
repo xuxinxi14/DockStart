@@ -227,6 +227,56 @@
   line-height: 1.5;
 }
 
+.flexible-receptor-explainer {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--ds-border-default);
+  border-left: 3px solid var(--ds-info, var(--ds-accent, #3b82f6));
+  border-radius: 8px;
+  background: var(--ds-surface);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ds-text-secondary);
+}
+
+.flexible-receptor-explainer p {
+  margin: 0;
+}
+
+.flexible-receptor-explainer strong {
+  color: var(--ds-text-primary);
+}
+
+.flexible-receptor-explainer ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+}
+
+.flexible-receptor-suggestion {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--ds-info-border, var(--ds-warning-border));
+  border-left: 3px solid var(--ds-info, var(--ds-accent, #3b82f6));
+  border-radius: 8px;
+  background: var(--ds-info-soft, var(--ds-warning-soft));
+  padding: 10px 12px;
+}
+
+.flexible-receptor-suggestion strong {
+  color: var(--ds-text-primary);
+  font-size: 12px;
+}
+
+.flexible-receptor-suggestion p {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .flexible-bad-residue-confirm input {
   width: 16px;
   min-height: 16px;

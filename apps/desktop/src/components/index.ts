@@ -5,6 +5,7 @@ export { default as ContextPanel } from "./ContextPanel";
 export { default as DelayedPending } from "./DelayedPending";
 export { default as EmptyState } from "./EmptyState";
 export { default as ErrorRecoveryPanel } from "./ErrorRecoveryPanel";
+export { default as FieldHint } from "./FieldHint";
 export { default as FileChip } from "./FileChip";
 export { default as Notice } from "./Notice";
 export { default as PageHeader } from "./PageHeader";
