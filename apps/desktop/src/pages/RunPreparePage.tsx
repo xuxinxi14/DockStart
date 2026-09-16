@@ -21,6 +21,7 @@ import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import AutoGridMapsPanel from "../components/AutoGridMapsPanel";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
+import FieldHint from "../components/FieldHint";
 import FlexibleReceptorPanel, {
   type FlexibleReceptorIdentityContext,
 } from "../components/FlexibleReceptorPanel";
@@ -108,12 +109,12 @@ const runActionDescriptions: Record<RunActionMode, string> = {
   config: "仅保存并生成配置",
 };
 
-const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string }> = [
-  { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议从 8 开始" },
-  { key: "num_modes", label: "输出构象数量", hint: "建议 9" },
-  { key: "energy_range", label: "能量范围", hint: "kcal/mol" },
-  { key: "cpu", label: "CPU 线程", hint: "0 为 Vina 自动" },
-  { key: "seed", label: "随机种子", hint: "留空则不写入配置" },
+const vinaFields: Array<{ key: VinaNumericKey; label: string; hint: string; explain: string }> = [
+  { key: "exhaustiveness", label: "搜索彻底程度", hint: "建议从 8 开始", explain: "控制 Vina 搜索投入的计算量。值越大搜索越充分、越耗时，但不保证结果更好。" },
+  { key: "num_modes", label: "输出构象数量", hint: "建议 9", explain: "最多保留多少个候选结合构象，按评分从好到差排列。" },
+  { key: "energy_range", label: "能量范围", hint: "kcal/mol", explain: "只保留与最佳构象能量差在此范围内的候选。单位 kcal/mol。" },
+  { key: "cpu", label: "CPU 线程", hint: "0 为 Vina 自动", explain: "用多少 CPU 核心计算；更多核心通常更快，0 表示自动检测。" },
+  { key: "seed", label: "随机种子", hint: "留空则不写入配置", explain: "控制随机搜索起始状态；相同输入和 seed 有助于复现结果。" },
 ];
 
 const stageLabels: Record<string, string> = {
@@ -1440,7 +1441,13 @@ export default function RunPreparePage({
                 </div>
                 <div className="run-vina-fields">
                   <label>
-                    <span>评分协议</span>
+                    <span className="field-hint-row">
+                      评分协议
+                      <FieldHint
+                        subject="评分协议"
+                        label="评分协议决定 Vina 用什么方法给候选结合构象打分。不同评分方法（如 Vina 与 Vinardo）给出的分值不能直接比较；AutoDock4 需要预先计算 affinity maps。"
+                      />
+                    </span>
                     {isAd4Maps ? (
                       <input aria-label="评分协议" disabled value="AutoDock4 (maps)" />
                     ) : (
@@ -1477,7 +1484,10 @@ export default function RunPreparePage({
                       : !Number.isFinite(Number(value)) || Number(value) < (field.key === "cpu" ? 0 : Number.EPSILON);
                     return (
                       <label key={field.key} className={invalid ? "is-invalid" : ""}>
-                        <span>{field.label}</span>
+                        <span className="field-hint-row">
+                          {field.label}
+                          <FieldHint subject={field.label} label={field.explain} />
+                        </span>
                         <input disabled={isBusy} value={value} inputMode={field.key === "energy_range" ? "decimal" : "numeric"} onChange={(event) => updateVinaField(field.key, event.target.value)} aria-invalid={invalid} />
                         <small>{field.hint}</small>
                       </label>

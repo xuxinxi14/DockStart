@@ -130,6 +130,7 @@ export default function FlexibleReceptorPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [rawError, setRawError] = useState("");
+  const [suggestion, setSuggestion] = useState("");
   const [badResidues, setBadResidues] = useState<string[]>([]);
   const [badResiduesConfirmed, setBadResiduesConfirmed] = useState(false);
   const [identityContext, setIdentityContext] = useState<FlexibleReceptorIdentityContext | null>(null);
@@ -193,6 +194,7 @@ export default function FlexibleReceptorPanel({
       setStatus(next);
       if (!quiet) setMessage(next.message || "柔性受体状态已刷新。");
       if (next.error?.raw_error) setRawError(next.error.raw_error);
+      if (next.error?.suggestion) setSuggestion(next.error.suggestion);
     } catch (error) {
       if (!quiet) setRawError(error instanceof Error ? error.message : String(error));
     }
@@ -204,13 +206,8 @@ export default function FlexibleReceptorPanel({
       { projectDir: project.project_dir },
     ));
     if (!next.ok || !next.selection_context_sha256 || !next.viewer?.ok) {
-      throw new Error(
-        [
-          next.error?.message || "无法建立柔性残基身份审查上下文。",
-          next.error?.suggestion,
-          next.error?.raw_error,
-        ].filter(Boolean).join("\n"),
-      );
+      if (next.error?.suggestion) setSuggestion(next.error.suggestion);
+      throw new Error(next.error?.message || "无法建立柔性残基身份审查上下文。");
     }
     setIdentityContext(next);
     onIdentityContextChange?.(next);
@@ -222,6 +219,7 @@ export default function FlexibleReceptorPanel({
     setInput("");
     setMessage("");
     setRawError("");
+    setSuggestion("");
     setBadResidues([]);
     setBadResiduesConfirmed(false);
     setIdentityContext(null);
@@ -303,13 +301,8 @@ export default function FlexibleReceptorPanel({
           setIdentityContext(result.identity_context);
           onIdentityContextChange?.(result.identity_context);
         }
-        setRawError(
-          [
-            result.error?.message || "柔性残基检查失败。",
-            result.error?.suggestion,
-            result.error?.raw_error,
-          ].filter(Boolean).join("\n"),
-        );
+        setRawError(result.error?.raw_error || result.error?.message || "柔性残基检查失败。");
+        if (result.error?.suggestion) setSuggestion(result.error.suggestion);
         return;
       }
       setMessage(`已确认 ${residues.length} 个残基选择有效；受体模板完整性将在严格准备时检查。`);
@@ -361,13 +354,8 @@ export default function FlexibleReceptorPanel({
           setRawError("");
           return;
         }
-        setRawError(
-          [
-            result?.error?.message || completed.error || "柔性受体准备失败。",
-            result?.error?.suggestion,
-            result?.error?.raw_error,
-          ].filter(Boolean).join("\n"),
-        );
+        setRawError(result?.error?.raw_error || result?.error?.message || completed.error || "柔性受体准备失败。");
+        if (result?.error?.suggestion) setSuggestion(result.error.suggestion);
         return;
       }
       if (result.project) onProjectChange(result.project);
@@ -410,11 +398,22 @@ export default function FlexibleReceptorPanel({
           <h2>受体柔性设置</h2>
         </div>
         <StatusBadge tone={status?.effective_mode === "flexible" ? "ok" : "muted"}>
-          {status?.effective_mode === "flexible" ? "柔性模式" : "刚性模式"}
+          {status?.effective_mode === "flexible" ? "柔性模式" : "刚性受体"}
         </StatusBadge>
       </div>
 
       <div className="flexible-receptor-content">
+        <div className="flexible-receptor-explainer">
+          <p><strong>受体柔性 × 配体柔性。</strong>两种模式下，配体始终按 Vina 标准柔性处理（可旋转键自动保留）。区别只在于受体是否允许少量残基参与柔性变化。</p>
+          <ul>
+            <li><strong>标准对接</strong>：受体刚性 + 配体柔性。受体不发生侧链柔性变化，配体仍按 Vina 标准保留可旋转键，无需选择柔性残基。</li>
+            <li><strong>受体有限柔性对接</strong>：受体部分柔性 + 配体柔性。在标准对接的基础上，额外允许选定少量受体残基发生柔性变化。</li>
+          </ul>
+          <AdvancedDetails summary="什么是柔性残基？为什么只选少量？">
+            <p>柔性残基允许受体部分侧链在对接时发生构象变化。并不是附近所有残基都需要设为柔性，通常只选择与结合口袋直接相关、且有合理结构依据的少量残基。残基选择应基于结构和研究目的，而不是机械地把所有邻近残基都设为柔性。</p>
+          </AdvancedDetails>
+        </div>
+
         <nav className="flexible-mode-switch" aria-label="受体柔性模式">
           <button type="button" className={viewMode === "rigid" ? "active" : ""} onClick={() => setViewMode("rigid")}>刚性受体</button>
           <button type="button" className={viewMode === "flexible" ? "active" : ""} onClick={() => setViewMode("flexible")}>有限柔性</button>
@@ -539,6 +538,7 @@ export default function FlexibleReceptorPanel({
         ) : null}
 
         {message && !(viewMode === "flexible" && status?.flexible_ready) ? <p className="flexible-receptor-message" role="status">{message}</p> : null}
+        {suggestion ? <div className="flexible-receptor-suggestion" role="status"><strong>建议怎么做</strong><p>{suggestion}</p></div> : null}
         {rawError ? <AdvancedDetails summary="柔性受体诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
       </div>
     </section>

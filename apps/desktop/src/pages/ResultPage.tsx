@@ -6,6 +6,7 @@ import { hydratedApi } from "../api/hydrated";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
+import FieldHint from "../components/FieldHint";
 import HydratedProtocolScope from "../components/HydratedProtocolScope";
 import HydratedResultSummary from "../components/HydratedResultSummary";
 import { PageHero, PageShell } from "../components/layout/PageLayout";
@@ -998,6 +999,15 @@ export default function ResultPage({
                   {isMultipleLigand
                     ? "RMSD 描述整组联合构象相对 Mode 1 的差异；标为“仅日志”的评分行被 energy_range 排除，没有可加载的 out.pdbqt 构象。"
                     : "RMSD 相对基于 Mode 1 的构象，仅用于本次输出内比较。"}
+                </p>
+              ) : null}
+              {!isEvaluationMode ? (
+                <p className="result-metric-hint">
+                  <FieldHint
+                    subject="评分与 RMSD"
+                    label="Affinity（评分）：Vina 给出的预测结合评分，单位 kcal/mol。数值越小通常代表预测结合越强，但只用于在同一次计算中比较候选构象，不能拿不同体系或不同条件的分数直接比较。RMSD：描述不同对接构象之间的结构差异。不要把 RMSD 简单理解成“越小就一定越好”，它只是衡量构象间偏离程度的参考指标。"
+                  />
+                  <span>评分与 RMSD 说明</span>
                 </p>
               ) : null}
             </div>

@@ -2,6 +2,7 @@ type CommandResultPanelProps = {
   title?: string;
   message?: string;
   rawError?: string;
+  suggestion?: string;
   announceAs?: "status" | "alert";
 };
 
@@ -9,9 +10,10 @@ export default function CommandResultPanel({
   title = "命令结果",
   message,
   rawError,
+  suggestion,
   announceAs,
 }: CommandResultPanelProps) {
-  if (!message && !rawError) {
+  if (!message && !rawError && !suggestion) {
     return null;
   }
 
@@ -26,6 +28,12 @@ export default function CommandResultPanel({
     >
       <strong>{title}</strong>
       {message ? <p>{message}</p> : null}
+      {suggestion ? (
+        <div className="command-result-suggestion">
+          <strong>建议怎么做</strong>
+          <p>{suggestion}</p>
+        </div>
+      ) : null}
       {rawError ? (
         <details>
           <summary>技术详情</summary>

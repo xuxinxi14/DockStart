@@ -42,6 +42,53 @@ textarea {
   }
 }
 
+/* “?”参数提示图标：说明默认不展开，悬停或键盘聚焦时通过 Tooltip 展示。 */
+.ds-field-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  min-height: 15px;
+  padding: 0;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 999px;
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-muted);
+  font-weight: 500;
+  line-height: 1;
+  text-transform: none;
+  cursor: help;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.ds-field-hint:hover {
+  border-color: var(--ds-brand);
+  color: var(--ds-brand);
+}
+
+.ds-field-hint:focus-visible {
+  outline: 2px solid var(--ds-focus-outline);
+  outline-offset: 1px;
+  border-color: var(--ds-brand);
+  color: var(--ds-brand);
+}
+
+/* 参数名称行：文字 + “?”图标横向对齐。 */
+.field-hint-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 行内（如页面描述句尾）使用时的基线对齐。 */
+.ds-field-hint-tooltip {
+  vertical-align: middle;
+}
+
 .operation-loading-backdrop {
   position: fixed;
   inset: 0;
@@ -839,6 +886,30 @@ pre,
 }
 
 .command-result-panel > p {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+.command-result-suggestion {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  border: 1px solid var(--ds-info-border, var(--ds-warning-border));
+  border-left: var(--ds-callout-accent-width) solid var(--ds-info, var(--ds-warning));
+  border-radius: 6px;
+  background: var(--ds-info-soft, var(--ds-warning-soft));
+  padding: 8px 10px;
+}
+
+.command-result-suggestion > strong {
+  margin: 0;
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-sm);
+}
+
+.command-result-suggestion > p {
   margin: 0;
   color: var(--ds-text-secondary);
   font-size: var(--ds-text-sm);

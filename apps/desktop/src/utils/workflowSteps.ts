@@ -121,11 +121,11 @@ export function buildWorkflowSteps(
           }
         : {
             rangeTitle: "设置搜索范围",
-            rangeDescription: "设置对接箱体中心与尺寸。",
+            rangeDescription: "设置对接箱体中心与尺寸，告诉 Vina 在哪里寻找可能的结合构象。",
             rangeAction: "设置搜索范围",
-            paramsDescription: "确认 exhaustiveness、num_modes、energy_range、cpu 和 seed。",
+            paramsDescription: "确认 exhaustiveness、num_modes、energy_range、cpu 和 seed，控制搜索强度与输出数量。",
             executeTitle: "开始对接",
-            executeDescription: "执行 AutoDock Vina 并保存 stdout、stderr、log 与 out.pdbqt。",
+            executeDescription: "执行 AutoDock Vina，让它搜索配体可能的结合构象，并保存 stdout、stderr、log 与 out.pdbqt。",
             executeAction: "开始对接",
             analyzeTitle: "解析结果",
             analyzeDescription: "从 Vina log 解析构象评分并生成 scores.csv。",
@@ -214,7 +214,7 @@ export function buildWorkflowSteps(
       "转换为 PDBQT",
       rawStageSkipped
         ? "有效的受体与配体 PDBQT 已就绪，无需重复格式转换。"
-        : "Assisted：把原始结构准备并转换为 Vina 可用的 PDBQT。",
+        : "Assisted：把原始结构准备并转换为 Vina 可用的 PDBQT（含原子类型、电荷与可旋转键信息）。",
       preparedStatus,
       rawStageSkipped ? "无需转换" : "开始格式转换",
       "preparation",
