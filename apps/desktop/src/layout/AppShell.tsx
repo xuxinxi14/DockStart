@@ -11,6 +11,12 @@ import Topbar from "./Topbar";
 import type { WorkflowStep } from "../components/WorkflowStepper";
 import { isTerminalBackgroundTask, listenForBackgroundTaskUpdates } from "../utils/backgroundTasks";
 import { isSameProjectDir } from "../utils/backgroundProjectRefresh";
+import {
+  THEME_CHANGE_EVENT,
+  readThemePreference,
+  setThemePreference,
+  type ThemeMode,
+} from "../utils/themePreference";
 
 type AppShellProps = {
   currentPage: PageId;
@@ -22,11 +28,7 @@ type AppShellProps = {
   children: ReactNode;
 };
 
-export type ThemeMode = "dark" | "light";
-
-function readInitialTheme(): ThemeMode {
-  return window.localStorage.getItem("dockstart-theme") === "light" ? "light" : "dark";
-}
+export type { ThemeMode };
 
 function readInitialSidebarState(): boolean {
   return window.localStorage.getItem("dockstart-sidebar-collapsed") === "true";
@@ -47,7 +49,7 @@ export default function AppShell({
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialSidebarState);
   const [compactViewport, setCompactViewport] = useState(readInitialCompactViewport);
-  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+  const [theme, setTheme] = useState<ThemeMode>(readThemePreference);
   const [batchScreeningCompleted, setBatchScreeningCompleted] = useState(false);
   const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
     releaseProfile: "unknown",
@@ -141,10 +143,18 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    window.localStorage.setItem("dockstart-theme", theme);
+    // Shared with the Settings page: applying through the helper keeps the
+    // document attribute, the stored preference and other listeners in sync.
+    setThemePreference(theme);
   }, [theme]);
+
+  useEffect(() => {
+    const handleThemeChange = (event: Event) => {
+      setTheme((event as CustomEvent<ThemeMode>).detail ?? readThemePreference());
+    };
+    window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange as EventListener);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, handleThemeChange as EventListener);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem("dockstart-sidebar-collapsed", String(sidebarCollapsed));

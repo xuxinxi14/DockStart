@@ -1,0 +1,252 @@
+/*
+ * Settings page.
+ *
+ * Visual rules follow the existing DockStart direction: one clear focal block
+ * per section, hairline separators instead of a border around every row, and
+ * no colour literals — every value comes from tokens.css.
+ */
+
+.settings-panel {
+  display: grid;
+  gap: var(--ds-space-4);
+}
+
+/* Rows become a single column with a divider: fewer boxes, clearer reading. */
+.settings-panel .setting-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: var(--ds-space-2);
+  padding: 0 0 var(--ds-space-4);
+  border: 0;
+  border-bottom: 1px solid var(--ds-divider);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-panel .settings-list > .setting-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.setting-label-block {
+  display: grid;
+  gap: 2px;
+}
+
+.setting-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-strong);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.setting-current {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+}
+
+.settings-row-note {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+.settings-inline-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+
+.settings-inline-control > .path-input {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.settings-section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-3);
+  margin-top: var(--ds-space-4);
+}
+
+/* Theme switcher -------------------------------------------------------- */
+
+.settings-segmented {
+  display: inline-flex;
+  gap: var(--ds-space-1);
+  padding: 3px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-input);
+}
+
+.settings-segmented-button {
+  min-height: 32px;
+  padding: 0 var(--ds-space-4);
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--ds-text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ds-motion-fast) var(--ds-ease-standard), color var(--ds-motion-fast) var(--ds-ease-standard);
+}
+
+.settings-segmented-button:hover {
+  color: var(--ds-text-primary);
+}
+
+.settings-segmented-button.is-active {
+  background: var(--ds-surface-selected);
+  color: var(--ds-text-strong);
+}
+
+.settings-segmented-button:focus-visible {
+  outline: 3px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Tools ----------------------------------------------------------------- */
+
+.settings-tool-list {
+  display: grid;
+  gap: var(--ds-space-3);
+}
+
+.settings-tool-card {
+  display: grid;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-4);
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-panel);
+}
+
+.settings-tool-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ds-space-3);
+}
+
+.settings-tool-icon.is-ok {
+  color: var(--ds-success);
+}
+
+.settings-tool-icon.is-warning {
+  color: var(--ds-warning);
+}
+
+.settings-tool-icon.is-error {
+  color: var(--ds-danger);
+}
+
+.settings-tool-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-tool-meta {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+}
+
+.settings-tool-message {
+  margin: 0;
+  color: var(--ds-warning-text);
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-normal);
+}
+
+/* Docking defaults ------------------------------------------------------ */
+
+.docking-defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--ds-space-4);
+}
+
+.docking-default-field {
+  display: grid;
+  gap: var(--ds-space-1);
+}
+
+.docking-default-field > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.docking-default-field small {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-text-xs);
+}
+
+.docking-default-field input,
+.docking-default-field select {
+  width: 100%;
+  min-height: 38px;
+  min-width: 0;
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface);
+  color: var(--ds-text-primary);
+  padding: 0 var(--ds-space-3);
+  font: inherit;
+}
+
+.docking-default-field input:focus,
+.docking-default-field select:focus {
+  border-color: var(--ds-accent);
+  outline: 3px solid var(--ds-focus-ring);
+}
+
+/* Diagnostics ----------------------------------------------------------- */
+
+.settings-diagnostics {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.settings-diagnostic-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding-bottom: var(--ds-space-2);
+  border-bottom: 1px solid var(--ds-divider);
+}
+
+.settings-diagnostic-label {
+  color: var(--ds-text-primary);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.settings-diagnostic-value {
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.settings-diagnostic-path {
+  margin: var(--ds-space-1) 0 0;
+}
+
+@media (max-width: 720px) {
+  .settings-diagnostic-row {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+    gap: var(--ds-space-1);
+  }
+}

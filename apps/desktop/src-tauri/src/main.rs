@@ -417,6 +417,19 @@ async fn update_tool_path(tool_key: String, path: String) -> String {
 }
 
 #[tauri::command]
+async fn diagnose_settings() -> String {
+    match run_backend_module_async(
+        "dockstart_core.settings",
+        vec!["diagnose".to_string()],
+    )
+    .await
+    {
+        Ok(payload) => payload,
+        Err(error) => fallback_settings_error_json("无法诊断 DockStart 设置存储。", &error),
+    }
+}
+
+#[tauri::command]
 async fn create_project(project_name: String, base_dir: String) -> String {
     match run_backend_module_async(
         "dockstart_core.project",
@@ -6135,6 +6148,7 @@ fn main() {
             get_settings,
             save_settings,
             update_tool_path,
+            diagnose_settings,
             create_project,
             load_project,
             import_receptor_pdbqt,

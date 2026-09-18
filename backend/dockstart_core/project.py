@@ -39,7 +39,7 @@ from dockstart_core.preparation_models import (
     default_preparation_result,
     preparation_state_from_dict,
 )
-from dockstart_core.settings import load_settings
+from dockstart_core.settings import docking_default_overrides, load_settings
 from dockstart_core.structure_review import build_structure_review
 
 PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation", "maps")
@@ -1048,6 +1048,40 @@ def save_project(project: DockStartProject) -> dict[str, Any]:
         )
 
 
+def _new_project_vina_settings() -> VinaSettings:
+    """Seed a brand new project from the user's global docking defaults.
+
+    The global defaults are strictly optional.  A missing or damaged settings
+    file, or an unexpected key, must never block project creation, so every
+    failure falls back to the documented dataclass defaults.  Once a project
+    exists it stores its own copy, which is why project-level values always win
+    over these global defaults.
+    """
+
+    defaults = VinaSettings()
+    try:
+        overrides = docking_default_overrides()
+    except Exception:  # noqa: BLE001 - settings must never break project creation.
+        return defaults
+    if not isinstance(overrides, dict):
+        return defaults
+
+    fallbacks: dict[str, Any] = {
+        "scoring": defaults.scoring,
+        "exhaustiveness": defaults.exhaustiveness,
+        "num_modes": defaults.num_modes,
+        "energy_range": defaults.energy_range,
+        "cpu": defaults.cpu,
+        "seed": defaults.seed,
+    }
+    try:
+        return VinaSettings(
+            **{key: overrides.get(key, fallback) for key, fallback in fallbacks.items()}
+        )
+    except Exception:  # noqa: BLE001 - never fail project creation on settings.
+        return defaults
+
+
 def create_project(project_name: str, base_dir: str) -> dict[str, Any]:
     safe_name = _sanitize_project_name(project_name)
     name_error = _validate_project_name(safe_name)
@@ -1079,6 +1113,7 @@ def create_project(project_name: str, base_dir: str) -> dict[str, Any]:
             created_at=created_at,
             updated_at=created_at,
             project_dir=str(project_dir),
+            vina=_new_project_vina_settings(),
         )
         saved = save_project(project)
         if not saved.get("ok"):

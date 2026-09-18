@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { applyThemePreference, readThemePreference } from "./utils/themePreference";
 import "./styles/tokens.css";
 import "./styles.css";
 import "./styles/layout.css";
@@ -14,10 +15,9 @@ import "./styles/flexible-receptor.css";
 import "./styles/multiple-ligand-docking.css";
 import "./styles/screening-archive-comparison.css";
 import "./styles/help-center.css";
+import "./styles/settings.css";
 
-const savedTheme = window.localStorage.getItem("dockstart-theme");
-document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";
-document.documentElement.style.colorScheme = savedTheme === "light" ? "light" : "dark";
+applyThemePreference(readThemePreference());
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

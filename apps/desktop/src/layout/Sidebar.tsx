@@ -112,7 +112,10 @@ export default function Sidebar({
       return currentPage === "result" || currentPage === "report";
     }
     if (itemId === "toolchain-status") {
-      return currentPage === "toolchain-status" || currentPage === "tool-check" || currentPage === "settings";
+      return currentPage === "toolchain-status" || currentPage === "tool-check";
+    }
+    if (itemId === "settings") {
+      return currentPage === "settings";
     }
     return false;
   }

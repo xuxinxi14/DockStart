@@ -272,7 +272,7 @@ export default function App() {
     }
 
     if (currentPage === "settings") {
-      return <SettingsPage onBack={() => navigateTo("toolchain-status")} />;
+      return <SettingsPage onBack={() => navigateTo("home")} />;
     }
 
     if (currentPage === "toolchain-status") {

@@ -1127,6 +1127,15 @@ export type VinaEvaluation = {
   scientific_note: string;
 };
 
+export type DockingDefaults = {
+  scoring: string;
+  exhaustiveness: number;
+  num_modes: number;
+  energy_range: number;
+  cpu: number;
+  seed: number | null;
+};
+
 export type DockStartSettings = {
   tool_paths: {
     vina: string;
@@ -1136,12 +1145,46 @@ export type DockStartSettings = {
   project: {
     default_project_dir: string;
   };
+  docking_defaults: DockingDefaults;
 };
 
 export type SettingsResponse = {
   ok: boolean;
   settings_path: string;
   settings: DockStartSettings | null;
+  error?: {
+    message: string;
+    raw_error: string;
+  };
+};
+
+export type SettingsCheckReport = {
+  ok: boolean;
+  message: string;
+  raw_error: string;
+  suggestion: string;
+};
+
+export type SettingsDiagnostics = {
+  settings_path: string;
+  settings_dir: string;
+  dir_exists: boolean;
+  file_exists: boolean;
+  file_size_bytes: number;
+  file_modified_at: string;
+  lock_file: string;
+  env_override: string;
+  readable: boolean;
+  writable: boolean;
+  load: SettingsCheckReport;
+  write_probe: SettingsCheckReport;
+  current_settings: DockStartSettings | null;
+};
+
+export type SettingsDiagnosticsResponse = {
+  ok: boolean;
+  settings_path: string;
+  diagnostics: SettingsDiagnostics | null;
   error?: {
     message: string;
     raw_error: string;

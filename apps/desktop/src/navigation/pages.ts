@@ -74,13 +74,19 @@ export const navigationItems: NavigationItem[] = [
     description: "实验性显式水对接流程",
     requiresProject: true,
   },
+  {
+    id: "settings",
+    group: "Support",
+    label: "设置",
+    description: "环境、工具与默认参数",
+  },
 ];
 
 export const pageTitles: Record<PageId, string> = {
   home: "项目总览",
   "tool-check": "工具检测",
   "toolchain-status": "配置工具链",
-  settings: "工具路径设置",
+  settings: "设置",
   "project-create": "创建项目",
   "structure-fetch": "获取或导入原始结构",
   preparation: "格式转换与 PDBQT 准备",
