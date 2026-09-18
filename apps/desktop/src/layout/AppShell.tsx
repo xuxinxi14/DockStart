@@ -12,10 +12,16 @@ import type { WorkflowStep } from "../components/WorkflowStepper";
 import { isTerminalBackgroundTask, listenForBackgroundTaskUpdates } from "../utils/backgroundTasks";
 import { isSameProjectDir } from "../utils/backgroundProjectRefresh";
 import {
-  THEME_CHANGE_EVENT,
-  readThemePreference,
+  APPEARANCE_CHANGE_EVENT,
+  SYSTEM_DARK_MEDIA_QUERY,
+  applyAppearanceState,
+  normalizeThemeMode,
+  prefersDarkColorScheme,
+  readAppearanceState,
+  resolveThemeMode,
   setThemePreference,
-  type ThemeMode,
+  type AppearanceState,
+  type ResolvedTheme,
 } from "../utils/themePreference";
 
 type AppShellProps = {
@@ -27,8 +33,6 @@ type AppShellProps = {
   onOpenProject: () => void;
   children: ReactNode;
 };
-
-export type { ThemeMode };
 
 function readInitialSidebarState(): boolean {
   return window.localStorage.getItem("dockstart-sidebar-collapsed") === "true";
@@ -49,7 +53,8 @@ export default function AppShell({
 }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialSidebarState);
   const [compactViewport, setCompactViewport] = useState(readInitialCompactViewport);
-  const [theme, setTheme] = useState<ThemeMode>(readThemePreference);
+  const [appearance, setAppearance] = useState<AppearanceState>(readAppearanceState);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(prefersDarkColorScheme);
   const [batchScreeningCompleted, setBatchScreeningCompleted] = useState(false);
   const [distributionProfile, setDistributionProfile] = useState<DistributionProfileStatus>({
     releaseProfile: "unknown",
@@ -143,17 +148,27 @@ export default function AppShell({
   }, []);
 
   useEffect(() => {
-    // Shared with the Settings page: applying through the helper keeps the
-    // document attribute, the stored preference and other listeners in sync.
-    setThemePreference(theme);
-  }, [theme]);
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(SYSTEM_DARK_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches);
+    setSystemPrefersDark(media.matches);
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
 
   useEffect(() => {
-    const handleThemeChange = (event: Event) => {
-      setTheme((event as CustomEvent<ThemeMode>).detail ?? readThemePreference());
+    // Shared with the Settings page: applying through the helper keeps every
+    // document attribute, the stored preferences and other listeners in sync.
+    applyAppearanceState(appearance, systemPrefersDark);
+  }, [appearance, systemPrefersDark]);
+
+  useEffect(() => {
+    const handleAppearanceChange = (event: Event) => {
+      const detail = (event as CustomEvent<AppearanceState>).detail;
+      setAppearance(detail ? { mode: normalizeThemeMode(detail.mode), appearance: detail.appearance, accent: detail.accent } : readAppearanceState());
     };
-    window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange as EventListener);
-    return () => window.removeEventListener(THEME_CHANGE_EVENT, handleThemeChange as EventListener);
+    window.addEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange as EventListener);
+    return () => window.removeEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange as EventListener);
   }, []);
 
   useEffect(() => {
@@ -172,6 +187,7 @@ export default function AppShell({
   }, [currentPage]);
 
   const effectiveSidebarCollapsed = sidebarCollapsed || compactViewport;
+  const resolvedTheme: ResolvedTheme = resolveThemeMode(appearance.mode, systemPrefersDark);
 
   return (
     <div className={`dockstart-shell ${effectiveSidebarCollapsed ? "sidebar-collapsed" : ""}`.trim()}>
@@ -191,8 +207,9 @@ export default function AppShell({
           currentPage={currentPage}
           project={project}
           workflowSummary={workflowSummary}
-          theme={theme}
-          onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+          theme={resolvedTheme}
+          themeMode={appearance.mode}
+          onToggleTheme={() => setThemePreference(resolvedTheme === "dark" ? "light" : "dark")}
           onNavigate={onNavigate}
           onOpenProject={onOpenProject}
         />

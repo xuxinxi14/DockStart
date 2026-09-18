@@ -6,15 +6,37 @@
     <link rel="icon" href="/dockstart-icon.png" type="image/png" />
     <title>DockStart</title>
     <script>
-      try {
-        if (window.localStorage.getItem("dockstart-theme") === "light") {
-          document.documentElement.dataset.theme = "light";
+      // First-paint appearance. Must stay dependency-free and mirror
+      // src/utils/themePreference.ts (same keys, same attribute names) so the
+      // shell never flashes the wrong palette before React mounts.
+      (function () {
+        var read = function (key) {
+          try {
+            return window.localStorage.getItem(key);
+          } catch (error) {
+            return null;
+          }
+        };
+        var mode = read("dockstart-theme");
+        if (mode !== "light" && mode !== "system") mode = "dark";
+        var appearance = read("dockstart-appearance");
+        if (appearance !== "soft" && appearance !== "contrast") appearance = "default";
+        var accent = read("dockstart-accent");
+        if (accent !== "cyan" && accent !== "graphite") accent = "default";
+        var prefersDark = true;
+        try {
+          prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        } catch (error) {
+          prefersDark = true;
         }
-      } catch {
-        document.documentElement.dataset.theme = "dark";
-      }
-      document.documentElement.style.colorScheme =
-        document.documentElement.dataset.theme === "light" ? "light" : "dark";
+        var resolved = mode === "light" ? "light" : mode === "dark" ? "dark" : prefersDark ? "dark" : "light";
+        var root = document.documentElement;
+        root.dataset.theme = resolved;
+        root.dataset.themeMode = mode;
+        root.dataset.appearance = appearance;
+        root.dataset.accent = accent;
+        root.style.colorScheme = resolved;
+      })();
     </script>
   </head>
   <body>

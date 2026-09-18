@@ -345,3 +345,298 @@
   --ds-surface-inset: var(--ds-surface-input);
   --ds-border: var(--ds-border-default);
 }
+
+/* =====================================================================
+   Appearance and accent layers.
+   ---------------------------------------------------------------------
+   Everything above defines the two base palettes (deep-blue dark, cool
+   daylight light). The layers below refine a *subset* of those tokens and
+   never introduce a new visual language: the same tokens, the same
+   components, the same `--ds-*` names.
+
+   Two attributes drive them, both written by utils/themePreference.ts:
+
+     data-appearance  default | soft | contrast
+     data-accent       default | cyan | graphite
+
+   The default ids intentionally have no block — they are exactly the two
+   palettes above, so an untouched install renders byte-identical CSS.
+
+   Selectors use bare attribute pairs rather than a `:root` prefix so the
+   very same rules can render the preview swatches on the Settings page:
+   a swatch carrying `data-theme`/`data-appearance`/`data-accent` picks up
+   the real values, which keeps the preview honest with zero duplicated
+   colour literals outside this file.
+
+   Each block restates BOTH attributes, so the dark and light variants can
+   never leak into one another regardless of source order.
+   ===================================================================== */
+
+/* --- Appearance: soft -------------------------------------------------
+   Lower glare without losing legibility: backgrounds lift, the blue cast
+   turns neutral, borders and dividers step back, text stops being pure
+   white. Every text pair still clears WCAG AA comfortably. */
+[data-theme="dark"][data-appearance="soft"] {
+  --ds-bg-app: #10202E;
+  --ds-bg-workspace: #162835;
+  --ds-surface-panel: #1E3342;
+  --ds-surface-raised: #27404F;
+  --ds-surface-input: #1A2E3C;
+  --ds-surface-hover: #2E4A5B;
+  --ds-surface-selected: #34536A;
+
+  --ds-nav-bg: #0C1A26;
+  --ds-topbar-bg: #12212E;
+  --ds-statusbar-bg: #0A1620;
+  --ds-rail-bg: #1A2E3C;
+  --ds-rail-bg-hover: #27404F;
+
+  --ds-border-strong: #7C93A3;
+  --ds-border-default: #5D7583;
+  --ds-border-subtle: #435A68;
+  --ds-divider: #52697A;
+  --ds-window-border: #5D7583;
+
+  --ds-text-strong: #EEF3F7;
+  --ds-text-primary: #E2EAF0;
+  --ds-text-secondary: #C6D3DC;
+  --ds-text-muted: #A7B6C0;
+  --ds-text-disabled: #8A9AA5;
+
+  --ds-rail-text-strong: #EEF3F7;
+  --ds-rail-text-primary: #E2EAF0;
+  --ds-rail-text-secondary: #C6D3DC;
+  --ds-rail-text-muted: #A7B6C0;
+
+  --ds-text-on-dark: #EEF3F7;
+  --ds-text-on-dark-secondary: #C6D3DC;
+  --ds-text-on-dark-muted: #A7B6C0;
+
+  --ds-shadow-soft: 0 1px 4px rgba(6, 12, 20, 0.22);
+  --ds-shadow-panel: 0 2px 5px rgba(6, 12, 20, 0.22), 0 14px 34px rgba(6, 12, 20, 0.14);
+  --ds-shadow-raised: 0 2px 6px rgba(6, 12, 20, 0.18);
+  --ds-shadow-rail: 0 12px 32px rgba(6, 12, 20, 0.18);
+  --ds-shadow-sticky: 0 -10px 24px rgba(6, 12, 20, 0.10);
+}
+
+[data-theme="light"][data-appearance="soft"] {
+  --ds-bg-app: #E4EBEF;
+  --ds-bg-workspace: #EFF4F7;
+  --ds-surface-panel: #FAFCFD;
+  --ds-surface-raised: #E3EBF0;
+  --ds-surface-input: #F7FAFB;
+  --ds-surface-hover: #D2DFE7;
+  --ds-surface-selected: #C2D3DE;
+
+  --ds-nav-bg: #E4EBEF;
+  --ds-topbar-bg: #F6FAFB;
+  --ds-statusbar-bg: #E4EBEF;
+  --ds-rail-bg: #F2F7F9;
+  --ds-rail-bg-hover: #DFE9EF;
+
+  --ds-border-strong: #7E99A9;
+  --ds-border-default: #9DB3BF;
+  --ds-border-subtle: #C0D0D9;
+  --ds-divider: #ADBFC9;
+  --ds-window-border: #8FA7B4;
+
+  --ds-text-strong: #10222F;
+  --ds-text-primary: #23394A;
+  --ds-text-secondary: #41606F;
+  --ds-text-muted: #44606F;
+  --ds-text-disabled: #6A8494;
+
+  --ds-rail-text-strong: #10222F;
+  --ds-rail-text-primary: #23394A;
+  --ds-rail-text-secondary: #41606F;
+  --ds-rail-text-muted: #44606F;
+
+  --ds-shadow-soft: 0 1px 3px rgba(60, 88, 106, 0.12);
+  --ds-shadow-panel: 0 2px 5px rgba(60, 88, 106, 0.11), 0 12px 30px rgba(60, 88, 106, 0.07);
+  --ds-shadow-raised: 0 2px 5px rgba(60, 88, 106, 0.10);
+  --ds-shadow-sticky: 0 -10px 24px rgba(60, 88, 106, 0.08);
+}
+
+/* --- Appearance: high contrast ----------------------------------------
+   Separation moves from blur and translucency to opaque borders and
+   deeper surfaces, so structure survives glare, projectors and low-quality
+   panels. Status and scientific colours are deliberately untouched — they
+   are semantic, not decorative. */
+[data-theme="dark"][data-appearance="contrast"] {
+  --ds-bg-app: #00060C;
+  --ds-bg-workspace: #000B14;
+  --ds-surface-panel: #06131F;
+  --ds-surface-raised: #0E2334;
+  --ds-surface-input: #04101A;
+  --ds-surface-hover: #16334A;
+  --ds-surface-selected: #1B4260;
+
+  --ds-nav-bg: #000306;
+  --ds-topbar-bg: #00060C;
+  --ds-statusbar-bg: #000306;
+  --ds-rail-bg: #05121D;
+  --ds-rail-bg-hover: #123049;
+
+  --ds-border-strong: #A9C3D3;
+  --ds-border-default: #86A3B5;
+  --ds-border-subtle: #63808F;
+  --ds-divider: #6E8B9C;
+  --ds-rail-border: #8AA6B7;
+  --ds-rail-divider: #7E97A6;
+  --ds-window-border: #86A3B5;
+  --ds-on-dark-border-subtle: rgba(199, 219, 232, 0.42);
+  --ds-on-dark-border-default: rgba(199, 219, 232, 0.56);
+  --ds-on-dark-border-strong: rgba(214, 232, 243, 0.78);
+
+  --ds-text-strong: #FFFFFF;
+  --ds-text-primary: #FFFFFF;
+  --ds-text-secondary: #DDE9F2;
+  --ds-text-muted: #BFD1DF;
+  --ds-text-disabled: #9DB0BF;
+
+  --ds-rail-text-strong: #FFFFFF;
+  --ds-rail-text-primary: #FFFFFF;
+  --ds-rail-text-secondary: #DDE9F2;
+  --ds-rail-text-muted: #BFD1DF;
+
+  --ds-text-on-dark: #FFFFFF;
+  --ds-text-on-dark-secondary: #DDE9F2;
+  --ds-text-on-dark-muted: #BFD1DF;
+  --ds-text-on-dark-accent: #BFE4FF;
+
+  --ds-focus-outline: #A8D8F5;
+  --ds-focus-ring: rgba(168, 216, 245, 0.45);
+  --ds-focus-ring-strong: rgba(168, 216, 245, 0.72);
+}
+
+[data-theme="light"][data-appearance="contrast"] {
+  --ds-bg-app: #FFFFFF;
+  --ds-bg-workspace: #F2F8FB;
+  --ds-surface-panel: #FFFFFF;
+  --ds-surface-raised: #EAF1F5;
+  --ds-surface-input: #FFFFFF;
+  --ds-surface-hover: #D8E6EF;
+  --ds-surface-selected: #C4DAE8;
+
+  --ds-nav-bg: #F2F7FA;
+  --ds-topbar-bg: #FFFFFF;
+  --ds-statusbar-bg: #F2F7FA;
+  --ds-rail-bg: #F8FBFC;
+  --ds-rail-bg-hover: #E4EEF4;
+
+  --ds-border-strong: #3F5B6C;
+  --ds-border-default: #2F4A5A;
+  --ds-border-subtle: #5C7686;
+  --ds-divider: #4A6473;
+  --ds-rail-border: #3A5666;
+  --ds-rail-divider: #7A939F;
+  --ds-window-border: #2F4A5A;
+
+  --ds-text-strong: #000000;
+  --ds-text-primary: #061420;
+  --ds-text-secondary: #16303F;
+  --ds-text-muted: #26414F;
+  --ds-text-disabled: #4A6272;
+
+  --ds-rail-text-strong: #000000;
+  --ds-rail-text-primary: #061420;
+  --ds-rail-text-secondary: #16303F;
+  --ds-rail-text-muted: #26414F;
+
+  --ds-focus-outline: #0A4A70;
+  --ds-focus-ring: rgba(10, 74, 112, 0.28);
+  --ds-focus-ring-strong: rgba(10, 74, 112, 0.52);
+}
+
+/* --- Accent ------------------------------------------------------------
+   Only the brand / primary-action / focus family moves. Success, warning,
+   danger, info, molecule and vina keep their hue on purpose: in a docking
+   workbench those colours mean something, and an accent choice must never
+   make a status indistinguishable. */
+[data-theme="dark"][data-accent="cyan"] {
+  --ds-brand: #187E9C;
+  --ds-brand-hover: #1D8CAE;
+  --ds-brand-active: #136279;
+  --ds-brand-soft: #0C3A4C;
+  --ds-brand-border: #3D93B0;
+  --ds-brand-selection: rgba(23, 126, 156, 0.72);
+  --ds-brand-on-dark: #6FD6EC;
+  --ds-brand-hover-on-dark: rgba(52, 150, 178, 0.24);
+  --ds-brand-border-on-dark: rgba(93, 175, 199, 0.42);
+  --ds-accent: #6FD6EC;
+  --ds-accent-hover: #97E4F3;
+  --ds-accent-soft: #0C3A4C;
+  --ds-accent-border: #3D93B0;
+  --ds-focus-outline: #5FC3DC;
+  --ds-focus-ring: rgba(95, 195, 220, 0.24);
+  --ds-focus-ring-strong: rgba(95, 195, 220, 0.42);
+  --ds-shadow-brand: 0 2px 6px rgba(16, 96, 120, 0.18);
+  --ds-navy-800: #0B4557;
+  --ds-navy-700: #12607A;
+}
+
+[data-theme="light"][data-accent="cyan"] {
+  --ds-brand: #0B6A85;
+  --ds-brand-hover: #085670;
+  --ds-brand-active: #06475C;
+  --ds-brand-soft: #D2EDF5;
+  --ds-brand-border: #4E93AB;
+  --ds-brand-selection: rgba(11, 106, 133, 0.17);
+  --ds-brand-on-dark: #4FBEDC;
+  --ds-brand-hover-on-dark: rgba(52, 150, 178, 0.24);
+  --ds-brand-border-on-dark: rgba(93, 175, 199, 0.42);
+  --ds-accent: #0A6079;
+  --ds-accent-hover: #084D62;
+  --ds-accent-soft: #D2EDF5;
+  --ds-accent-border: #4E93AB;
+  --ds-focus-outline: #0C6B88;
+  --ds-focus-ring: rgba(12, 107, 136, 0.20);
+  --ds-focus-ring-strong: rgba(12, 107, 136, 0.36);
+  --ds-shadow-brand: 0 2px 6px rgba(11, 106, 133, 0.18);
+  --ds-navy-800: #0B4557;
+  --ds-navy-700: #12607A;
+}
+
+[data-theme="dark"][data-accent="graphite"] {
+  --ds-brand: #55697A;
+  --ds-brand-hover: #617687;
+  --ds-brand-active: #47596A;
+  --ds-brand-soft: #26343F;
+  --ds-brand-border: #6E8394;
+  --ds-brand-selection: rgba(85, 105, 122, 0.72);
+  --ds-brand-on-dark: #A9BCC9;
+  --ds-brand-hover-on-dark: rgba(120, 142, 158, 0.24);
+  --ds-brand-border-on-dark: rgba(139, 161, 178, 0.42);
+  --ds-accent: #B4C6D2;
+  --ds-accent-hover: #CBDAE3;
+  --ds-accent-soft: #26343F;
+  --ds-accent-border: #6E8394;
+  --ds-focus-outline: #9FB6C4;
+  --ds-focus-ring: rgba(159, 182, 196, 0.26);
+  --ds-focus-ring-strong: rgba(159, 182, 196, 0.44);
+  --ds-shadow-brand: 0 2px 6px rgba(24, 34, 43, 0.20);
+  --ds-navy-800: #2C3A45;
+  --ds-navy-700: #3C4E5C;
+}
+
+[data-theme="light"][data-accent="graphite"] {
+  --ds-brand: #4A5F6F;
+  --ds-brand-hover: #3B4D5B;
+  --ds-brand-active: #30404C;
+  --ds-brand-soft: #E2E9EE;
+  --ds-brand-border: #8399A8;
+  --ds-brand-selection: rgba(74, 95, 111, 0.16);
+  --ds-brand-on-dark: #7E93A1;
+  --ds-brand-hover-on-dark: rgba(120, 142, 158, 0.24);
+  --ds-brand-border-on-dark: rgba(139, 161, 178, 0.42);
+  --ds-accent: #40525F;
+  --ds-accent-hover: #33424D;
+  --ds-accent-soft: #E2E9EE;
+  --ds-accent-border: #8399A8;
+  --ds-focus-outline: #47606F;
+  --ds-focus-ring: rgba(71, 96, 111, 0.20);
+  --ds-focus-ring-strong: rgba(71, 96, 111, 0.36);
+  --ds-shadow-brand: 0 2px 6px rgba(74, 95, 111, 0.18);
+  --ds-navy-800: #2C3A45;
+  --ds-navy-700: #3C4E5C;
+}

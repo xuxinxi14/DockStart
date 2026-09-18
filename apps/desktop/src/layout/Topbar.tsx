@@ -10,18 +10,29 @@ import {
 import type { DockStartProject } from "../types";
 import { pageTitles, type NavigateHandler, type PageId } from "../navigation/pages";
 import Tooltip from "../components/Tooltip";
-import type { ThemeMode } from "./AppShell";
+import type { ResolvedTheme, ThemeMode } from "../utils/themePreference";
 import WindowControls from "./WindowControls";
 
 type TopbarProps = {
   currentPage: PageId;
   project: DockStartProject | null;
   workflowSummary: string;
-  theme: ThemeMode;
+  /** What is actually painted right now (never `system`). */
+  theme: ResolvedTheme;
+  /** The stored preference, which may be `system`. */
+  themeMode: ThemeMode;
   onToggleTheme: () => void;
   onNavigate: NavigateHandler;
   onOpenProject: () => void;
 };
+
+function themeToggleLabel(theme: ResolvedTheme, themeMode: ThemeMode): string {
+  const next = theme === "dark" ? "亮色" : "暗色";
+  if (themeMode === "system") {
+    return `当前跟随系统（${theme === "dark" ? "深色" : "浅色"}），点击固定为${next}主题`;
+  }
+  return `切换到${next}主题`;
+}
 
 function formatSavedAt(value: string | undefined): string {
   if (!value) return "";
@@ -40,6 +51,7 @@ export default function Topbar({
   project,
   workflowSummary,
   theme,
+  themeMode,
   onToggleTheme,
   onNavigate,
   onOpenProject,
@@ -91,12 +103,12 @@ export default function Topbar({
             </button>
           </Tooltip>
         </div>
-        <Tooltip label={theme === "dark" ? "切换到亮色主题" : "切换到暗色主题"}>
+        <Tooltip label={themeToggleLabel(theme, themeMode)}>
           <button
             className="topbar-theme-toggle"
             type="button"
             onClick={onToggleTheme}
-            aria-label="亮色主题"
+            aria-label="切换亮色或暗色主题"
             aria-pressed={theme === "light"}
           >
             {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  ArrowSquareOut,
   CheckCircle,
   FloppyDisk,
   ShieldCheck,
@@ -42,7 +43,29 @@ import {
   type ToolStatusEntry,
   type ToolchainSummary,
 } from "../utils/settingsForm";
-import { readThemePreference, setThemePreference, type ThemeMode } from "../utils/themePreference";
+import { openExternalUrl } from "../utils/externalLink";
+import { appVersion } from "../navigation/pages";
+import {
+  DOCKSTART_LICENSE,
+  DOCKSTART_PROJECT_SUMMARY,
+  DOCKSTART_REPOSITORY_URL,
+  repositoryDisplayUrl,
+} from "../utils/projectInfo";
+import {
+  ACCENT_IDS,
+  APPEARANCE_IDS,
+  THEME_MODES,
+  readAppearanceState,
+  resolveThemeMode,
+  setAccentPreference,
+  setAppearancePreference,
+  setThemePreference,
+  type AccentId,
+  type AppearanceId,
+  type AppearanceState,
+  type ResolvedTheme,
+  type ThemeMode,
+} from "../utils/themePreference";
 
 type SettingsPageProps = {
   onBack: () => void;
@@ -62,6 +85,77 @@ const SCORING_LABELS: Record<string, string> = {
   vinardo: "Vinardo（偏好疏水匹配）",
 };
 
+/**
+ * Appearance options. The ids map 1:1 to the CSS layers in styles/tokens.css;
+ * `default` intentionally has no layer because it *is* the original palette.
+ *
+ * Each map is keyed by the id union, so adding a new id in
+ * utils/themePreference.ts fails the type check until it is described here —
+ * the UI can never offer a combination the stylesheet does not implement.
+ */
+const THEME_MODE_LABELS: Record<ThemeMode, { label: string; note: string }> = {
+  system: { label: "跟随系统", note: "跟随 Windows 的浅色/深色设置自动切换。" },
+  light: { label: "浅色", note: "始终使用浅色界面。" },
+  dark: { label: "深色", note: "始终使用深色界面。" },
+};
+
+const APPEARANCE_LABELS: Record<AppearanceId, { label: string; note: string }> = {
+  default: { label: "DockStart 默认", note: "当前的深蓝工作台配色。" },
+  soft: { label: "柔和", note: "降低明暗反差、边框更轻，长时间阅读更轻松。" },
+  contrast: { label: "高对比", note: "加深文字与边框、压深背景，弱光和投影下更清晰。" },
+};
+
+const ACCENT_LABELS: Record<AccentId, { label: string; note: string }> = {
+  default: { label: "DockStart 蓝", note: "默认强调色。" },
+  cyan: { label: "青蓝", note: "偏冷的青蓝色强调。" },
+  graphite: { label: "石墨", note: "中性灰蓝，最克制的强调色。" },
+};
+
+const THEME_MODE_OPTIONS = THEME_MODES.map((id) => ({ id, ...THEME_MODE_LABELS[id] }));
+const APPEARANCE_OPTIONS = APPEARANCE_IDS.map((id) => ({ id, ...APPEARANCE_LABELS[id] }));
+const ACCENT_OPTIONS = ACCENT_IDS.map((id) => ({ id, ...ACCENT_LABELS[id] }));
+
+function themeModeLabel(mode: ThemeMode, resolved: ResolvedTheme): string {
+  if (mode === "system") return `跟随系统（当前${resolved === "dark" ? "深色" : "浅色"}）`;
+  return THEME_MODE_LABELS[mode].label;
+}
+
+function optionLabel<T extends string>(options: ReadonlyArray<{ id: T; label: string }>, id: T): string {
+  return options.find((option) => option.id === id)?.label ?? id;
+}
+
+/**
+ * A miniature of the real palette. The swatch carries the same
+ * `data-theme` / `data-appearance` / `data-accent` attributes as <html>, so it
+ * resolves through the exact same CSS layers — the preview cannot drift from
+ * the real theme because it *is* the real theme, scoped to a 3-block box.
+ */
+function AppearanceSwatch({
+  appearance,
+  accent,
+  theme,
+}: {
+  appearance: AppearanceId;
+  accent: AccentId;
+  theme: ResolvedTheme;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className="settings-choice-swatch"
+      data-accent={accent}
+      data-appearance={appearance}
+      data-theme={theme}
+    >
+      <span className="settings-choice-swatch-nav" />
+      <span className="settings-choice-swatch-panel" />
+      <span className="settings-choice-swatch-accent" />
+    </span>
+  );
+}
+
+type LinkFeedback = { tone: "ok" | "error"; message: string; suggestion: string; rawError: string };
+
 function toolEntryTone(entry: ToolStatusEntry | null): "ok" | "warning" | "error" {
   return toolStatusTone(entry?.status ?? "");
 }
@@ -80,7 +174,9 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
   const [settingsPath, setSettingsPath] = useState("");
   const [toolchain, setToolchain] = useState<ToolchainSummary | null>(null);
   const [diagnostics, setDiagnostics] = useState<SettingsDiagnostics | null>(null);
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemePreference());
+  const [appearanceState, setAppearanceState] = useState<AppearanceState>(readAppearanceState);
+  const [linkFeedback, setLinkFeedback] = useState<LinkFeedback | null>(null);
+  const [isOpeningRepository, setIsOpeningRepository] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(EMPTY_FEEDBACK);
   const [isSaving, setIsSaving] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
@@ -269,14 +365,42 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
     setDockingForm(dockingDefaultsToForm(DEFAULT_DOCKING_DEFAULTS));
   };
 
-  const applyTheme = (next: ThemeMode) => {
-    setThemeMode(next);
+  const applyThemeMode = (next: ThemeMode) => {
     setThemePreference(next);
+    setAppearanceState(readAppearanceState());
+  };
+
+  const applyAppearance = (next: AppearanceId) => {
+    setAppearancePreference(next);
+    setAppearanceState(readAppearanceState());
+  };
+
+  const applyAccent = (next: AccentId) => {
+    setAccentPreference(next);
+    setAppearanceState(readAppearanceState());
+  };
+
+  const openRepository = async () => {
+    setIsOpeningRepository(true);
+    try {
+      const result = await openExternalUrl(DOCKSTART_REPOSITORY_URL);
+      setLinkFeedback(
+        result.ok
+          ? { tone: "ok", message: "已在系统默认浏览器中打开 DockStart 官方仓库。", suggestion: "", rawError: "" }
+          : { tone: "error", message: result.message, suggestion: result.suggestion, rawError: result.rawError },
+      );
+    } finally {
+      setIsOpeningRepository(false);
+    }
   };
 
   const python = toolchain?.python ?? null;
   const vina = toolchain?.vina ?? null;
   const hasDiagnostics = Boolean(diagnostics);
+  const themeMode = appearanceState.mode;
+  const appearanceId = appearanceState.appearance;
+  const accentId = appearanceState.accent;
+  const resolvedTheme = resolveThemeMode(themeMode);
 
   return (
     <PageShell labelledBy="settings-title">
@@ -323,30 +447,88 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
               <div className="settings-list">
                 <div className="setting-row is-stacked">
                   <div className="setting-label-block">
-                    <span className="setting-label">主题</span>
-                    <span className="setting-current">
-                      当前：{themeMode === "dark" ? "深色" : "浅色"}
+                    <span className="setting-label">
+                      主题
+                      <FieldHint
+                        label="决定 DockStart 使用深色还是浅色界面。选择「跟随系统」后，会随 Windows 的浅色/深色设置自动切换。"
+                        subject="主题"
+                      />
                     </span>
+                    <span className="setting-current">当前：{themeModeLabel(themeMode, resolvedTheme)}</span>
                   </div>
-                  <div className="settings-segmented" role="group" aria-label="主题">
-                    <button
-                      aria-pressed={themeMode === "dark"}
-                      className={`settings-segmented-button${themeMode === "dark" ? " is-active" : ""}`}
-                      onClick={() => applyTheme("dark")}
-                      type="button"
-                    >
-                      深色
-                    </button>
-                    <button
-                      aria-pressed={themeMode === "light"}
-                      className={`settings-segmented-button${themeMode === "light" ? " is-active" : ""}`}
-                      onClick={() => applyTheme("light")}
-                      type="button"
-                    >
-                      浅色
-                    </button>
+                  <div className="settings-segmented" role="group" aria-label="主题模式">
+                    {THEME_MODE_OPTIONS.map((option) => (
+                      <button
+                        aria-pressed={themeMode === option.id}
+                        className={`settings-segmented-button${themeMode === option.id ? " is-active" : ""}`}
+                        key={option.id}
+                        onClick={() => applyThemeMode(option.id)}
+                        title={option.note}
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
-                  <span className="settings-row-note">与本机偏好一起保存，下次打开仍然生效。</span>
+                  <span className="settings-row-note">
+                    与本机偏好一起保存，重新启动 DockStart 后仍然生效。
+                  </span>
+                </div>
+
+                <div className="setting-row is-stacked">
+                  <div className="setting-label-block">
+                    <span className="setting-label">
+                      外观
+                      <FieldHint
+                        label="在不改变 DockStart 视觉语言的前提下调整明暗反差与面板层级。所有页面共用同一套配色变量，因此整个软件会一起变化。"
+                        subject="外观"
+                      />
+                    </span>
+                    <span className="setting-current">当前：{optionLabel(APPEARANCE_OPTIONS, appearanceId)}</span>
+                  </div>
+                  <div className="settings-choice-grid" role="group" aria-label="外观">
+                    {APPEARANCE_OPTIONS.map((option) => (
+                      <button
+                        aria-pressed={appearanceId === option.id}
+                        className={`settings-choice${appearanceId === option.id ? " is-active" : ""}`}
+                        key={option.id}
+                        onClick={() => applyAppearance(option.id)}
+                        type="button"
+                      >
+                        <AppearanceSwatch appearance={option.id} accent={accentId} theme={resolvedTheme} />
+                        <span className="settings-choice-label">{option.label}</span>
+                        <span className="settings-choice-note">{option.note}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="setting-row is-stacked">
+                  <div className="setting-label-block">
+                    <span className="setting-label">
+                      强调色
+                      <FieldHint
+                        label="只调整按钮、选中态与键盘焦点等强调用的颜色。成功、警告、错误、分子与 Vina 等语义色不会改变，避免影响科学信息的可读性。"
+                        subject="强调色"
+                      />
+                    </span>
+                    <span className="setting-current">当前：{optionLabel(ACCENT_OPTIONS, accentId)}</span>
+                  </div>
+                  <div className="settings-choice-grid is-accent" role="group" aria-label="强调色">
+                    {ACCENT_OPTIONS.map((option) => (
+                      <button
+                        aria-pressed={accentId === option.id}
+                        className={`settings-choice${accentId === option.id ? " is-active" : ""}`}
+                        key={option.id}
+                        onClick={() => applyAccent(option.id)}
+                        type="button"
+                      >
+                        <AppearanceSwatch appearance={appearanceId} accent={option.id} theme={resolvedTheme} />
+                        <span className="settings-choice-label">{option.label}</span>
+                        <span className="settings-choice-note">{option.note}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="setting-row is-stacked">
@@ -625,6 +807,60 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
               </div>
             </SectionCard>
 
+            <SectionCard title="关于项目" description="DockStart 是什么，以及在哪里获取源码与反馈问题。">
+              <div className="settings-about">
+                <p className="settings-about-summary">{DOCKSTART_PROJECT_SUMMARY}</p>
+
+                <div className="settings-about-repository">
+                  <ActionButton
+                    className="settings-repository-button"
+                    disabled={isOpeningRepository}
+                    onClick={() => void openRepository()}
+                  >
+                    <ArrowSquareOut aria-hidden="true" size={16} />
+                    {isOpeningRepository ? "正在打开…" : "打开 GitHub 仓库"}
+                  </ActionButton>
+                  <span className="settings-about-url">
+                    {repositoryDisplayUrl()}
+                    <span className="settings-about-hint">使用系统默认浏览器打开外部网站</span>
+                  </span>
+                </div>
+
+                {linkFeedback ? (
+                  linkFeedback.tone === "ok" ? (
+                    <p aria-live="polite" className="settings-about-result is-ok">
+                      {linkFeedback.message}
+                    </p>
+                  ) : (
+                    <div className="settings-about-result is-error" role="alert">
+                      <p>{linkFeedback.message}</p>
+                      {linkFeedback.suggestion ? <p>{linkFeedback.suggestion}</p> : null}
+                      {linkFeedback.rawError ? (
+                        <AdvancedDetails summary="技术信息（用于排查）">
+                          <pre>{linkFeedback.rawError}</pre>
+                        </AdvancedDetails>
+                      ) : null}
+                    </div>
+                  )
+                ) : null}
+
+                <dl className="settings-about-meta">
+                  <div>
+                    <dt>版本</dt>
+                    <dd>DockStart v{appVersion}</dd>
+                  </div>
+                  <div>
+                    <dt>许可证</dt>
+                    <dd>{DOCKSTART_LICENSE}</dd>
+                  </div>
+                  <div>
+                    <dt>运行方式</dt>
+                    <dd>完全在本机运行，不上传数据</dd>
+                  </div>
+                </dl>
+              </div>
+            </SectionCard>
+
             <SectionCard title="高级设置" description="只在需要时调整。默认收起，避免影响正常使用。">
               <AdvancedDetails summary="展开高级设置">
                 <div className="settings-list">
@@ -715,6 +951,16 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
               <div>
                 <dt>默认项目目录</dt>
                 <dd>{settings.project.default_project_dir.trim() || "创建项目时选择"}</dd>
+              </div>
+              <div>
+                <dt>主题</dt>
+                <dd>{themeModeLabel(themeMode, resolvedTheme)}</dd>
+              </div>
+              <div>
+                <dt>外观与强调色</dt>
+                <dd>
+                  {optionLabel(APPEARANCE_OPTIONS, appearanceId)} · {optionLabel(ACCENT_OPTIONS, accentId)}
+                </dd>
               </div>
               <div>
                 <dt>默认搜索彻底程度</dt>

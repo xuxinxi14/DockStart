@@ -6127,6 +6127,7 @@ fn configure_resource_dir_env(app: &tauri::App) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             configure_resource_dir_env(app);
             Ok(())
