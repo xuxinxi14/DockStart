@@ -1,0 +1,18 @@
+{
+  "run_id": "run_001",
+  "started_at": "2026-06-29T00:00:00+00:00",
+  "finished_at": "2026-06-29T00:00:05+00:00",
+  "status": "finished",
+  "vina_version": "demo",
+  "command": [],
+  "config_file": "configs/vina_config.txt",
+  "config_snapshot": "runs/run_001/config_snapshot.txt",
+  "output_file": "runs/run_001/out.pdbqt",
+  "log_file": "runs/run_001/log.txt",
+  "scores_file": "runs/run_001/scores.csv",
+  "project_scores_file": "results/scores.csv",
+  "exit_code": 0,
+  "best_affinity": -5.4,
+  "demo": true,
+  "scientific_note": "Synthetic software demo only; not a scientific docking result."
+}

@@ -1,0 +1,10 @@
+DockStart bundled viewer demo
+
+mode |   affinity | dist from best mode
+     | (kcal/mol) | rmsd l.b.| rmsd u.b.
+-----+------------+----------+----------
+   1       -5.400      0.000      0.000
+   2       -4.800      1.200      2.100
+   3       -4.200      2.400      3.300
+
+This synthetic log is for software demonstration only.

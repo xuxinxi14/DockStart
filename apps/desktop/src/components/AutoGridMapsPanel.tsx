@@ -12,6 +12,7 @@ import type {
 import ActionButton from "./ActionButton";
 import Ad4ZnProtocolPanel, { getAd4ZnWorkflowReadiness } from "./Ad4ZnProtocolPanel";
 import AdvancedDetails from "./AdvancedDetails";
+import FieldHint from "./FieldHint";
 import OperationLoadingDialog from "./OperationLoadingDialog";
 import PathInput from "./PathInput";
 import StatusBadge from "./StatusBadge";
@@ -286,7 +287,14 @@ export default function AutoGridMapsPanel({
     <section className="run-cockpit-card ad4-maps-card" aria-labelledby="ad4-maps-title">
       <div className="run-cockpit-section-heading">
         <div>
-          <span className="run-cockpit-kicker">评分协议</span>
+          <div className="field-hint-row">
+            <span className="run-cockpit-kicker">评分协议</span>
+            <FieldHint
+              placement="bottom"
+              subject="评分协议"
+              label="这里用于选择对接评分方式。第一次使用或进行普通 Vina 对接时，保持默认的 Vina / Vinardo 即可，本板块可以跳过，不需要生成或导入 maps。只有已经拥有 AutoDock4 maps，或需要明确复现 AutoDock4 / AD4Zn 协议时，才切换并完成对应网格设置。不同评分协议的分值不能直接比较。"
+            />
+          </div>
           <h2 id="ad4-maps-title">Vina / AutoDock4 Maps</h2>
         </div>
         <StatusBadge tone={isAd4 ? ((isAd4Zn ? ad4ZnReady : status?.ready) ? "ok" : "warning") : "info"}>

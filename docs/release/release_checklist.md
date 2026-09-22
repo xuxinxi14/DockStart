@@ -33,7 +33,7 @@ python scripts/verify_ad4_v0141_evidence_bundle.py `
 
 默认模式会在三门科学 oracle 均通过时保留历史结论，但汇总必须写明 `binding_status=legacy_unbound`。正式要求当前源码绑定时追加 `--require-source-bound`；上述旧证据必须非零退出。只有在当前源码上重新执行三条真实外部门禁后生成的新证据，才可能满足该选项。
 
-DockStart v0.14.3 是非最终的本地候选版本。Basic 与 Assisted 是两个隔离的发布 profile，
+DockStart v1.0.2 是非最终的本地候选版本。Basic 与 Assisted 是两个隔离的发布 profile，
 不是产品成熟度标签；本清单不会把任一 profile 称为正式 Stable Release。三条外部 AD4
 科学门禁已在固定本地工具链上实跑通过，但本轮不重新打包，也不因此升级为正式 Release。
 
@@ -43,19 +43,19 @@ DockStart v0.14.3 是非最终的本地候选版本。Basic 与 Assisted 是两�
 - `-AllowDirtyDevelopmentBuild` 只用于显式的本地开发产物，manifest 必须记录
   `worktree_dirty=true` 和 `development_override`，且不得发布；
 - 后端 `__init__.py`、`package.json`、`package-lock.json`、`Cargo.toml`、`Cargo.lock`、
-  `tauri.conf.json`、`pages.ts` 七处权威版本必须全部为 `0.14.3`；
+  `tauri.conf.json`、`pages.ts` 七处权威版本必须全部为 `1.0.2`；
 - `candidate_id` 必须同时包含版本、源码短 commit 和 UTC 构建时间；替代旧候选时显式记录
   `supersedes_candidate`，不得仅凭同名文件覆盖；
 - `artifact-manifest.json` 必须记录完整源码 commit、分支、构建时间、profile、工作树状态、
   `maturity=local_candidate`、三条外部科学验收状态，以及每个 artifact 的相对路径、大小和 SHA256；
-- v0.14.3 的所有构建结果均保持 `candidate=true`、`publishable=false`。通过候选门禁只允许写为
+- v1.0.2 的所有构建结果均保持 `candidate=true`、`publishable=false`。通过候选门禁只允许写为
   `candidate_gates_passed`，不能自动升级为正式 Release；
 - 本地候选验收不冒充 GitHub Release。只有后续明确发布时才创建并推送 tag；
 - 安装包、`.release/`、`dist/`、`target/`、runtime 二进制和真实 docking 输出不提交 Git。
 
 ## 本轮最小源码检查
 
-v0.14.3 打包必须运行 `scripts/check_all.ps1` 定义的完整自动检查；完整回归仍不能替代独立外部科学门禁：
+v1.0.2 打包必须运行 `scripts/check_all.ps1` 定义的完整自动检查；完整回归仍不能替代独立外部科学门禁：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/check_all.ps1 `
@@ -153,7 +153,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 - Assisted wheelhouse 中每个 artifact 必须匹配 `resources/assisted/SOURCE_MANIFEST.json`，构建不联网；
 - AutoGrid4、`AD4Zn.dat` 和外部验收输入不进入任一 stage；
 - Assisted 的 development、post-package、post-install 结果全部写入同一 candidate manifest；
-- `-SkipPostInstallGate` 产物只能是 `candidate_incomplete`；即使 post-install 通过，v0.14.3 仍为
+- `-SkipPostInstallGate` 产物只能是 `candidate_incomplete`；即使 post-install 通过，v1.0.2 仍为
   `candidate_gates_passed` 和 `publishable=false`。
 
 ## 安装与 GUI 验收（后续打包时）
@@ -167,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows_release.ps1 -Prof
 
 ## 发布文案边界
 
-- 明确 Basic/Assisted 是 profile，v0.14.3 的成熟度是非最终本地候选；
+- 明确 Basic/Assisted 是 profile，v1.0.2 的成熟度是非最终本地候选；
 - 自动准备仍需人工检查；Docking score 仅供结构结合趋势参考，不能替代实验验证；
 - 串行批量是固定受体和冻结 maps 下的多个独立 run，不是联合搜索，也不代表大型数据库虚拟筛选；
 - 明确不含 PLIP/ProLIF、Open Babel/MGLTools、相互作用分析、pocket prediction、分子动力学、

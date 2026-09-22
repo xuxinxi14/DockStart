@@ -22,7 +22,7 @@
 .run-workspace-mode-availability {
   margin: -6px auto 14px;
   width: min(100% - 36px, 1160px);
-  color: var(--ds-warning-on-dark);
+  color: var(--ds-warning-text);
   font-size: 10px;
   line-height: 1.5;
 }

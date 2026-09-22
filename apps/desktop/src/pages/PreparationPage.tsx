@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CheckCircle, FileArrowUp, Info } from "@phosphor-icons/react";
+import { CheckCircle, FileArrowUp, Info, X } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -212,6 +212,7 @@ export default function PreparationPage({
   const [batchLigandPreview, setBatchLigandPreview] = useState<LigandImportPreview | null>(null);
   const [selectedBatchLigandId, setSelectedBatchLigandId] = useState("");
   const [pendingTarget, setPendingTarget] = useState<PreparationTarget | null>(null);
+  const [detailTarget, setDetailTarget] = useState<PreparationTarget | null>(null);
   const [activeTask, setActiveTask] = useState<BackgroundTaskStatus | null>(null);
   const activeTaskAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -221,6 +222,20 @@ export default function PreparationPage({
   const preparedIdentityRef = useRef(`${initialProject.receptor.file}|${initialProject.ligand.file}`);
   const rawReceptorIdentityRef = useRef(`${initialProject.project_dir}|${initialProject.receptor.raw_file}`);
   const rawLigandIdentityRef = useRef(`${initialProject.project_dir}|${initialProject.ligand.raw_file}`);
+
+  useEffect(() => {
+    if (!detailTarget) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailTarget(null);
+    };
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [detailTarget]);
 
   useEffect(() => {
     if (currentProjectDirRef.current !== initialProject.project_dir) {
@@ -1231,18 +1246,58 @@ export default function PreparationPage({
             </>
           ) : null}
 
-          <AdvancedDetails className="preparation-target-details" summary="查看详情">
-            <dl className="meta-list">
-              <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, projectRawFile)}</code></dd></div>
-              <div><dt>准备方法</dt><dd>{prep?.method ?? "外部或手动导入"}</dd></div>
-              <div><dt>日志</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
-            </dl>
-            <div className="button-row">
-              <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={interactionBusy}>读取日志</ActionButton>
-              <ActionButton variant="text" onClick={() => void resetTarget(target)} disabled={interactionBusy}>重置状态</ActionButton>
-            </div>
-          </AdvancedDetails>
+          <ActionButton
+            className="preparation-details-trigger"
+            variant="secondary"
+            aria-haspopup="dialog"
+            onClick={() => setDetailTarget(target)}
+          >
+            查看详情
+          </ActionButton>
         </div>
+        {detailTarget === target ? (
+          <div
+            className="preparation-details-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.currentTarget === event.target) setDetailTarget(null);
+            }}
+          >
+            <section
+              className="preparation-details-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={`preparation-${target}-details-title`}
+            >
+              <header>
+                <h2 id={`preparation-${target}-details-title`}>{label} · 结构与准备详情</h2>
+                <button
+                  type="button"
+                  className="preparation-details-close"
+                  aria-label="关闭详情弹窗"
+                  autoFocus
+                  onClick={() => setDetailTarget(null)}
+                >
+                  <X aria-hidden="true" size={18} weight="bold" />
+                </button>
+              </header>
+              <div className="preparation-details-body">
+                <dl className="meta-list">
+                  <div><dt>当前文件</dt><dd><code>{fileName}</code></dd></div>
+                  <div><dt>准备状态</dt><dd>{preparationState}</dd></div>
+                  <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, projectRawFile)}</code></dd></div>
+                  <div><dt>准备方法</dt><dd>{prep?.method ?? "外部或手动导入"}</dd></div>
+                  <div><dt>日志</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
+                </dl>
+              </div>
+              <footer>
+                <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={interactionBusy}>读取日志</ActionButton>
+                <ActionButton variant="secondary" onClick={() => void resetTarget(target)} disabled={interactionBusy}>重置状态</ActionButton>
+                <ActionButton variant="primary" onClick={() => setDetailTarget(null)}>关闭</ActionButton>
+              </footer>
+            </section>
+          </div>
+        ) : null}
         {badResidues.length || alternateLocations.length ? (
           <section className="preparation-target-review" aria-label="受体结构审查">
             <header>

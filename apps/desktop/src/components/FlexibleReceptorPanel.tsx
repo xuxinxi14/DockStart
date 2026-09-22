@@ -6,6 +6,7 @@ import type { DockStartProject, ViewerStructureResult } from "../types";
 import { startFlexibleReceptorTask, waitForBackgroundTask } from "../utils/backgroundTasks";
 import ActionButton from "./ActionButton";
 import AdvancedDetails from "./AdvancedDetails";
+import FieldHint from "./FieldHint";
 import StatusBadge from "./StatusBadge";
 
 type FlexibleStatus = {
@@ -404,14 +405,20 @@ export default function FlexibleReceptorPanel({
 
       <div className="flexible-receptor-content">
         <div className="flexible-receptor-explainer">
-          <p><strong>受体柔性 × 配体柔性。</strong>两种模式下，配体始终按 Vina 标准柔性处理（可旋转键自动保留）。区别只在于受体是否允许少量残基参与柔性变化。</p>
+          <p>
+            <span className="field-hint-row">
+              <strong>受体柔性 × 配体柔性。</strong>
+              <FieldHint
+                subject="柔性残基"
+                label="柔性残基允许受体部分侧链在对接时发生构象变化。通常只选择与结合口袋直接相关、且有合理结构依据的少量残基；不要机械地把所有邻近残基都设为柔性。第一次使用或没有明确结构依据时，可以保持默认的刚性受体。"
+              />
+            </span>
+            两种模式下，配体始终按 Vina 标准柔性处理（可旋转键自动保留）。区别只在于受体是否允许少量残基参与柔性变化。
+          </p>
           <ul>
             <li><strong>标准对接</strong>：受体刚性 + 配体柔性。受体不发生侧链柔性变化，配体仍按 Vina 标准保留可旋转键，无需选择柔性残基。</li>
             <li><strong>受体有限柔性对接</strong>：受体部分柔性 + 配体柔性。在标准对接的基础上，额外允许选定少量受体残基发生柔性变化。</li>
           </ul>
-          <AdvancedDetails summary="什么是柔性残基？为什么只选少量？">
-            <p>柔性残基允许受体部分侧链在对接时发生构象变化。并不是附近所有残基都需要设为柔性，通常只选择与结合口袋直接相关、且有合理结构依据的少量残基。残基选择应基于结构和研究目的，而不是机械地把所有邻近残基都设为柔性。</p>
-          </AdvancedDetails>
         </div>
 
         <nav className="flexible-mode-switch" aria-label="受体柔性模式">

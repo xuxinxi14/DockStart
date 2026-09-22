@@ -1,0 +1,12 @@
+REMARK DockStart toy ligand PDBQT for software demo only.
+REMARK Generated from the assisted demo SDF ligand with RDKit and Meeko.
+REMARK Not suitable for scientific docking conclusions.
+REMARK SMILES CO
+REMARK SMILES IDX 1 1 2 2
+REMARK H PARENT 2 3
+ROOT
+ATOM      1  C   UNL     1       0.000   0.000   0.000  1.00  0.00     0.190 C
+ATOM      2  O   UNL     1       1.200   0.000   0.000  1.00  0.00    -0.400 OA
+ATOM      3  H   UNL     1       1.533   0.943   0.000  1.00  0.00     0.210 HD
+ENDROOT
+TORSDOF 0

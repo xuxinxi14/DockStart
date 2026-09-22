@@ -1,0 +1,3812 @@
+"""Preparation workflow status and prerequisites for DockStart projects."""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from collections.abc import Mapping
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from adapters import meeko_adapter, rdkit_adapter, vina_adapter
+from dockstart_core.advanced_protocols import (
+    MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION,
+    MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
+    ProtocolValidationError,
+    extract_meeko_altloc_residues,
+    extract_meeko_bad_residues,
+    inspect_meeko_ligand_pdbqt,
+    meeko_receptor_control_arguments,
+    normalize_meeko_receptor_controls,
+    parse_flexible_residue,
+    receptor_altloc_review_options,
+)
+from dockstart_core.macrocycle import (
+    ANALYSIS_VERSION,
+    CONTRACT_SCHEMA_VERSION,
+    HYDROGEN_POLICY,
+    MEEKO_API_PROFILE,
+    build_reviewed_preparation_plan,
+)
+from dockstart_core.persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
+from dockstart_core.project import (
+    _error,
+    _preparation_target_lock,
+    _project_from_dict,
+    _project_lock,
+    _read_and_migrate_project_unlocked,
+    _write_project_json_unlocked,
+    load_project,
+    save_project,
+)
+from dockstart_core.preparation_models import (
+    ALLOWED_PREPARATION_TARGETS,
+    PreparationTarget,
+    default_preparation_result,
+)
+from dockstart_core.structure_review import build_structure_review, format_structure_review_text
+from dockstart_core.toolchain import get_resolved_python
+
+SUPPORTED_LIGAND_PREPARATION_FORMATS = {".sdf", ".mol", ".mol2"}
+SUPPORTED_RECEPTOR_PREPARATION_FORMATS = {".pdb", ".cif"}
+LIGAND_PREPARATION_OUTPUT = "prepared/ligand.pdbqt"
+RECEPTOR_PREPARATION_OUTPUT = "prepared/receptor.pdbqt"
+LIGAND_PREPARATION_LOG_DIR = Path("prepared", "logs")
+LIGAND_PREPARATION_STDOUT = Path("prepared", "logs", "ligand_stdout.txt")
+LIGAND_PREPARATION_STDERR = Path("prepared", "logs", "ligand_stderr.txt")
+LIGAND_PREPARATION_LOG = Path("prepared", "logs", "ligand_preparation_log.json")
+RECEPTOR_PREPARATION_STDOUT = Path("prepared", "logs", "receptor_stdout.txt")
+RECEPTOR_PREPARATION_STDERR = Path("prepared", "logs", "receptor_stderr.txt")
+RECEPTOR_PREPARATION_LOG = Path("prepared", "logs", "receptor_preparation_log.json")
+PREPARATION_RECORD_ROOT = Path("preparation")
+PREPARATION_ID_PATTERN = re.compile(r"^(receptor|ligand)_(\d{3,})$")
+PREPARATION_TOOLS_SNAPSHOT_ENV_VAR = "DOCKSTART_PREPARATION_TOOLS_JSON"
+MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES = 16 * 1024
+MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES = 32 * 1024
+MAX_MACROCYCLE_EVIDENCE_JSON_BYTES = 1024 * 1024
+MAX_PREPARATION_ERROR_STREAM_CHARS = 16 * 1024
+MACROCYCLE_REVIEW_ID_PATTERN = re.compile(r"^review_[0-9]{3,}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+class PreparationPathError(RuntimeError):
+    """Raised when a preparation path can escape through a reparse point."""
+
+
+class CandidateOutputIntegrityError(RuntimeError):
+    """Raised when a validated preparation candidate changes before publication."""
+
+
+def _pdb_coordinate_order_repair_plan(path: Path) -> dict[str, Any]:
+    """Describe a safe, byte-preserving repair for interrupted PDB residues.
+
+    Meeko groups PDB atoms by contiguous residue records.  A record displaced
+    elsewhere in an otherwise serially ordered PDB therefore looks like a
+    second copy of the residue.  Automatic repair is deliberately limited to
+    unique numeric atom serials where stable serial ordering removes every
+    interrupted residue.  The actual repair runs after the preparation claim
+    in an audited helper script; this function only selects that path.
+    """
+
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "required": False,
+        "reason": "",
+        "coordinate_record_count": 0,
+        "interrupted_residues": [],
+        "preserves_coordinate_record_bytes": True,
+        "renumbers_atoms": False,
+        "deletes_atoms": False,
+    }
+    try:
+        lines = path.read_bytes().splitlines(keepends=True)
+    except OSError as exc:
+        result["reason"] = f"read_error:{type(exc).__name__}"
+        return result
+    if any(line.startswith((b"MODEL ", b"ENDMDL")) for line in lines):
+        result["reason"] = "model_records_present"
+        return result
+
+    records: list[tuple[int, int, bytes]] = []
+    for index, line in enumerate(lines):
+        if not (line.startswith(b"ATOM  ") or line.startswith(b"HETATM")):
+            continue
+        if len(line) < 27:
+            result["reason"] = "short_coordinate_record"
+            return result
+        serial_field = line[6:11].strip()
+        if not serial_field or not serial_field.isdigit():
+            result["reason"] = "non_decimal_atom_serial"
+            return result
+        records.append((int(serial_field), index, line))
+    result["coordinate_record_count"] = len(records)
+    if not records:
+        result["reason"] = "no_coordinate_records"
+        return result
+    serials = [item[0] for item in records]
+    if len(set(serials)) != len(serials):
+        result["reason"] = "duplicate_atom_serials"
+        return result
+    ordered = sorted(records, key=lambda item: (item[0], item[1]))
+    if serials == [item[0] for item in ordered]:
+        result["reason"] = "already_ordered"
+        return result
+
+    def interrupted(items: list[tuple[int, int, bytes]]) -> set[bytes]:
+        seen: set[bytes] = set()
+        found: set[bytes] = set()
+        previous: bytes | None = None
+        for _, _, line in items:
+            current = line[21:27]
+            if current != previous:
+                if current in seen:
+                    found.add(current)
+                seen.add(current)
+                previous = current
+        return found
+
+    original_interrupted = interrupted(records)
+    if not original_interrupted:
+        result["reason"] = "unordered_without_interrupted_residue"
+        return result
+    if interrupted(ordered):
+        result["reason"] = "serial_order_does_not_restore_contiguity"
+        return result
+
+    result.update(
+        {
+            "required": True,
+            "reason": "unique_atom_serial_order_restores_residue_contiguity",
+            "interrupted_residues": [
+                (
+                    f"{value[0:1].decode('ascii', errors='replace').strip() or '_'}:"
+                    f"{value[1:5].decode('ascii', errors='replace').strip()}"
+                    f"{value[5:6].decode('ascii', errors='replace').strip()}"
+                )
+                for value in sorted(original_interrupted)
+            ],
+        }
+    )
+    return result
+
+
+def _bounded_preparation_stream(value: str) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) <= MAX_PREPARATION_ERROR_STREAM_CHARS:
+        return normalized
+    half = MAX_PREPARATION_ERROR_STREAM_CHARS // 2
+    omitted = len(normalized) - (half * 2)
+    return (
+        normalized[:half]
+        + f"\n… 已省略 {omitted} 个字符；完整内容保存在 preparation 日志文件 …\n"
+        + normalized[-half:]
+    )
+
+
+def _preparation_failure_diagnostic(
+    *,
+    publication_error: str,
+    stdout: str,
+    stderr: str,
+    exit_code: int,
+) -> str:
+    parts: list[str] = []
+    if str(publication_error or "").strip():
+        parts.append(
+            "[publish]\n" + _bounded_preparation_stream(publication_error)
+        )
+    if str(stdout or "").strip():
+        parts.append("[stdout]\n" + _bounded_preparation_stream(stdout))
+    if str(stderr or "").strip():
+        parts.append("[stderr]\n" + _bounded_preparation_stream(stderr))
+    if not parts:
+        parts.append(
+            "输出 PDBQT 不存在或为空。"
+            if exit_code == 0
+            else f"准备命令退出码为 {exit_code}，但没有捕获到 stdout/stderr。"
+        )
+    return "\n\n".join(parts)
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
+
+
+def _target_error(target: str) -> dict[str, Any]:
+    return _error(
+        "PREPARATION_TARGET_INVALID",
+        "准备目标无效，只能是 receptor 或 ligand。",
+        raw_error=str(target),
+        suggestion="请选择 receptor 或 ligand。",
+    )
+
+
+def _normalize_target(target: str) -> PreparationTarget | None:
+    normalized = str(target or "").strip().lower()
+    if normalized in ALLOWED_PREPARATION_TARGETS:
+        return normalized  # type: ignore[return-value]
+    return None
+
+
+def _load_project_model(
+    project_dir: str,
+    *,
+    persist_migration: bool = True,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    loaded = (
+        load_project(project_dir)
+        if persist_migration
+        else load_project(project_dir, persist_migration=False)
+    )
+    if not loaded.get("ok"):
+        return None, loaded
+    return _project_from_dict(loaded["project"], Path(project_dir).expanduser()), None
+
+
+def _file_status(project_path: Path, relative_file: str, key: str, name: str) -> dict[str, Any]:
+    value = str(relative_file or "")
+    if not value:
+        return {
+            "key": key,
+            "name": name,
+            "path": "",
+            "exists": False,
+            "is_file": False,
+            "size": 0,
+            "non_empty": False,
+            "status": "missing",
+            "message": f"{name} 尚未记录。",
+        }
+
+    try:
+        path = _safe_project_path(project_path, Path(value))
+    except PreparationPathError as exc:
+        return {
+            "key": key,
+            "name": name,
+            "path": value,
+            "absolute_path": "",
+            "exists": False,
+            "is_file": False,
+            "size": 0,
+            "non_empty": False,
+            "status": "error",
+            "message": f"{name} 路径不安全：{exc}",
+        }
+    exists = path.exists()
+    is_file = path.is_file()
+    size = path.stat().st_size if exists and is_file else 0
+    non_empty = size > 0
+    if not exists:
+        status = "missing"
+        message = f"{name} 文件不存在。"
+    elif not is_file:
+        status = "error"
+        message = f"{name} 路径不是文件。"
+    elif not non_empty:
+        status = "empty"
+        message = f"{name} 文件为空。"
+    else:
+        status = "ok"
+        message = f"{name} 文件存在。"
+
+    return {
+        "key": key,
+        "name": name,
+        "path": value,
+        "absolute_path": str(path.resolve()),
+        "exists": exists,
+        "is_file": is_file,
+        "size": size,
+        "non_empty": non_empty,
+        "status": status,
+        "message": message,
+    }
+
+
+def _is_reparse_or_symlink(path: Path) -> bool:
+    try:
+        details = os.lstat(path)
+    except OSError:
+        return False
+    attributes = int(getattr(details, "st_file_attributes", 0) or 0)
+    return stat.S_ISLNK(details.st_mode) or bool(
+        attributes & int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0) or 0),
+    )
+
+
+def _safe_project_path(project_path: Path, value: Path, *, allow_missing: bool = True) -> Path:
+    """Return a lexical project-local path with no symlink/reparse components."""
+
+    project_root = project_path.expanduser().resolve(strict=True)
+    supplied = value.expanduser()
+    candidate = supplied if supplied.is_absolute() else project_root / supplied
+    lexical = Path(os.path.abspath(candidate))
+    try:
+        relative = lexical.relative_to(project_root)
+    except ValueError as exc:
+        raise PreparationPathError(f"路径越出项目目录：{value}") from exc
+
+    current = project_root
+    for part in relative.parts:
+        current = current / part
+        if os.path.lexists(current) and _is_reparse_or_symlink(current):
+            raise PreparationPathError(f"路径包含符号链接、junction 或 reparse point：{current}")
+
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(project_root)
+    except ValueError as exc:
+        raise PreparationPathError(f"路径重解析到项目目录外：{value}") from exc
+    if not allow_missing and not lexical.exists():
+        raise PreparationPathError(f"路径不存在：{lexical}")
+    return lexical
+
+
+def _project_file_path(project_path: Path, value: str) -> Path:
+    return _safe_project_path(project_path, Path(str(value or "")))
+
+
+def _relative_path(path: Path, project_path: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_path.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _write_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
+    atomic_write_json(path, payload)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _canonical_json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _sha256_if_readable(path: Path) -> tuple[str, str]:
+    try:
+        return (_sha256_file(path), "") if path.is_file() else ("", "")
+    except OSError as exc:
+        return "", str(exc)
+
+
+def _file_size_if_readable(path: Path) -> int:
+    try:
+        return path.stat().st_size if path.is_file() else 0
+    except OSError:
+        return 0
+
+
+def _preparation_record_dir(project_path: Path, prep_id: str) -> Path:
+    return _safe_project_path(project_path, PREPARATION_RECORD_ROOT / prep_id)
+
+
+def _ensure_preparation_directories(project_path: Path) -> None:
+    for relative in (PREPARATION_RECORD_ROOT, Path("prepared")):
+        directory = _safe_project_path(project_path, relative)
+        directory.mkdir(parents=True, exist_ok=True)
+        checked = _safe_project_path(project_path, relative, allow_missing=False)
+        if not checked.is_dir():
+            raise PreparationPathError(f"preparation 路径不是普通目录：{checked}")
+
+
+def _validate_prep_id_for_target(target: PreparationTarget, prep_id: str) -> dict[str, Any] | None:
+    match = PREPARATION_ID_PATTERN.match(str(prep_id or ""))
+    if not match or match.group(1) != target:
+        return _error(
+            "PREPARATION_ID_INVALID",
+            "preparation 记录编号无效。",
+            raw_error=str(prep_id),
+            suggestion=f"请使用形如 {target}_001 的 preparation 记录编号。",
+        )
+    return None
+
+
+def get_next_preparation_id(project_dir: str, target: str) -> str:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        raise ValueError("preparation target must be receptor or ligand")
+
+    project_path = Path(project_dir).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
+    root = _safe_project_path(project_path, PREPARATION_RECORD_ROOT, allow_missing=False)
+    max_index = 0
+    if root.is_dir():
+        for child in root.iterdir():
+            _safe_project_path(project_path, PREPARATION_RECORD_ROOT / child.name, allow_missing=False)
+            if not child.is_dir():
+                continue
+            match = PREPARATION_ID_PATTERN.match(child.name)
+            if match and match.group(1) == normalized_target:
+                max_index = max(max_index, int(match.group(2)))
+    return f"{normalized_target}_{max_index + 1:03d}"
+
+
+def _make_preparation_record_paths(project_path: Path, prep_id: str) -> dict[str, Any]:
+    record_dir = _preparation_record_dir(project_path, prep_id)
+    return {
+        "prep_id": prep_id,
+        "record_dir": record_dir,
+        "record_dir_relative": _relative_path(record_dir, project_path),
+        "metadata_file": _relative_path(record_dir / "metadata.json", project_path),
+        "stdout_file": _relative_path(record_dir / "stdout.txt", project_path),
+        "stderr_file": _relative_path(record_dir / "stderr.txt", project_path),
+        "command_file": _relative_path(record_dir / "command.json", project_path),
+        "input_snapshot_file": _relative_path(record_dir / "input_snapshot.json", project_path),
+        "output_check_file": _relative_path(record_dir / "output_check.json", project_path),
+    }
+
+
+def _file_snapshot(path: Path, project_path: Path) -> dict[str, Any]:
+    path = _safe_project_path(project_path, path)
+    exists = path.exists()
+    is_file = path.is_file()
+    size = path.stat().st_size if exists and is_file else 0
+    modified_at = (
+        datetime.fromtimestamp(path.stat().st_mtime, UTC).replace(microsecond=0).isoformat()
+        if exists and is_file
+        else ""
+    )
+    sha256, sha256_error = _sha256_if_readable(path)
+    return {
+        "path": _relative_path(path, project_path),
+        "absolute_path": str(path.resolve()) if exists else str(path),
+        "exists": exists,
+        "is_file": is_file,
+        "size": size,
+        "non_empty": size > 0,
+        "sha256": sha256,
+        "sha256_error": sha256_error,
+        "modified_at": modified_at,
+    }
+
+
+def _raw_input_identity(path: Path, project_path: Path) -> dict[str, Any]:
+    """Capture a stable project-relative identity for one raw preparation input."""
+
+    safe_path = _safe_project_path(project_path, path, allow_missing=False)
+    canonical_relative_path = _relative_path(safe_path, project_path)
+    captured_at = _now_iso()
+    try:
+        before = safe_path.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+            raise OSError("raw 输入不是非空普通文件")
+        sha256 = _sha256_file(safe_path)
+        after = safe_path.stat()
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable:
+            raise OSError("计算 SHA256 期间 raw 输入发生变化")
+        return {
+            "ok": True,
+            "canonical_relative_path": canonical_relative_path,
+            "sha256": sha256,
+            "size_bytes": int(after.st_size),
+            "modified_at_ns": int(after.st_mtime_ns),
+            "captured_at": captured_at,
+            "error": "",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "canonical_relative_path": canonical_relative_path,
+            "sha256": "",
+            "size_bytes": 0,
+            "modified_at_ns": 0,
+            "captured_at": captured_at,
+            "error": str(exc),
+        }
+
+
+def _prepared_output_identity(path: Path, project_path: Path) -> dict[str, Any]:
+    """Capture one stable prepared-output version, including the missing state."""
+
+    safe_path = _safe_project_path(project_path, path)
+    canonical_relative_path = _relative_path(safe_path, project_path)
+    captured_at = _now_iso()
+    try:
+        if not safe_path.exists():
+            return {
+                "ok": True,
+                "canonical_relative_path": canonical_relative_path,
+                "exists": False,
+                "sha256": "",
+                "size_bytes": 0,
+                "captured_at": captured_at,
+                "error": "",
+            }
+
+        before = safe_path.stat()
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("prepared 输出路径不是普通文件")
+        sha256 = _sha256_file(safe_path)
+        after = safe_path.stat()
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable:
+            raise OSError("计算 SHA256 期间 prepared 输出发生变化")
+        return {
+            "ok": True,
+            "canonical_relative_path": canonical_relative_path,
+            "exists": True,
+            "sha256": sha256,
+            "size_bytes": int(after.st_size),
+            "captured_at": captured_at,
+            "error": "",
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "canonical_relative_path": canonical_relative_path,
+            "exists": safe_path.exists(),
+            "sha256": "",
+            "size_bytes": 0,
+            "captured_at": captured_at,
+            "error": str(exc),
+        }
+
+
+def _verify_current_prepared_output(
+    project_path: Path,
+    target: PreparationTarget,
+    claimed_output: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any], dict[str, Any] | None]:
+    """Reject publication when the prepared output changed after task claim."""
+
+    output_path = _safe_project_path(project_path, Path("prepared") / f"{target}.pdbqt")
+    current_output = _prepared_output_identity(output_path, project_path)
+    reasons: list[str] = []
+    if not claimed_output.get("ok"):
+        reasons.append("任务认领时未能冻结 prepared 输出身份")
+    if not current_output.get("ok"):
+        reasons.append("发布前无法稳定读取当前 prepared 输出身份")
+
+    claimed_path = str(claimed_output.get("canonical_relative_path") or "")
+    current_path = str(current_output.get("canonical_relative_path") or "")
+    claimed_exists = bool(claimed_output.get("exists"))
+    current_exists = bool(current_output.get("exists"))
+    if claimed_path != current_path:
+        reasons.append("prepared 输出路径已变化")
+    if claimed_exists != current_exists:
+        reasons.append("prepared 输出在任务运行期间被创建或删除")
+    elif claimed_exists and current_exists:
+        if int(claimed_output.get("size_bytes") or 0) != int(current_output.get("size_bytes") or 0):
+            reasons.append("prepared 输出大小已变化")
+        if str(claimed_output.get("sha256") or "") != str(current_output.get("sha256") or ""):
+            reasons.append("prepared 输出 SHA256 已变化")
+
+    verification = {
+        "checked_at": _now_iso(),
+        "target": target,
+        "claimed": dict(claimed_output),
+        "current": current_output,
+        "matches": not reasons,
+        "reasons": reasons,
+    }
+    if not reasons:
+        return True, verification, None
+
+    error = {
+        "code": "PREPARATION_OUTPUT_CONFLICT",
+        "message": f"prepared/{target}.pdbqt 在准备任务运行期间发生变化，候选输出未发布。",
+        "raw_error": json.dumps(verification, ensure_ascii=False, sort_keys=True),
+        "suggestion": (
+            "DockStart 已保留后来创建、替换或删除的 prepared 输出状态。"
+            "请检查当前 PDBQT；如确需使用自动准备结果，请重新启动准备任务。"
+        ),
+    }
+    return False, verification, error
+
+
+def _verify_current_raw_input(
+    project_path: Path,
+    project: Any,
+    target: PreparationTarget,
+    claimed_input: Mapping[str, Any],
+) -> tuple[bool, dict[str, Any], dict[str, Any] | None]:
+    """Compare current project raw reference and bytes with the claimed input."""
+
+    file_ref = getattr(project, target)
+    recorded_raw_file = str(getattr(file_ref, "raw_file", "") or "")
+    reasons: list[str] = []
+    current_input: dict[str, Any]
+    if not recorded_raw_file:
+        current_input = {
+            "ok": False,
+            "canonical_relative_path": "",
+            "sha256": "",
+            "error": "project.json 当前未记录 raw_file",
+        }
+        reasons.append("raw 引用已被清空")
+    else:
+        try:
+            current_path = _project_file_path(project_path, recorded_raw_file)
+            current_input = _raw_input_identity(current_path, project_path)
+        except (OSError, PreparationPathError) as exc:
+            current_input = {
+                "ok": False,
+                "canonical_relative_path": "",
+                "sha256": "",
+                "error": str(exc),
+            }
+        if not current_input.get("ok"):
+            reasons.append("当前 raw 输入不存在、不可读或在校验期间发生变化")
+
+    claimed_path = str(claimed_input.get("canonical_relative_path") or "")
+    claimed_sha256 = str(claimed_input.get("sha256") or "")
+    current_path = str(current_input.get("canonical_relative_path") or "")
+    current_sha256 = str(current_input.get("sha256") or "")
+    if not claimed_path or not claimed_sha256:
+        reasons.append("任务认领记录缺少规范 raw 路径或 SHA256")
+    if current_path != claimed_path:
+        reasons.append("project.json 的 raw 引用已变化")
+    if current_sha256 != claimed_sha256:
+        reasons.append("raw 文件内容 SHA256 已变化")
+
+    verification = {
+        "checked_at": _now_iso(),
+        "recorded_raw_file": recorded_raw_file,
+        "claimed": dict(claimed_input),
+        "current": current_input,
+        "matches": not reasons,
+        "reasons": reasons,
+    }
+    if not reasons:
+        return True, verification, None
+
+    error = {
+        "code": "PREPARATION_INPUT_STALE",
+        "message": "分子准备期间原始输入发生变化，候选 PDBQT 未发布。",
+        "raw_error": json.dumps(verification, ensure_ascii=False, sort_keys=True),
+        "suggestion": "请确认当前 raw 文件与项目引用后重新启动格式转换；旧候选文件仅保留在 preparation 记录中。",
+    }
+    return False, verification, error
+
+
+def _build_preparation_metadata(
+    *,
+    prep_id: str,
+    target: PreparationTarget,
+    status: str,
+    method: str,
+    created_at: str,
+    started_at: str | None,
+    finished_at: str | None,
+    built: dict[str, Any],
+    exit_code: int | None = None,
+    warnings: list[str] | None = None,
+    error: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tools = built.get("tools", {})
+    python_tool = tools.get("python", {}) if isinstance(tools, dict) else {}
+    rdkit_tool = tools.get("rdkit", {}) if isinstance(tools, dict) else {}
+    meeko_tool = tools.get("meeko", {}) if isinstance(tools, dict) else {}
+    python_path = Path(str(python_tool.get("path") or "")).expanduser()
+    python_snapshot = built.get("python_executable_snapshot")
+    if not isinstance(python_snapshot, dict):
+        python_exists = python_path.is_file()
+        python_sha256, python_sha256_error = _sha256_if_readable(python_path)
+        python_snapshot = {
+            "path": str(python_path),
+            "exists": python_exists,
+            "size_bytes": _file_size_if_readable(python_path) if python_exists else 0,
+            "sha256": python_sha256,
+            "sha256_error": python_sha256_error,
+            "captured_at": _now_iso(),
+        }
+        # Reuse the exact launch-time observation at finalization.  Rehashing
+        # the path later could silently attribute replacement bytes to a run.
+        built["python_executable_snapshot"] = python_snapshot
+    payload = {
+        "prep_id": prep_id,
+        "target": target,
+        "status": status,
+        "method": method,
+        "created_at": created_at,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "python_path": str(python_tool.get("path") or ""),
+        "python_source": str(python_tool.get("source") or "unknown"),
+        "python_sha256": str(python_snapshot.get("sha256") or ""),
+        "python_sha256_error": str(python_snapshot.get("sha256_error") or ""),
+        "python_size_bytes": int(python_snapshot.get("size_bytes") or 0),
+        "python_executable_snapshot": dict(python_snapshot),
+        "rdkit_version": str(rdkit_tool.get("version") or ""),
+        "meeko_version": str(meeko_tool.get("version") or ""),
+        "input_file": built.get("input_file", ""),
+        "output_file": built.get("output_file", ""),
+        "candidate_output_file": built.get("candidate_output_file", ""),
+        "overwrite": bool(built.get("overwrite", False)),
+        "claimed_input": built.get("claimed_input", {}),
+        "claimed_output": built.get("claimed_output", {}),
+        "claim_verification": built.get("claim_verification", {}),
+        "output_verification": built.get("output_verification", {}),
+        "script_file": built.get("script_file", ""),
+        "intermediate_input_file": built.get("intermediate_input_file", ""),
+        "command": built.get("command", []),
+        "executor_pid": built.get("executor_pid"),
+        "executor_executable": built.get("executor_executable", ""),
+        "executor_identity": built.get("executor_identity"),
+        "exit_code": exit_code,
+        "warnings": warnings or [],
+        "error": error,
+    }
+    if isinstance(built.get("pdb_coordinate_order_repair"), Mapping):
+        payload["pdb_coordinate_order_repair"] = copy.deepcopy(
+            built["pdb_coordinate_order_repair"],
+        )
+    if "protocol" in built:
+        payload["protocol"] = str(built.get("protocol") or "")
+        payload["options"] = copy.deepcopy(built.get("options", {}))
+        payload["protocol_mode"] = str(built.get("protocol_mode") or "legacy")
+    if built.get("macrocycle_reviewed") is True:
+        payload["macrocycle_contract"] = copy.deepcopy(
+            built.get("macrocycle_contract", {}),
+        )
+        payload["macrocycle_contract_file"] = str(
+            built.get("macrocycle_contract_file") or "",
+        )
+        payload["macrocycle_contract_sha256"] = str(
+            built.get("macrocycle_contract_sha256") or "",
+        )
+        payload["macrocycle_evidence_file"] = str(
+            built.get("macrocycle_evidence_file") or "",
+        )
+        payload["macrocycle_input_file"] = str(
+            built.get("macrocycle_input_file") or "",
+        )
+        payload["macrocycle_expected_output_evidence"] = copy.deepcopy(
+            built.get("macrocycle_expected_output_evidence", {}),
+        )
+    if isinstance(built.get("receptor_controls"), Mapping):
+        payload["receptor_controls"] = copy.deepcopy(
+            built["receptor_controls"],
+        )
+        payload["receptor_controls_sha256"] = str(
+            built.get("receptor_controls_sha256") or "",
+        )
+        payload["receptor_controls_canonicalization"] = str(
+            built.get("receptor_controls_canonicalization") or "",
+        )
+    if isinstance(built.get("bad_residue_review"), Mapping):
+        payload["bad_residue_review"] = copy.deepcopy(
+            built["bad_residue_review"],
+        )
+    if "protocol_evidence" in built:
+        payload["protocol_evidence"] = copy.deepcopy(built.get("protocol_evidence"))
+    return payload
+
+
+def _attach_executor_identity(built: dict[str, Any]) -> None:
+    """Record the backend process that owns a running preparation task."""
+
+    executor_pid = os.getpid()
+    identity = vina_adapter.get_process_identity(executor_pid)
+    built["executor_pid"] = executor_pid
+    built["executor_identity"] = identity
+    built["executor_executable"] = str((identity or {}).get("executable_path") or "")
+
+
+def _publish_candidate_output(
+    candidate: Path,
+    destination: Path,
+    project_path: Path | None = None,
+    *,
+    expected_snapshot: Mapping[str, Any] | None = None,
+) -> None:
+    """Validate and atomically publish the exact PDBQT bytes that were read."""
+
+    if project_path is not None:
+        candidate = _safe_project_path(project_path, candidate, allow_missing=False)
+        destination = _safe_project_path(project_path, destination)
+
+    if not candidate.is_file() or candidate.stat().st_size <= 0:
+        raise RuntimeError("Meeko 没有生成非空的 PDBQT 候选文件。")
+    payload = candidate.read_bytes()
+    if expected_snapshot is not None:
+        expected_sha256 = str(expected_snapshot.get("sha256") or "").lower()
+        try:
+            expected_size = int(expected_snapshot.get("size"))
+        except (TypeError, ValueError):
+            expected_size = -1
+        actual_sha256 = hashlib.sha256(payload).hexdigest()
+        if (
+            not SHA256_PATTERN.fullmatch(expected_sha256)
+            or expected_size != len(payload)
+            or expected_sha256 != actual_sha256
+        ):
+            raise CandidateOutputIntegrityError(
+                "大环候选 PDBQT 在证据校验后发生变化，已拒绝发布。"
+            )
+    text = payload.decode("utf-8", errors="strict")
+    if not text.strip():
+        raise RuntimeError("Meeko 生成的 PDBQT 候选文件只包含空白内容。")
+    # Publish the same bytes whose size/hash were checked above.  Re-reading
+    # ``candidate`` here would reopen the evidence-to-publication TOCTOU gap.
+    atomic_write_bytes(destination, payload)
+
+
+def _project_error_payload(
+    project: Any,
+    code: str,
+    message: str,
+    raw_error: str = "",
+    suggestion: str = "",
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "preparation": project.preparation.to_dict(),
+        "error": {
+            "code": code,
+            "message": message,
+            "raw_error": raw_error,
+            "suggestion": suggestion,
+        },
+        "warnings": warnings or [],
+        "message": message,
+    }
+
+
+def _preparation_busy_error(project: Any, target: PreparationTarget) -> dict[str, Any] | None:
+    prep = getattr(project.preparation, target)
+    if prep.status != "running":
+        return None
+
+    active = False
+    detail = "项目仍记录为 running，等待恢复检查确认执行器状态。"
+    prep_id = str(prep.prep_id or project.latest_preparation.get(target) or "")
+    if PREPARATION_ID_PATTERN.match(prep_id):
+        try:
+            metadata_path = _safe_project_path(
+                Path(project.project_dir),
+                PREPARATION_RECORD_ROOT / prep_id / "metadata.json",
+                allow_missing=False,
+            )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(metadata, dict):
+                pid = metadata.get("executor_pid")
+                if isinstance(pid, int) and pid > 0:
+                    verification = vina_adapter.verify_process_identity(
+                        pid,
+                        str(metadata.get("executor_executable") or ""),
+                        metadata.get("executor_identity") if isinstance(metadata.get("executor_identity"), dict) else None,
+                    )
+                    active = bool(verification.get("ok"))
+                    detail = str(verification.get("message") or detail)
+        except (OSError, ValueError, json.JSONDecodeError, PreparationPathError):
+            pass
+
+    return _project_error_payload(
+        project,
+        "PREPARATION_ALREADY_RUNNING",
+        f"{target} 已有准备任务正在运行，未启动重复任务。",
+        raw_error=f"prep_id={prep_id or 'unknown'}; active={active}; {detail}",
+        suggestion="请等待当前任务完成；若应用曾异常退出，请先触发项目恢复检查。",
+    )
+
+
+def _check_preparation_available(project_path: Path, target: PreparationTarget) -> dict[str, Any] | None:
+    with _project_lock(project_path):
+        data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+        project = _project_from_dict(data, project_path)
+        return _preparation_busy_error(project, target)
+
+
+def _claim_preparation(
+    project_path: Path,
+    target: PreparationTarget,
+    prep_id: str,
+    built: dict[str, Any],
+    *,
+    method: str,
+    created_at: str,
+    started_at: str,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Claim one target while the caller holds its cross-process lock."""
+
+    _ensure_preparation_directories(project_path)
+    _attach_executor_identity(built)
+    command_path = _safe_project_path(project_path, Path(built["command_file"]))
+    input_snapshot_path = _safe_project_path(project_path, Path(built["input_snapshot_file"]))
+    metadata_path = _safe_project_path(project_path, Path(built["metadata_file"]))
+    input_path = _safe_project_path(project_path, Path(built["input_path"]), allow_missing=False)
+    try:
+        claimed_input = _raw_input_identity(input_path, project_path)
+    except (OSError, PreparationPathError) as exc:
+        claimed_input = {
+            "ok": False,
+            "canonical_relative_path": _relative_path(input_path, project_path),
+            "sha256": "",
+            "captured_at": _now_iso(),
+            "error": str(exc),
+        }
+    built["claimed_input"] = claimed_input
+    output_path = _safe_project_path(project_path, Path(built["output_path"]))
+    claimed_output = _prepared_output_identity(output_path, project_path)
+    built["claimed_output"] = claimed_output
+
+    # Create the audit record before publishing the running claim.  A crash can
+    # therefore never leave project.json pointing to a record that did not
+    # exist at claim time.
+    _write_json(command_path, {"prep_id": prep_id, "target": target, "command": built["command"]})
+    warnings = list(built.get("warnings", []))
+    input_snapshot_payload = {
+        "prep_id": prep_id,
+        "target": target,
+        "input_file": built["input_file"],
+        "canonical_input_file": str(claimed_input.get("canonical_relative_path") or ""),
+        "input_sha256": str(claimed_input.get("sha256") or ""),
+        "claimed_input": claimed_input,
+        "claimed_output": claimed_output,
+        "input": _file_snapshot(input_path, project_path),
+        "tools": built.get("tools", {}),
+        "warnings": warnings,
+    }
+    _write_json(input_snapshot_path, input_snapshot_payload)
+    if not claimed_input.get("ok") or not claimed_input.get("sha256"):
+        snapshot_error = _error(
+            "PREPARATION_INPUT_SNAPSHOT_FAILED",
+            "无法冻结本次分子准备的 raw 输入，任务未启动。",
+            raw_error=str(claimed_input.get("error") or "raw 输入 SHA256 不可用"),
+            suggestion="请确认 raw 文件是项目内可读取的非空普通文件，然后重新启动格式转换。",
+        )
+        rejected = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="failed",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=_now_iso(),
+            built=built,
+            warnings=warnings,
+            error=copy.deepcopy(snapshot_error.get("error")),
+        )
+        rejected["published"] = False
+        rejected["claim_rejected"] = True
+        _write_json(metadata_path, rejected)
+        return None, snapshot_error
+    if not claimed_output.get("ok"):
+        snapshot_error = _error(
+            "PREPARATION_OUTPUT_SNAPSHOT_FAILED",
+            "无法冻结本次分子准备的 prepared 输出状态，任务未启动。",
+            raw_error=str(claimed_output.get("error") or "prepared 输出身份不可用"),
+            suggestion="请确认 prepared 目录可写且输出路径是普通文件，然后重新启动格式转换。",
+        )
+        rejected = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="failed",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=_now_iso(),
+            built=built,
+            warnings=warnings,
+            error=copy.deepcopy(snapshot_error.get("error")),
+        )
+        rejected["published"] = False
+        rejected["claim_rejected"] = True
+        _write_json(metadata_path, rejected)
+        return None, snapshot_error
+    _write_json(
+        metadata_path,
+        _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status="running",
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=None,
+            built=built,
+            warnings=warnings,
+        ),
+    )
+
+    with _project_lock(project_path):
+        data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+        project = _project_from_dict(data, project_path)
+        busy = _preparation_busy_error(project, target)
+        if busy:
+            rejected = _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="interrupted",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                built=built,
+                warnings=warnings,
+                error=copy.deepcopy(busy.get("error")) if isinstance(busy.get("error"), dict) else None,
+            )
+            rejected["published"] = False
+            rejected["claim_rejected"] = True
+            _write_json(metadata_path, rejected)
+            return None, busy
+
+        input_matches, claim_verification, stale_error = _verify_current_raw_input(
+            project_path,
+            project,
+            target,
+            claimed_input,
+        )
+        built["claim_verification"] = claim_verification
+        input_snapshot_payload["claim_verification"] = claim_verification
+        _write_json(input_snapshot_path, input_snapshot_payload)
+        if not input_matches:
+            assert stale_error is not None
+            rejected = _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="failed",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=_now_iso(),
+                built=built,
+                warnings=warnings,
+                error=copy.deepcopy(stale_error),
+            )
+            rejected["published"] = False
+            rejected["claim_rejected"] = True
+            _write_json(metadata_path, rejected)
+            return None, _project_error_payload(
+                project,
+                str(stale_error.get("code") or "PREPARATION_INPUT_STALE"),
+                str(stale_error.get("message") or "分子准备输入已变化。"),
+                raw_error=str(stale_error.get("raw_error") or ""),
+                suggestion=str(stale_error.get("suggestion") or ""),
+                warnings=warnings,
+            )
+
+        _write_json(
+            metadata_path,
+            _build_preparation_metadata(
+                prep_id=prep_id,
+                target=target,
+                status="running",
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=None,
+                built=built,
+                warnings=warnings,
+            ),
+        )
+
+        prep = getattr(project.preparation, target)
+        prep.prep_id = prep_id
+        prep.status = "running"
+        prep.method = method
+        prep.input_file = str(built["input_file"])
+        prep.output_file = f"prepared/{target}.pdbqt"
+        prep.started_at = started_at
+        prep.finished_at = None
+        prep.python_path = str(built["tools"]["python"].get("path", ""))
+        prep.python_source = str(built["tools"]["python"].get("source", "unknown"))
+        prep.rdkit_available = target == "ligand" and built["tools"]["rdkit"].get("status") == "ok"
+        prep.meeko_available = built["tools"]["meeko"].get("status") == "ok"
+        prep.command = list(built["command"])
+        prep.stdout_file = str(built["stdout_file"])
+        prep.stderr_file = str(built["stderr_file"])
+        prep.log_file = str(built["log_file"])
+        prep.metadata_file = str(built["metadata_file"])
+        prep.command_file = str(built["command_file"])
+        prep.input_snapshot_file = str(built["input_snapshot_file"])
+        prep.output_check_file = str(built["output_check_file"])
+        prep.exit_code = None
+        prep.error = None
+        prep.warnings = warnings
+        project.latest_preparation[target] = prep_id
+        project.updated_at = _now_iso()
+        project.revision += 1
+        _write_project_json_unlocked(project_path, project)
+        return project, None
+
+
+def _restore_previous_output(destination: Path, previous: bytes | None) -> str:
+    try:
+        if previous is None:
+            destination.unlink(missing_ok=True)
+        else:
+            atomic_write_bytes(destination, previous)
+        return ""
+    except OSError as exc:
+        return str(exc)
+
+
+def _normalized_macrocycle_bonds(value: Any, *, label: str) -> list[list[int]]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} 必须是原子索引对列表")
+    normalized: list[list[int]] = []
+    for pair in value:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError(f"{label} 包含无效原子索引对")
+        left, right = pair
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, int)
+            or not isinstance(right, int)
+            or left < 0
+            or right < 0
+            or left == right
+        ):
+            raise ValueError(f"{label} 包含无效原子索引")
+        normalized.append([min(left, right), max(left, right)])
+    if normalized != sorted(normalized) or len({tuple(pair) for pair in normalized}) != len(
+        normalized
+    ):
+        raise ValueError(f"{label} 必须按规范顺序排列且不能重复")
+    return normalized
+
+
+def _reviewed_macrocycle_evidence_gate(
+    project_path: Path,
+    built: dict[str, Any],
+    candidate_output_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Validate worker evidence before a reviewed macrocycle can be published."""
+
+    issues: list[dict[str, str]] = []
+
+    def issue(code: str, message: str, detail: str = "") -> None:
+        issues.append({"code": code, "message": message, "detail": detail})
+
+    contract = built.get("macrocycle_contract")
+    expected = built.get("macrocycle_expected_output_evidence")
+    if not isinstance(contract, Mapping):
+        contract = {}
+        issue(
+            "MACROCYCLE_CONTRACT_NOT_RECORDED",
+            "准备记录缺少大环合同。",
+        )
+    elif (
+        isinstance(contract.get("schema_version"), bool)
+        or contract.get("schema_version") != CONTRACT_SCHEMA_VERSION
+        or contract.get("analysis_version") != ANALYSIS_VERSION
+        or contract.get("meeko_api_profile") != MEEKO_API_PROFILE
+        or contract.get("hydrogen_policy") != HYDROGEN_POLICY
+    ):
+        issue(
+            "MACROCYCLE_CONTRACT_PROFILE_MISMATCH",
+            "大环合同不是当前正式协议版本。",
+            json.dumps(
+                {
+                    "schema_version": contract.get("schema_version"),
+                    "analysis_version": contract.get("analysis_version"),
+                    "meeko_api_profile": contract.get("meeko_api_profile"),
+                    "hydrogen_policy": contract.get("hydrogen_policy"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+    if not isinstance(expected, Mapping):
+        expected = {}
+        issue(
+            "MACROCYCLE_EXPECTED_EVIDENCE_NOT_RECORDED",
+            "准备记录缺少预期的大环输出证据。",
+        )
+
+    contract_file = str(built.get("macrocycle_contract_file") or "")
+    contract_sha256 = str(built.get("macrocycle_contract_sha256") or "").lower()
+    contract_snapshot: dict[str, Any] = {}
+    try:
+        contract_path = _safe_project_path(
+            project_path,
+            Path(contract_file),
+            allow_missing=False,
+        )
+        contract_snapshot = _file_snapshot(contract_path, project_path)
+        if (
+            not SHA256_PATTERN.fullmatch(contract_sha256)
+            or contract_snapshot.get("sha256") != contract_sha256
+        ):
+            issue(
+                "MACROCYCLE_CONTRACT_HASH_MISMATCH",
+                "大环合同 SHA256 与准备计划不一致。",
+                json.dumps(contract_snapshot, ensure_ascii=False, sort_keys=True),
+            )
+        persisted_contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        if not isinstance(persisted_contract, dict) or persisted_contract != dict(contract):
+            issue(
+                "MACROCYCLE_CONTRACT_CONTENT_MISMATCH",
+                "大环合同文件与任务内存快照不一致。",
+            )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_CONTRACT_READ_FAILED",
+            "无法读取或核验大环合同文件。",
+            str(exc),
+        )
+
+    macrocycle_input_file = str(built.get("macrocycle_input_file") or "")
+    macrocycle_input_snapshot: dict[str, Any] = {}
+    runtime_input = contract.get("runtime_input") if isinstance(contract, Mapping) else None
+    try:
+        macrocycle_input_path = _safe_project_path(
+            project_path,
+            Path(macrocycle_input_file),
+            allow_missing=False,
+        )
+        macrocycle_input_snapshot = _file_snapshot(macrocycle_input_path, project_path)
+        if not isinstance(runtime_input, Mapping):
+            issue(
+                "MACROCYCLE_RUNTIME_INPUT_NOT_RECORDED",
+                "大环合同缺少冻结运行输入。",
+            )
+        else:
+            runtime_relative = Path(
+                str(runtime_input.get("relative_path") or ""),
+            ).as_posix()
+            if (
+                runtime_relative != Path(macrocycle_input_file).as_posix()
+                or macrocycle_input_snapshot.get("sha256")
+                != str(runtime_input.get("sha256") or "")
+                or int(macrocycle_input_snapshot.get("size") or 0)
+                != int(runtime_input.get("size_bytes") or 0)
+            ):
+                issue(
+                    "MACROCYCLE_RUNTIME_INPUT_MISMATCH",
+                    "大环 worker 输入不是审查合同绑定的冻结副本。",
+                    json.dumps(
+                        {
+                            "expected": dict(runtime_input),
+                            "actual": macrocycle_input_snapshot,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
+    except (OSError, ValueError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_RUNTIME_INPUT_READ_FAILED",
+            "无法读取大环审查冻结输入。",
+            str(exc),
+        )
+
+    evidence_file = str(built.get("macrocycle_evidence_file") or "")
+    evidence: dict[str, Any] = {}
+    evidence_snapshot: dict[str, Any] = {}
+    try:
+        evidence_path = _safe_project_path(
+            project_path,
+            Path(evidence_file),
+            allow_missing=False,
+        )
+        evidence_size = evidence_path.stat().st_size
+        if evidence_size <= 0 or evidence_size > MAX_MACROCYCLE_EVIDENCE_JSON_BYTES:
+            raise ValueError(
+                f"evidence size={evidence_size}, "
+                f"limit={MAX_MACROCYCLE_EVIDENCE_JSON_BYTES}"
+            )
+        evidence_snapshot = _file_snapshot(evidence_path, project_path)
+        parsed = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict):
+            raise ValueError("macrocycle_evidence.json 顶层不是对象")
+        evidence = parsed
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, PreparationPathError) as exc:
+        issue(
+            "MACROCYCLE_EVIDENCE_READ_FAILED",
+            "无法读取有效的 macrocycle_evidence.json。",
+            str(exc),
+        )
+
+    candidate_snapshot = _file_snapshot(candidate_output_path, project_path)
+    inspection: dict[str, Any] = {}
+    if candidate_snapshot.get("non_empty"):
+        try:
+            inspection = inspect_meeko_ligand_pdbqt(candidate_output_path)
+        except ProtocolValidationError as exc:
+            issue(
+                "MACROCYCLE_PDBQT_INSPECTION_FAILED",
+                "无法核验大环候选 PDBQT。",
+                json.dumps(exc.to_dict(), ensure_ascii=False, sort_keys=True),
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            issue(
+                "MACROCYCLE_PDBQT_INSPECTION_FAILED",
+                "无法核验大环候选 PDBQT。",
+                str(exc),
+            )
+    else:
+        issue(
+            "MACROCYCLE_CANDIDATE_OUTPUT_MISSING",
+            "大环 worker 未生成非空候选 PDBQT。",
+        )
+
+    try:
+        expected_bonds = _normalized_macrocycle_bonds(
+            contract.get("exact_bonds"),
+            label="合同断环键",
+        )
+        plan_bonds = _normalized_macrocycle_bonds(
+            expected.get("exact_bonds"),
+            label="计划断环键",
+        )
+        evidence_expected_bonds = _normalized_macrocycle_bonds(
+            evidence.get("expected_bonds"),
+            label="证据预期断环键",
+        )
+        evidence_actual_bonds = _normalized_macrocycle_bonds(
+            evidence.get("actual_bonds"),
+            label="证据实际断环键",
+        )
+        if not (
+            expected_bonds
+            == plan_bonds
+            == evidence_expected_bonds
+            == evidence_actual_bonds
+        ):
+            issue(
+                "MACROCYCLE_BOND_EVIDENCE_MISMATCH",
+                "合同、计划、预期与实际断环键不一致。",
+                json.dumps(
+                    {
+                        "contract": expected_bonds,
+                        "plan": plan_bonds,
+                        "expected": evidence_expected_bonds,
+                        "actual": evidence_actual_bonds,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+    except (TypeError, ValueError) as exc:
+        expected_bonds = []
+        issue(
+            "MACROCYCLE_BOND_EVIDENCE_INVALID",
+            "大环断环键证据格式无效。",
+            str(exc),
+        )
+
+    selection_mode = str(contract.get("selection_mode") or "")
+    candidate_id = str(contract.get("candidate_id") or "")
+    confirmation_sha256 = str(contract.get("confirmation_sha256") or "").lower()
+    review_id = str(contract.get("review_id") or "")
+    atom_table_sha256 = str(contract.get("atom_table_sha256") or "").lower()
+    bond_topology_sha256 = str(
+        contract.get("bond_topology_sha256") or ""
+    ).lower()
+    bond_topology = contract.get("bond_topology")
+    atom_indexing = contract.get("atom_indexing")
+    contract_tool_versions = contract.get("tool_versions")
+    try:
+        bond_topology_matches = (
+            isinstance(bond_topology, list)
+            and _canonical_json_sha256(bond_topology)
+            == bond_topology_sha256
+        )
+    except (TypeError, ValueError):
+        bond_topology_matches = False
+    if (
+        not SHA256_PATTERN.fullmatch(bond_topology_sha256)
+        or not bond_topology_matches
+    ):
+        issue(
+            "MACROCYCLE_BOND_TOPOLOGY_INVALID",
+            "大环合同中的键拓扑或 SHA256 无效。",
+        )
+    if not isinstance(atom_indexing, Mapping):
+        issue(
+            "MACROCYCLE_ATOM_INDEXING_INVALID",
+            "大环合同缺少显式氢与原始原子索引映射。",
+        )
+    if not isinstance(contract_tool_versions, Mapping):
+        contract_tool_versions = {}
+        issue(
+            "MACROCYCLE_TOOL_VERSIONS_INVALID",
+            "大环合同缺少审查工具版本。",
+        )
+    scalar_expectations = (
+        ("protocol_id", "meeko_macrocycle"),
+        ("selection_mode", selection_mode),
+        ("candidate_id", candidate_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("review_id", review_id),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+        ("hydrogen_policy", HYDROGEN_POLICY),
+    )
+    if evidence.get("ok") is not True:
+        issue(
+            "MACROCYCLE_WORKER_REPORTED_FAILURE",
+            "大环 worker 没有报告成功。",
+            json.dumps(evidence.get("error"), ensure_ascii=False, sort_keys=True),
+        )
+    for key, value in scalar_expectations:
+        if evidence.get(key) != value:
+            issue(
+                "MACROCYCLE_EVIDENCE_FIELD_MISMATCH",
+                f"大环证据字段 {key} 与合同不一致。",
+                f"expected={value!r}; actual={evidence.get(key)!r}",
+            )
+    for key, value in (
+        ("selection_mode", selection_mode),
+        ("candidate_id", candidate_id),
+        ("confirmation_sha256", confirmation_sha256),
+        ("atom_table_sha256", atom_table_sha256),
+        ("bond_topology_sha256", bond_topology_sha256),
+    ):
+        if expected.get(key) != value:
+            issue(
+                "MACROCYCLE_PLAN_FIELD_MISMATCH",
+                f"大环准备计划字段 {key} 与合同不一致。",
+                f"expected={value!r}; actual={expected.get(key)!r}",
+            )
+    if evidence.get("atom_indexing") != atom_indexing:
+        issue(
+            "MACROCYCLE_ATOM_INDEXING_EVIDENCE_MISMATCH",
+            "worker 的显式氢/原始原子索引映射与合同不一致。",
+        )
+    for key in ("rdkit", "meeko"):
+        expected_version = str(contract_tool_versions.get(key) or "")
+        actual_version = str(evidence.get(f"{key}_version") or "")
+        if not expected_version or actual_version != expected_version:
+            issue(
+                "MACROCYCLE_TOOL_VERSION_EVIDENCE_MISMATCH",
+                f"worker 的 {key} 版本与审查合同不一致。",
+                f"expected={expected_version!r}; actual={actual_version!r}",
+            )
+
+    output_sha256 = str(evidence.get("output_sha256") or "").lower()
+    try:
+        evidence_output_size = int(evidence.get("output_size_bytes"))
+    except (TypeError, ValueError):
+        evidence_output_size = -1
+    if (
+        not SHA256_PATTERN.fullmatch(output_sha256)
+        or output_sha256 != candidate_snapshot.get("sha256")
+        or evidence_output_size != int(candidate_snapshot.get("size") or 0)
+    ):
+        issue(
+            "MACROCYCLE_OUTPUT_EVIDENCE_MISMATCH",
+            "大环证据中的输出 SHA256 或大小与候选 PDBQT 不一致。",
+            json.dumps(
+                {
+                    "evidence_sha256": output_sha256,
+                    "evidence_size": evidence_output_size,
+                    "candidate": candidate_snapshot,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    try:
+        glue_count = int(evidence.get("glue_pseudo_atom_count"))
+    except (TypeError, ValueError):
+        glue_count = -1
+    inspected_glue_count = len(inspection.get("glue_pseudo_atoms") or [])
+    expected_glue_count = 2 * len(expected_bonds)
+    if (
+        glue_count != expected_glue_count
+        or inspected_glue_count != expected_glue_count
+    ):
+        issue(
+            "MACROCYCLE_GLUE_EVIDENCE_MISMATCH",
+            "G* 胶合伪原子数量与断环键数量不一致。",
+            (
+                f"expected={expected_glue_count}; worker={glue_count}; "
+                f"pdbqt={inspected_glue_count}"
+            ),
+        )
+
+    if selection_mode == "rigid":
+        if candidate_id or expected_bonds or glue_count != 0 or inspected_glue_count != 0:
+            issue(
+                "MACROCYCLE_RIGID_EVIDENCE_MISMATCH",
+                "刚性大环输出包含候选标识、断环键或 G* 伪原子。",
+            )
+    elif selection_mode == "candidate":
+        if not candidate_id or not expected_bonds:
+            issue(
+                "MACROCYCLE_CANDIDATE_EVIDENCE_INCOMPLETE",
+                "柔性大环合同缺少候选标识或精确断环键。",
+            )
+        if inspection and not inspection.get("macrocycle_evidence"):
+            issue(
+                "MACROCYCLE_PDBQT_CLOSURE_EVIDENCE_MISSING",
+                "柔性大环 PDBQT 缺少闭环伪原子证据。",
+            )
+    else:
+        issue(
+            "MACROCYCLE_SELECTION_MODE_INVALID",
+            "大环合同选择模式不是 candidate 或 rigid。",
+            selection_mode,
+        )
+
+    if inspection and not inspection.get("embedded_topology"):
+        issue(
+            "MACROCYCLE_TOPOLOGY_EVIDENCE_MISSING",
+            "大环候选 PDBQT 缺少 REMARK SMILES/SMILES IDX 拓扑映射。",
+        )
+
+    protocol_evidence = {
+        "ok": not issues,
+        "mode": "reviewed",
+        "contract_file": contract_file,
+        "contract_sha256": contract_sha256,
+        "contract_snapshot": contract_snapshot,
+        "input_snapshot": macrocycle_input_snapshot,
+        "evidence_file": evidence_file,
+        "evidence_snapshot": evidence_snapshot,
+        "evidence": copy.deepcopy(evidence),
+        "candidate_output": candidate_snapshot,
+        "inspection": inspection,
+        "issues": issues,
+    }
+    if not issues:
+        return protocol_evidence, None
+    error = {
+        "code": "MACROCYCLE_EVIDENCE_GATE_FAILED",
+        "message": "正式大环准备证据不完整或不一致，候选 PDBQT 未发布。",
+        "raw_error": json.dumps(issues, ensure_ascii=False, sort_keys=True),
+        "suggestion": "请保留 preparation 审计记录，刷新大环审查与确认后重新准备。",
+    }
+    protocol_evidence["error"] = copy.deepcopy(error)
+    return protocol_evidence, error
+
+
+def _finalize_preparation(
+    project_path: Path,
+    target: PreparationTarget,
+    prep_id: str,
+    built: dict[str, Any],
+    *,
+    method: str,
+    created_at: str,
+    started_at: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> dict[str, Any]:
+    """Finalize only if ``prep_id`` still owns the target claim."""
+
+    stdout_path = _safe_project_path(project_path, Path(built["stdout_file"]))
+    stderr_path = _safe_project_path(project_path, Path(built["stderr_file"]))
+    metadata_path = _safe_project_path(project_path, Path(built["metadata_file"]))
+    output_check_path = _safe_project_path(project_path, Path(built["output_check_file"]))
+    candidate_output_path = _safe_project_path(project_path, Path(built["candidate_output_path"]))
+    output_path = _safe_project_path(project_path, Path(built["output_path"]))
+    atomic_write_text(stdout_path, stdout)
+    atomic_write_text(stderr_path, stderr)
+
+    finished_at = _now_iso()
+    candidate_ok = candidate_output_path.is_file() and candidate_output_path.stat().st_size > 0
+    protocol_gate_error: dict[str, Any] | None = None
+    detected_bad_residues = (
+        extract_meeko_bad_residues(f"{stdout}\n{stderr}")
+        if target == "receptor"
+        else []
+    )
+    detected_altloc_residues = (
+        extract_meeko_altloc_residues(f"{stdout}\n{stderr}")
+        if target == "receptor"
+        else []
+    )
+    detected_altloc_options: list[dict[str, Any]] = []
+    if target == "receptor" and detected_altloc_residues:
+        try:
+            detected_altloc_options = receptor_altloc_review_options(
+                built["input_path"],
+                detected_altloc_residues,
+            )
+        except (ProtocolValidationError, OSError, UnicodeError, ValueError):
+            detected_altloc_options = [
+                {
+                    "selector": parse_flexible_residue(value).canonical,
+                    "meeko_id": parse_flexible_residue(value).meeko_id,
+                    "residue_name": "",
+                    "ids": [],
+                }
+                for value in detected_altloc_residues
+            ]
+    if target == "receptor" and built.get("protocol") == "meeko_allow_bad_res_reviewed":
+        acknowledged_bad_residues = [
+            str(value)
+            for value in built.get("acknowledged_bad_residues", [])
+            if str(value)
+        ]
+        built["bad_residue_review"] = {
+            "allow_bad_res": True,
+            "acknowledged_bad_residues": acknowledged_bad_residues,
+            "acknowledged_bad_residues_sha256": str(
+                built.get("acknowledged_bad_residues_sha256") or ""
+            ),
+            "detected_bad_residues": detected_bad_residues,
+            "lists_match": set(acknowledged_bad_residues)
+            == set(detected_bad_residues),
+            "alternate_locations": copy.deepcopy(
+                built.get("alternate_locations", {}),
+            ),
+        }
+        if exit_code == 0 and set(acknowledged_bad_residues) != set(detected_bad_residues):
+            protocol_gate_error = {
+                "code": "RECEPTOR_BAD_RESIDUE_REVIEW_CHANGED",
+                "message": "实际忽略的不完整残基与用户确认列表不一致，候选输出未发布。",
+                "raw_error": json.dumps(
+                    built["bad_residue_review"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "suggestion": "请重新执行严格转换并审阅最新残基列表。",
+                "bad_residues": detected_bad_residues,
+            }
+    if (
+        target == "ligand"
+        and built.get("protocol") == "meeko_macrocycle"
+        and built.get("macrocycle_reviewed") is True
+    ):
+        built["protocol_evidence"], protocol_gate_error = (
+            _reviewed_macrocycle_evidence_gate(
+                project_path,
+                built,
+                candidate_output_path,
+            )
+        )
+    elif target == "ligand" and built.get("protocol") == "meeko_macrocycle" and candidate_ok:
+        try:
+            built["protocol_evidence"] = {
+                "ok": True,
+                "mode": "legacy",
+                "inspection": inspect_meeko_ligand_pdbqt(candidate_output_path),
+            }
+        except ProtocolValidationError as exc:
+            built["protocol_evidence"] = {
+                "ok": False,
+                "mode": "legacy",
+                "error": exc.to_dict(),
+            }
+        except (OSError, UnicodeError, ValueError) as exc:
+            built["protocol_evidence"] = {
+                "ok": False,
+                "mode": "legacy",
+                "error": {
+                    "code": "MACROCYCLE_EVIDENCE_READ_FAILED",
+                    "message": "无法读取大环 PDBQT 证据。",
+                    "detail": str(exc),
+                    "suggestion": "请检查候选 PDBQT 是否为完整 UTF-8 文本，并查看 Meeko stderr。",
+                },
+            }
+    publication_error = ""
+    restore_error = ""
+    published = False
+    ownership_lost = False
+    current_project: Any | None = None
+    error: dict[str, Any] | None = None
+    input_verification: dict[str, Any] = {}
+    output_verification: dict[str, Any] = {}
+    if (
+        target == "ligand"
+        and built.get("protocol") is None
+        and exit_code == 5
+        and "MACROCYCLE_REVIEW_REQUIRED" in stderr
+    ):
+        error = {
+            "code": "MACROCYCLE_REVIEW_REQUIRED",
+            "message": (
+                "检测到大环配体；标准准备已停止，未采用 Meeko 的自动断环结果。"
+            ),
+            "raw_error": stderr.strip(),
+            "suggestion": (
+                "请在“大环配体准备”中选择“受审查的大环准备”，"
+                "分析并确认断环候选或刚性大环。"
+            ),
+        }
+    elif (
+        target == "receptor"
+        and exit_code != 0
+        and (detected_bad_residues or detected_altloc_options)
+        and (
+            not built.get("protocol")
+            or (
+                built.get("protocol") == "meeko_allow_bad_res_reviewed"
+                and detected_altloc_options
+            )
+        )
+    ):
+        if detected_bad_residues and detected_altloc_options:
+            review_code = "RECEPTOR_STRUCTURE_REVIEW_REQUIRED"
+            review_message = (
+                f"Meeko 检测到 {len(detected_bad_residues)} 个不完整残基和 "
+                f"{len(detected_altloc_options)} 个未决替代构象。"
+            )
+            review_suggestion = "请核对不完整残基，并为每个替代构象选择明确的 altloc 后重试。"
+        elif detected_altloc_options:
+            review_code = "RECEPTOR_ALTLOC_REVIEW_REQUIRED"
+            review_message = f"Meeko 检测到 {len(detected_altloc_options)} 个未决替代构象。"
+            review_suggestion = "请为每个残基明确选择原始结构中存在的 altloc 后重试。"
+        else:
+            review_code = "RECEPTOR_BAD_RESIDUES_REVIEW_REQUIRED"
+            review_message = (
+                f"Meeko 检测到 {len(detected_bad_residues)} 个不完整或无法匹配模板的残基。"
+            )
+            review_suggestion = "请先检查这些残基；如确认可以忽略，请勾选确认后重新转换。"
+        error = {
+            "code": review_code,
+            "message": review_message,
+            "raw_error": _preparation_failure_diagnostic(
+                publication_error="",
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=exit_code,
+            ),
+            "suggestion": review_suggestion,
+            "bad_residues": detected_bad_residues,
+            "alternate_locations": detected_altloc_options,
+        }
+
+    with _preparation_target_lock(project_path, target):
+        with _project_lock(project_path):
+            data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+            current_project = _project_from_dict(data, project_path)
+            current_prep = getattr(current_project.preparation, target)
+            owns_target = (
+                current_project.latest_preparation.get(target) == prep_id
+                and current_prep.prep_id == prep_id
+                and current_prep.status == "running"
+            )
+            if not owns_target:
+                ownership_lost = True
+                error = {
+                    "code": "PREPARATION_OWNERSHIP_LOST",
+                    "message": f"{target} 准备任务已被更新的任务取代，候选输出未发布。",
+                    "raw_error": (
+                        f"prep_id={prep_id}; latest={current_project.latest_preparation.get(target)}; "
+                        f"current={current_prep.prep_id}:{current_prep.status}"
+                    ),
+                    "suggestion": "请查看最新 preparation 记录；旧任务的候选文件仅保留用于审计。",
+                }
+            else:
+                input_matches, input_verification, stale_error = _verify_current_raw_input(
+                    project_path,
+                    current_project,
+                    target,
+                    built.get("claimed_input", {}),
+                )
+                output_matches, output_verification, output_conflict_error = (
+                    _verify_current_prepared_output(
+                        project_path,
+                        target,
+                        built.get("claimed_output", {}),
+                    )
+                )
+                built["output_verification"] = output_verification
+                if not output_matches:
+                    error = output_conflict_error
+                elif not input_matches:
+                    error = stale_error
+                elif protocol_gate_error is not None:
+                    error = copy.deepcopy(protocol_gate_error)
+                previous_output: bytes | None = None
+                if error is None and exit_code == 0 and candidate_ok:
+                    try:
+                        previous_output = output_path.read_bytes() if output_path.is_file() else None
+                        expected_candidate_snapshot = None
+                        if (
+                            target == "ligand"
+                            and built.get("protocol") == "meeko_macrocycle"
+                            and built.get("macrocycle_reviewed") is True
+                            and isinstance(built.get("protocol_evidence"), Mapping)
+                        ):
+                            candidate_evidence = built["protocol_evidence"].get(
+                                "candidate_output"
+                            )
+                            if isinstance(candidate_evidence, Mapping):
+                                expected_candidate_snapshot = candidate_evidence
+                        _publish_candidate_output(
+                            candidate_output_path,
+                            output_path,
+                            project_path,
+                            expected_snapshot=expected_candidate_snapshot,
+                        )
+                        published = True
+                    except CandidateOutputIntegrityError as exc:
+                        publication_error = str(exc)
+                        error = {
+                            "code": "MACROCYCLE_CANDIDATE_CHANGED_BEFORE_PUBLISH",
+                            "message": (
+                                "大环候选 PDBQT 在证据校验后发生变化，"
+                                "候选文件未发布。"
+                            ),
+                            "raw_error": publication_error,
+                            "suggestion": (
+                                "请保留 preparation 审计记录，检查项目目录中的"
+                                "同步、杀毒或外部写入进程后重新准备。"
+                            ),
+                        }
+                    except Exception as exc:  # noqa: BLE001 - preserve previous output below.
+                        publication_error = str(exc)
+
+                output_ok = published and output_path.is_file() and output_path.stat().st_size > 0
+                success = error is None and exit_code == 0 and candidate_ok and output_ok
+                if success:
+                    current_prep.status = "finished"
+                    current_prep.error = None
+                    getattr(current_project, target).file = f"prepared/{target}.pdbqt"
+                else:
+                    current_prep.status = "failed"
+                    if error is None:
+                        raw_error = _preparation_failure_diagnostic(
+                            publication_error=publication_error,
+                            stdout=stdout,
+                            stderr=stderr,
+                            exit_code=exit_code,
+                        )
+                        error = {
+                            "code": f"{target.upper()}_PREPARATION_FAILED",
+                            "message": (
+                                f"{target} PDBQT 自动准备失败，"
+                                "请查看 stdout、stderr 和 preparation 日志。"
+                            ),
+                            "raw_error": raw_error,
+                            "suggestion": (
+                                "请确认 RDKit/Meeko 版本、输入结构和配体准备能力。"
+                                if target == "ligand"
+                                else "请确认 Meeko receptor 模块、输入结构完整性和准备选项。"
+                            ),
+                        }
+                    current_prep.error = error
+                current_prep.finished_at = finished_at
+                current_prep.exit_code = exit_code
+                current_project.updated_at = _now_iso()
+                current_project.revision += 1
+                try:
+                    _write_project_json_unlocked(project_path, current_project)
+                except Exception as exc:  # noqa: BLE001 - rollback published bytes.
+                    if published:
+                        restore_error = _restore_previous_output(output_path, previous_output)
+                        published = False
+                    publication_error = str(exc)
+                    if restore_error:
+                        publication_error += f"; rollback failed: {restore_error}"
+                    error = {
+                        "code": "PREPARATION_PROJECT_COMMIT_FAILED",
+                        "message": "准备输出已拒绝提交，因为 project.json 更新失败。",
+                        "raw_error": publication_error,
+                        "suggestion": "请确认项目目录可写；旧 prepared 文件已尽力恢复。",
+                    }
+
+        final_status = "interrupted" if ownership_lost else (
+            "finished" if published and not error else "failed"
+        )
+        output_ok = published and output_path.is_file() and output_path.stat().st_size > 0
+        output_check = {
+            "prep_id": prep_id,
+            "target": target,
+            "output_file": f"prepared/{target}.pdbqt",
+            "candidate_output": _file_snapshot(candidate_output_path, project_path),
+            "output": _file_snapshot(output_path, project_path),
+            "exit_code": exit_code,
+            "published": published,
+            "overwrite": bool(built.get("overwrite", False)),
+            "ownership_lost": ownership_lost,
+            "input_verification": input_verification,
+            "output_verification": output_verification,
+            "publication_error": publication_error,
+            "restore_error": restore_error,
+            "success": final_status == "finished",
+        }
+        _write_json(output_check_path, output_check)
+        metadata_payload = _build_preparation_metadata(
+            prep_id=prep_id,
+            target=target,
+            status=final_status,
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            finished_at=finished_at,
+            built=built,
+            exit_code=exit_code,
+            warnings=list(built.get("warnings", [])),
+            error=error,
+        )
+        metadata_payload.update(
+            {
+                "stdout_file": built["stdout_file"],
+                "stderr_file": built["stderr_file"],
+                "command_file": built["command_file"],
+                "input_snapshot_file": built["input_snapshot_file"],
+                "output_check_file": built["output_check_file"],
+                "output_exists": output_path.is_file(),
+                "output_non_empty": output_ok,
+                "published": published,
+                "ownership_lost": ownership_lost,
+                "input_verification": input_verification,
+                "output_verification": output_verification,
+                "candidate_output": _file_snapshot(candidate_output_path, project_path),
+                "output": _file_snapshot(output_path, project_path),
+                "stdout": _file_snapshot(stdout_path, project_path),
+                "stderr": _file_snapshot(stderr_path, project_path),
+            },
+        )
+        _write_json(metadata_path, metadata_payload)
+
+    return {
+        "success": final_status == "finished",
+        "status": final_status,
+        "project": current_project,
+        "error": error,
+        "finished_at": finished_at,
+        "exit_code": exit_code,
+        "published": published,
+        "ownership_lost": ownership_lost,
+        "input_verification": input_verification,
+        "output_verification": output_verification,
+    }
+
+
+def _prepare_target_pdbqt(
+    project_dir: str,
+    target: PreparationTarget,
+    *,
+    overwrite: bool,
+    method: str,
+    builder: Any,
+) -> dict[str, Any]:
+    project_path = Path(project_dir).expanduser().resolve()
+    try:
+        with _preparation_target_lock(project_path, target):
+            _ensure_preparation_directories(project_path)
+            busy = _check_preparation_available(project_path, target)
+            if busy:
+                return busy
+            prep_id = get_next_preparation_id(str(project_path), target)
+            built = builder(str(project_path), overwrite=overwrite, prep_id=prep_id)
+            if not built.get("ok"):
+                return built
+            created_at = _now_iso()
+            started_at = _now_iso()
+            claimed, claim_error = _claim_preparation(
+                project_path,
+                target,
+                prep_id,
+                built,
+                method=method,
+                created_at=created_at,
+                started_at=started_at,
+            )
+            if claim_error:
+                return claim_error
+            assert claimed is not None
+
+        try:
+            completed = meeko_adapter.run_preparation_command(built["command"], cwd=project_path)
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            exit_code = int(completed.returncode)
+        except Exception as exc:  # noqa: BLE001 - structured preparation failure.
+            stdout = ""
+            stderr = str(exc)
+            exit_code = -1
+
+        finalized = _finalize_preparation(
+            project_path,
+            target,
+            prep_id,
+            built,
+            method=method,
+            created_at=created_at,
+            started_at=started_at,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        tools_snapshot = built.get("tools")
+        payload = get_preparation_status(
+            str(project_path),
+            tools_snapshot=tools_snapshot if isinstance(tools_snapshot, Mapping) else None,
+        )
+        success = bool(finalized["success"])
+        final_error = finalized.get("error") if isinstance(finalized.get("error"), dict) else {}
+        if finalized["ownership_lost"]:
+            message = f"{target} 准备任务已失去所有权，候选输出未发布。"
+        elif final_error.get("code") == "PREPARATION_INPUT_STALE":
+            message = f"{target} 准备期间 raw 输入发生变化，候选输出未发布。"
+        elif final_error.get("code") == "PREPARATION_OUTPUT_CONFLICT":
+            message = f"{target} 准备期间 prepared 输出发生变化，候选输出未发布。"
+        elif final_error.get("code") == "MACROCYCLE_REVIEW_REQUIRED":
+            message = "检测到大环配体，请先审查并确认断环方案或刚性大环。"
+        elif success:
+            message = (
+                "ligand PDBQT 自动准备完成。请继续人工检查配体质子化、电荷和构象合理性。"
+                if target == "ligand"
+                else "receptor PDBQT 自动准备完成。请继续人工检查受体结构、金属离子、水分子、辅因子和质子化状态。"
+            )
+        else:
+            message = f"{target} PDBQT 自动准备失败。"
+        payload.update(
+            {
+                "ok": success,
+                "target": target,
+                "prep_id": prep_id,
+                "metadata_file": built["metadata_file"],
+                "output_file": f"prepared/{target}.pdbqt",
+                "stdout_file": built["stdout_file"],
+                "stderr_file": built["stderr_file"],
+                "log_file": built["log_file"],
+                "exit_code": exit_code,
+                "message": message,
+                "error": finalized["error"],
+            },
+        )
+        return payload
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "准备任务路径包含符号链接、junction、reparse point 或越出项目目录，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请恢复项目中的普通 raw/preparation/prepared 目录和文件后重试。",
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the boundary structured.
+        return _error(
+            "PREPARATION_START_ERROR",
+            "启动分子准备任务时发生错误。",
+            raw_error=str(exc),
+            suggestion="请检查项目目录、工具链和 preparation 审计目录后重试。",
+        )
+
+
+def _tool_status() -> dict[str, Any]:
+    cached_payload = os.environ.get(PREPARATION_TOOLS_SNAPSHOT_ENV_VAR, "").strip()
+    if cached_payload:
+        try:
+            cached_tools = json.loads(cached_payload)
+        except (TypeError, ValueError):
+            cached_tools = None
+        if (
+            isinstance(cached_tools, dict)
+            and isinstance(cached_tools.get("python"), dict)
+            and isinstance(cached_tools.get("rdkit"), dict)
+            and isinstance(cached_tools.get("meeko"), dict)
+        ):
+            # The desktop host keys this snapshot by its runtime fingerprint
+            # and injects it only into the preparation subprocess.  Reusing it
+            # avoids launching the same RDKit/Meeko capability probes for the
+            # receptor and ligand conversions of one session.
+            return copy.deepcopy(cached_tools)
+
+    python_result = get_resolved_python()
+    rdkit_result = rdkit_adapter.detect_rdkit_capabilities(python_result.path, python_result.source)
+    meeko_result = meeko_adapter.detect_meeko_capabilities(python_result.path, python_result.source)
+    return {
+        "python": python_result.to_dict(),
+        "rdkit": rdkit_result,
+        "meeko": meeko_result,
+    }
+
+
+def get_preparation_tool_status(project_dir: str) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    tools = _tool_status()
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "tools": tools,
+        "python_path": tools["python"].get("path", ""),
+        "python_source": tools["python"].get("source", "unknown"),
+        "message": "自动准备工具能力检测已完成。本阶段只检测能力，不执行分子处理。",
+        "error": None,
+    }
+
+
+def get_preparation_status(
+    project_dir: str,
+    *,
+    tools_snapshot: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    # A validation/preparation command has already paid for the Python/RDKit/
+    # Meeko probes.  Reuse that immutable snapshot instead of starting the
+    # detection scripts a second time merely to assemble the response payload.
+    tools = copy.deepcopy(dict(tools_snapshot)) if tools_snapshot is not None else _tool_status()
+    structure_review = build_structure_review(
+        project.project_dir,
+        receptor_file=project.receptor.file,
+        ligand_file=project.ligand.file,
+        receptor_raw_file=project.receptor.raw_file,
+        ligand_raw_file=project.ligand.raw_file,
+        receptor_metadata_file=project.preparation.receptor.metadata_file,
+        ligand_metadata_file=project.preparation.ligand.metadata_file,
+    )
+    payload = {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "preparation": project.preparation.to_dict(),
+        "structure_review": structure_review,
+        "tools": tools,
+        "files": {
+            "receptor_raw": _file_status(project_path, project.receptor.raw_file, "receptor_raw", "受体 raw 文件"),
+            "ligand_raw": _file_status(project_path, project.ligand.raw_file, "ligand_raw", "配体 raw 文件"),
+            "receptor_prepared": _file_status(project_path, project.receptor.file, "receptor_prepared", "受体 prepared PDBQT"),
+            "ligand_prepared": _file_status(project_path, project.ligand.file, "ligand_prepared", "配体 prepared PDBQT"),
+        },
+        "message": "PDBQT 自动准备状态已读取。",
+        "error": None,
+    }
+    return payload
+
+
+def get_structure_review_status(project_dir: str) -> dict[str, Any]:
+    """Read structure facts without probing Python/RDKit/Meeko capabilities."""
+
+    project, project_error = _load_project_model(project_dir, persist_migration=False)
+    if project_error:
+        return project_error
+    assert project is not None
+    try:
+        structure_review = build_structure_review(
+            project.project_dir,
+            receptor_file=project.receptor.file,
+            ligand_file=project.ligand.file,
+            receptor_raw_file=project.receptor.raw_file,
+            ligand_raw_file=project.ligand.raw_file,
+            receptor_metadata_file=project.preparation.receptor.metadata_file,
+            ligand_metadata_file=project.preparation.ligand.metadata_file,
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI boundary must stay structured.
+        return _error(
+            "STRUCTURE_REVIEW_READ_ERROR",
+            "读取结构审查信息时发生错误，未读取不安全的候选文件。",
+            raw_error=str(exc),
+            suggestion="请检查项目内 raw/prepared 目录、文件权限和符号链接后重试。",
+        )
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "structure_review": structure_review,
+        "error": None,
+    }
+
+
+def validate_preparation_prerequisites(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+    busy = _preparation_busy_error(project, normalized_target)
+    if busy:
+        return busy
+
+    project_path = Path(project.project_dir).expanduser()
+    file_ref = getattr(project, normalized_target)
+    raw_status = _file_status(
+        project_path,
+        file_ref.raw_file,
+        f"{normalized_target}_raw",
+        "受体 raw 文件" if normalized_target == "receptor" else "配体 raw 文件",
+    )
+    if raw_status["status"] != "ok":
+        return _error(
+            f"{normalized_target.upper()}_RAW_FILE_NOT_READY",
+            "尚未找到可用于自动准备的 raw 文件。",
+            raw_error=raw_status.get("path", ""),
+            suggestion="请先在“下载原始结构文件”页面下载 raw 文件，或确认 project.json 中的 raw_file 记录。",
+        )
+
+    tools = _tool_status()
+    python_ok = tools["python"]["status"] == "ok"
+    rdkit_ok = tools["rdkit"]["status"] == "ok"
+    meeko_ok = tools["meeko"]["status"] == "ok"
+    missing: list[str] = []
+    if not python_ok:
+        missing.append("Python")
+    if normalized_target == "ligand" and not rdkit_ok:
+        missing.append("RDKit")
+    if not meeko_ok:
+        missing.append("Meeko")
+
+    status = "ready" if not missing else "checking"
+    preparation_result = getattr(project.preparation, normalized_target)
+    preparation_result.status = status  # type: ignore[assignment]
+    preparation_result.input_file = file_ref.raw_file
+    preparation_result.output_file = f"prepared/{normalized_target}.pdbqt"
+    preparation_result.python_path = tools["python"].get("path", "")
+    preparation_result.python_source = tools["python"].get("source", "unknown")
+    preparation_result.rdkit_available = rdkit_ok
+    preparation_result.meeko_available = meeko_ok
+    preparation_result.warnings = [
+        "自动准备只能完成格式和工具链层面的处理，不能保证质子化、电荷、构象或受体结构选择一定科学正确。"
+    ]
+    preparation_result.error = None if not missing else {
+        "code": "PREPARATION_TOOLS_NOT_READY",
+        "message": "自动准备所需工具尚未全部可用。",
+        "raw_error": ", ".join(missing),
+        "suggestion": "请先在工具链状态页确认 Python、RDKit 和 Meeko。DockStart 不会自动安装这些包。",
+    }
+
+    save_result = save_project(project)
+    if not save_result.get("ok"):
+        return save_result
+
+    payload = get_preparation_status(project.project_dir, tools_snapshot=tools)
+    payload["target"] = normalized_target
+    payload["ready"] = not missing
+    payload["missing_tools"] = missing
+    payload["message"] = (
+        "自动准备前置检查通过。"
+        if not missing
+        else "raw 文件已找到，但自动准备工具尚未全部可用。"
+    )
+    if missing:
+        payload["ok"] = False
+        payload["error"] = preparation_result.error
+    return payload
+
+
+def _ligand_preparation_script_text() -> str:
+    return r'''
+from __future__ import annotations
+
+import json
+import io
+import sys
+from pathlib import Path
+
+from rdkit import Chem
+from meeko import MoleculePreparation
+
+try:
+    from meeko import PDBQTWriterLegacy as PDBQTWriter
+except Exception:
+    try:
+        from meeko import PDBQTWriter
+    except Exception as exc:
+        raise RuntimeError("未找到可用的 Meeko PDBQT writer。") from exc
+
+
+def read_ligand(path: Path):
+    suffix = path.suffix.lower()
+    if suffix == ".sdf":
+        # Let Python open the path so Windows Unicode/space handling does not
+        # depend on RDKit's C++ filename conversion.
+        supplier = Chem.ForwardSDMolSupplier(
+            io.BytesIO(path.read_bytes()),
+            sanitize=True,
+            removeHs=False,
+        )
+        molecules = [mol for mol in supplier if mol is not None]
+        if not molecules:
+            raise RuntimeError("RDKit 未能从 SDF 中读取到有效分子。")
+        return prepare_ligand_for_meeko(molecules[0])
+    if suffix == ".mol":
+        molecule = Chem.MolFromMolBlock(
+            path.read_text(encoding="utf-8", errors="replace"),
+            sanitize=True,
+            removeHs=False,
+        )
+        if molecule is None:
+            raise RuntimeError("RDKit 未能从 MOL 文件中读取到有效分子。")
+        return prepare_ligand_for_meeko(molecule)
+    if suffix == ".mol2":
+        molecule = Chem.MolFromMol2Block(
+            path.read_text(encoding="utf-8", errors="replace"),
+            sanitize=True,
+            removeHs=False,
+            cleanupSubstructures=True,
+        )
+        if molecule is None:
+            raise RuntimeError("RDKit 未能从 MOL2 文件中读取到有效分子。")
+        return prepare_ligand_for_meeko(molecule)
+    raise RuntimeError(f"暂不支持的配体输入格式：{suffix}")
+
+
+def prepare_ligand_for_meeko(molecule):
+    try:
+        molecule = Chem.AddHs(molecule, addCoords=True)
+        Chem.SanitizeMol(molecule)
+    except Exception as exc:
+        raise RuntimeError("RDKit failed to add explicit hydrogens before Meeko ligand preparation.") from exc
+    return molecule
+
+
+def detected_macrocycle_rings(molecule):
+    """Return one-based atom numbers for perceived rings that require review."""
+
+    rings = []
+    for atom_indices in Chem.GetSymmSSSR(molecule):
+        indices = [int(index) for index in atom_indices]
+        if len(indices) >= 7:
+            rings.append([index + 1 for index in indices])
+    return rings
+
+
+def normalize_writer_result(result):
+    if isinstance(result, tuple):
+        if len(result) >= 2 and result[1] is False:
+            raise RuntimeError(str(result[2]) if len(result) >= 3 else "Meeko 写出 PDBQT 失败。")
+        return str(result[0])
+    return str(result)
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        print("需要输入 raw ligand 路径和输出 PDBQT 路径。", file=sys.stderr)
+        return 2
+
+    input_path = Path(sys.argv[1])
+    output_path = Path(sys.argv[2])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    molecule = read_ligand(input_path)
+    preparator = MoleculePreparation()
+    setups = preparator.prepare(molecule)
+    if not setups:
+        print("Meeko 未生成 ligand setup，无法写出 PDBQT。", file=sys.stderr)
+        return 3
+    perceived_rings = detected_macrocycle_rings(molecule)
+    removed_bonds = sorted(
+        {
+            tuple(sorted((int(pair[0]), int(pair[1]))))
+            for setup in setups
+            for pair in getattr(
+                getattr(setup, "ring_closure_info", None),
+                "bonds_removed",
+                [],
+            )
+        }
+    )
+    if perceived_rings or removed_bonds:
+        print(
+            json.dumps(
+                {
+                    "code": "MACROCYCLE_REVIEW_REQUIRED",
+                    "message": "检测到大环配体，标准准备不会静默采用 Meeko 自动断环。",
+                    "ring_atom_numbers_one_based": perceived_rings,
+                    "meeko_proposed_bonds_zero_based": [
+                        list(pair) for pair in removed_bonds
+                    ],
+                    "suggestion": "请选择“受审查的大环准备”，分析并确认断环候选或刚性大环。",
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 5
+
+    result = PDBQTWriter.write_string(setups[0])
+    pdbqt_text = normalize_writer_result(result)
+    if not pdbqt_text.strip():
+        print("Meeko 写出的 PDBQT 为空。", file=sys.stderr)
+        return 4
+
+    output_path.write_text(pdbqt_text, encoding="utf-8")
+    print(json.dumps({"ok": True, "output_file": str(output_path)}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
+def _normalize_ligand_preparation_options(
+    options: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Accept only the formal reviewed macrocycle protocol for new tasks."""
+
+    if options is None or not options:
+        return None, None
+    if not isinstance(options, Mapping):
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_INVALID",
+            "配体准备选项必须是 JSON 对象。",
+            raw_error=type(options).__name__,
+            suggestion="请传入包含 protocol 和 macrocycle 的 JSON 对象。",
+        )
+
+    raw = dict(options)
+    unknown = sorted(set(raw) - {"protocol", "macrocycle"})
+    if unknown:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_UNKNOWN",
+            "配体准备选项包含未支持的字段。",
+            raw_error=", ".join(unknown),
+            suggestion="当前仅支持 protocol 和 macrocycle 字段。",
+        )
+    protocol = str(raw.get("protocol") or "").strip()
+    if protocol != "meeko_macrocycle":
+        return None, _error(
+            "LIGAND_PREPARATION_PROTOCOL_INVALID",
+            "配体准备协议无效。",
+            raw_error=protocol or "（空）",
+            suggestion="显式大环准备请使用 protocol=meeko_macrocycle；普通准备请省略 options。",
+        )
+    macrocycle = raw.get("macrocycle")
+    if not isinstance(macrocycle, Mapping):
+        return None, _error(
+            "LIGAND_MACROCYCLE_OPTIONS_INVALID",
+            "大环准备参数必须是 JSON 对象。",
+            raw_error=type(macrocycle).__name__,
+            suggestion="请在 macrocycle 字段中传入 Meeko 大环参数对象。",
+        )
+    macrocycle_raw = dict(macrocycle)
+    mode = str(macrocycle_raw.get("mode") or "").strip().lower()
+    if mode == "reviewed":
+        unknown_reviewed = sorted(
+            set(macrocycle_raw) - {"mode", "review_id", "confirmation_sha256"}
+        )
+        if unknown_reviewed:
+            return None, _error(
+                "MACROCYCLE_REVIEWED_OPTIONS_UNKNOWN",
+                "受审查的大环准备包含未支持字段。",
+                raw_error=", ".join(unknown_reviewed),
+                suggestion="正式大环准备只提交 mode、review_id 和 confirmation_sha256。",
+            )
+        review_id = str(macrocycle_raw.get("review_id") or "").strip()
+        confirmation_sha256 = str(
+            macrocycle_raw.get("confirmation_sha256") or "",
+        ).strip().lower()
+        if not MACROCYCLE_REVIEW_ID_PATTERN.fullmatch(review_id):
+            return None, _error(
+                "MACROCYCLE_REVIEW_ID_INVALID",
+                "大环 review_id 格式无效。",
+                raw_error=review_id or "（空）",
+                suggestion="请刷新当前大环审查并使用后端返回的 review_id。",
+            )
+        if not SHA256_PATTERN.fullmatch(confirmation_sha256):
+            return None, _error(
+                "MACROCYCLE_CONFIRMATION_SHA256_INVALID",
+                "大环 confirmation_sha256 格式无效。",
+                raw_error=confirmation_sha256 or "（空）",
+                suggestion="请使用当前确认记录的 64 位 SHA256，不要提交断环原子对。",
+            )
+        return {
+            "protocol": "meeko_macrocycle",
+            "macrocycle": {
+                "mode": "reviewed",
+                "review_id": review_id,
+                "confirmation_sha256": confirmation_sha256,
+            },
+        }, None
+    if mode not in {"auto", "rigid"}:
+        return None, _error(
+            "INVALID_MACROCYCLE_MODE",
+            "大环准备模式无效。",
+            raw_error=mode or "（空）",
+            suggestion=(
+                "新任务仅接受受审查模式；请先审查并提交 mode=reviewed、"
+                "review_id 和 confirmation_sha256。"
+            ),
+        )
+    return None, _error(
+        "MACROCYCLE_LEGACY_MODE_DISABLED",
+        "旧版大环自动/刚性入口已停止创建新任务。",
+        raw_error=str(macrocycle_raw.get("mode") or "（空）"),
+        suggestion=(
+            "请先创建大环审查，确认后提交 mode=reviewed、review_id "
+            "和 confirmation_sha256。旧项目记录仍可读取，但不能作为正式审查证据。"
+        ),
+    )
+
+
+def _parse_ligand_options_json(raw: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    encoded_size = len(str(raw).encode("utf-8"))
+    if encoded_size > MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_TOO_LARGE",
+            "配体准备选项 JSON 超过大小限制。",
+            raw_error=f"{encoded_size} bytes",
+            suggestion=(
+                f"请将选项 JSON 控制在 {MAX_LIGAND_PREPARATION_OPTIONS_JSON_BYTES} bytes 以内。"
+            ),
+        )
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_JSON_INVALID",
+            "配体准备选项不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请传入 UTF-8 JSON 对象，不要使用命令行表达式或拼接参数。",
+        )
+    if not isinstance(parsed, dict):
+        return None, _error(
+            "LIGAND_PREPARATION_OPTIONS_INVALID",
+            "配体准备选项必须是 JSON 对象。",
+            raw_error=type(parsed).__name__,
+            suggestion="请传入包含 protocol 和 macrocycle 的 JSON 对象。",
+        )
+    return parsed, None
+
+
+def validate_ligand_preparation_input(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    raw_file = str(project.ligand.raw_file or "")
+    if not raw_file:
+        return _error(
+            "LIGAND_RAW_FILE_NOT_RECORDED",
+            "尚未记录 ligand raw 文件，无法自动准备配体 PDBQT。",
+            suggestion="请先在“下载原始结构文件”页面下载 ligand raw 文件，或手动导入 prepared ligand PDBQT。",
+        )
+
+    try:
+        input_path = _project_file_path(project_path, raw_file)
+        output_path = _safe_project_path(project_path, Path(LIGAND_PREPARATION_OUTPUT))
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "配体准备路径不安全，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请使用项目内普通 raw/preparation/prepared 目录，移除符号链接或 junction。",
+        )
+    input_status = _file_status(project_path, raw_file, "ligand_raw", "配体 raw 文件")
+    if input_status["status"] != "ok":
+        return _error(
+            "LIGAND_RAW_FILE_NOT_READY",
+            "配体 raw 文件不存在或为空，无法自动准备 ligand PDBQT。",
+            raw_error=input_status.get("absolute_path", input_status.get("path", "")),
+            suggestion="请重新下载 ligand raw 文件，或检查 project.json 中的 ligand.raw_file 记录。",
+        )
+
+    suffix = input_path.suffix.lower()
+    if suffix not in SUPPORTED_LIGAND_PREPARATION_FORMATS:
+        return _error(
+            "LIGAND_RAW_FORMAT_UNSUPPORTED",
+            "当前版本暂不支持该配体 raw 文件格式自动准备 PDBQT。",
+            raw_error=suffix,
+            suggestion="配体自动准备支持 SDF、MOL 和 MOL2；PDB/SMILES 请先使用外部工具准备 PDBQT。",
+        )
+
+    if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
+        return _error(
+            "LIGAND_PREPARED_FILE_EXISTS",
+            "prepared/ligand.pdbqt 已存在，默认不会覆盖。",
+            raw_error=str(output_path),
+            suggestion="如确认要重新生成，请开启 overwrite。",
+        )
+
+    tool_status = get_preparation_tool_status(project.project_dir)
+    if not tool_status.get("ok"):
+        return tool_status
+    tools = tool_status["tools"]
+    python_tool = tools["python"]
+    rdkit_tool = tools["rdkit"]
+    meeko_tool = tools["meeko"]
+    ligand_capability = meeko_tool.get("capabilities", {}).get("ligand_preparation", {})
+
+    missing: list[str] = []
+    if python_tool.get("status") != "ok":
+        missing.append("Python")
+    if rdkit_tool.get("status") != "ok":
+        missing.append("RDKit")
+    if meeko_tool.get("status") != "ok":
+        missing.append("Meeko")
+    if ligand_capability.get("status") != "ok":
+        missing.append("Meeko ligand preparation capability")
+
+    if missing:
+        return _error(
+            "LIGAND_PREPARATION_TOOLS_NOT_READY",
+            "配体 PDBQT 自动准备所需工具尚未全部可用。",
+            raw_error=", ".join(missing),
+            suggestion="请先在 PreparationPage 或工具链状态页确认 Python、RDKit、Meeko 以及 Meeko 配体准备能力。",
+        )
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "input_file": raw_file,
+        "input_path": str(input_path),
+        "output_file": LIGAND_PREPARATION_OUTPUT,
+        "output_path": str(output_path),
+        "format": suffix,
+        "tools": tools,
+        "overwrite": overwrite,
+        "warnings": [
+            "自动生成 ligand PDBQT 不代表配体质子化、电荷、构象或互变异构状态一定科学正确，请人工检查。"
+        ],
+        "message": "配体 PDBQT 自动准备输入检查通过。",
+        "error": None,
+    }
+
+
+def build_ligand_preparation_command_or_script(
+    project_dir: str,
+    overwrite: bool = False,
+    prep_id: str | None = None,
+    options: Mapping[str, Any] | None = None,
+    *,
+    target_lock_held: bool = False,
+) -> dict[str, Any]:
+    normalized_options, options_error = _normalize_ligand_preparation_options(options)
+    if options_error:
+        return options_error
+    validation = validate_ligand_preparation_input(project_dir, overwrite=overwrite)
+    if not validation.get("ok"):
+        return validation
+
+    project_path = Path(validation["project_dir"]).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
+    selected_prep_id = prep_id or get_next_preparation_id(project_dir, "ligand")
+    paths = _make_preparation_record_paths(project_path, selected_prep_id)
+    record_dir = paths["record_dir"]
+    record_dir.mkdir(exist_ok=False)
+    _safe_project_path(project_path, PREPARATION_RECORD_ROOT / selected_prep_id, allow_missing=False)
+    candidate_output_path = record_dir / "candidate_ligand.pdbqt"
+    script_path: Path | None = None
+    protocol_fields: dict[str, Any] = {}
+    warnings = list(validation.get("warnings", []))
+
+    if normalized_options is None:
+        script_path = record_dir / "prepare_ligand_rdkit_meeko.py"
+        atomic_write_text(script_path, _ligand_preparation_script_text())
+        command = [
+            validation["tools"]["python"]["path"],
+            "-I",
+            "-B",
+            str(script_path),
+            validation["input_path"],
+            str(candidate_output_path),
+        ]
+    else:
+        reviewed = normalized_options["macrocycle"]
+        plan = build_reviewed_preparation_plan(
+            project_dir,
+            validation["tools"]["python"]["path"],
+            candidate_output_path,
+            record_dir=record_dir,
+            expected_review_id=reviewed["review_id"],
+            expected_confirmation_sha256=reviewed["confirmation_sha256"],
+            target_lock_held=target_lock_held,
+        )
+        if not plan.get("ok"):
+            try:
+                record_dir.rmdir()
+            except OSError:
+                pass
+            return plan
+        command = list(plan["argv"])
+        protocol_fields = {
+            "protocol": "meeko_macrocycle",
+            "protocol_mode": "reviewed",
+            "options": {"macrocycle": copy.deepcopy(reviewed)},
+            "macrocycle_reviewed": True,
+            "macrocycle_contract": copy.deepcopy(plan["contract"]),
+            "macrocycle_contract_file": str(plan["contract_file"]),
+            "macrocycle_contract_sha256": str(plan["contract_sha256"]),
+            "macrocycle_evidence_file": str(plan["evidence_file"]),
+            "macrocycle_input_file": str(plan["input_snapshot_file"]),
+            "macrocycle_expected_output_evidence": copy.deepcopy(
+                plan["expected_output_evidence"],
+            ),
+        }
+        warnings.append(
+            "本任务只使用已审查并由 SHA256 绑定的冻结配体输入与断环选择。",
+        )
+
+    built = {
+        **validation,
+        "prep_id": selected_prep_id,
+        "record_dir": paths["record_dir_relative"],
+        "command": command,
+        "script_file": _relative_path(script_path, project_path) if script_path is not None else "",
+        "candidate_output_file": _relative_path(candidate_output_path, project_path),
+        "candidate_output_path": str(candidate_output_path),
+        "warnings": warnings,
+        "stdout_file": paths["stdout_file"],
+        "stderr_file": paths["stderr_file"],
+        "log_file": paths["metadata_file"],
+        "metadata_file": paths["metadata_file"],
+        "command_file": paths["command_file"],
+        "input_snapshot_file": paths["input_snapshot_file"],
+        "output_check_file": paths["output_check_file"],
+        **protocol_fields,
+    }
+    return built
+
+
+def prepare_ligand_pdbqt(
+    project_dir: str,
+    overwrite: bool = False,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_options, options_error = _normalize_ligand_preparation_options(options)
+    if options_error:
+        return options_error
+    if normalized_options is None:
+        builder = build_ligand_preparation_command_or_script
+        method = "rdkit_meeko"
+    else:
+        method = "meeko_macrocycle"
+
+        def builder(
+            nested_project_dir: str,
+            *,
+            overwrite: bool,
+            prep_id: str,
+        ) -> dict[str, Any]:
+            return build_ligand_preparation_command_or_script(
+                nested_project_dir,
+                overwrite=overwrite,
+                prep_id=prep_id,
+                options=normalized_options,
+                target_lock_held=True,
+            )
+
+    return _prepare_target_pdbqt(
+        project_dir,
+        "ligand",
+        overwrite=overwrite,
+        method=method,
+        builder=builder,
+    )
+
+
+def load_ligand_preparation_log(project_dir: str) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    prep = project.preparation.ligand
+    stdout_file = prep.stdout_file or LIGAND_PREPARATION_STDOUT.as_posix()
+    stderr_file = prep.stderr_file or LIGAND_PREPARATION_STDERR.as_posix()
+    log_file = prep.log_file or LIGAND_PREPARATION_LOG.as_posix()
+
+    def read_optional(relative_file: str) -> str:
+        path = _project_file_path(project_path, relative_file)
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    try:
+        stdout = read_optional(stdout_file)
+        stderr = read_optional(stderr_file)
+        log = read_optional(log_file)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "ligand preparation 日志路径不安全。", raw_error=str(exc))
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": "ligand",
+        "stdout_file": stdout_file,
+        "stderr_file": stderr_file,
+        "log_file": log_file,
+        "stdout": stdout,
+        "stderr": stderr,
+        "log": log,
+        "message": "ligand preparation 日志已读取。",
+        "error": None,
+    }
+
+
+def _normalize_receptor_preparation_options(
+    options: Mapping[str, Any] | None,
+    *,
+    structure_path: str | Path | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate accepted non-default rigid receptor protocols.
+
+    The contract intentionally reuses the reviewed flexible-receptor control
+    schema for typed residue decisions.  A separate reviewed recovery protocol
+    permits ``allow_bad_res`` only after a strict run has returned the exact
+    residue list and the user has acknowledged that same list.  The reviewed
+    retry may also carry explicit per-residue alternate-location decisions.
+    Free argv and ``default_altloc`` remain unavailable.
+    """
+
+    if options is None or not options:
+        return None, None
+    if not isinstance(options, Mapping):
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_INVALID",
+            "受体准备选项必须是 JSON 对象。",
+            raw_error=type(options).__name__,
+            suggestion="请传入 protocol 和 receptor_controls；不要传入命令行字符串。",
+        )
+    raw = dict(options)
+    protocol = str(raw.get("protocol") or "").strip()
+    allowed_fields = (
+        {"protocol", "acknowledged_bad_residues", "alternate_locations"}
+        if protocol == "meeko_allow_bad_res_reviewed"
+        else {"protocol", "receptor_controls"}
+    )
+    unknown = sorted(set(raw) - allowed_fields)
+    if unknown:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_UNKNOWN",
+            "受体准备选项包含未支持的字段。",
+            raw_error=", ".join(str(item) for item in unknown),
+            suggestion=(
+                "受审查的不完整残基恢复只接受 acknowledged_bad_residues 和 alternate_locations；"
+                "逐残基控制合同只接受 receptor_controls。"
+            ),
+        )
+    if protocol == "meeko_allow_bad_res_reviewed":
+        values = raw.get("acknowledged_bad_residues")
+        if not isinstance(values, list) or not values:
+            return None, _error(
+                "RECEPTOR_BAD_RESIDUE_ACKNOWLEDGEMENT_REQUIRED",
+                "尚未确认 Meeko 检测到的不完整残基。",
+                suggestion="请先严格转换，审阅完整残基列表后再确认重试。",
+            )
+        if len(values) > 512:
+            return None, _error(
+                "RECEPTOR_BAD_RESIDUE_ACKNOWLEDGEMENT_TOO_LARGE",
+                "确认的不完整残基数量超过安全上限。",
+                raw_error=str(len(values)),
+                suggestion="请检查输入结构与确认列表是否对应同一受体。",
+            )
+        acknowledged: list[str] = []
+        seen: set[str] = set()
+        try:
+            for value in values:
+                residue_id = parse_flexible_residue(str(value)).meeko_id
+                if residue_id not in seen:
+                    acknowledged.append(residue_id)
+                    seen.add(residue_id)
+        except ProtocolValidationError as exc:
+            return None, _error(
+                exc.code,
+                exc.message,
+                raw_error=exc.detail,
+                suggestion=exc.suggestion,
+            )
+        try:
+            normalized_altloc_controls = normalize_meeko_receptor_controls(
+                {
+                    "schema_version": MEEKO_RECEPTOR_CONTROLS_SCHEMA_VERSION,
+                    "allow_bad_res": False,
+                    "alternate_locations": raw.get("alternate_locations", {}),
+                    "template_assignments": {},
+                    "deleted_residues": [],
+                },
+                structure_path=structure_path,
+            )
+        except ProtocolValidationError as exc:
+            detail = ": ".join(
+                item for item in (exc.title, exc.detail) if str(item).strip()
+            )
+            return None, _error(
+                exc.code,
+                exc.message,
+                raw_error=detail,
+                suggestion=exc.suggestion,
+            )
+        return {
+            "protocol": "meeko_allow_bad_res_reviewed",
+            "acknowledged_bad_residues": acknowledged,
+            "alternate_locations": copy.deepcopy(
+                normalized_altloc_controls["alternate_locations"],
+            ),
+        }, None
+    if protocol != "meeko_receptor_controls":
+        return None, _error(
+            "RECEPTOR_PREPARATION_PROTOCOL_INVALID",
+            "受体准备协议无效。",
+            raw_error=protocol or "（空）",
+            suggestion=(
+                "普通受体准备请省略 options；显式残基决定请使用"
+                " protocol=meeko_receptor_controls；不完整残基恢复请先严格运行。"
+            ),
+        )
+    controls = raw.get("receptor_controls")
+    if not isinstance(controls, Mapping):
+        return None, _error(
+            "RECEPTOR_CONTROLS_INVALID",
+            "受体残基控制合同必须是 JSON 对象。",
+            raw_error=type(controls).__name__,
+            suggestion=(
+                "请提交 schema_version、allow_bad_res=false、alternate_locations、"
+                "template_assignments 和 deleted_residues。"
+            ),
+        )
+    try:
+        normalized_controls = normalize_meeko_receptor_controls(
+            controls,
+            structure_path=structure_path,
+        )
+    except ProtocolValidationError as exc:
+        detail = ": ".join(
+            item for item in (exc.title, exc.detail) if str(item).strip()
+        )
+        return None, _error(
+            exc.code,
+            exc.message,
+            raw_error=detail,
+            suggestion=exc.suggestion,
+        )
+    return {
+        "protocol": "meeko_receptor_controls",
+        "receptor_controls": normalized_controls,
+    }, None
+
+
+def _parse_receptor_options_json(
+    raw: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    encoded_size = len(str(raw).encode("utf-8"))
+    if encoded_size > MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_TOO_LARGE",
+            "受体准备选项 JSON 超过大小限制。",
+            raw_error=f"{encoded_size} bytes",
+            suggestion=(
+                "请将逐残基控制合同控制在"
+                f" {MAX_RECEPTOR_PREPARATION_OPTIONS_JSON_BYTES} bytes 以内。"
+            ),
+        )
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_JSON_INVALID",
+            "受体准备选项不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请传入 UTF-8 JSON 对象，不要拼接命令行参数。",
+        )
+    if not isinstance(parsed, dict):
+        return None, _error(
+            "RECEPTOR_PREPARATION_OPTIONS_INVALID",
+            "受体准备选项必须是 JSON 对象。",
+            raw_error=type(parsed).__name__,
+            suggestion="请传入 protocol 和 receptor_controls。",
+        )
+    return parsed, None
+
+
+def validate_receptor_preparation_input(project_dir: str, overwrite: bool = False) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    raw_file = str(project.receptor.raw_file or "")
+    if not raw_file:
+        return _error(
+            "RECEPTOR_RAW_FILE_NOT_RECORDED",
+            "尚未记录 receptor raw 文件，无法自动准备受体 PDBQT。",
+            suggestion="请先在“下载原始结构文件”页面下载 receptor raw 文件，或手动导入 prepared receptor PDBQT。",
+        )
+
+    try:
+        input_path = _project_file_path(project_path, raw_file)
+        output_path = _safe_project_path(project_path, Path(RECEPTOR_PREPARATION_OUTPUT))
+    except PreparationPathError as exc:
+        return _error(
+            "PREPARATION_PATH_UNSAFE",
+            "受体准备路径不安全，已拒绝访问。",
+            raw_error=str(exc),
+            suggestion="请使用项目内普通 raw/preparation/prepared 目录，移除符号链接或 junction。",
+        )
+    input_status = _file_status(project_path, raw_file, "receptor_raw", "受体 raw 文件")
+    if input_status["status"] != "ok":
+        return _error(
+            "RECEPTOR_RAW_FILE_NOT_READY",
+            "受体 raw 文件不存在或为空，无法自动准备 receptor PDBQT。",
+            raw_error=input_status.get("absolute_path", input_status.get("path", "")),
+            suggestion="请重新下载 receptor raw 文件，或检查 project.json 中的 receptor.raw_file 记录。",
+        )
+
+    suffix = input_path.suffix.lower()
+    if suffix not in SUPPORTED_RECEPTOR_PREPARATION_FORMATS:
+        return _error(
+            "RECEPTOR_RAW_FORMAT_UNSUPPORTED",
+            "当前版本暂不支持该受体 raw 文件格式自动准备 PDBQT。",
+            raw_error=suffix,
+            suggestion="受体自动准备支持 PDB 和 CIF；其他格式请先使用外部工具准备 PDBQT。",
+        )
+
+    if output_path.exists() and output_path.stat().st_size > 0 and not overwrite:
+        return _error(
+            "RECEPTOR_PREPARED_FILE_EXISTS",
+            "prepared/receptor.pdbqt 已存在，默认不会覆盖。",
+            raw_error=str(output_path),
+            suggestion="如确认要重新生成，请开启 overwrite。",
+        )
+
+    tool_status = get_preparation_tool_status(project.project_dir)
+    if not tool_status.get("ok"):
+        return tool_status
+    tools = tool_status["tools"]
+    python_tool = tools["python"]
+    meeko_tool = tools["meeko"]
+    receptor_capability = meeko_tool.get("capabilities", {}).get("receptor_preparation", {})
+    missing: list[str] = []
+    if python_tool.get("status") != "ok":
+        missing.append("Python")
+    if meeko_tool.get("status") != "ok":
+        missing.append("Meeko")
+    if receptor_capability.get("status") != "ok":
+        missing.append("Meeko receptor preparation capability (meeko.cli.mk_prepare_receptor)")
+    if suffix == ".cif" and receptor_capability.get("cif_input_available") is not True:
+        missing.append("Gemmi CIF parser")
+
+    if missing:
+        return _error(
+            "RECEPTOR_PREPARATION_TOOLS_NOT_READY",
+            "受体 PDBQT 自动准备所需工具尚未全部可用或不可确认。",
+            raw_error=", ".join(missing),
+            suggestion=(
+                "CIF 转换还需要同一 Python 中可导入 Gemmi；请检查 Assisted 工具链，或改用 PDB。"
+                if suffix == ".cif"
+                else "请确认 Meeko 已安装且可导入 receptor preparation 模块。当前版本不使用 MGLTools/Open Babel 兜底。"
+            ),
+        )
+
+    warnings = [
+        "受体自动准备使用保守默认设置，不能保证缺失残基、金属离子、水分子、辅因子或质子化状态处理一定适合当前体系。",
+        "请在运行 Vina 前人工检查 receptor PDBQT。",
+    ]
+    if suffix == ".cif":
+        warnings.append(
+            "CIF 将先由 Gemmi 转换为 preparation 审计目录中的中间 PDB，再交给 Meeko；"
+            "无法无损表示为传统 PDB 的多模型、长链 ID 或超大结构会被明确拒绝。"
+        )
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "project": project.to_dict(),
+        "input_file": raw_file,
+        "input_path": str(input_path),
+        "output_file": RECEPTOR_PREPARATION_OUTPUT,
+        "output_path": str(output_path),
+        "format": suffix,
+        "tools": tools,
+        "receptor_module": "meeko.cli.mk_prepare_receptor",
+        "overwrite": overwrite,
+        "warnings": warnings,
+        "message": "受体 PDBQT 自动准备输入检查通过。",
+        "error": None,
+    }
+
+
+def build_receptor_preparation_command_or_script(
+    project_dir: str,
+    overwrite: bool = False,
+    prep_id: str | None = None,
+    options: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    validation = validate_receptor_preparation_input(project_dir, overwrite=overwrite)
+    if not validation.get("ok"):
+        return validation
+    normalized_options, options_error = _normalize_receptor_preparation_options(options)
+    if options_error:
+        return options_error
+    if normalized_options is not None and str(validation.get("format") or "") != ".pdb":
+        return _error(
+            "RECEPTOR_CONTROLS_PDB_REQUIRED",
+            "当前显式受体残基控制只接受原始 PDB。",
+            raw_error=str(validation.get("format") or ""),
+            suggestion=(
+                "请使用保留原始残基身份的 PDB，或先在 mmCIF 审计桥接流程中"
+                "确认作者/标签编号和替代构象；DockStart 不会把 PDB 选择静默套到 CIF。"
+            ),
+        )
+    if (
+        normalized_options is not None
+        and normalized_options.get("protocol") == "meeko_receptor_controls"
+    ):
+        normalized_options, options_error = _normalize_receptor_preparation_options(
+            normalized_options,
+            structure_path=validation["input_path"],
+        )
+        if options_error:
+            return options_error
+
+    project_path = Path(validation["project_dir"]).expanduser().resolve()
+    _ensure_preparation_directories(project_path)
+    selected_prep_id = prep_id or get_next_preparation_id(project_dir, "receptor")
+    paths = _make_preparation_record_paths(project_path, selected_prep_id)
+    paths["record_dir"].mkdir(exist_ok=False)
+    _safe_project_path(project_path, PREPARATION_RECORD_ROOT / selected_prep_id, allow_missing=False)
+    candidate_output_path = paths["record_dir"] / "candidate_receptor.pdbqt"
+    output_stem = str(candidate_output_path.with_suffix(""))
+    python_path = validation["tools"]["python"]["path"]
+    is_cif = str(validation.get("format") or "").lower() == ".cif"
+    protocol_fields: dict[str, Any] = {}
+    warnings = list(validation.get("warnings", []))
+    script_file = ""
+    intermediate_input_file = ""
+    pdb_coordinate_order_repair: dict[str, Any] | None = None
+    if is_cif:
+        script_path = paths["record_dir"] / "prepare_receptor_cif_gemmi_meeko.py"
+        intermediate_path = paths["record_dir"] / "receptor_from_cif.pdb"
+        atomic_write_text(script_path, meeko_adapter.receptor_cif_bridge_script_text())
+        command = [
+            python_path,
+            "-I",
+            "-B",
+            str(script_path),
+            validation["input_path"],
+            str(intermediate_path),
+            output_stem,
+        ]
+        script_file = _relative_path(script_path, project_path)
+        intermediate_input_file = _relative_path(intermediate_path, project_path)
+    else:
+        pdb_coordinate_order_repair = _pdb_coordinate_order_repair_plan(
+            Path(validation["input_path"]),
+        )
+        if pdb_coordinate_order_repair.get("required") is True:
+            script_path = paths["record_dir"] / "prepare_receptor_pdb_order_meeko.py"
+            intermediate_path = paths["record_dir"] / "receptor_ordered.pdb"
+            atomic_write_text(
+                script_path,
+                meeko_adapter.receptor_pdb_order_bridge_script_text(),
+            )
+            command = [
+                python_path,
+                "-I",
+                "-B",
+                str(script_path),
+                validation["input_path"],
+                str(intermediate_path),
+                output_stem,
+            ]
+            script_file = _relative_path(script_path, project_path)
+            intermediate_input_file = _relative_path(intermediate_path, project_path)
+            restored = ", ".join(
+                str(value)
+                for value in pdb_coordinate_order_repair.get(
+                    "interrupted_residues",
+                    [],
+                )
+            )
+            warnings.append(
+                "输入 PDB 的同一残基记录被其他残基打断；DockStart 将按唯一原子序号生成"
+                "受审计的中间 PDB，不删除或重编号原子。"
+                + (f" 涉及残基：{restored}。" if restored else "")
+            )
+        else:
+            command = [
+                python_path,
+                "-I",
+                "-B",
+                "-m",
+                str(validation["receptor_module"]),
+                "--read_pdb",
+                validation["input_path"],
+                "-o",
+                output_stem,
+                "-p",
+            ]
+        if (
+            normalized_options is not None
+            and normalized_options.get("protocol") == "meeko_receptor_controls"
+        ):
+            controls = normalized_options["receptor_controls"]
+            command.extend(meeko_receptor_control_arguments(controls))
+            controls_sha256 = _canonical_json_sha256(controls)
+            protocol_fields = {
+                "protocol": "meeko_receptor_controls",
+                "protocol_mode": "reviewed",
+                "options": copy.deepcopy(normalized_options),
+                "receptor_controls": copy.deepcopy(controls),
+                "receptor_controls_sha256": controls_sha256,
+                "receptor_controls_canonicalization": (
+                    MEEKO_RECEPTOR_CONTROLS_CANONICALIZATION
+                ),
+            }
+            warnings.append(
+                "本次受体准备只采用已显式记录并由 SHA256 绑定的逐残基替代构象、模板和删除决定。"
+            )
+        elif (
+            normalized_options is not None
+            and normalized_options.get("protocol") == "meeko_allow_bad_res_reviewed"
+        ):
+            acknowledged = list(
+                normalized_options.get("acknowledged_bad_residues", []),
+            )
+            alternate_locations = copy.deepcopy(
+                normalized_options.get("alternate_locations", {}),
+            )
+            command.append("--allow_bad_res")
+            command.extend(
+                meeko_receptor_control_arguments(
+                    {
+                        "alternate_locations": alternate_locations,
+                        "template_assignments": {},
+                        "deleted_residues": [],
+                    },
+                ),
+            )
+            acknowledgement_sha256 = _canonical_json_sha256(acknowledged)
+            alternate_locations_sha256 = _canonical_json_sha256(
+                alternate_locations,
+            )
+            protocol_fields = {
+                "protocol": "meeko_allow_bad_res_reviewed",
+                "protocol_mode": "reviewed",
+                "options": copy.deepcopy(normalized_options),
+                "allow_bad_res": True,
+                "acknowledged_bad_residues": acknowledged,
+                "acknowledged_bad_residues_sha256": acknowledgement_sha256,
+                "alternate_locations": alternate_locations,
+                "alternate_locations_sha256": alternate_locations_sha256,
+            }
+            warnings.append(
+                "用户已明确确认由 Meeko 严格模式列出的不完整残基；"
+                "本次准备会忽略这些残基，并在发布前核对实际忽略列表。"
+            )
+            if alternate_locations:
+                warnings.append(
+                    "本次受体准备同时采用用户逐项确认的交替构象选择。"
+                )
+
+    return {
+        **validation,
+        "prep_id": selected_prep_id,
+        "record_dir": paths["record_dir_relative"],
+        "command": command,
+        "script_file": script_file,
+        "intermediate_input_file": intermediate_input_file,
+        "candidate_output_file": _relative_path(candidate_output_path, project_path),
+        "candidate_output_path": str(candidate_output_path),
+        "pdb_coordinate_order_repair": pdb_coordinate_order_repair,
+        "warnings": warnings,
+        "stdout_file": paths["stdout_file"],
+        "stderr_file": paths["stderr_file"],
+        "log_file": paths["metadata_file"],
+        "metadata_file": paths["metadata_file"],
+        "command_file": paths["command_file"],
+        "input_snapshot_file": paths["input_snapshot_file"],
+        "output_check_file": paths["output_check_file"],
+        **protocol_fields,
+    }
+
+
+def prepare_receptor_pdbqt(project_dir: str, overwrite: bool = False, options: dict[str, Any] | None = None) -> dict[str, Any]:
+    normalized_options, options_error = _normalize_receptor_preparation_options(
+        options,
+    )
+    if options_error:
+        return options_error
+    if normalized_options is None:
+        builder = build_receptor_preparation_command_or_script
+        method = "meeko"
+    else:
+        method = str(normalized_options.get("protocol") or "meeko")
+
+        def builder(
+            nested_project_dir: str,
+            *,
+            overwrite: bool,
+            prep_id: str,
+        ) -> dict[str, Any]:
+            return build_receptor_preparation_command_or_script(
+                nested_project_dir,
+                overwrite=overwrite,
+                prep_id=prep_id,
+                options=normalized_options,
+            )
+
+    return _prepare_target_pdbqt(
+        project_dir,
+        "receptor",
+        overwrite=overwrite,
+        method=method,
+        builder=builder,
+    )
+
+
+def load_receptor_preparation_log(project_dir: str) -> dict[str, Any]:
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser()
+    prep = project.preparation.receptor
+    stdout_file = prep.stdout_file or RECEPTOR_PREPARATION_STDOUT.as_posix()
+    stderr_file = prep.stderr_file or RECEPTOR_PREPARATION_STDERR.as_posix()
+    log_file = prep.log_file or RECEPTOR_PREPARATION_LOG.as_posix()
+
+    def read_optional(relative_file: str) -> str:
+        path = _project_file_path(project_path, relative_file)
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    try:
+        stdout = read_optional(stdout_file)
+        stderr = read_optional(stderr_file)
+        log = read_optional(log_file)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "receptor preparation 日志路径不安全。", raw_error=str(exc))
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": "receptor",
+        "stdout_file": stdout_file,
+        "stderr_file": stderr_file,
+        "log_file": log_file,
+        "stdout": stdout,
+        "stderr": stderr,
+        "log": log,
+        "message": "receptor preparation 日志已读取。",
+        "error": None,
+    }
+
+
+def list_preparation_runs(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser().resolve()
+    try:
+        root = _safe_project_path(project_path, PREPARATION_RECORD_ROOT)
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "preparation 记录目录不安全。", raw_error=str(exc))
+    runs: list[dict[str, Any]] = []
+    if root.is_dir():
+        for child in root.iterdir():
+            try:
+                child = _safe_project_path(project_path, PREPARATION_RECORD_ROOT / child.name, allow_missing=False)
+            except PreparationPathError as exc:
+                return _error("PREPARATION_PATH_UNSAFE", "preparation 记录路径不安全。", raw_error=str(exc))
+            if not child.is_dir():
+                continue
+            match = PREPARATION_ID_PATTERN.match(child.name)
+            if not match or match.group(1) != normalized_target:
+                continue
+            try:
+                metadata_file = _safe_project_path(
+                    project_path,
+                    PREPARATION_RECORD_ROOT / child.name / "metadata.json",
+                )
+            except PreparationPathError as exc:
+                return _error("PREPARATION_PATH_UNSAFE", "preparation metadata 路径不安全。", raw_error=str(exc))
+            metadata: dict[str, Any] = {}
+            if metadata_file.is_file():
+                try:
+                    metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+                except json.JSONDecodeError as exc:
+                    metadata = {"metadata_error": str(exc)}
+            runs.append(
+                {
+                    "prep_id": child.name,
+                    "target": normalized_target,
+                    "record_dir": _relative_path(child, project_path),
+                    "metadata_file": _relative_path(metadata_file, project_path),
+                    "metadata_exists": metadata_file.is_file(),
+                    "status": metadata.get("status", "unknown"),
+                    "created_at": metadata.get("created_at", ""),
+                    "finished_at": metadata.get("finished_at", ""),
+                    "metadata": metadata,
+                }
+            )
+
+    runs.sort(key=lambda item: int(PREPARATION_ID_PATTERN.match(item["prep_id"]).group(2)))  # type: ignore[union-attr]
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": normalized_target,
+        "runs": runs,
+        "message": "preparation 记录列表已读取。",
+        "error": None,
+    }
+
+
+def load_preparation_metadata(project_dir: str, target: str, prep_id: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+    prep_id_error = _validate_prep_id_for_target(normalized_target, prep_id)
+    if prep_id_error:
+        return prep_id_error
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    project_path = Path(project.project_dir).expanduser().resolve()
+    try:
+        metadata_path = _safe_project_path(
+            project_path,
+            PREPARATION_RECORD_ROOT / prep_id / "metadata.json",
+        )
+    except PreparationPathError as exc:
+        return _error("PREPARATION_PATH_UNSAFE", "preparation metadata 路径不安全。", raw_error=str(exc))
+    if not metadata_path.is_file():
+        return _error(
+            "PREPARATION_METADATA_NOT_FOUND",
+            "没有找到 preparation metadata.json。",
+            raw_error=str(metadata_path),
+            suggestion="请先执行一次自动准备，或确认 prep_id 是否正确。",
+        )
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return _error(
+            "PREPARATION_METADATA_INVALID",
+            "preparation metadata.json 不是有效 JSON。",
+            raw_error=str(exc),
+            suggestion="请检查该 preparation 记录是否被手动修改。",
+        )
+
+    return {
+        "ok": True,
+        "project_dir": project.project_dir,
+        "target": normalized_target,
+        "prep_id": prep_id,
+        "metadata_file": _relative_path(metadata_path, project_path),
+        "metadata": metadata,
+        "message": "preparation metadata 已读取。",
+        "error": None,
+    }
+
+
+def get_latest_preparation(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project, project_error = _load_project_model(project_dir)
+    if project_error:
+        return project_error
+    assert project is not None
+
+    latest = project.latest_preparation.get(normalized_target, "")
+    if latest:
+        loaded = load_preparation_metadata(project.project_dir, normalized_target, latest)
+        if loaded.get("ok"):
+            loaded["latest"] = True
+            return loaded
+
+    runs = list_preparation_runs(project.project_dir, normalized_target)
+    if not runs.get("ok"):
+        return runs
+    run_items = runs.get("runs", [])
+    if not run_items:
+        return {
+            "ok": True,
+            "project_dir": project.project_dir,
+            "target": normalized_target,
+            "prep_id": "",
+            "metadata": None,
+            "latest": False,
+            "message": "当前还没有 preparation 记录。",
+            "error": None,
+        }
+
+    latest_item = run_items[-1]
+    loaded = load_preparation_metadata(project.project_dir, normalized_target, latest_item["prep_id"])
+    if loaded.get("ok"):
+        loaded["latest"] = True
+    return loaded
+
+
+def reset_preparation_status(project_dir: str, target: str) -> dict[str, Any]:
+    normalized_target = _normalize_target(target)
+    if normalized_target is None:
+        return _target_error(target)
+
+    project_path = Path(project_dir).expanduser().resolve()
+    try:
+        with _preparation_target_lock(project_path, normalized_target):
+            with _project_lock(project_path):
+                data, _, _ = _read_and_migrate_project_unlocked(project_path, persist_migration=True)
+                project = _project_from_dict(data, project_path)
+                busy = _preparation_busy_error(project, normalized_target)
+                if busy:
+                    return busy
+                setattr(project.preparation, normalized_target, default_preparation_result(normalized_target))
+                project.updated_at = _now_iso()
+                project.revision += 1
+                _write_project_json_unlocked(project_path, project)
+    except Exception as exc:  # noqa: BLE001 - return a structured reset error.
+        return _error(
+            "PREPARATION_RESET_ERROR",
+            "重置 preparation 状态时发生错误。",
+            raw_error=str(exc),
+            suggestion="请确认项目目录可写且没有正在运行的同类型准备任务。",
+        )
+
+    # Reset changes only the persisted task state. It must not relaunch the
+    # Python/RDKit/Meeko capability probes merely to rebuild the UI response.
+    payload = get_preparation_status(str(project_path), tools_snapshot={})
+    payload["tools"] = None
+    payload["target"] = normalized_target
+    payload["message"] = "准备状态已重置。prepared PDBQT 文件不会被删除。"
+    return payload
+
+
+def _print_json(payload: dict[str, Any]) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def _print_text(value: str) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    print(value)
+
+
+def _parse_structure_review_cli_args(
+    arguments: list[str],
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Parse structure-review options without argparse's English exits."""
+
+    project_dir = ""
+    output_format = "json"
+    format_seen = False
+    options_finished = False
+    index = 0
+    while index < len(arguments):
+        argument = str(arguments[index])
+        if not options_finished and argument == "--":
+            options_finished = True
+            index += 1
+            continue
+        if not options_finished and argument == "--format":
+            if format_seen or index + 1 >= len(arguments):
+                return "", "json", _error(
+                    "STRUCTURE_REVIEW_FORMAT_INVALID",
+                    "结构审查输出格式无效，仅支持 json 或 text。",
+                    raw_error="--format 缺少值或被重复指定",
+                    suggestion="用法：structure-review <project_dir> [--format json|text]。",
+                )
+            output_format = str(arguments[index + 1]).strip().lower()
+            format_seen = True
+            index += 2
+            continue
+        if not options_finished and argument.startswith("--format="):
+            if format_seen:
+                return "", "json", _error(
+                    "STRUCTURE_REVIEW_FORMAT_INVALID",
+                    "结构审查输出格式无效，仅支持 json 或 text。",
+                    raw_error="--format 被重复指定",
+                    suggestion="用法：structure-review <project_dir> [--format json|text]。",
+                )
+            output_format = argument.partition("=")[2].strip().lower()
+            format_seen = True
+            index += 1
+            continue
+        if not options_finished and argument.startswith("--"):
+            return "", "json", _error(
+                "STRUCTURE_REVIEW_ARGS",
+                "结构审查命令包含未支持的参数。",
+                raw_error=argument,
+                suggestion="用法：structure-review <project_dir> [--format json|text]。",
+            )
+        if project_dir:
+            return "", "json", _error(
+                "STRUCTURE_REVIEW_ARGS",
+                "结构审查只能指定一个 project_dir。",
+                raw_error=argument,
+                suggestion="用法：structure-review <project_dir> [--format json|text]。",
+            )
+        project_dir = argument
+        index += 1
+
+    if output_format not in {"json", "text"}:
+        return "", "json", _error(
+            "STRUCTURE_REVIEW_FORMAT_INVALID",
+            "结构审查输出格式无效，仅支持 json 或 text。",
+            raw_error=output_format or "（空）",
+            suggestion="请使用 --format json 或 --format text。",
+        )
+    if not project_dir.strip():
+        return "", "json", _error(
+            "STRUCTURE_REVIEW_ARGS",
+            "读取结构信息需要 project_dir 参数。",
+            suggestion=(
+                "用法：structure-review <project_dir> [--format json|text]。"
+                if arguments
+                else ""
+            ),
+        )
+    return project_dir, output_format, None
+
+
+def main() -> int | None:
+    command = sys.argv[1] if len(sys.argv) > 1 else "status"
+
+    if command == "status":
+        if len(sys.argv) < 3:
+            _print_json(_error("PREPARATION_STATUS_ARGS", "读取准备状态需要 project_dir 参数。"))
+            return
+        _print_json(get_preparation_status(sys.argv[2]))
+        return
+
+    if command == "structure-review":
+        project_dir, output_format, argument_error = _parse_structure_review_cli_args(
+            sys.argv[2:],
+        )
+        if argument_error:
+            _print_json(argument_error)
+            error = argument_error.get("error")
+            error_code = error.get("code") if isinstance(error, dict) else ""
+            # The pre-existing no-argument JSON error remains exit 0 for
+            # compatibility. New option/format errors are proper CLI failures.
+            return 0 if not sys.argv[2:] and error_code == "STRUCTURE_REVIEW_ARGS" else 2
+        payload = get_structure_review_status(project_dir)
+        if output_format == "text":
+            _print_text(format_structure_review_text(payload))
+            return 0 if payload.get("ok") is True else 1
+        else:
+            _print_json(payload)
+        return 0
+
+    if command == "validate":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_VALIDATE_ARGS", "准备前置检查需要 project_dir 和 target 参数。"))
+            return
+        _print_json(validate_preparation_prerequisites(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "tool-status":
+        if len(sys.argv) < 3:
+            _print_json(_error("PREPARATION_TOOL_STATUS_ARGS", "读取准备工具能力需要 project_dir 参数。"))
+            return
+        _print_json(get_preparation_tool_status(sys.argv[2]))
+        return
+
+    if command == "prepare-ligand":
+        if len(sys.argv) < 3:
+            _print_json(_error("LIGAND_PREPARATION_ARGS", "准备 ligand PDBQT 需要 project_dir 参数。"))
+            return
+        if len(sys.argv) > 5:
+            _print_json(
+                _error(
+                    "LIGAND_PREPARATION_ARGS",
+                    "准备 ligand PDBQT 的参数数量无效。",
+                    suggestion="用法：prepare-ligand <project_dir> [overwrite] [options_json]。",
+                )
+            )
+            return
+        overwrite = len(sys.argv) >= 4 and sys.argv[3].strip().lower() in {"1", "true", "yes", "y"}
+        options: dict[str, Any] | None = None
+        if len(sys.argv) >= 5:
+            options, options_error = _parse_ligand_options_json(sys.argv[4])
+            if options_error:
+                _print_json(options_error)
+                return
+        _print_json(prepare_ligand_pdbqt(sys.argv[2], overwrite=overwrite, options=options))
+        return
+
+    if command == "ligand-log":
+        if len(sys.argv) < 3:
+            _print_json(_error("LIGAND_PREPARATION_LOG_ARGS", "读取 ligand preparation 日志需要 project_dir 参数。"))
+            return
+        _print_json(load_ligand_preparation_log(sys.argv[2]))
+        return
+
+    if command == "prepare-receptor":
+        if len(sys.argv) < 3:
+            _print_json(_error("RECEPTOR_PREPARATION_ARGS", "准备 receptor PDBQT 需要 project_dir 参数。"))
+            return
+        if len(sys.argv) > 5:
+            _print_json(
+                _error(
+                    "RECEPTOR_PREPARATION_ARGS",
+                    "准备 receptor PDBQT 的参数数量无效。",
+                    suggestion=(
+                        "用法：prepare-receptor <project_dir> [overwrite] [options_json]。"
+                    ),
+                )
+            )
+            return
+        overwrite = len(sys.argv) >= 4 and sys.argv[3].strip().lower() in {"1", "true", "yes", "y"}
+        options = None
+        if len(sys.argv) >= 5:
+            options, options_error = _parse_receptor_options_json(sys.argv[4])
+            if options_error:
+                _print_json(options_error)
+                return
+        _print_json(
+            prepare_receptor_pdbqt(
+                sys.argv[2],
+                overwrite=overwrite,
+                options=options,
+            )
+        )
+        return
+
+    if command == "receptor-log":
+        if len(sys.argv) < 3:
+            _print_json(_error("RECEPTOR_PREPARATION_LOG_ARGS", "读取 receptor preparation 日志需要 project_dir 参数。"))
+            return
+        _print_json(load_receptor_preparation_log(sys.argv[2]))
+        return
+
+    if command == "list-runs":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_LIST_ARGS", "列出 preparation 记录需要 project_dir 和 target 参数。"))
+            return
+        _print_json(list_preparation_runs(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "metadata":
+        if len(sys.argv) < 5:
+            _print_json(_error("PREPARATION_METADATA_ARGS", "读取 preparation metadata 需要 project_dir、target 和 prep_id 参数。"))
+            return
+        _print_json(load_preparation_metadata(sys.argv[2], sys.argv[3], sys.argv[4]))
+        return
+
+    if command == "latest":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_LATEST_ARGS", "读取 latest preparation 需要 project_dir 和 target 参数。"))
+            return
+        _print_json(get_latest_preparation(sys.argv[2], sys.argv[3]))
+        return
+
+    if command == "reset":
+        if len(sys.argv) < 4:
+            _print_json(_error("PREPARATION_RESET_ARGS", "重置准备状态需要 project_dir 和 target 参数。"))
+            return
+        _print_json(reset_preparation_status(sys.argv[2], sys.argv[3]))
+        return
+
+    _print_json(_error("PREPARATION_COMMAND_UNKNOWN", f"未知准备命令：{command}"))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

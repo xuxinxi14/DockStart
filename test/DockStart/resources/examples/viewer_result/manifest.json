@@ -1,0 +1,27 @@
+{
+  "id": "viewer_result",
+  "title": "结果查看示例",
+  "description": "打开已完成的对接结果，查看构象、分数和报告。",
+  "mode": "viewer",
+  "requiredTools": [],
+  "tags": ["无需工具链", "仅查看"],
+  "entryStep": "results",
+  "entryRunId": "run_001",
+  "buttonLabel": "复制并查看结果",
+  "targetNamePrefix": "result_demo",
+  "files": {
+    "project": "project.json",
+    "receptor": "receptor.pdbqt",
+    "ligand": "ligand.pdbqt",
+    "output": "docking_out.pdbqt",
+    "log": "vina.log",
+    "results": "results.csv",
+    "report": "report.md",
+    "box": "box.json",
+    "runMetadata": "runs/run_001/metadata.json",
+    "runOutput": "runs/run_001/out.pdbqt",
+    "runLog": "runs/run_001/log.txt",
+    "runScores": "runs/run_001/scores.csv"
+  },
+  "note": "此示例用于查看 DockStart 的结果展示，不重新运行 Vina。"
+}

@@ -218,6 +218,19 @@
   margin-top: 4px;
 }
 
+.structure-mini-preview-gate .secondary-button {
+  border-color: var(--ds-viewer-brand-border);
+  background: var(--ds-viewer-bg-soft);
+  color: var(--ds-viewer-text) !important;
+  font-weight: 720;
+}
+
+.structure-mini-preview-gate .secondary-button:hover:not(:disabled) {
+  border-color: var(--ds-viewer-brand);
+  background: var(--ds-viewer-brand-hover);
+  color: var(--ds-viewer-text);
+}
+
 .preparation-target-actions {
   display: flex;
   flex-direction: column;
@@ -230,6 +243,115 @@
 .preparation-target-actions .primary-button,
 .preparation-target-actions .secondary-button {
   width: 100%;
+}
+
+.preparation-details-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--ds-modal-backdrop);
+}
+
+.preparation-details-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(580px, calc(100vw - 48px));
+  max-height: min(620px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--ds-modal-border);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-modal-surface);
+  box-shadow: var(--ds-modal-shadow);
+  color: var(--ds-text-primary);
+}
+
+.preparation-details-dialog > header,
+.preparation-details-dialog > footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 12px 8px 16px;
+}
+
+.preparation-details-dialog > header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--ds-modal-divider);
+  background: var(--ds-modal-surface-raised);
+}
+
+.preparation-details-dialog > header h2 {
+  margin: 0;
+  color: var(--ds-text-primary);
+  font-size: 14px;
+  font-weight: 720;
+  line-height: 1.3;
+}
+
+.preparation-details-close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 7px;
+  background: var(--ds-surface-panel);
+  color: var(--ds-text-secondary);
+  cursor: pointer;
+}
+
+.preparation-details-close:hover,
+.preparation-details-close:focus-visible {
+  border-color: var(--ds-brand-border);
+  background: var(--ds-surface-hover);
+  color: var(--ds-text-strong);
+}
+
+.preparation-details-body {
+  overflow: auto;
+  padding: 8px 16px;
+  background: var(--ds-modal-surface);
+}
+
+.preparation-details-body .meta-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.preparation-details-body .meta-list > div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 14px;
+  border-bottom: 1px solid var(--ds-modal-divider);
+  padding: 12px 0;
+}
+
+.preparation-details-body .meta-list > div:last-child {
+  border-bottom: 0;
+}
+
+.preparation-details-body dt {
+  color: var(--ds-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preparation-details-body dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ds-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.preparation-details-dialog > footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--ds-modal-divider);
+  background: var(--ds-modal-footer);
 }
 
 .preparation-file-check {
@@ -2129,30 +2251,30 @@
   gap: 6px;
   margin: 0 auto 14px;
   width: min(100% - 36px, 1160px);
-  border-bottom: 1px solid var(--ds-on-dark-border-default);
+  border-bottom: 1px solid var(--ds-border-default);
   padding: 0 0 10px;
 }
 
 .run-workspace-mode button {
   min-height: 36px;
-  border: 1px solid var(--ds-on-dark-border-default);
+  border: 1px solid var(--ds-border-default);
   border-radius: 6px;
-  background: transparent;
-  color: var(--ds-text-on-dark-secondary);
+  background: var(--ds-surface-panel);
+  color: var(--ds-text-secondary);
   padding: 0 14px;
   font: inherit;
   font-weight: 700;
 }
 
 .run-workspace-mode button.active {
-  border-color: var(--ds-brand-border-on-dark);
-  background: var(--ds-brand-hover-on-dark);
-  color: var(--ds-text-on-dark);
+  border-color: var(--ds-brand-border);
+  background: var(--ds-brand-soft);
+  color: var(--ds-text-strong);
 }
 
 .run-workspace-mode > span {
   margin-left: 8px;
-  color: var(--ds-text-on-dark-muted);
+  color: var(--ds-text-muted);
   font-size: 11px;
 }
 

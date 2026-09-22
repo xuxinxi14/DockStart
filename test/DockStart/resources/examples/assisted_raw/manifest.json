@@ -1,0 +1,22 @@
+{
+  "id": "assisted_raw",
+  "title": "从原始结构开始示例",
+  "description": "从 PDB / SDF 准备 Vina 输入文件，再继续对接。",
+  "mode": "assisted",
+  "requiredTools": ["python", "rdkit", "meeko"],
+  "fallback": "prepared",
+  "tags": ["需要工具链", "可使用参考文件"],
+  "entryStep": "prepare",
+  "buttonLabel": "复制并进入结构准备",
+  "targetNamePrefix": "assisted_demo",
+  "files": {
+    "project": "project.json",
+    "rawReceptor": "raw/receptor.pdb",
+    "rawLigand": "raw/ligand.sdf",
+    "preparedReceptor": "prepared/receptor.pdbqt",
+    "preparedLigand": "prepared/ligand.pdbqt",
+    "box": "box.json",
+    "readme": "README.md"
+  },
+  "note": "如果 RDKit / Meeko 不可用，可以使用已准备好的参考 PDBQT 文件继续体验。"
+}

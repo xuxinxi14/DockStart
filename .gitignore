@@ -76,6 +76,12 @@ resources/python/Lib/site-packages/
 # Runtime docking outputs
 runs/
 
+# The bundled read-only Viewer demo is release input, not a user run output.
+!resources/examples/viewer_result/runs/
+!resources/examples/viewer_result/runs/run_001/
+!resources/examples/viewer_result/runs/run_001/**
+!resources/examples/viewer_result/vina.log
+
 # Keep demo project skeleton directories tracked.
 !examples/demo_project/runs/
 !examples/demo_project/runs/.gitkeep

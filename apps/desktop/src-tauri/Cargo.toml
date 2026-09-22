@@ -1,6 +1,6 @@
 [package]
 name = "dockstart-desktop"
-version = "0.14.3"
+version = "1.0.2"
 description = "DockStart desktop shell"
 authors = ["XinXi Xu"]
 license = "Apache-2.0"

@@ -47,6 +47,16 @@
   --ds-tooltip-border: rgba(190, 218, 239, 0.42);
   --ds-tooltip-text: #FFFFFF;
 
+  /* Modal surfaces are semantic theme tokens so dialogs never inherit the
+     scientific viewer palette or rely on page-specific color literals. */
+  --ds-modal-backdrop: rgba(1, 14, 27, 0.72);
+  --ds-modal-surface: var(--ds-surface-panel);
+  --ds-modal-surface-raised: var(--ds-surface-raised);
+  --ds-modal-footer: var(--ds-surface-muted);
+  --ds-modal-border: var(--ds-border-strong);
+  --ds-modal-divider: var(--ds-border-subtle);
+  --ds-modal-shadow: 0 14px 38px rgba(0, 8, 18, 0.46);
+
   /* Borders and dividers. */
   --ds-border-strong: #6C8EA7;
   --ds-border-default: #4A718D;
@@ -283,6 +293,14 @@
   --ds-rail-text-primary: #17384F;
   --ds-rail-text-secondary: #355C74;
   --ds-rail-text-muted: #456579;
+
+  --ds-modal-backdrop: rgba(7, 30, 47, 0.28);
+  --ds-modal-surface: var(--ds-surface-panel);
+  --ds-modal-surface-raised: var(--ds-surface-raised);
+  --ds-modal-footer: var(--ds-surface-muted);
+  --ds-modal-border: var(--ds-border-strong);
+  --ds-modal-divider: var(--ds-border-subtle);
+  --ds-modal-shadow: 0 14px 38px rgba(34, 72, 96, 0.32);
 
   --ds-brand: #14638F;
   --ds-brand-hover: #0E527A;

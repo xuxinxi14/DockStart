@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "toolchain_name": "DockStart Assisted",
+  "release_profile": "assisted_stable",
+  "status": "ready",
+  "maturity": "local_candidate",
+  "description": "DockStart Assisted candidate includes Vina and a separate, replaceable CPython 3.11 runtime with pinned RDKit/Meeko dependencies for offline PDBQT preparation.",
+  "prepared_at": "2026-09-22T11:36:08+00:00",
+  "network_used_during_stage": false,
+  "includes_bundled_rdkit": true,
+  "includes_bundled_meeko": true,
+  "integrity_policy": "provenance_and_warning_only; user replacement must remain possible",
+  "bundled_vina": {
+    "name": "AutoDock Vina",
+    "version": "1.2.7",
+    "binary_path": "resources/vina/vina.exe",
+    "license": "Apache-2.0",
+    "bundled": true,
+    "sha256": "e0c4b2715e0c1a74f6e92d0f3be0328ac97542eafbc111e6b1efad897a73cce5"
+  },
+  "bundled_python": {
+    "name": "CPython",
+    "version": "Python 3.11.15",
+    "binary_path": "resources/python/python.exe",
+    "role": "backend_and_preparation_runtime",
+    "license": "Python Software Foundation License",
+    "bundled": true,
+    "includes_site_packages": true,
+    "sha256": "28d2965d061656abbe3a46100bd3342d1152185289445d489782a21a8cfe9b57",
+    "base_runtime_tree_sha256": "8ba6bdba81eeeab40a4714a654a653e84a5e1c21b33357d6d9c969225f77d812",
+    "base_runtime_file_count": 823,
+    "base_runtime_size_bytes": 36796475,
+    "runtime_tree_sha256": "96f316bce26a9038aa5286cc856020999c36caa53483916950cb3f98ba35059e",
+    "runtime_file_count": 4512,
+    "runtime_size_bytes": 284624652
+  },
+  "preparation": {
+    "resolution_priority": [
+      "configured",
+      "bundled",
+      "current_environment"
+    ],
+    "meeko_invocation": [
+      "python",
+      "-I",
+      "-B",
+      "-m",
+      "meeko.cli.<entrypoint>"
+    ],
+    "modified_upstream_packages": false
+  },
+  "packages": {
+    "meeko": {
+      "version": "0.7.1",
+      "license": "LGPL-2.1 (wheel classifier: LGPLv2+)",
+      "wheel_filename": "meeko-0.7.1-py3-none-any.whl",
+      "wheel_sha256": "e50f5fdb9f94f44e6ee20616936cf033be9c93c7825bd69493a9cd9a3c5dc28d",
+      "source_url": "https://files.pythonhosted.org/packages/cb/c8/19f80438c2f285a109a42fde50a41ec7c06d7dfd257954da8d9c4e17677d/meeko-0.7.1-py3-none-any.whl",
+      "role": "PDBQT preparation",
+      "replaceable": true,
+      "installed_tree_sha256": "22ee4599d95076bce10d38c5a294d28905950b0633bcfb8f2198e113fe1f3f10",
+      "installed_file_count": 56,
+      "metadata_sha256": "52086a41e429e496d9ee15943cf7d0c30dc1c101885bf090bc14f43c85a052b5",
+      "record_sha256": "8c28cb8ef1436c4a141117de46d371cfb9595a6eee8be27dde8804c8928d17b6"
+    },
+    "rdkit": {
+      "version": "2026.3.3",
+      "license": "BSD-3-Clause",
+      "wheel_filename": "rdkit-2026.3.3-cp311-cp311-win_amd64.whl",
+      "wheel_sha256": "41ac83ad336b8aaf47b5bf5f2c36796b45957e97acecc1f9d5dcbc8235c6bfbe",
+      "source_url": "https://files.pythonhosted.org/packages/c3/1d/b04460859c12e1a8eac261c63ea39e958d2cfa84cc06cc8a295dde7150f5/rdkit-2026.3.3-cp311-cp311-win_amd64.whl",
+      "role": "ligand structure parsing",
+      "replaceable": true,
+      "installed_tree_sha256": "881a0a840db8993fbd5044844835fec7631a5f9baf7c59eee9e14940c2d033e3",
+      "installed_file_count": 946,
+      "metadata_sha256": "555b7d8f898320b52e202dbf8f3fc4c3f9a8a70d09024cacd17bae3aade15cb9",
+      "record_sha256": "2dec4f4ce3beb90bd235093460237e41fe17339c55279858aba8afc0e93ff350"
+    },
+    "numpy": {
+      "version": "1.26.4",
+      "license": "BSD-3-Clause and bundled runtime notices",
+      "wheel_filename": "numpy-1.26.4-cp311-cp311-win_amd64.whl",
+      "wheel_sha256": "cd25bcecc4974d09257ffcd1f098ee778f7834c3ad767fe5db785be9a4aa9cb2",
+      "source_url": "https://files.pythonhosted.org/packages/3f/6b/5610004206cf7f8e7ad91c5a85a8c71b2f2f8051a0c0c4d5916b76d6cbb2/numpy-1.26.4-cp311-cp311-win_amd64.whl",
+      "role": "scientific runtime dependency",
+      "replaceable": true,
+      "installed_tree_sha256": "f06498f6ce800c28e23fc97ff5da786d8ced88933c5331f06ce80c3220334104",
+      "installed_file_count": 933,
+      "metadata_sha256": "5a27a0e272b1f6e597acbbf58e8da39ae350b2318db8df4cf49d72518e62eebc",
+      "record_sha256": "45a9be9a6f0659b619b218b6ada930483c60c0f4b26da8a212a0a2c4691c26e0"
+    },
+    "scipy": {
+      "version": "1.17.1",
+      "license": "BSD-3-Clause and bundled runtime notices",
+      "wheel_filename": "scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "wheel_sha256": "d30e57c72013c2a4fe441c2fcb8e77b14e152ad48b5464858e07e2ad9fbfceff",
+      "source_url": "https://files.pythonhosted.org/packages/95/da/0d1df507cf574b3f224ccc3d45244c9a1d732c81dcb26b1e8a766ae271a8/scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "role": "Meeko spatial dependency",
+      "replaceable": true,
+      "installed_tree_sha256": "0781b672ca80faa7ada59c567183fc460d26c3d0953023de33675971c1ecc7cb",
+      "installed_file_count": 1532,
+      "metadata_sha256": "3a61ac02d145c9ca53f53d3f6f58d09017727a317731d0af02909730d4403e32",
+      "record_sha256": "93f2261f3550d66caa25aa4e670d2b2aa9980209f7d47b8bcb386f306aaaab25"
+    },
+    "gemmi": {
+      "version": "0.7.5",
+      "license": "MPL-2.0",
+      "wheel_filename": "gemmi-0.7.5-cp311-cp311-win_amd64.whl",
+      "wheel_sha256": "06cb44f4e3657b7e3a2b23cd40b67a8e7b5d00bfb92ea94cb4060bd47ba50df6",
+      "source_url": "https://files.pythonhosted.org/packages/b9/5e/62402bf021183bc6122cb01b8f1be17cac67545713fb30f888f59357a782/gemmi-0.7.5-cp311-cp311-win_amd64.whl",
+      "role": "Meeko receptor chemistry dependency",
+      "replaceable": true,
+      "installed_tree_sha256": "50a9fd37330855aa7a37917448db58f26209f8c6b4443b4a6fb9c97e40875b78",
+      "installed_file_count": 36,
+      "metadata_sha256": "b82dba712f27ff666e9b49a6a5b37d5ce7b52a2886de8e3f944535972bc09020",
+      "record_sha256": "25860973d179baa85f7f9be82d3a5363aec7165426698abf63071798d6671ebc"
+    },
+    "pillow": {
+      "version": "12.2.0",
+      "license": "MIT-CMU",
+      "wheel_filename": "pillow-12.2.0-cp311-cp311-win_amd64.whl",
+      "wheel_sha256": "6e6b2a0c538fc200b38ff9eb6628228b77908c319a005815f2dde585a0664b60",
+      "source_url": "https://files.pythonhosted.org/packages/69/42/836b6f3cd7f3e5fa10a1f1a5420447c17966044c8fbf589cc0452d5502db/pillow-12.2.0-cp311-cp311-win_amd64.whl",
+      "role": "RDKit wheel dependency",
+      "replaceable": true,
+      "installed_tree_sha256": "600d1b5726b352a9136baaadd9899cbda1cf7de93987d6d2601174cfb17bfc47",
+      "installed_file_count": 120,
+      "metadata_sha256": "500a4dcf2154f5291661ea4a9025898081d536c3026d506c648c31b68a7a66cc",
+      "record_sha256": "58521571ce23357f5ff3faca645846ced13b45e1131bba49b9e4dd2ba9e75def"
+    },
+    "tqdm": {
+      "version": "4.67.1",
+      "license": "MPL-2.0 AND MIT",
+      "wheel_filename": "tqdm-4.67.1-py3-none-any.whl",
+      "wheel_sha256": "26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2",
+      "source_url": "https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl",
+      "role": "progress utility",
+      "replaceable": true,
+      "installed_tree_sha256": "5efe5da20e42ea5220d8128991a5aa15b949edcf59479b952b71dcbaf35b713b",
+      "installed_file_count": 40,
+      "metadata_sha256": "688a1632df525a198fec52dcfefb1246d31eacee9c035aacac2d7eaf8d8ff669",
+      "record_sha256": "684170b150694d6a00ac6b8fed02ac10bb215fe97ab957b2bea4037e42550aa8"
+    },
+    "tomli": {
+      "version": "2.2.1",
+      "license": "MIT",
+      "wheel_filename": "tomli-2.2.1-py3-none-any.whl",
+      "wheel_sha256": "cb55c73c5f4408779d0cf3eef9f762b9c9f147a77de7b258bef0a5628adc85cc",
+      "source_url": "https://files.pythonhosted.org/packages/6e/c2/61d3e0f47e2b74ef40a68b9e6ad5984f6241a942f7cd3bbfbdbd03861ea9/tomli-2.2.1-py3-none-any.whl",
+      "role": "TOML compatibility fallback",
+      "replaceable": true,
+      "installed_tree_sha256": "e12c583e6f468ae8df06111ebf35104c19ef7e0fd09d446d89a170f581f5c673",
+      "installed_file_count": 9,
+      "metadata_sha256": "fd2375d1117fc88f3719f758e61cb4621318507ceb3985e9afa4dee8fa3cb675",
+      "record_sha256": "ba99b0d7fa9c5d2bc1d9480f3be597d4f3e533d9338df876f3e18d4d0badc8e3"
+    },
+    "colorama": {
+      "version": "0.4.6",
+      "license": "BSD-3-Clause",
+      "wheel_filename": "colorama-0.4.6-py2.py3-none-any.whl",
+      "wheel_sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "source_url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "role": "tqdm Windows dependency",
+      "replaceable": true,
+      "installed_tree_sha256": "b26895ad119e4f72e2002d122e0fe9b0b8e69254c892bc2de74bc46e38258d86",
+      "installed_file_count": 17,
+      "metadata_sha256": "7baed29eb50c3b29bdb33ff84e3177bf1bc05784f7685ecdcaa4471c7dd810cc",
+      "record_sha256": "5156db21eb0064401fda26ed846fc594cb4de0dd25d220bdeb28cb7532539547"
+    }
+  },
+  "source_archives": {
+    "meeko": {
+      "version": "0.7.1",
+      "filename": "meeko-0.7.1.tar.gz",
+      "sha256": "e3f4ca3a66db17a95d75905fa7a1bfb73971d2f16ec52eb68e5226bafe120b2d",
+      "source_url": "https://files.pythonhosted.org/packages/46/9d/342bc5d09ba070496738e6b7dd37e2918ea8264df3a99bb1ed8a5a464dda/meeko-0.7.1.tar.gz",
+      "reason": "LGPL complete corresponding source for the bundled version"
+    },
+    "gemmi": {
+      "version": "0.7.5",
+      "filename": "gemmi-0.7.5.tar.gz",
+      "sha256": "3328f26c8a8a0ef6a7fc8bb28e167818e324e4239dd4197d6b6066ae2b6315fe",
+      "source_url": "https://files.pythonhosted.org/packages/60/38/a79d9e672b837ceefa7da1921c33b10479362603c4c6370bc004d69558d6/gemmi-0.7.5.tar.gz",
+      "reason": "MPL-2.0 source availability for the bundled version"
+    },
+    "tqdm": {
+      "version": "4.67.1",
+      "filename": "tqdm-4.67.1.tar.gz",
+      "sha256": "f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2",
+      "source_url": "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz",
+      "reason": "Source and dual-license provenance for the bundled version"
+    }
+  },
+  "licenses": {
+    "dockstart": "resources/licenses/DockStart-Apache-2.0.txt",
+    "serde": "resources/licenses/Serde_LICENSE-MIT.txt",
+    "third_party_notices": "resources/licenses/THIRD_PARTY_NOTICES.md",
+    "package_licenses": "resources/licenses/python-packages/",
+    "source_manifest": "resources/sources/SOURCE_MANIFEST.json",
+    "source_manifest_sha256": "e2ab26a22f1396b71b89050b88b803e992c97db3fa2b47a14f251b7fb5b1b3d1",
+    "dependency_bom": "resources/licenses/dependencies/THIRD_PARTY_DEPENDENCIES.json"
+  }
+}

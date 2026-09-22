@@ -1,0 +1,20 @@
+{
+  "id": "basic_pdbqt",
+  "title": "基础对接示例",
+  "description": "已有 receptor.pdbqt 和 ligand.pdbqt，演示最小对接流程。",
+  "mode": "basic",
+  "requiredTools": ["vina"],
+  "tags": ["推荐", "只需要 Vina"],
+  "entryStep": "prepare",
+  "buttonLabel": "复制并进入准备结构",
+  "targetNamePrefix": "basic_demo",
+  "files": {
+    "project": "project.json",
+    "receptor": "receptor.pdbqt",
+    "ligand": "ligand.pdbqt",
+    "box": "box.json",
+    "config": "config.txt",
+    "readme": "README.md"
+  },
+  "note": "示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。"
+}

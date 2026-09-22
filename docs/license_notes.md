@@ -12,9 +12,9 @@
 | Tauri | 桌面应用壳 | Apache-2.0 / MIT | npm CLI + Rust crate | 是 | 需要本机具备 Rust/Tauri 构建环境 |
 | tauri-plugin-dialog | 原生文件/目录选择对话框（路径输入的“选择…”按钮） | Apache-2.0 / MIT（Tauri 官方插件） | Rust crate + npm 包，通过 capabilities 授权 `dialog:default` | 是 | 否 |
 | serde / serde_json | 后台任务事件的结构化序列化 | MIT OR Apache-2.0 | Rust crate，编译进桌面端 | 是 | 否 |
-| Python | 后端运行环境 | Python Software Foundation License | v0.14.3 的 Basic/Assisted 候选 profile 均从本地固定资源装配独立 runtime；源码仓库不提交二进制 | 是 | 否 |
+| Python | 后端运行环境 | Python Software Foundation License | v1.0.2 的 Basic/Assisted 候选 profile 均从本地固定资源装配独立 runtime；源码仓库不提交二进制 | 是 | 否 |
 
-## v0.14.3 Basic profile 候选分发边界
+## v1.0.2 Basic profile 候选分发边界
 
 | 名称 | 用途 | 许可证 | 集成方式 | 是否随包 | 是否需要用户自行安装 |
 | --- | --- | --- | --- | --- | --- |
@@ -23,12 +23,12 @@
 | RDKit | Assisted Mode 的配体读取与准备 | BSD-3-Clause | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 | Meeko | Assisted Mode 的 PDBQT 准备 | LGPL-2.1-or-later | 用户配置的独立 Python 环境 | 否 | 是，仅 Assisted Mode |
 
-v0.14.3 Basic profile 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
+v1.0.2 Basic profile 的“开箱即用”仅指已有 receptor/ligand PDBQT 的 Basic Mode。该 profile 不包含
 `Lib/site-packages`、Meeko/RDKit 命令行工具或 conda 环境。
 
-## v0.14.3 Assisted profile 候选分发边界
+## v1.0.2 Assisted profile 候选分发边界
 
-Assisted 与 Basic 是两个独立发布 profile，不是成熟度标签。v0.14.3 仍是非最终本地候选；Assisted
+Assisted 与 Basic 是两个独立发布 profile，不是成熟度标签。v1.0.2 仍是非最终本地候选；Assisted
 候选包额外包含普通目录形式的
 CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop.exe`：
 
@@ -69,7 +69,7 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 | AutoGrid4 4.2.6+ | 生成 AutoDock4 affinity maps；AD4Zn beta 要求 4.2.7 或更高版本 | GNU GPL | 外部命令行工具；仅从用户配置路径或 PATH 检测，通过 adapter 参数数组调用 | 否 | 是，仅 AutoDock4 maps / AD4Zn 协议 |
 | `AD4Zn.dat` | AD4Zn 专用 AutoGrid 非键参数 | GPL-2.0-or-later（文件头声明） | 用户从 AutoDock Vina v1.2.7 上游参考自行取得并在项目中选择；DockStart 复制到用户项目，记录本机来源路径、SHA256、许可证 ID、支持配置和上游参考 | 否 | 是，仅 AD4Zn beta |
 
-### v0.14.3 AutoGrid4 结论
+### v1.0.2 AutoGrid4 结论
 
 - 上游 AutoDock4 下载页将 AutoDock4/AutoGrid4 按 GNU GPL 提供；
 - DockStart 不复制、修改或重新分发 AutoGrid4 二进制；
@@ -85,7 +85,7 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 - DockStart 不在 Git、Basic 或 Assisted 资源中内置或重新分发 `AD4Zn.dat`，也不会静默下载。用户应从固定的 AutoDock Vina v1.2.7 根数据路径取得：<https://github.com/ccsb-scripps/AutoDock-Vina/blob/v1.2.7/data/AD4Zn.dat>；
 - 用户明确选择文件后，DockStart 会为可复现性把它复制到用户项目、maps 和 run 快照，并记录本机来源路径、文件 SHA256、GPL-2.0-or-later、受支持参数配置和固定上游参考；分享含该副本的项目时，分享者需要自行履行 GPL 再分发义务。这不改变 DockStart 自有 Apache-2.0 代码的许可证；
 - 若未来提供应用内下载、离线组件包或随包分发，必须先单独完成 GPL 源码提供、notice、修改说明和再分发方案审查，不能沿用当前“用户提供”结论；
-- v0.14.3 Basic/Assisted 候选包包含 AD4Zn beta 的 DockStart 源码入口，但不内置或重新分发 AutoGrid4、`AD4Zn.dat`。本轮仍未进入正式 Release，不能把入口存在表述为参数文件已获授权随包或科学能力已升为 Stable。
+- v1.0.2 Basic/Assisted 候选包包含 AD4Zn beta 的 DockStart 源码入口，但不内置或重新分发 AutoGrid4、`AD4Zn.dat`。本轮仍未进入正式 Release，不能把入口存在表述为参数文件已获授权随包或科学能力已升为 Stable。
 
 ### 当前源码多配体共同对接的依赖边界
 
@@ -93,7 +93,7 @@ CPython 3.11 和以下固定 wheel；它们不会被冻结进 `dockstart-desktop
 - 最低运行门槛为 AutoDock Vina 1.2.0；Basic/Assisted 已有的 AutoDock Vina 1.2.7 仍按 Apache-2.0 分发，联合对接不会改变其许可证或分发方式；
 - 命令使用一个 `--ligand` 后跟两个用户已准备 PDBQT 路径，不复制第三方算法源码，也不修改 AutoDock Vina 的评分函数；
 - v0.14.1 的 5X72 外部验收契约记录精确上游版本、路径、大小、SHA256、用途和 Apache-2.0 来源，但 receptor/P59/P69 输入仍由调用者提供，不提交到仓库或安装包；
-- v0.14.3 非最终 Basic/Assisted 候选包包含该实验入口，但不包含 5X72 receptor/P59/P69、AutoGrid4 或真实验收输出，也未进入正式 Release。
+- v1.0.2 非最终 Basic/Assisted 候选包包含该实验入口，但不包含 5X72 receptor/P59/P69、AutoGrid4 或真实验收输出，也未进入正式 Release。
 
 ### 科学回归夹具
 
@@ -135,7 +135,7 @@ V0.2.3 已完成 bundled Python runtime 的路径解析、manifest 完整性检�
 
 - `resources/python/` 当前只提交 `README.md`；
 - `resources/python/python.exe`、`Lib/`、`DLLs/`、`Scripts/`、`site-packages/` 等真实 runtime 文件被 `.gitignore` 忽略；
-- v0.14.3 Basic 候选构建使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
+- v1.0.2 Basic 候选构建使用 `scripts/prepare_basic_release_resources.py` 生成全新的 `.release/basic/` 白名单资源树；
 - Basic stage 排除 `Lib/site-packages`、`Scripts`、`__pycache__`、`.pyc` 与 `.pyo`；
 - `scripts/prepare_bundled_python.py` 仍只用于准备本地构建输入，不直接定义稳定安装包内容；
 - 该脚本不联网、不下载 Python、不安装 Python 包、不安装 RDKit、不安装 Meeko；

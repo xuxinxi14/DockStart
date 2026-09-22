@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.0.2
+
+- Forced high-contrast white text for the on-demand 3D preview action in the dark molecular viewer.
+- Restyled preparation details as a compact desktop-style dialog and removed the backdrop blur.
+- Replaced the expanded flexible-residue explanation with an accessible hover/focus help button.
+- Added beginner guidance to the scoring-protocol panel, including when the panel can be skipped.
+- Synchronized all authoritative application version fields to `1.0.2` for refreshed Basic and Assisted GUI installers.
+
+## v1.0.1
+
+- Reworked the toolchain page into a true two-column grid with aligned card rows and consistent metadata spacing.
+- Fixed light-theme contrast for the on-demand 3D preview action and the docking workspace mode controls.
+- Replaced the expanding preparation details section with a theme-tokenized modal dialog.
+- Synchronized all authoritative application version fields to `1.0.1` for refreshed Basic and Assisted GUI installers.
+
+## v1.0.0
+
+- Rebased the local Windows GUI candidate on Git commit `01a0bdb`, including the beginner workflow and expanded appearance/settings updates.
+- Synchronized the seven authoritative application version fields to `1.0.0` for a new Basic/Assisted candidate build.
+- Restored the tracked `viewer_result` run fixture and ignore exceptions so a clean clone can create and open the bundled finished-run demo.
+- Refreshed the locked Browserslist metadata toolchain to patched transitive versions after the release audit reported current high/moderate advisories; no direct runtime dependency was added.
+- Kept the AutoDock Vina algorithms, scientific protocol semantics, runtime dependency set, license strategy, and user project schema unchanged.
+- This remains an unsigned local candidate until its recorded build gates and separate release process are completed; no public GitHub Release is implied.
+
 ## v0.14.3
 
 - Hardened PDBQT and raw-structure publication with no-follow project paths, hard-link rejection, bounded downloads, atomic replacement, and rollback when `project.json` revision commits fail.
