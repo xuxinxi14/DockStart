@@ -53,26 +53,24 @@ textarea {
   min-width: 15px;
   min-height: 15px;
   padding: 0;
-  border: 1px solid var(--ds-border-default);
+  border: 0;
   border-radius: 999px;
-  background: var(--ds-surface-raised);
+  background: transparent;
   color: var(--ds-text-muted);
   font-weight: 500;
   line-height: 1;
   text-transform: none;
   cursor: help;
-  transition: border-color 120ms ease, color 120ms ease;
+  transition: color 120ms ease;
 }
 
 .ds-field-hint:hover {
-  border-color: var(--ds-brand);
   color: var(--ds-brand);
 }
 
 .ds-field-hint:focus-visible {
   outline: 2px solid var(--ds-focus-outline);
   outline-offset: 1px;
-  border-color: var(--ds-brand);
   color: var(--ds-brand);
 }
 
@@ -3190,11 +3188,60 @@ pre,
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  list-style: none;
   cursor: pointer;
   color: var(--ds-accent);
   font-size: var(--ds-text-sm);
   font-weight: 700;
   text-align: center;
+}
+
+.advanced-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-details-caret {
+  flex: 0 0 auto;
+  transition: transform var(--ds-motion-fast) var(--ds-ease-standard);
+}
+
+.advanced-details[open] > summary .advanced-details-caret {
+  transform: rotate(90deg);
+}
+
+.advanced-details.diagnostic-details {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-surface-panel);
+  padding: 0;
+  box-shadow: none;
+}
+
+.advanced-details.diagnostic-details > summary {
+  justify-content: flex-start;
+  min-height: 40px;
+  padding: 9px 12px;
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-primary);
+  font-size: var(--ds-text-sm);
+  text-align: left;
+}
+
+.advanced-details.diagnostic-details > .advanced-details-content {
+  margin: 0;
+  border-top: 1px solid var(--ds-border-subtle);
+  background: var(--ds-surface-input);
+  padding: 10px 12px;
+}
+
+.advanced-details.diagnostic-details pre {
+  margin: 0;
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  padding: 10px 12px;
 }
 
 .advanced-details-content {

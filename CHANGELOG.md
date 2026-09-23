@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.3
+
+- Disabled incidental browser-style text selection across the desktop shell while preserving selection in inputs, logs, and code blocks.
+- Reworked diagnostics into compact theme-aware disclosure panels and aligned the run action bar with the validation panel above it.
+- Simplified help affordances to one correctly aligned question-mark circle.
+- Added an interactive top-pose gallery to the result analysis page using the actual receptor and ranked docking pose files.
+- Synchronized all authoritative application version fields to `1.0.3` for refreshed Basic and Assisted GUI installers.
+
 ## v1.0.2
 
 - Forced high-contrast white text for the on-demand 3D preview action in the dark molecular viewer.

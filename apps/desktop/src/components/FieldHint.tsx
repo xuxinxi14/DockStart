@@ -29,7 +29,7 @@ export default function FieldHint({
   return (
     <Tooltip className={`ds-field-hint-tooltip ${className}`.trim()} label={label} placement={placement}>
       <button aria-label={accessibleLabel} className="ds-field-hint" type="button">
-        <Question aria-hidden="true" size={10} weight="bold" />
+        <Question aria-hidden="true" size={15} weight="regular" />
       </button>
     </Tooltip>
   );

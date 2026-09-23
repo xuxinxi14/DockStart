@@ -36,6 +36,7 @@ type PoseStructurePreviewProps = {
   focusRequest?: { mode: number; token: number } | null;
   refreshKey?: number;
   className?: string;
+  compact?: boolean;
 };
 
 type ModelRecord = {
@@ -81,6 +82,7 @@ export default function PoseStructurePreview({
   focusRequest = null,
   refreshKey = 0,
   className = "",
+  compact = false,
 }: PoseStructurePreviewProps) {
   const isLocalPosePair = localPoseView !== undefined;
   const isScreeningPose = Boolean(screeningItemId);
@@ -116,7 +118,7 @@ export default function PoseStructurePreview({
   const [isSpinning, setIsSpinning] = useState(false);
   const [showReceptor, setShowReceptor] = useState(true);
   const [showPose, setShowPose] = useState(true);
-  const [showAxes, setShowAxes] = useState(true);
+  const [showAxes, setShowAxes] = useState(!compact);
 
   const showInputPose = localPoseView === "input" || localPoseView === "overlay";
   const showOptimizedPose = localPoseView === "optimized" || localPoseView === "overlay";
@@ -247,12 +249,15 @@ export default function PoseStructurePreview({
 
     if (previousView) {
       (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
+    } else if (compact && poseModelRef.current) {
+      viewer.zoomTo({ model: poseModelRef.current.model } as never);
     } else {
       viewer.zoomTo();
     }
     viewer.render();
   }, [
     ensureViewer,
+    compact,
     isLocalPosePair,
     localPair,
     mode,
@@ -521,7 +526,7 @@ export default function PoseStructurePreview({
           || localPair?.flex_receptor_optimized?.ok
         )
       : Boolean(receptor?.ok || pose?.ok);
-    const shouldFit = !hasFitRef.current && sceneReady;
+    const shouldFit = !hasFitRef.current && (compact ? Boolean(pose?.ok) : sceneReady);
     void renderScene(shouldFit)
       .then(() => {
         if (shouldFit) hasFitRef.current = true;
@@ -530,7 +535,7 @@ export default function PoseStructurePreview({
         setMessage(error instanceof Error ? error.message : "3D 场景渲染失败");
         setMessageTone("error");
       });
-  }, [isLocalPosePair, localPair, pairLoadDone, pose, receptor, renderScene]);
+  }, [compact, isLocalPosePair, localPair, pairLoadDone, pose, receptor, renderScene]);
 
   useEffect(() => {
     if (!focusRequest || focusRequest.mode !== mode) return;
@@ -627,11 +632,11 @@ export default function PoseStructurePreview({
 
   return (
     <div
-      className={`run-preview pose-structure-preview ${className}`.trim()}
+      className={`run-preview pose-structure-preview ${compact ? "is-compact" : ""} ${className}`.trim()}
       aria-label="构象 3D 预览"
       aria-busy={isBusy}
     >
-      <div className="run-preview-toolbar" aria-label="3D 视图工具">
+      {!compact ? <div className="run-preview-toolbar" aria-label="3D 视图工具">
         <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大">
           <MagnifyingGlassPlus size={18} />
         </button>
@@ -654,7 +659,7 @@ export default function PoseStructurePreview({
         >
           <Crosshair size={18} />
         </button>
-      </div>
+      </div> : null}
       <div
         aria-label={canvasLabel}
         className="run-preview-canvas"
@@ -663,7 +668,7 @@ export default function PoseStructurePreview({
         role="img"
         tabIndex={0}
       />
-      <div className="run-preview-legend">
+      {!compact ? <div className="run-preview-legend">
         <button
           type="button"
           className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
@@ -715,7 +720,11 @@ export default function PoseStructurePreview({
         >
           {message}
         </strong>
-      </div>
+      </div> : isBusy || messageTone === "error" ? (
+        <div className={`pose-preview-compact-status ${messageTone}`} role={messageTone === "error" ? "alert" : "status"}>
+          {message}
+        </div>
+      ) : null}
     </div>
   );
 }

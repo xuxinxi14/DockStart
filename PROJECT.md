@@ -1,4 +1,4 @@
-﻿# PROJECT.md
+# PROJECT.md
 
 # DockStart
  项目说明
@@ -7,7 +7,7 @@
 
 DockStart 是一个基于 AutoDock Vina 的第三方开源中文分子对接工作台，目标是帮助初学者完成受体/配体准备、对接箱体设置、AutoDock Vina 参数生成、任务运行、结果解析和报告导出。
 
-当前 v1.0.2 Windows 工程保留 Basic 与 Assisted 两个隔离发布 profile；版本成熟度统一为“本地候选”，不是最终版或正式 Stable Release。Basic profile 随附 AutoDock Vina 与精简后端 Python，面向已经准备好 receptor/ligand PDBQT 的用户。Assisted profile 额外随附独立、可替换的 CPython 3.11 + RDKit 2026.3.3 + Meeko 0.7.1 固定工具链，允许离线从 PDB/CIF + SDF/MOL/MOL2 尝试准备 PDBQT。项目创建与格式转换页面按受体和配体各自的真实文件格式处理输入，支持 PDBQT 与原始结构混合导入；Meeko 严格模式发现不完整残基或 alternate location 时，必须先显示并确认完整清单与所选构象，才允许受审计地重试。格式转换页会保留受体与配体的来源名称；批量配体库可逐项选择并预览全部已准备候选。柔性受体同样把 Meeko 的模板异常作为结构化确认项处理；大环配体以明确的分析、确认、准备、继续四步流程呈现。用户配置的兼容 Python 对 preparation 仍然优先；自动准备结果必须人工检查。
+当前 v1.0.3 Windows 工程保留 Basic 与 Assisted 两个隔离发布 profile；版本成熟度统一为“本地候选”，不是最终版或正式 Stable Release。Basic profile 随附 AutoDock Vina 与精简后端 Python，面向已经准备好 receptor/ligand PDBQT 的用户。Assisted profile 额外随附独立、可替换的 CPython 3.11 + RDKit 2026.3.3 + Meeko 0.7.1 固定工具链，允许离线从 PDB/CIF + SDF/MOL/MOL2 尝试准备 PDBQT。项目创建与格式转换页面按受体和配体各自的真实文件格式处理输入，支持 PDBQT 与原始结构混合导入；Meeko 严格模式发现不完整残基或 alternate location 时，必须先显示并确认完整清单与所选构象，才允许受审计地重试。格式转换页会保留受体与配体的来源名称；批量配体库可逐项选择并预览全部已准备候选。柔性受体同样把 Meeko 的模板异常作为结构化确认项处理；大环配体以明确的分析、确认、准备、继续四步流程呈现。用户配置的兼容 Python 对 preparation 仍然优先；自动准备结果必须人工检查。
 
 v0.14.1 在标准 AutoDock4 maps 协议上补齐三个独立闭环：有限柔性单配体 AD4、多个配体逐个运行的串行批量 AD4，以及恰好两个配体共同搜索的联合 AD4。柔性模式从受体刚性分量生成 maps，并在运行时同时加载冻结的柔性侧链文件；批量与联合模式只允许刚性受体，并复用、冻结和校验同一组 maps。源码提供三条独立、失败即阻断的外部验收器，分别固定 1FPU 柔性 AD4、5X72 双配体联合 AD4 和 12 项串行 AD4 队列的输入、工具、命令与输出证据；它们仍需维护者提供官方输入和 AutoGrid4 后实际执行，不能以普通单元测试替代。AD4Zn beta 与水合 AD4 Experimental 仍保持单配体专用入口，不与这三条标准 AD4 扩展混用。工具链页可检测和配置 AutoGrid4，但它因 GPL 分发边界仍只作为用户自行安装的外部工具，不进入 Basic/Assisted 安装包。
 

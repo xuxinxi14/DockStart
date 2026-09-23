@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/source-v1.0.2-155f8a">
+  <img alt="Version" src="https://img.shields.io/badge/source-v1.0.3-155f8a">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-1f6feb">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-2f7d59">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-local--first-314d67">
@@ -31,7 +31,7 @@
 
 DockStart 是一个基于 [AutoDock Vina](https://vina.scripps.edu/) 的第三方开源桌面应用。它不开发新的 docking 算法，而是把分散的命令行步骤整理成清晰、可追踪的中文工作流，帮助初学者减少格式、路径、参数和结果归档方面的错误。
 
-> 当前源码版本为 **v1.0.2 本地候选**，不是最终版，也尚未声明为正式 Stable Release。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。v1.0.2 会重新生成本地候选安装包；安装包不提交到 Git 仓库，请以候选 manifest 中的门禁状态和 SHA256 为准。只有后续明确发布到 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 的产物才属于公开 Release。
+> 当前源码版本为 **v1.0.3 本地候选**，不是最终版，也尚未声明为正式 Stable Release。AutoGrid4 仍是用户自行安装的 GPL 外部工具，不包含在 Basic 或 Assisted 安装包中。v1.0.3 会重新生成本地候选安装包；安装包不提交到 Git 仓库，请以候选 manifest 中的门禁状态和 SHA256 为准。只有后续明确发布到 [GitHub Releases](https://github.com/xuxinxi14/DockStart/releases) 的产物才属于公开 Release。
 
 > v0.14.1 在标准 AutoDock4 maps 协议中补齐有限柔性单配体、刚性串行批量和刚性双配体共同对接，并为 1FPU、5X72 与固定 12 项串行队列提供三条独立外部验收器。验收器会固定输入与工具 SHA256、命令、maps 和结果证据，但仍需维护者提供官方输入和 AutoGrid4 后实际运行，源码存在不等于门禁已经通过。批量队列复用一组冻结 maps，但每个配体独立运行和排名；共同对接则让两个配体在一次 Vina 搜索中产生联合评分，不能拆成两个成员 affinity。两条刚性多配体路径都会先验证 maps 覆盖全部配体原子类型。AD4Zn beta 与水合 AD4 Experimental 仍是隔离的单配体子协议，不能与这些标准 AD4 扩展组合。
 
@@ -49,7 +49,7 @@ DockStart 提供两个 Windows x64 发布 profile。二者使用同一个应用�
 
 | | Basic profile | Assisted profile |
 | --- | --- | --- |
-| 当前成熟度 | v1.0.2 本地候选 | v1.0.2 本地候选 |
+| 当前成熟度 | v1.0.3 本地候选 | v1.0.3 本地候选 |
 | 适合谁 | 已有受体和配体 PDBQT | 只有受体 PDB/CIF 与配体 SDF/MOL/MOL2 |
 | 内置 AutoDock Vina | 是，1.2.7 | 是，1.2.7 |
 | 内置后端 Python | 是，精简运行时 | 是，独立 CPython 3.11 运行时 |

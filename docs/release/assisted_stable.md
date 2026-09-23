@@ -1,4 +1,4 @@
-# DockStart v1.0.2 Assisted profile 发布门禁
+# DockStart v1.0.3 Assisted profile 发布门禁
 
 Assisted 候选 profile 是第二阶段能力，不修改 AutoDock Vina 算法。它只把现有
 PDB/SDF/MOL → PDBQT 最小准备流程放入可复现、离线、可替换的 Python 工具链。

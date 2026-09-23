@@ -602,7 +602,7 @@ export default function Ad4ZnProtocolPanel({
 
       {disabled && disabledReason ? <p className="ad4-disabled-reason">{disabledReason}</p> : null}
       {message ? <p className="run-inline-message" role={rawError ? "alert" : "status"}>{message}</p> : null}
-      {rawError ? <AdvancedDetails summary="查看诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+      {rawError ? <AdvancedDetails className="diagnostic-details" summary="查看诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
 
       <OperationLoadingDialog
         open={busyAction === "review" || busyAction === "prepare" || busyAction === "parameter"}

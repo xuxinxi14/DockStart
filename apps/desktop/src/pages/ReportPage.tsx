@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
@@ -15,10 +15,13 @@ import type {
   DockStartProject,
   ProjectResponse,
   RunFileStatus,
+  ScoreRow,
   VinaEvaluation,
   VinaEvaluationStage,
   VinaRunMode,
 } from "../types";
+
+const PoseStructurePreview = lazy(() => import("../components/PoseStructurePreview"));
 
 type ReportPageProps = {
   project: DockStartProject;
@@ -66,6 +69,7 @@ function parseProjectResponse(rawPayload: string): ProjectResponse {
     run_id: parsed.run_id,
     metadata: parsed.metadata,
     evaluation: parsed.evaluation,
+    scores: parsed.scores,
     evaluation_file: parsed.evaluation_file,
     report_file: parsed.report_file,
     project_report_file: parsed.project_report_file,
@@ -159,6 +163,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [evaluation, setEvaluation] = useState<VinaEvaluation | null>(null);
   const [files, setFiles] = useState<RunFileStatus[]>([]);
+  const [scores, setScores] = useState<ScoreRow[]>([]);
   const [reportFile, setReportFile] = useState("");
   const [projectReportFile, setProjectReportFile] = useState("");
   const [reportedAt, setReportedAt] = useState("");
@@ -182,6 +187,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   const projectReportStatus = useMemo(() => files.find((file) => file.key === "project_report"), [files]);
   const protocolId = metadataProtocolId(metadata);
   const isMultipleLigand = protocolId === "simultaneous_multi_ligand";
+  const isHydrated = protocolId === "hydrated_ad4_experimental";
   const isAd4Zn = protocolId === "ad4zn_beta";
   const isAd4Maps = metadataString(metadata, "scoring_protocol") === "ad4_maps" || isAd4Zn;
   const ad4ProtocolLabel = isAd4Zn ? "AutoDock4Zn beta" : "AutoDock4 maps";
@@ -243,6 +249,10 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
     || (runMode === "local_only" && !geometry ? "此次运行未记录优化前后的几何比较。" : "")
     || (geometry?.ok === false ? "优化前后的几何比较不可用。" : "");
   const stages = evaluation?.stages ?? [];
+  const topPoseScores = useMemo(
+    () => scores.filter((score) => score.pose_available !== false).slice(0, 4),
+    [scores],
+  );
 
   const applyResponse = useCallback(
     (response: ProjectResponse, fallbackMessage: string) => {
@@ -252,6 +262,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
       }
       if (response.metadata !== undefined) setMetadata(response.metadata ?? null);
       if (response.evaluation !== undefined) setEvaluation(response.evaluation);
+      if (response.scores !== undefined) setScores(response.scores);
       setFiles(response.files ?? []);
       setReportFile(response.report_file ?? metadataString(response.metadata ?? null, "report_file"));
       setProjectReportFile(response.project_report_file ?? metadataString(response.metadata ?? null, "project_report_file"));
@@ -316,8 +327,10 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
         setPreviewError("");
       }
       const observedMode = reportRunMode(response.metadata ?? null, observedProject);
+      const observedProtocol = metadataProtocolId(response.metadata ?? null);
       const evaluationReady = response.files?.some((file) => file.key === "evaluation" && file.status === "ok");
-      if (ok && observedMode === "local_only" && evaluationReady) {
+      const scoresReady = response.files?.some((file) => file.key === "scores" && file.status === "ok");
+      if (ok && observedMode !== "dock" && evaluationReady) {
         const evaluationPayload = await invoke<string>("load_vina_evaluation", {
           projectDir: initialProject.project_dir,
           runId,
@@ -330,8 +343,30 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
           setMessage(evaluationResponse.error?.message ?? "报告状态已读取，但无法加载局部优化对比数据。");
           setRawError(evaluationResponse.error?.raw_error ?? "");
         }
-      } else if (observedMode !== "local_only") {
+      } else {
         setEvaluation(null);
+        if (
+          ok
+          && observedMode === "dock"
+          && scoresReady
+          && observedProtocol !== "simultaneous_multi_ligand"
+          && observedProtocol !== "hydrated_ad4_experimental"
+        ) {
+          const scoresPayload = await invoke<string>("load_scores_csv", {
+            projectDir: initialProject.project_dir,
+            runId,
+          });
+          const scoresResponse = parseProjectResponse(scoresPayload);
+          if (scoresResponse.ok) {
+            setScores(scoresResponse.scores ?? []);
+          } else {
+            setScores([]);
+            setMessage(scoresResponse.error?.message ?? "报告状态已读取，但无法加载构象排名。");
+            setRawError(scoresResponse.error?.raw_error ?? "");
+          }
+        } else {
+          setScores([]);
+        }
       }
     } catch (error) {
       setMessage("无法读取报告状态。");
@@ -478,6 +513,42 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             </div>
 
             {message || rawError ? <CommandResultPanel title="报告操作" message={message} rawError={rawError} /> : null}
+
+            {runMode === "dock" && !isMultipleLigand && !isHydrated && topPoseScores.length ? (
+              <SectionCard
+                title="排名靠前的对接姿势"
+                description={`展示 scores.csv 中前 ${topPoseScores.length} 个可读取构象；视图自动聚焦配体所在区域。`}
+                className="report-pose-gallery-section"
+              >
+                <div className="report-pose-gallery">
+                  {topPoseScores.map((score) => (
+                    <article className="report-pose-card" key={score.mode}>
+                      <header>
+                        <strong>Mode {score.mode}</strong>
+                        <span>{formatMetric(score.affinity_kcal_mol, 2)} kcal/mol</span>
+                      </header>
+                      <Suspense fallback={<div className="report-pose-loading">正在加载构象…</div>}>
+                        <PoseStructurePreview
+                          compact
+                          className="report-pose-preview"
+                          projectDir={project.project_dir}
+                          runId={runId}
+                          mode={score.mode}
+                          poseLabel={`Mode ${score.mode}`}
+                        />
+                      </Suspense>
+                      <footer>
+                        <span>RMSD 下界 {formatMetric(score.rmsd_lb, 2)} Å</span>
+                        <span>上界 {formatMetric(score.rmsd_ub, 2)} Å</span>
+                      </footer>
+                    </article>
+                  ))}
+                </div>
+                <p className="report-pose-gallery-note">
+                  图中结构来自本次运行的受体与对应输出构象，仅用于检查姿势位置和方向，不代表相互作用分析或实验结合证据。
+                </p>
+              </SectionCard>
+            ) : null}
 
             {hasExportedReport ? markdownPreview : null}
 

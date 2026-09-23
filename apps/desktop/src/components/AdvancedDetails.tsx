@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CaretRight } from "@phosphor-icons/react";
 
 type AdvancedDetailsProps = {
   summary?: string;
@@ -15,7 +16,7 @@ export default function AdvancedDetails({
 }: AdvancedDetailsProps) {
   return (
     <details className={`advanced-details ${className}`.trim()} open={open}>
-      <summary>{summary}</summary>
+      <summary><CaretRight aria-hidden="true" className="advanced-details-caret" size={14} weight="bold" />{summary}</summary>
       <div className="advanced-details-content">{children}</div>
     </details>
   );

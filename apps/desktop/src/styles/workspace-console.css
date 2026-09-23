@@ -412,18 +412,6 @@
   display: none;
 }
 
-.preparation-target-actions .preparation-target-details summary::before {
-  content: "›";
-  flex: 0 0 auto;
-  font-size: 14px;
-  line-height: 1;
-  transition: transform 140ms ease;
-}
-
-.preparation-target-actions .preparation-target-details[open] summary::before {
-  transform: rotate(90deg);
-}
-
 .preparation-target-actions .preparation-target-details .advanced-details-content {
   margin-top: 0;
   border-top: 1px solid var(--ds-on-dark-border-subtle);
@@ -1329,8 +1317,8 @@
   position: static;
   z-index: auto;
   box-sizing: border-box;
-  width: 100%;
-  margin-top: 12px;
+  width: calc(100% - 30px);
+  margin: 12px 15px 0;
   border: 1px solid var(--ds-border-default);
   border-radius: 8px;
   background: var(--ds-surface-raised);
@@ -1782,6 +1770,104 @@
   gap: 0;
   margin: 0;
   border-top: 1px solid var(--ds-on-dark-border-default);
+}
+
+.report-pose-gallery-section {
+  min-width: 0;
+}
+
+.report-pose-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.report-pose-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-lg);
+  background: var(--ds-surface-panel);
+}
+
+.report-pose-card > header,
+.report-pose-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+}
+
+.report-pose-card > header {
+  border-bottom: 1px solid var(--ds-border-subtle);
+  background: var(--ds-surface-raised);
+}
+
+.report-pose-card > header strong {
+  color: var(--ds-text-strong);
+  font-size: 13px;
+}
+
+.report-pose-card > header span {
+  color: var(--ds-brand);
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-pose-card > footer {
+  border-top: 1px solid var(--ds-border-subtle);
+  color: var(--ds-text-muted);
+  font-size: 10px;
+}
+
+.report-pose-card .pose-structure-preview.is-compact,
+.report-pose-loading {
+  position: relative;
+  width: 100%;
+  height: 248px;
+  min-height: 248px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ds-viewer-bg);
+}
+
+.report-pose-loading {
+  display: grid;
+  place-items: center;
+  color: var(--ds-viewer-text-muted);
+  font-size: 12px;
+}
+
+.pose-preview-compact-status {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  border: 1px solid var(--ds-viewer-border);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-viewer-bg-raised);
+  padding: 6px 8px;
+  color: var(--ds-viewer-text-secondary);
+  font-size: 10px;
+  text-align: center;
+}
+
+.pose-preview-compact-status.error {
+  border-color: var(--ds-viewer-danger);
+  color: var(--ds-viewer-text);
+}
+
+.report-pose-gallery-note {
+  margin: 12px 0 0;
+  border-left: 3px solid var(--ds-info);
+  background: var(--ds-info-soft);
+  padding: 8px 10px;
+  color: var(--ds-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .result-local-geometry > div {
@@ -2413,6 +2499,7 @@
 @media (max-width: 820px) {
   .preparation-target-row,
   .result-pose-workbench,
+  .report-pose-gallery,
   .report-local-comparison-grid {
     grid-template-columns: 1fr;
   }

@@ -24,12 +24,15 @@ body {
   background: var(--ds-bg-app);
   color: var(--ds-text-primary);
   font-family: var(--ds-font-ui);
-  -webkit-user-select: text;
-  user-select: text;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 input,
 textarea,
+[data-selectable="true"],
+pre,
+code,
 [contenteditable="true"],
 [contenteditable="plaintext-only"] {
   -webkit-user-select: text;
