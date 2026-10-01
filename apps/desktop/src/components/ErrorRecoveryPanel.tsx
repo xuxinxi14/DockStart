@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import AdvancedDetails from "./AdvancedDetails";
+import DocumentationLink from "./DocumentationLink";
+import { helpTopicForError, topicUrl } from "../utils/helpContent";
 
 export type ErrorRecoveryData = {
   code?: string;
@@ -32,6 +34,7 @@ export default function ErrorRecoveryPanel({
   const displayedMessage = error?.message || message || "操作未完成，请根据建议检查后重试。";
   const displayedSuggestion = error?.suggestion || suggestion;
   const displayedRawError = error?.raw_error || rawError;
+  const topic = error?.code ? helpTopicForError(error.code) : null;
 
   if (!error && !message && !suggestion && !rawError) return null;
 
@@ -41,6 +44,10 @@ export default function ErrorRecoveryPanel({
       <p>{displayedMessage}</p>
       {displayedSuggestion ? <p>{displayedSuggestion}</p> : null}
       {error?.code ? <code>{error.code}</code> : null}
+      {topic ? <AdvancedDetails summary={`排查说明：${topic.title}`}>
+        <ol>{topic.steps.map(step => <li key={step}>{step}</li>)}</ol>
+        <DocumentationLink url={topicUrl(topic)}>查看对应排错文档</DocumentationLink>
+      </AdvancedDetails> : null}
       {action ? <div>{action}</div> : null}
       {displayedRawError ? (
         <AdvancedDetails summary="错误详情">

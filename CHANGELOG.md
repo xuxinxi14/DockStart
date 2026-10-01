@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.4
+
+- Rebuilt the in-app help center around verified project/tool state, quick actions, offline topics and troubleshooting.
+- Added local topic/error-code search, explicit online documentation search and direct links to DockStart-Docs chapters, with browser-opening and copy fallbacks.
+- Added offline detailed help dialogs to supported question-mark controls and error-code recovery panels.
+- Added a persisted startup-page preference in Settings and clarified version differences between bundled help and independently maintained online documentation.
+- Updated all application version fields to `1.0.4`; no runtime dependency or project data schema changed.
+- Basic/Assisted installers remain unsigned local candidates; full test and installation gates were skipped at the user's request.
+
 ## v1.0.3
 
 - Disabled incidental browser-style text selection across the desktop shell while preserving selection in inputs, logs, and code blocks.

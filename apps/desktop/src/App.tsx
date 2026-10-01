@@ -24,6 +24,7 @@ import {
 import { taskIntentFromProject, workflowRunForTask } from "./utils/vinaTask";
 import { getWorkflowSummary } from "./utils/workflowSummary";
 import { buildWorkflowSteps } from "./utils/workflowSteps";
+import { readStartupPage } from "./utils/startupPreference";
 
 const BatchResultsPage = lazy(() => import("./pages/BatchResultsPage"));
 const BoxSetupPage = lazy(() => import("./pages/BoxSetupPage"));
@@ -46,7 +47,7 @@ function projectStateKey(project: DockStartProject): string {
 }
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<PageId>("help");
+  const [currentPage, setCurrentPage] = useState<PageId>(readStartupPage);
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
   const [workflowStatus, setWorkflowStatus] = useState<ProjectWorkflowStatusResponse | null>(null);
@@ -57,7 +58,7 @@ export default function App() {
   const [navigationNotice, setNavigationNotice] = useState("");
   const committedProjectKeyRef = useRef("");
   const committedProjectTaskRef = useRef<{ projectDir: string; taskIntent: ProjectTaskIntent } | null>(null);
-  const currentPageRef = useRef<PageId>("help");
+  const currentPageRef = useRef<PageId>(currentPage);
 
   const commitProject = useCallback((project: DockStartProject) => {
     const nextTask = {

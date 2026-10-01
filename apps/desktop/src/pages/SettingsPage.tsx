@@ -45,6 +45,7 @@ import {
 } from "../utils/settingsForm";
 import { openExternalUrl } from "../utils/externalLink";
 import { appVersion } from "../navigation/pages";
+import { readStartupPage, saveStartupPage, type StartupPage } from "../utils/startupPreference";
 import {
   DOCKSTART_LICENSE,
   DOCKSTART_PROJECT_SUMMARY,
@@ -170,6 +171,8 @@ function ToolEntryIcon({ tone }: { tone: "ok" | "warning" | "error" }) {
 
 export default function SettingsPage({ onBack }: SettingsPageProps) {
   const [settings, setSettings] = useState<DockStartSettings>(EMPTY_SETTINGS);
+  const [startupPage, setStartupPage] = useState<StartupPage>(readStartupPage);
+  const [startupNotice, setStartupNotice] = useState("");
   const [dockingForm, setDockingForm] = useState<DockingDefaultsForm>(EMPTY_DOCKING_DEFAULTS_FORM);
   const [settingsPath, setSettingsPath] = useState("");
   const [toolchain, setToolchain] = useState<ToolchainSummary | null>(null);
@@ -531,6 +534,20 @@ export default function SettingsPage({ onBack }: SettingsPageProps) {
                   </div>
                 </div>
 
+                <div className="setting-row is-stacked">
+                  <div className="setting-label-block">
+                    <span className="setting-label">启动页面</span>
+                    <span className="setting-current">下次启动生效；未加载项目时显示项目入口，不自动打开历史文件。</span>
+                  </div>
+                  <div className="settings-inline-control">
+                    <select aria-label="启动页面" value={startupPage} onChange={event => {
+                      const value: StartupPage = event.target.value === "home" ? "home" : "help";
+                      if (saveStartupPage(value)) { setStartupPage(value); setStartupNotice("启动页面已保存，下次启动生效。"); }
+                      else setStartupNotice("无法保存启动页面，请检查应用本地存储权限。");
+                    }}><option value="help">帮助与入门（推荐首次使用）</option><option value="home">项目页</option></select>
+                    {startupNotice ? <span role="status">{startupNotice}</span> : null}
+                  </div>
+                </div>
                 <div className="setting-row is-stacked">
                   <div className="setting-label-block">
                     <span className="setting-label">

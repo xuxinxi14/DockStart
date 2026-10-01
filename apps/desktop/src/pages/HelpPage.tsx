@@ -1,393 +1,151 @@
-import {
-  ArrowCounterClockwise,
-  ArrowRight,
-  BookOpenText,
-  ChartBar,
-  CheckCircle,
-  Crosshair,
-  Cube,
-  Database,
-  FileText,
-  FolderOpen,
-  Play,
-  ShieldCheck,
-  WarningCircle,
-  Wrench,
-} from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowRight, ArrowClockwise, BookOpenText, FolderOpen, MagnifyingGlass, ShieldCheck, Wrench } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
-import ScientificDisclaimer from "../components/ScientificDisclaimer";
+import DocumentationLink from "../components/DocumentationLink";
 import StatusBadge from "../components/StatusBadge";
-import {
-  appVersion,
-  type NavigateHandler,
-  type PageId,
-  type ProjectTaskIntent,
-  type StartMode,
-} from "../navigation/pages";
-import type { DockStartProject } from "../types";
+import TopicHelpDialog from "../components/TopicHelpDialog";
+import { appVersion, type NavigateHandler } from "../navigation/pages";
+import type { AppCapabilityProfile, DockStartProject, ProjectWorkflowStatusResponse } from "../types";
+import { DOCUMENTATION_URL, helpTopics, helpTopicForError, searchDocumentationUrl, searchHelpTopics, type HelpTopic } from "../utils/helpContent";
+import { recommendHelp } from "../utils/helpRecommendation";
+import { isSameProjectDir } from "../utils/backgroundProjectRefresh";
 
-type HelpPageProps = {
-  project: DockStartProject | null;
-  onNavigate: NavigateHandler;
-};
-
-type StartRoute = {
-  mode: StartMode;
-  icon: typeof Database;
-  eyebrow: string;
-  title: string;
-  description: string;
-  requirement: string;
-  action: string;
-  tone: "ok" | "info" | "muted";
-};
-
-const startRoutes: StartRoute[] = [
-  {
-    mode: "assisted",
-    icon: Database,
-    eyebrow: "结构输入",
-    title: "导入受体与配体结构",
-    description: "受体和配体可分别选择 PDBQT 或原始结构；DockStart 会按每个文件的实际格式直接使用或提供转换。",
-    requirement: "PDBQT 可直接使用 · 原始结构转换需要 RDKit / Meeko",
-    action: "选择结构文件",
-    tone: "info",
-  },
-  {
-    mode: "demo",
-    icon: BookOpenText,
-    eyebrow: "DEMO MODE",
-    title: "示例项目（快速体验）",
-    description: "复制内置示例，了解项目、搜索范围、运行记录和结果页面之间的关系。",
-    requirement: "仅用于软件操作演示，不用于科研结论",
-    action: "打开示例入口",
-    tone: "muted",
-  },
-];
-
-type TaskGuide = {
-  intent: ProjectTaskIntent;
-  icon: typeof Cube;
-  eyebrow: string;
-  title: string;
-  summary: string;
-  suitable: string;
-  input: string;
-  output: string;
-  boundary: string;
-  action: string;
-};
-
-const taskGuides: TaskGuide[] = [
-  {
-    intent: "dock",
-    icon: Cube,
-    eyebrow: "还不知道配体应如何放置",
-    title: "全局对接",
-    summary: "在指定 Box 内搜索配体的位置、方向和可旋转键构象。",
-    suitable: "常规小分子对接，或尚无可信结合姿势",
-    input: "受体与配体 PDBQT；配体无需预先放入结合位点",
-    output: "多个候选 Mode、评分与相对 RMSD",
-    boundary: "“全局”指 Box 内搜索，不代表自动扫描整颗蛋白。",
-    action: "开始全局对接",
-  },
-  {
-    intent: "score_only",
-    icon: ChartBar,
-    eyebrow: "已有可信姿势，只需要评价",
-    title: "姿势评分",
-    summary: "保持输入坐标不变，只计算当前姿势的评分与能量项。",
-    suitable: "共晶配体、已有对接 Mode 或其他软件生成的姿势",
-    input: "受体与配体处在同一坐标系，配体已位于待评价位置",
-    output: "当前姿势的单次评分与能量项；不生成新 Mode",
-    boundary: "不会搜索其他结合方向或判断当前姿势是否最优。",
-    action: "评价当前姿势",
-  },
-  {
-    intent: "local_only",
-    icon: Crosshair,
-    eyebrow: "已有可信姿势，需要附近微调",
-    title: "局部优化",
-    summary: "从输入姿势附近调整位置、方向和构象，不搜索新位点。",
-    suitable: "消除局部碰撞，或进一步调整已定位的配体姿势",
-    input: "受体与配体处在同一坐标系，配体已位于目标口袋",
-    output: "优化后 PDBQT，以及优化前后的评分和几何变化",
-    boundary: "只能改进当前位置附近的姿势，不能替代全局对接。",
-    action: "优化当前姿势",
-  },
-];
-
-const workflowSteps: Array<{
-  index: string;
-  icon: typeof FolderOpen;
-  title: string;
-  description: string;
-  page: PageId;
-}> = [
-  { index: "01", icon: FolderOpen, title: "获取或导入结构", description: "在线搜索 RCSB / PubChem，或从电脑导入支持的结构文件。", page: "structure-fetch" },
-  { index: "02", icon: Wrench, title: "转换为 PDBQT", description: "将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备为 Vina 输入；已有 PDBQT 可跳过。", page: "preparation" },
-  { index: "03", icon: Cube, title: "设置搜索范围", description: "复核结构，定位 Box，并设置 Vina 参数。", page: "run-prepare" },
-  { index: "04", icon: Play, title: "运行对接", description: "保存配置、创建运行记录并执行本地 Vina。", page: "run-prepare" },
-  { index: "05", icon: ChartBar, title: "结果与报告", description: "查看构象和评分，导出 CSV 与 Markdown 实验记录。", page: "result" },
-];
-
-function projectTarget(project: DockStartProject | null, page: PageId): PageId {
-  if (project || page === "project-create" || page === "toolchain-status") return page;
-  return "project-create";
-}
+type HelpPageProps = { project: DockStartProject | null; onNavigate: NavigateHandler };
+type HelpTab = "all" | "入门" | "操作" | "排错" | "进阶";
 
 export default function HelpPage({ project, onNavigate }: HelpPageProps) {
-  return (
-    <section className="help-center-page" aria-labelledby="help-title">
-      <header className="help-center-hero">
-        <div className="help-center-hero-copy">
-          <div className="help-center-kicker">
-            <BookOpenText aria-hidden="true" size={16} />
-            <span>DOCKSTART HELP CENTER</span>
-            <StatusBadge tone="info">{`v${appVersion}`}</StatusBadge>
-          </div>
-          <h1 id="help-title">从结构文件到可复现运行记录</h1>
-          <p>已有 PDBQT 可直接作为输入执行全局对接、姿势评分或局部优化；只有 PDB、CIF、SDF 或 MOL 时，可先搜索或导入并转换。</p>
-        </div>
-        <div className="help-center-hero-actions">
-          <ActionButton variant="secondary" onClick={() => onNavigate("toolchain-status")}>
-            <Wrench aria-hidden="true" size={16} /> 检查工具链
-          </ActionButton>
-          <ActionButton variant="primary" onClick={() => onNavigate(project ? "home" : "project-create")}>
-            {project ? "返回项目总览" : "创建第一个项目"} <ArrowRight aria-hidden="true" size={16} />
-          </ActionButton>
-        </div>
-      </header>
+  const [profile, setProfile] = useState<AppCapabilityProfile | null>(null);
+  const [workflow, setWorkflow] = useState<ProjectWorkflowStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refresh, setRefresh] = useState(0);
+  const [statusError, setStatusError] = useState("");
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<HelpTab>("all");
+  const [showAll, setShowAll] = useState(false);
+  const [selectedTopic, setSelectedTopic] = useState<HelpTopic | null>(null);
+  const [online, setOnline] = useState(navigator.onLine);
 
-      <div className="help-center-layout">
-        <main className="help-center-main">
-          <section className="help-center-section" aria-labelledby="help-start-title">
-            <div className="help-section-heading">
-              <div>
-                <span>快速开始</span>
-                <h2 id="help-start-title">你现在手里有什么文件？</h2>
-              </div>
-              <p>选择最接近当前情况的路径，不必先理解全部术语。</p>
-            </div>
-            <div className="help-route-grid">
-              {startRoutes.map((route) => {
-                const Icon = route.icon;
-                return (
-                  <article className={`help-route-card ${route.mode}`} key={route.mode}>
-                    <div className="help-route-icon"><Icon aria-hidden="true" size={22} /></div>
-                    <div className="help-route-copy">
-                      <span>{route.eyebrow}</span>
-                      <h3>{route.title}</h3>
-                      <p>{route.description}</p>
-                    </div>
-                    <StatusBadge tone={route.tone}>{route.requirement}</StatusBadge>
-                    <button type="button" onClick={() => onNavigate("project-create", { startMode: route.mode })}>
-                      {route.action} <ArrowRight aria-hidden="true" size={15} />
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update); window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setStatusError(""); setWorkflow(null);
+    const projectDir = project?.project_dir;
+    async function load() {
+      const requests = await Promise.allSettled([
+        invoke<string>("get_app_capability_profile"),
+        projectDir ? invoke<string>("get_project_workflow_status", { projectDir }) : Promise.resolve("null"),
+      ]);
+      if (cancelled) return;
+      const notices: string[] = [];
+      try {
+        if (requests[0].status !== "fulfilled") throw new Error("capability");
+        const parsed = JSON.parse(requests[0].value) as AppCapabilityProfile;
+        if (!parsed?.ok) throw new Error("capability");
+        setProfile(parsed);
+      } catch { setProfile(null); notices.push("工具状态读取失败，可进入工具链页重新检测。"); }
+      try {
+        if (requests[1].status !== "fulfilled") throw new Error("workflow");
+        const parsed = JSON.parse(requests[1].value) as ProjectWorkflowStatusResponse | null;
+        if (projectDir && (!parsed?.ok || !isSameProjectDir(parsed.project_dir, projectDir))) throw new Error("workflow");
+        setWorkflow(parsed);
+      } catch { notices.push("项目状态读取失败，可打开项目页查看或刷新。"); }
+      setStatusError(notices.join(" ")); setLoading(false);
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [project?.project_dir, project?.updated_at, refresh]);
 
-          <section className="help-center-section help-task-guide" aria-labelledby="help-task-guide-title">
-            <div className="help-section-heading">
-              <div>
-                <span>本次任务</span>
-                <h2 id="help-task-guide-title">三种任务分别解决什么问题？</h2>
-              </div>
-              <p>先判断是否已有可信的配体姿势，再选择计算任务。</p>
-            </div>
-            <div className="help-task-guide-grid">
-              {taskGuides.map((task) => {
-                const Icon = task.icon;
-                return (
-                  <article className="help-task-guide-card" key={task.intent}>
-                    <header>
-                      <Icon aria-hidden="true" size={20} />
-                      <div>
-                        <span>{task.eyebrow}</span>
-                        <h3>{task.title}</h3>
-                      </div>
-                    </header>
-                    <p>{task.summary}</p>
-                    <dl>
-                      <div><dt>适合</dt><dd>{task.suitable}</dd></div>
-                      <div><dt>输入前提</dt><dd>{task.input}</dd></div>
-                      <div><dt>结果</dt><dd>{task.output}</dd></div>
-                    </dl>
-                    <small className="help-task-guide-boundary">{task.boundary}</small>
-                    <button
-                      type="button"
-                      onClick={() => onNavigate("project-create", {
-                        startMode: "basic",
-                        taskIntent: task.intent,
-                      })}
-                    >
-                      {task.action} <ArrowRight aria-hidden="true" size={15} />
-                    </button>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
+  const recommendation = recommendHelp(project, workflow, profile);
+  const recommendedTopic = helpTopics.find(topic => topic.id === recommendation.topic)!;
+  const errorCode = query.trim().toUpperCase().match(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/)?.[0];
+  const errorTopic = errorCode ? helpTopicForError(errorCode) : null;
+  const topics = useMemo(() => {
+    const matches = searchHelpTopics(query);
+    if (errorTopic && !matches.some(topic => topic.id === errorTopic.id)) matches.unshift(errorTopic);
+    return matches.filter(topic => tab === "all" || topic.group === tab);
+  }, [query, tab, errorTopic]);
+  const faqs = ["profiles", "structure", "tasks", "maps", "results", "errors"];
+  function openAction(topic: HelpTopic) {
+    if (!topic.page) return;
+    if (topic.page === "project-create") onNavigate("project-create", { startMode: "demo" });
+    else onNavigate(!project && !["toolchain-status", "settings", "home"].includes(topic.page) ? "project-create" : topic.page);
+  }
 
-          <section className="help-center-section" aria-labelledby="help-workflow-title">
-            <div className="help-section-heading">
-              <div>
-                <span>标准流程</span>
-                <h2 id="help-workflow-title">一次完整对接包含五个阶段</h2>
-              </div>
-              <p>Basic 从第 1 阶段直接导入 PDBQT；Assisted 会经过第 2 阶段。</p>
-            </div>
-            <ol className="help-workflow">
-              {workflowSteps.map((step) => {
-                const Icon = step.icon;
-                return (
-                  <li key={step.index}>
-                    <button type="button" onClick={() => onNavigate(projectTarget(project, step.page))}>
-                      <span className="help-workflow-index">{step.index}</span>
-                      <Icon aria-hidden="true" size={20} />
-                      <strong>{step.title}</strong>
-                      <small>{step.description}</small>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
+  return <section className="help-hub" aria-labelledby="help-title">
+    <header className="help-hub-header">
+      <div><div className="help-hub-kicker"><BookOpenText size={16} aria-hidden="true" /><span>帮助与入门</span><StatusBadge tone="info">{`v${appVersion}`}</StatusBadge></div>
+        <h1 id="help-title">下一步怎么做？</h1><p>继续当前项目，或查阅对应的操作、原理与排错说明。</p></div>
+      <DocumentationLink url={DOCUMENTATION_URL}>打开完整文档</DocumentationLink>
+    </header>
 
-          <section className="help-center-section" aria-labelledby="help-box-title">
-            <div className="help-section-heading">
-              <div>
-                <span>搜索范围</span>
-                <h2 id="help-box-title">Box 定位与调整</h2>
-              </div>
-              <ActionButton
-                variant="text"
-                onClick={() => onNavigate(projectTarget(project, "run-prepare"))}
-              >
-                打开运行工作台 <ArrowRight aria-hidden="true" size={15} />
-              </ActionButton>
-            </div>
-            <div className="help-feature-grid">
-              <article>
-                <Crosshair aria-hidden="true" size={21} />
-                <div><strong>定位到受体</strong><p>读取受体 PDBQT 的原子坐标范围，把 Box 中心快速移动到该范围中心；不会改变尺寸。</p></div>
-              </article>
-              <article>
-                <ArrowCounterClockwise aria-hidden="true" size={21} />
-                <div><strong>重置参数</strong><p>恢复进入运行工作台时的 Box 中心和尺寸，适合撤销一轮大幅调整。</p></div>
-              </article>
-              <article>
-                <Cube aria-hidden="true" size={21} />
-                <div><strong>滚轮精调</strong><p>先绑定中心或尺寸参数，再用滚轮按 0.1、1 或 5 Å 调整；未绑定时滚轮仍用于缩放视图。</p></div>
-              </article>
-              <article>
-                <WarningCircle aria-hidden="true" size={21} />
-                <div><strong>不是口袋预测</strong><p>自动定位只是几何操作。结合位点、质子化、电荷、金属和缺失残基仍需人工判断。</p></div>
-              </article>
-            </div>
-          </section>
-
-          <section className="help-center-section" aria-labelledby="help-reliability-title">
-            <div className="help-section-heading">
-              <div>
-                <span>运行与记录</span>
-                <h2 id="help-reliability-title">长任务与产物在哪里查看</h2>
-              </div>
-            </div>
-            <div className="help-reliability-grid">
-              <article><ShieldCheck aria-hidden="true" size={20} /><div><strong>工具状态</strong><p>工具链页显示当前可用版本和路径；环境变化后可手动重新检测。</p></div></article>
-              <article><Play aria-hidden="true" size={20} /><div><strong>长任务进度</strong><p>格式准备和 Vina 运行期间会显示进度；切换页面不会自动终止任务。</p></div></article>
-              <article><FileText aria-hidden="true" size={20} /><div><strong>可追踪产物</strong><p>配置、命令、stdout、stderr、日志、输入快照、SHA256 和报告随运行记录保存。</p></div></article>
-              <article><ArrowCounterClockwise aria-hidden="true" size={20} /><div><strong>中断恢复</strong><p>异常退出后重新打开项目，可根据保留的状态和日志检查或恢复未完成任务。</p></div></article>
-              <article><ChartBar aria-hidden="true" size={20} /><div><strong>多配体结果</strong><p>批量任务可检索、筛选和排序全部配体；归档后可只读查看、比较两个有效批次，或把一条有效归档导出为带 SHA256 清单的 ZIP。</p></div></article>
-            </div>
-          </section>
-
-          <section className="help-center-section help-troubleshooting" aria-labelledby="help-trouble-title">
-            <div className="help-section-heading">
-              <div>
-                <span>帮助</span>
-                <h2 id="help-trouble-title">常见问题</h2>
-              </div>
-              <ActionButton variant="text" onClick={() => onNavigate("toolchain-status")}>安装自检</ActionButton>
-            </div>
-            <div className="help-accordion">
-              <details>
-                <summary><span><Wrench aria-hidden="true" size={18} />工具或格式准备不可用</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>在工具链页重新检测。已有 PDBQT 只需 Vina；转换 PDB、CIF、SDF 或 MOL 还需 Python、RDKit 与 Meeko。</p>
-              </details>
-              <details>
-                <summary><span><Cube aria-hidden="true" size={18} />Box 看不到、太远或太大</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>点击“定位到受体”，再用“适应视图”复核；Box 尺寸仍需自行设置。</p>
-              </details>
-              <details>
-                <summary><span><Play aria-hidden="true" size={18} />Vina 无法开始或运行中断</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>按运行前检查处理阻塞项；中断后请查看 run 目录中的日志与 metadata.json。</p>
-              </details>
-              <details>
-                <summary><span><ChartBar aria-hidden="true" size={18} />完成后没有评分或报告</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>确认运行状态为 finished，并检查 log.txt、scores.csv 或 evaluation.json 是否存在。</p>
-              </details>
-              <details>
-                <summary><span><ChartBar aria-hidden="true" size={18} />历史筛选无法打开</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>损坏归档只能查看错误原因；缺少输出哈希的旧归档仅支持只读查看。</p>
-              </details>
-              <details>
-                <summary><span><ChartBar aria-hidden="true" size={18} />两个历史批次为什么没有差值</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>请选择两个不同的有效归档。只有输入 SHA256 可匹配且评分有效时才计算差值。</p>
-              </details>
-              <details>
-                <summary><span><FileText aria-hidden="true" size={18} />如何分享一条历史筛选记录</span><ArrowRight aria-hidden="true" size={15} /></summary>
-                <p>在“历史归档”中导出 ZIP。分享前请检查记录中的本机路径和文件内容。</p>
-              </details>
-            </div>
-          </section>
-
-          <ScientificDisclaimer kind="score" />
-        </main>
-
-        <aside className="help-center-rail" aria-label="帮助页快捷信息">
-          <section className="help-rail-project">
-            <span>当前上下文</span>
-            <h2>{project ? project.project_name : "尚未加载项目"}</h2>
-            <p>{project ? "可直接进入当前项目的结构准备、对接或结果页面。" : "创建或打开项目后，可从这里进入各项操作。"}</p>
-            <StatusBadge tone={project ? "ok" : "muted"}>{project ? "项目已加载" : "等待项目"}</StatusBadge>
-          </section>
-
-          <section>
-            <h2>快捷入口</h2>
-            <nav className="help-rail-actions" aria-label="帮助快捷入口">
-              <button type="button" onClick={() => onNavigate(project ? "home" : "project-create")}><FolderOpen aria-hidden="true" size={17} /><span>{project ? "项目总览" : "创建项目"}</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate(projectTarget(project, "preparation"))}><Wrench aria-hidden="true" size={17} /><span>格式转换</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate(projectTarget(project, "run-prepare"))}><Cube aria-hidden="true" size={17} /><span>运行工作台</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate(projectTarget(project, "result"))}><ChartBar aria-hidden="true" size={17} /><span>结果与报告</span><ArrowRight aria-hidden="true" size={14} /></button>
-              <button type="button" onClick={() => onNavigate("toolchain-status")}><ShieldCheck aria-hidden="true" size={17} /><span>工具链与自检</span><ArrowRight aria-hidden="true" size={14} /></button>
-            </nav>
-          </section>
-
-          <section>
-            <h2>格式与输出</h2>
-            <dl className="help-format-list">
-              <div><dt>受体准备</dt><dd>PDB / CIF</dd></div>
-              <div><dt>配体准备</dt><dd>SDF / MOL / MOL2</dd></div>
-              <div><dt>Vina 输入</dt><dd>PDBQT</dd></div>
-              <div><dt>结果输出</dt><dd>PDBQT / CSV / MD</dd></div>
-            </dl>
-          </section>
-
-          <section className="help-rail-boundary">
-            <h2>当前边界</h2>
-            <ul>
-              <li><CheckCircle aria-hidden="true" size={15} />本地运行，不自动上传项目数据</li>
-              <li><WarningCircle aria-hidden="true" size={15} />不支持 PDB / SMILES 配体自动准备</li>
-              <li><WarningCircle aria-hidden="true" size={15} />不做口袋预测或药效判断</li>
-            </ul>
-          </section>
-        </aside>
+    <section className="help-next" aria-labelledby="help-next-title" aria-busy={loading}>
+      <div><small>{project ? project.project_name : "尚未打开项目"} · 当前建议</small>
+        <h2 id="help-next-title">{loading ? "正在读取当前状态…" : recommendation.title}</h2>
+        <p>{loading ? "离线帮助与文档入口仍可使用。" : recommendation.description}</p>
+        {statusError ? <p role="status">{statusError}</p> : null}</div>
+      <div className="help-button-row">
+        <ActionButton variant="primary" disabled={loading} onClick={() => onNavigate(recommendation.page, { runId: recommendation.runId })}>{recommendation.action}<ArrowRight size={16} aria-hidden="true" /></ActionButton>
+        <ActionButton variant="text" onClick={() => setSelectedTopic(recommendedTopic)}>操作说明</ActionButton>
+        <ActionButton variant="text" disabled={loading} aria-label="刷新工具与项目状态" onClick={() => setRefresh(value => value + 1)}><ArrowClockwise size={16} aria-hidden="true" />刷新</ActionButton>
       </div>
     </section>
-  );
+
+    <section className="help-start-row" aria-label="快速开始">
+      <article><FolderOpen size={21} aria-hidden="true" /><div><h2>{project ? "继续使用当前结构" : "使用自己的结构"}</h2><p>受体 PDBQT/PDB/CIF；配体 PDBQT/SDF/MOL/单分子 MOL2。</p>
+        <ActionButton variant="text" onClick={() => onNavigate(project ? "preparation" : "project-create", { startMode: profile?.assisted_mode_available ? "assisted" : "basic" })}>{project ? "查看结构准备" : "创建项目并选择文件"}<ArrowRight size={14} aria-hidden="true" /></ActionButton></div></article>
+      <article><BookOpenText size={21} aria-hidden="true" /><div><h2>体验内置示例</h2><p>{profile?.ok && !profile.demo_mode_available ? "当前未检测到示例资源，请检查安装目录。" : "先熟悉流程，或直接打开已有结果。示例仅用于教学。"}</p>
+        <ActionButton variant="text" disabled={profile?.ok === true && !profile.demo_mode_available} onClick={() => onNavigate("project-create", { startMode: "demo" })}>打开示例入口<ArrowRight size={14} aria-hidden="true" /></ActionButton></div></article>
+    </section>
+
+    <div className="help-hub-layout">
+      <section className="help-topics-panel" aria-labelledby="help-search-title">
+        <header><h2 id="help-search-title">查找帮助</h2><small>本地说明离线可读</small></header>
+        <form className="help-search" onSubmit={event => { event.preventDefault(); setTab("all"); }}>
+          <label className="help-search-input"><MagnifyingGlass size={18} aria-hidden="true" /><input type="search" aria-label="搜索本地帮助主题或错误码" placeholder="搜索 Box、PDBQT、RMSD 或错误码…" maxLength={160} value={query} onChange={event => setQuery(event.target.value)} /></label>
+          <ActionButton type="submit">查找</ActionButton>
+        </form>
+        <div className="help-online-search"><DocumentationLink url={searchDocumentationUrl(query)}>在在线文档中搜索{query.trim() ? "此关键词" : ""}</DocumentationLink><small>仅在点击时打开浏览器；关键词不会自动发送。</small></div>
+        <div className="help-topic-filters" role="group" aria-label="帮助主题分类">
+          {(["all", "入门", "操作", "排错", "进阶"] as HelpTab[]).map(value => <button type="button" key={value} aria-pressed={tab === value} className={tab === value ? "is-active" : ""} onClick={() => setTab(value)}>{value === "all" ? "全部" : value}</button>)}
+        </div>
+        {errorTopic ? <div className="help-code-result" role="status"><code>{errorCode}</code><p>按错误类型查看“{errorTopic.title}”。这是排查方向，具体原因仍需结合本次日志确认。</p><ActionButton variant="text" onClick={() => setSelectedTopic(errorTopic)}>查看排查步骤</ActionButton></div> : null}
+        <div className="help-topic-grid">
+          {(tab === "all" && !query.trim() && !showAll ? topics.slice(0, 8) : topics).map(topic => <button className="help-topic-card" type="button" key={topic.id} onClick={() => setSelectedTopic(topic)}>
+            <span className="help-topic-category">{topic.group}</span><strong>{topic.title}</strong><span>{topic.summary}</span><small>查看说明<ArrowRight size={14} aria-hidden="true" /></small>
+          </button>)}
+        </div>
+        {tab === "all" && !query.trim() ? <ActionButton variant="text" onClick={() => setShowAll(value => !value)}>{showAll ? "收起进阶与排错主题" : `查看全部 ${helpTopics.length} 个主题`}</ActionButton> : null}
+        {!topics.length ? <p className="help-empty" role="status">没有匹配的本地主题。试试更短的关键词，或点击在线文档搜索。</p> : null}
+        <footer className="help-documentation-note"><p>软件内说明适用于 v{appVersion}。在线文档独立更新，部分正文依据 v0.14.3 整理，案例可能使用更新界面；以章节适用版本和当前软件的支持范围为准。</p>
+          {!online ? <p role="status">当前系统报告离线；本地操作说明和 FAQ 仍可阅读，在线文档需要网络。</p> : null}</footer>
+      </section>
+
+      <aside className="help-support" aria-label="排错与快捷入口">
+        <section><h2>遇到问题？</h2><p>保留项目与日志，先看中文提示和错误码，再处理对应的阻塞项。</p>
+          <div className="help-support-actions"><ActionButton onClick={() => onNavigate("toolchain-status")}><Wrench size={16} aria-hidden="true" />工具链检查</ActionButton>
+          <ActionButton onClick={() => onNavigate("toolchain-status")}><ShieldCheck size={16} aria-hidden="true" />安装自检与诊断导出</ActionButton>
+          <DocumentationLink url="https://github.com/xuxinxi14/DockStart/issues">反馈问题</DocumentationLink></div>
+          <small>反馈请附软件版本、安装档位、错误码和复现步骤；分享日志前检查本机路径和研究数据。</small></section>
+        <section><h2>离线常见问题</h2><div className="help-local-faq">{faqs.map(id => {
+          const topic = helpTopics.find(item => item.id === id)!;
+          return <details key={id}><summary>{topic.title}</summary><p>{topic.summary}</p><p>{topic.skip}</p>
+            <ActionButton variant="text" onClick={() => setSelectedTopic(topic)}>查看操作说明</ActionButton></details>;
+        })}</div></section>
+        <section><h2>项目快捷入口</h2><div className="help-support-actions">
+          <ActionButton variant="text" onClick={() => onNavigate(project ? "home" : "project-create")}>{project ? "项目总览" : "创建项目"}</ActionButton>
+          <ActionButton variant="text" onClick={() => onNavigate("project-create")}>新建另一个项目</ActionButton>
+          <ActionButton variant="text" onClick={() => onNavigate("settings")}>启动页面与设置</ActionButton>
+        </div></section>
+        <section className="help-scientific-note"><strong>理解结果的边界</strong><p>Docking score 仅供结构结合趋势参考，不能替代实验验证。文件检查通过或成功生成 PDBQT，不代表结构方案在科学上正确。</p></section>
+      </aside>
+    </div>
+    {selectedTopic ? <TopicHelpDialog topic={selectedTopic} onClose={() => setSelectedTopic(null)}>
+      {selectedTopic.page ? <ActionButton onClick={() => { openAction(selectedTopic); setSelectedTopic(null); }}>前往相关操作</ActionButton> : null}
+    </TopicHelpDialog> : null}
+  </section>;
 }

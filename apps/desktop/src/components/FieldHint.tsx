@@ -1,6 +1,9 @@
 import { Question } from "@phosphor-icons/react";
+import { useState } from "react";
 import Tooltip from "./Tooltip";
 import { buildFieldHintLabel } from "./tooltipAccessibility";
+import { helpTopicForSubject } from "../utils/helpContent";
+import TopicHelpDialog from "./TopicHelpDialog";
 
 type FieldHintProps = {
   /** 悬浮/聚焦时展示的完整解释文本。 */
@@ -26,11 +29,16 @@ export default function FieldHint({
   className = "",
 }: FieldHintProps) {
   const accessibleLabel = buildFieldHintLabel(subject);
+  const [expanded, setExpanded] = useState(false);
+  const topic = helpTopicForSubject(subject);
   return (
+    <>
     <Tooltip className={`ds-field-hint-tooltip ${className}`.trim()} label={label} placement={placement}>
-      <button aria-label={accessibleLabel} className="ds-field-hint" type="button">
+      <button aria-label={accessibleLabel} className="ds-field-hint" type="button" onClick={() => { if (topic) setExpanded(true); }}>
         <Question aria-hidden="true" size={15} weight="regular" />
       </button>
     </Tooltip>
+    {expanded && topic ? <TopicHelpDialog topic={topic} onClose={() => setExpanded(false)} /> : null}
+    </>
   );
 }

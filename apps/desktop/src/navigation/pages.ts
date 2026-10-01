@@ -37,7 +37,7 @@ export type NavigationItem = {
   disabled?: boolean;
 };
 
-export const appVersion = "1.0.3";
+export const appVersion = "1.0.4";
 
 export const navigationItems: NavigationItem[] = [
   {
@@ -99,7 +99,7 @@ export const pageTitles: Record<PageId, string> = {
   "run-execute": "执行 AutoDock Vina",
   result: "查看运行结果",
   report: "结果分析报告",
-  help: "文档帮助",
+  help: "帮助与入门",
 };
 
 export function resolveNavigationTarget(item: NavigationItem, hasProject: boolean): PageId {
