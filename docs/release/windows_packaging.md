@@ -1,5 +1,7 @@
 # Windows Packaging
 
+> v1.0.4 当前公开交付为 Assisted EXE 试用包，具体下载、哈希与验证范围见 [发布说明](v1_0_4_release_notes.md)。本文是构建流程说明，不能替代当前安装包的安装/GUI 验收。
+
 本文档定义 DockStart v1.0.4 Windows x86_64 的可重复发布入口。正式候选构建脚本只能在干净的
 `main` 分支运行，并从白名单 stage 生成 MSI 与 NSIS；禁止直接把开发目录中的
 `resources/python` 或旧 `target/release` 内容复制进安装包。

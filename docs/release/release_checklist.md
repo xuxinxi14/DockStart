@@ -1,5 +1,10 @@
 # Release Checklist
 
+## v1.0.4 公开试用状态
+
+发布范围、源码对应、2026-10-02 补充验证和未完成项见 [v1.0.4 发布说明](v1_0_4_release_notes.md) 与 [验证清单](v1_0_4_release_manifest.json)。公开上传不等于完整门禁通过；以下历史 AD4/安装记录不能追认为当前包的验收。
+
+
 ## v0.14.1 AD4 证据绑定协议
 
 - 三条门禁新生成的成功和失败 JSON 均为 `schema_version=2`。完成科学 workflow 后生成的 schema v2（无论科学 oracle 成功或失败）必须具有完整的 `source_bound` provenance；导入前检查或绑定阶段失败时必须改为结构化 `ok=false` 与 `unbound` provenance，这类结果不能进入证据包。schema v1 只作为历史兼容格式，必须完全没有 provenance，并标记为 `legacy_unbound`；schema v1 携带任何 provenance 都失败。`--require-source-bound` 只接受三份均为 schema v2 且 `source_bound` 的证据。
@@ -51,7 +56,7 @@ DockStart v1.0.4 是非最终的本地候选版本。Basic 与 Assisted 是两�
 - v1.0.4 的所有构建结果均保持 `candidate=true`、`publishable=false`。通过候选门禁只允许写为
   `candidate_gates_passed`，不能自动升级为正式 Release；
 - 本地候选验收不冒充 GitHub Release。只有后续明确发布时才创建并推送 tag；
-- 安装包、`.release/`、`dist/`、`target/`、runtime 二进制和真实 docking 输出不提交 Git。
+- 后续新生成的安装包、`.release/`、`dist/`、`target/`、runtime 二进制和真实 docking 输出不提交 Git。历史已跟踪的 `test/DockStart/` 保留待单独整理，不作为当前源码或正式分发依据。
 
 ## 本轮最小源码检查
 

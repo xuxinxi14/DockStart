@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "app_version": "1.0.4",
+  "distribution_status": "public_trial",
+  "reviewed_on": "2026-10-02",
+  "release_url": "https://github.com/xuxinxi14/DockStart/releases/tag/v1.0.4",
+  "source_reference": {
+    "commit": "d314084f246ce96cf0f4b56de888843b7c79c500",
+    "role": "v1.0.4 functional source reference; not a reproducible-build attestation"
+  },
+  "original_tag_commit": "36249f328ef4de231469444ec4638680c93b897e",
+  "published_assets": [
+    {
+      "name": "DockStart_1.0.4_Assisted_x64-setup.exe",
+      "profile": "assisted",
+      "size_bytes": 74017034,
+      "sha256": "c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2",
+      "signature": "NotSigned"
+    }
+  ],
+  "historical_candidate": {
+    "app_version": "1.0.4",
+    "candidate_id": "1.0.4-36249f32-20260930T201519Z-help-dirty",
+    "commit": "36249f328ef4de231469444ec4638680c93b897e",
+    "dirty_worktree": true,
+    "build_type": "quick_ui_candidate",
+    "maturity": "local_candidate",
+    "candidate": true,
+    "publishable": false,
+    "changes": [
+      "Context-aware help center based on actual project and toolchain checks",
+      "19 bundled offline topics and FAQ",
+      "Local search and error-code category lookup",
+      "Explicit online documentation search and 19 verified chapter links",
+      "Topic help dialogs from supported field hints and error recovery panels",
+      "Persisted startup-page preference",
+      "Theme-tokenized help center and dialogs"
+    ],
+    "verification": {
+      "typescript_vite_production_build": "passed_via_tauri_before_build",
+      "basic_release_stage": "passed_after_retry",
+      "assisted_release_stage": "passed",
+      "basic_tauri_bundle": "passed",
+      "assisted_tauri_bundle": "passed",
+      "documentation_sitemap_routes": "19_verified",
+      "documentation_search_http": 200,
+      "version_fields": "1.0.4",
+      "full_automated_test_suite": "not_run_by_user_request",
+      "post_package_gate": "not_run_by_user_request",
+      "post_install_gate": "not_run_by_user_request",
+      "automated_visual_regression": "not_run_by_user_request"
+    },
+    "artifacts": [
+      {
+        "file": "assisted/DockStart_1.0.4_Assisted_x64_en-US.msi",
+        "profile": "assisted",
+        "format": "msi",
+        "size_bytes": 114406491,
+        "sha256": "cda241cb5569ccd9fe8679f408b032533472a8add6878bf310ad36323d73e99a",
+        "signature": "NotSigned"
+      },
+      {
+        "file": "assisted/DockStart_1.0.4_Assisted_x64-setup.exe",
+        "profile": "assisted",
+        "format": "exe",
+        "size_bytes": 74017034,
+        "sha256": "c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2",
+        "signature": "NotSigned"
+      },
+      {
+        "file": "basic/DockStart_1.0.4_Basic_x64_en-US.msi",
+        "profile": "basic",
+        "format": "msi",
+        "size_bytes": 24589455,
+        "sha256": "2ea087486df1cc1e55720c71a0a909de33057e1732ae76a01f2ef6ae7e5794ea",
+        "signature": "NotSigned"
+      },
+      {
+        "file": "basic/DockStart_1.0.4_Basic_x64-setup.exe",
+        "profile": "basic",
+        "format": "exe",
+        "size_bytes": 18630013,
+        "sha256": "56c510d40f61333abda0e42a536d70da4ab581889fd23d4a640b59dd649718b5",
+        "signature": "NotSigned"
+      }
+    ]
+  },
+  "supplemental_verification": {
+    "frontend_tests": {
+      "passed": 150
+    },
+    "frontend_build": "passed",
+    "npm_audit_known_advisories": 0,
+    "rust_fmt": "passed",
+    "rust_check_test_clippy": "not_run",
+    "backend_initial": {
+      "tests": 1305,
+      "failures": 3,
+      "errors": 4,
+      "skipped": 15
+    },
+    "backend_related_recheck": {
+      "tests": 53,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "conditions": "fixed MSI Vina rehydrated and three fixture Git blob bytes restored in isolated review copy"
+    },
+    "full_backend_rerun": "not_run",
+    "basic_msi_layout": "passed",
+    "assisted_msi_layout": "passed",
+    "public_exe_install_upgrade_uninstall": "not_run",
+    "full_gui_acceptance": "not_run",
+    "all_current_scientific_gates": "not_run"
+  },
+  "scientific_disclaimer": "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+}
