@@ -106,12 +106,31 @@
       "skipped": 1,
       "conditions": "fixed MSI Vina rehydrated and three fixture Git blob bytes restored in isolated review copy"
     },
-    "full_backend_rerun": "not_run",
+    "full_backend_rerun": "not_run_locally_after_fixture_repair",
     "basic_msi_layout": "passed",
     "assisted_msi_layout": "passed",
     "public_exe_install_upgrade_uninstall": "not_run",
     "full_gui_acceptance": "not_run",
-    "all_current_scientific_gates": "not_run"
+    "all_current_scientific_gates": "not_run",
+    "github_windows_ci": {
+      "url": "https://github.com/xuxinxi14/DockStart/actions/runs/37022720578",
+      "commit": "223250816abb8cec9074a7a48808ef2c6730c284",
+      "source_changes": "documentation_and_screenshots_only",
+      "conclusion": "failure",
+      "backend": {
+        "tests": 1305,
+        "failures": 101,
+        "errors": 44,
+        "skipped": 15
+      },
+      "later_frontend_and_rust_steps": "not_run_after_backend_failure",
+      "observed_failure_categories": [
+        "missing_fixed_vina",
+        "scientific_fixture_byte_checks",
+        "Windows_temporary_path_difference"
+      ],
+      "all_causes_confirmed": false
+    }
   },
   "scientific_disclaimer": "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
 }

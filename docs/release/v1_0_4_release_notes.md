@@ -40,7 +40,7 @@ AutoGrid4 是用户自行安装的外部工具，普通 Vina/Vinardo 实时对�
 
 v1.0.4 功能源码参考：[`d314084f246ce96cf0f4b56de888843b7c79c500`](https://github.com/xuxinxi14/DockStart/tree/d314084f246ce96cf0f4b56de888843b7c79c500)。
 
-原 `v1.0.4` 标签误指向 v1.0.3 提交 `36249f328ef4de231469444ec4638680c93b897e`。2026-10-02 的发布整理将标签对应修正到上述 v1.0.4 提交；已下载旧 Source code 的用户应重新获取并核对提交。本次保留原 Assisted EXE，不重新构建或替换其字节。
+原 `v1.0.4` 标签误指向 v1.0.3 提交 `36249f328ef4de231469444ec4638680c93b897e`。2026-10-02 已将标签修正到上述 v1.0.4 提交；已下载旧 Source code 的用户应重新获取并核对提交。本次保留原 Assisted EXE，不重新构建或替换其字节。
 
 该 EXE 的历史候选身份是 `1.0.4-36249f32-20260930T201519Z-help-dirty`，由上述旧提交加未提交修改构建；原 manifest 的 `dirty_worktree=true`、`publishable=false` 和未运行门禁记录保留。功能提交对应不等于对历史安装包逐字节重建的证明，不能追认原候选为已通过完整发布门禁。
 
@@ -52,13 +52,16 @@ v1.0.4 功能源码参考：[`d314084f246ce96cf0f4b56de888843b7c79c500`](https:/
 | npm 锁文件审计 | 当次 registry 审计无已知告警；不覆盖 Python/Rust |
 | Rust | 格式检查通过；本次未跑 check/test/clippy |
 | 后端首轮全量 | 1305 项，3 failure、4 error、15 skipped；缺固定 Vina 与 fixture 换行差异造成条件失败 |
-| 后端相关模块复验 | 在审查副本补齐 Vina并恢复三份 fixture 的 Git 原始字节后，53 项复验通过、1 项跳过；未重跑全量 |
+| 后端相关模块复验 | 在审查副本补齐 Vina并恢复三份 fixture 的 Git 原始字节后，53 项复验无失败、1 项跳过；未在该修复副本重跑全量 |
+| 主仓库 Windows CI | [文档发布提交的 CI](https://github.com/xuxinxi14/DockStart/actions/runs/37022720578) 未通过：1305 项，101 failure、44 error、15 skipped；不能用本地复验替代该结果 |
 | Basic MSI 内容 | 实际 Vina、两轮对接、评分解析、快照与 Markdown 报告通过 |
 | Assisted MSI 内容 | 固定 runtime、CIF/配体准备、Python 优先级与真实 Vina 对接通过 |
 | 依赖许可资源 | 两种 MSI 中许可包完整性检查通过；不是法律认证 |
 | 安装文件身份 | 四份本地候选大小和 SHA256 与原 manifest 一致；公开 EXE digest 与本地 Assisted EXE 一致 |
 
 MSI 内容提取验证不是 EXE 的真实安装、升级、卸载或完整 GUI 验收；使用小型示例也不能代表科研准确率。v1.0.0 安装门禁记录及其他历史科学验收不计作 v1.0.4 通过项。已补充核对结果保存在发布验证清单，原候选 manifest 不回写。
+
+本次 CI 提交只变更文档与截图，应用/后端/测试源码未改。失败日志包含固定 `resources/vina/vina.exe` 缺失、科学 fixture 字节校验及 Windows 临时路径差异；尚未逐项排除其他原因。CI 在 Python 测试阶段终止，后续前端和 Rust 门禁未执行，仍需独立修复发布环境并重新验证。
 
 ## 已知限制和待验收
 

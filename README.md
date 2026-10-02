@@ -87,7 +87,7 @@ npm ci
 npm run tauri dev
 ```
 
-统一检查入口为仓库根目录的 `scripts/check_all.ps1`；部分外部验收测试需要固定 Vina 和逐字节匹配的 fixture，干净克隆未准备资源时可能失败。检查入口和源码构建条件见 [Windows 打包说明](docs/release/windows_packaging.md) 与 [发布检查表](docs/release/release_checklist.md)。
+统一检查入口为仓库根目录的 `scripts/check_all.ps1`；部分外部验收测试需要固定 Vina 和逐字节匹配的 fixture，干净克隆未准备资源时可能失败。[最新核对的 Windows CI](https://github.com/xuxinxi14/DockStart/actions/runs/37022720578) 未通过，具体范围记录在发布说明中；不能以本地复验宣称全量源码门禁通过。检查入口和源码构建条件见 [Windows 打包说明](docs/release/windows_packaging.md) 与 [发布检查表](docs/release/release_checklist.md)。
 
 仓库主要目录为 `apps/desktop/`、`backend/`、`resources/`、`docs/` 和 `scripts/`。历史 `test/DockStart/` 跟踪了一份运行布局，仅保留作为历史测试资源，不代表当前源码或推荐下载入口；它与未来“不提交 runtime”的资源策略尚待独立整理。
 
