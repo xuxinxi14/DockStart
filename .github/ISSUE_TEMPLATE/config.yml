@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "中文用户指南 / Chinese user documentation"
+    url: "https://xuxinxi14.github.io/DockStart-Docs/"
+    about: "查阅安装、结构准备、对接箱体与结果解释。/ Installation, preparation, docking boxes and result interpretation."
+  - name: "English Quick Start"
+    url: "https://github.com/xuxinxi14/DockStart/blob/main/docs/quick_start_v1_0_4.en.md"
+    about: "A first-run walkthrough with Chinese menu names for the public trial."

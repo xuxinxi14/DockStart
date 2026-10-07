@@ -1,16 +1,20 @@
 # DockStart v1.0.4 快速开始
 
-适用于 Windows 10/11 x64 的 v1.0.4 Assisted 试用安装包。本页先帮助你跑通软件流程，不把玩具示例视为科研验证。
+[中文](quick_start_v1_0_4.md) · [English](quick_start_v1_0_4.en.md)
+
+适用于 Windows 10/11 x64 的 v1.0.4 Basic/Assisted 试用安装包。本页先帮助你跑通软件流程，不把玩具示例视为科研验证。
 
 ## 1. 下载并核对
 
-打开 [v1.0.4 发布页](https://github.com/xuxinxi14/DockStart/releases/tag/v1.0.4)，下载 `DockStart_1.0.4_Assisted_x64-setup.exe`。目前公开资产只提供 Assisted EXE；已有 PDBQT 也可以直接使用。
+打开 [v1.0.4 发布页](https://github.com/xuxinxi14/DockStart/releases/tag/v1.0.4)。截至 2026-10-07，Basic 和 Assisted EXE 均可下载：已有受体/配体 PDBQT 可以选轻量 Basic；需要原始结构准备时选 Assisted，它也支持直接导入 PDBQT。
+
+例如，核对 Assisted 文件：
 
 ```powershell
 Get-FileHash -Algorithm SHA256 -LiteralPath .\DockStart_1.0.4_Assisted_x64-setup.exe
 ```
 
-期望值为 `c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2`。文件未做代码签名；哈希不一致时先停止安装并重新核对来源。不要关闭安全软件来绕过检测。
+Assisted 期望值为 `c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2`；Basic 为 `56c510d40f61333abda0e42a536d70da4ab581889fd23d4a640b59dd649718b5`。两包完整记录见 [校验文件](release/v1_0_4_SHA256SUMS_2026_10_07.txt) 和 [下载核对清单](release/v1_0_4_downloads_2026_10_07.json)。文件未做代码签名；哈希不一致时先停止安装并重新核对来源。不要关闭安全软件来绕过检测。
 
 正常安装后打开软件，确认显示 v1.0.4。普通对接无需先配置系统 Python；先到工具链页检查随附 Vina 和准备工具。项目目录应独立于软件安装目录。
 

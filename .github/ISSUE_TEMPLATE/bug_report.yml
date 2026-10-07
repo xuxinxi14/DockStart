@@ -1,0 +1,70 @@
+name: "使用问题 / Bug report"
+description: "报告安装、准备或运行中的问题 / Report an installation or workflow problem."
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请提供可复现步骤，中文或英文均可。分享日志前检查个人路径与研究数据。
+        Chinese and English reports are welcome. Remove private paths and research data from shared logs.
+  - type: input
+    id: version
+    attributes:
+      label: "DockStart 版本 / Version"
+      placeholder: "例如 / e.g. 1.0.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: "安装档位 / Installation profile"
+      options:
+        - Basic
+        - Assisted
+        - "源码运行 / Source checkout"
+        - "不确定 / Unsure"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: "系统与工具 / Environment"
+      description: "Windows 版本；相关 Vina、Python、准备工具的检测版本。/ Windows version and relevant tool versions from the toolchain page."
+      placeholder: "Windows 11 x64; AutoDock Vina 1.2.7; ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "复现步骤 / Steps to reproduce"
+      description: "写明所在页面、输入格式、操作与协议；优先用公开或经过处理的最小示例。/ Include the page, input format, actions and protocol; prefer a public or sanitized minimal example."
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期望结果 / Expected behavior"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "实际结果与错误码 / Actual behavior and error code"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "相关日志 / Relevant logs"
+      description: "按问题提供 stderr.txt、log.txt 或准备日志的相关片段；不要粘贴整个项目。/ Relevant excerpts from stderr.txt, log.txt or preparation logs are enough."
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "截图与补充信息 / Screenshots and additional context"
+      description: "可在这里附截图或最小公开数据来源。/ Attach screenshots or link to minimal public inputs if useful."

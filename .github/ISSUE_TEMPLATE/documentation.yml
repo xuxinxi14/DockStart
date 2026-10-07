@@ -1,0 +1,23 @@
+name: "文档反馈 / Documentation"
+description: "报告教程不清楚、翻译或链接问题 / Report unclear instructions, translations or broken links."
+title: "[Docs]: "
+labels: [documentation]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: "文档位置 / Page or file"
+      placeholder: "URL、文件名或软件内帮助主题 / URL, filename or in-app help topic"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: "问题与软件版本 / Problem and application version"
+      description: "说明哪句话或哪一步不清楚，以及使用的 DockStart 版本。/ Explain the unclear text or step and your DockStart version."
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: "建议与补充 / Suggested change and context"

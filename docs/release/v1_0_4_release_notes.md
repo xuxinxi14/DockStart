@@ -1,4 +1,4 @@
-# DockStart v1.0.4 · Windows x64 试用版（Assisted）
+# DockStart v1.0.4 · Windows x64 试用版（Basic / Assisted）
 
 DockStart 是基于 AutoDock Vina 的开源中文桌面工作台，整理结构准备、对接箱体、参数、任务运行、构象查看和实验记录。v1.0.4 重点更新帮助与入门；不改变 Vina 搜索/评分算法，不新增运行依赖或项目数据 schema。
 
@@ -6,15 +6,18 @@ DockStart 是基于 AutoDock Vina 的开源中文桌面工作台，整理结构�
 
 ## 下载
 
-当前发布只提供 Assisted EXE；它也可直接使用已有 receptor/ligand PDBQT。Basic 和 MSI 本地候选存在，但不列作本次公开下载。
+截至 2026-10-07，发布页提供 Basic 与 Assisted 两种 EXE。Basic 在 2026-10-05 新增为公开资产；Assisted 仍是原公开文件，亦可直接使用已有 receptor/ligand PDBQT。MSI 不列作本次公开下载。
 
 | 文件 | 大小 | SHA256 |
 | --- | ---: | --- |
+| [DockStart_1.0.4_Basic_x64-setup.exe](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/DockStart_1.0.4_Basic_x64-setup.exe) | 18,630,013 bytes（约 17.77 MiB） | `56c510d40f61333abda0e42a536d70da4ab581889fd23d4a640b59dd649718b5` |
 | [DockStart_1.0.4_Assisted_x64-setup.exe](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/DockStart_1.0.4_Assisted_x64-setup.exe) | 74,017,034 bytes（约 70.59 MiB） | `c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2` |
 
 支持 Windows 10/11 x64。安装包未做 Authenticode 签名，可能显示“未知发布者”；请从本项目发布页下载并核对 SHA256。安装元数据的 publisher 为 XinXi Xu，不等于数字签名身份。
 
-发布附件另提供 [SHA256SUMS](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/v1_0_4_SHA256SUMS.txt) 和 [历史构建与补充验证清单](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/v1_0_4_release_manifest.json)。
+两包当前信息见 [2026-10-07 校验文件](v1_0_4_SHA256SUMS_2026_10_07.txt) 与 [下载资产核对清单](v1_0_4_downloads_2026_10_07.json)。
+
+原 [2026-10-02 SHA256SUMS](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/v1_0_4_SHA256SUMS.txt) 与 [历史构建及补充验证清单](https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/v1_0_4_release_manifest.json) 按当时仅公开 Assisted 的状态保留。新增 Basic 资产与下载核对记录不改变历史门禁结果，也不作为新增安装或科学验收通过项。
 
 ```powershell
 Get-FileHash -Algorithm SHA256 -LiteralPath .\DockStart_1.0.4_Assisted_x64-setup.exe
@@ -30,7 +33,7 @@ Get-FileHash -Algorithm SHA256 -LiteralPath .\DockStart_1.0.4_Assisted_x64-setup
 
 ## 使用路径与工具边界
 
-已有 PDBQT 可直接导入。Assisted 另附 AutoDock Vina 1.2.7、CPython 3.11、RDKit 2026.3.3、Meeko 0.7.1 等固定准备工具，可离线尝试从受体 PDB/CIF、配体 SDF/MOL/单分子 MOL2 准备 PDBQT。普通流程无需自行安装系统 Python。用户配置的兼容 preparation Python 仍优先；自动准备结果需要人工检查。
+已有 PDBQT 可直接导入 Basic 或 Assisted。Basic 随附 AutoDock Vina 1.2.7 与精简后端 CPython 3.11；Assisted 额外随附 RDKit 2026.3.3、Meeko 0.7.1 等固定准备工具，可离线尝试从受体 PDB/CIF、配体 SDF/MOL/单分子 MOL2 准备 PDBQT。普通流程无需自行安装系统 Python。用户配置的兼容 preparation Python 仍优先；自动准备结果需要人工检查。
 
 AutoGrid4 是用户自行安装的外部工具，普通 Vina/Vinardo 实时对接可以跳过。Open Babel、PLIP、MGLTools 不随包提供。SMILES、配体 PDB 自动准备、多记录/批量 MOL2、口袋预测、复杂受体修复、PLIP/ProLIF 分析、分子动力学、PDF 报告和 AI 药效判断不在当前能力范围。
 

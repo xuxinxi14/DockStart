@@ -2,13 +2,13 @@
 
 适用于 Windows x64 v1.0.4 试用包；下载和哈希见 [发布说明](release/v1_0_4_release_notes.md)，首次使用见 [快速开始](quick_start_v1_0_4.md)。
 
-## 1. Basic 与 Assisted 怎么选？为什么下载页只有一个包？
+## 1. Basic 与 Assisted 怎么选？
 
-Basic 面向已有受体/配体 PDBQT 的用户，Assisted 额外随附原始结构准备工具。当前 v1.0.4 公开下载只有 Assisted EXE，它也能直接使用已有 PDBQT，不必进行格式转换。Basic 构建存在不代表它已公开发布。
+Basic 面向已有受体/配体 PDBQT 的用户，Assisted 额外随附原始结构准备工具。截至 2026-10-07，v1.0.4 发布页已提供两种 EXE；已有 PDBQT 可选 Basic，需要原始结构准备时选 Assisted。两种档位共用应用身份，不能并行安装。
 
 ## 2. 要先安装 Python、Vina、RDKit 或 Meeko 吗？
 
-使用 Assisted 安装版进行普通流程时不需要：它已经随附固定工具。先到工具链页检测，只有检测失败或要替换兼容工具时才配置路径。从源码运行另有资源条件，不能把安装版说明直接套到干净源码。
+使用 Basic 或 Assisted 安装版进行已有 PDBQT 的普通 Vina 对接时，不需要自行安装 Python 或 Vina。Assisted 还随附 RDKit/Meeko，Basic 不含这套准备环境。先到工具链页检测，只有检测失败或要替换兼容工具时才配置路径。从源码运行另有资源条件，不能把安装版说明直接套到干净源码。
 
 ## 3. 为什么找不到 Vina？
 

@@ -1,12 +1,14 @@
 # DockStart v1.0.4 用户指南
 
-本指南面向 v1.0.4 Windows x64 Assisted 试用安装包。公开下载目前只有 Assisted EXE；它同时支持已有 PDBQT 的基础路径。Basic 是另一个构建档位，当前没有对应公开下载资产。下载、文件哈希和验证范围见 [发布说明](release/v1_0_4_release_notes.md)。
+本指南面向 v1.0.4 Windows x64 Basic/Assisted 试用安装包。截至 2026-10-07，公开下载已提供两种 EXE：Basic 用于已有 PDBQT，Assisted 额外随附原始结构准备工具，也支持已有 PDBQT。下文自动准备说明适用于 Assisted 或用户自行配置的兼容准备环境。下载、文件哈希和验证范围见 [发布说明](release/v1_0_4_release_notes.md)。
 
 第一次使用建议先按 [快速开始](quick_start_v1_0_4.md) 复制内置基础示例，再阅读 [1IEP 真实体系教程](https://xuxinxi14.github.io/DockStart-Docs/docs/part-b/cases/basic-docking-1iep/)。
 
 ## 安装和工具检测
 
 安装后先检查软件版本与“工具链”状态。Assisted 随附 AutoDock Vina 1.2.7、独立 CPython 3.11 和 RDKit/Meeko 等准备工具，正常情况下不需要自行安装系统 Python，也不需要手填工具路径。
+
+Basic 同样随附 Vina 与精简后端 Python；已有 PDBQT 的普通对接不需要准备工具。Basic 未包含 RDKit/Meeko，不能把它视为随包支持自动准备。
 
 只有检测失败或你希望使用其他兼容工具时，才在设置中选择实际存在的可执行文件，然后显式重新检测：
 

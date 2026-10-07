@@ -1,0 +1,2 @@
+56c510d40f61333abda0e42a536d70da4ab581889fd23d4a640b59dd649718b5  DockStart_1.0.4_Basic_x64-setup.exe
+c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2  DockStart_1.0.4_Assisted_x64-setup.exe

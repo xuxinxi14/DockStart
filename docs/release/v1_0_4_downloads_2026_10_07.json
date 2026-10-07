@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "app_version": "1.0.4",
+  "checked_on": "2026-10-07",
+  "distribution_status": "public_trial",
+  "release_url": "https://github.com/xuxinxi14/DockStart/releases/tag/v1.0.4",
+  "verification_method": "Downloaded both public EXE assets and matched their size and SHA256 to GitHub asset metadata and the existing historical candidate manifest.",
+  "verification_scope": "File identity only; no new build, signature, installation, GUI or scientific acceptance.",
+  "historical_build_record": "v1_0_4_release_manifest.json",
+  "checksum_file": "v1_0_4_SHA256SUMS_2026_10_07.txt",
+  "published_installers": [
+    {
+      "name": "DockStart_1.0.4_Assisted_x64-setup.exe",
+      "profile": "assisted",
+      "size_bytes": 74017034,
+      "sha256": "c495a08184817aa1619116957def9d0d3b30dc9e2d469e638e04565b95253ee2",
+      "download_url": "https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/DockStart_1.0.4_Assisted_x64-setup.exe",
+      "github_asset_id": "602255500",
+      "created_at": "2026-10-01T02:17:56Z",
+      "updated_at": "2026-10-01T02:20:12Z"
+    },
+    {
+      "name": "DockStart_1.0.4_Basic_x64-setup.exe",
+      "profile": "basic",
+      "size_bytes": 18630013,
+      "sha256": "56c510d40f61333abda0e42a536d70da4ab581889fd23d4a640b59dd649718b5",
+      "download_url": "https://github.com/xuxinxi14/DockStart/releases/download/v1.0.4/DockStart_1.0.4_Basic_x64-setup.exe",
+      "github_asset_id": "612563113",
+      "created_at": "2026-10-05T12:49:03Z",
+      "updated_at": "2026-10-05T12:49:16Z"
+    }
+  ],
+  "scientific_disclaimer": "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
+}

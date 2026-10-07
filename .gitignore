@@ -36,6 +36,11 @@ dockstart_settings.json
 # Local smoke tests, scientific verification, screenshots, and docking outputs
 output/
 
+# Local screen recordings and historical installed layouts.
+# Existing tracked test/DockStart files remain tracked until a separate migration.
+/video/
+/test/DockStart/
+
 # Third-party source archives and downloads
 *_master.zip
 *_main.zip

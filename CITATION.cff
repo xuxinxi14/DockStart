@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: >-
+  If you use DockStart, please cite this software and separately cite
+  AutoDock Vina and the other scientific tools used in your workflow.
+type: software
+title: "DockStart: a local Windows GUI for AutoDock Vina"
+authors:
+  - family-names: Xu
+    given-names: XinXi
+repository-code: "https://github.com/xuxinxi14/DockStart"
+url: "https://github.com/xuxinxi14/DockStart"
+version: 1.0.4
+date-released: "2026-10-01"
+license: Apache-2.0
+abstract: >-
+  DockStart is an open-source Windows workbench with Chinese guidance
+  for PDBQT import or preparation, docking-box setup, AutoDock Vina
+  execution, pose viewing and traceable local experiment records.
+  Version 1.0.4 is a public trial; full installer, GUI and scientific
+  acceptance remain incomplete. DockStart does not change Vina's
+  search algorithm or scoring function. Docking scores cannot replace
+  experimental validation.
+keywords:
+  - molecular-docking
+  - autodock-vina
+  - protein-ligand-docking
+  - computational-chemistry
+  - cheminformatics
+  - windows
