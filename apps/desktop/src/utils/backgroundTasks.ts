@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getLanguage } from "../i18n/language";
 
 export const BACKGROUND_TASK_EVENT = "dockstart-background-task";
 
@@ -92,12 +93,12 @@ export async function startMultipleLigandTask(
   projectDir: string,
   runId: string,
 ): Promise<BackgroundTaskStatus> {
-  const payload = await invoke<string>("start_multiple_ligand_task", { projectDir, runId });
+  const payload = await invoke<string>("start_multiple_ligand_task", { projectDir, runId, reportLanguage: getLanguage() });
   return assertStarted(normalizeTaskStatus(payload));
 }
 
 export async function startScreeningTask(projectDir: string): Promise<BackgroundTaskStatus> {
-  const payload = await invoke<string>("start_screening_task", { projectDir });
+  const payload = await invoke<string>("start_screening_task", { projectDir, reportLanguage: getLanguage() });
   return assertStarted(normalizeTaskStatus(payload));
 }
 

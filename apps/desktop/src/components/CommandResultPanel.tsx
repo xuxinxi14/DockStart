@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 type CommandResultPanelProps = {
   title?: string;
   message?: string;
@@ -7,12 +9,13 @@ type CommandResultPanelProps = {
 };
 
 export default function CommandResultPanel({
-  title = "命令结果",
+  title = translate("命令结果"),
   message,
   rawError,
   suggestion,
   announceAs,
 }: CommandResultPanelProps) {
+  useLanguage();
   if (!message && !rawError && !suggestion) {
     return null;
   }
@@ -30,13 +33,13 @@ export default function CommandResultPanel({
       {message ? <p>{message}</p> : null}
       {suggestion ? (
         <div className="command-result-suggestion">
-          <strong>建议怎么做</strong>
+          <strong>{translate("建议怎么做")}</strong>
           <p>{suggestion}</p>
         </div>
       ) : null}
       {rawError ? (
         <details>
-          <summary>技术详情</summary>
+          <summary>{translate("技术详情")}</summary>
           <pre>{rawError}</pre>
         </details>
       ) : null}

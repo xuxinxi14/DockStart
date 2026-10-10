@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { MacrocycleBond, ViewerStructureResult } from "../types";
@@ -38,6 +40,7 @@ export default function StructureMiniPreview({
   highlightBonds = EMPTY_HIGHLIGHT_BONDS,
   screeningCandidate,
 }: StructureMiniPreviewProps) {
+  useLanguage();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
   const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
@@ -245,9 +248,9 @@ export default function StructureMiniPreview({
   }, []);
 
   return (
-    <div className="structure-mini-preview" aria-label={`${label} 3D 预览`}>
+    <div className="structure-mini-preview" aria-label={translate("{0} 3D 预览", [label])}>
       <div className="structure-mini-preview-canvas" ref={containerRef} />
-      {!structure?.ok ? <span>{message}</span> : null}
+      {!structure?.ok ? <span>{translate(message)}</span> : null}
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import StatusBadge from "./StatusBadge";
 
 type ToolStatusCardProps = {
@@ -19,11 +21,12 @@ function toneForStatus(status: string) {
 }
 
 export default function ToolStatusCard({ title, status, message, version, path }: ToolStatusCardProps) {
+  useLanguage();
   return (
     <article className="unified-status-card">
       <div>
         <strong>{title}</strong>
-        <StatusBadge tone={toneForStatus(status)}>{status || "unknown"}</StatusBadge>
+        <StatusBadge tone={toneForStatus(status)}>{translate(status || "unknown")}</StatusBadge>
       </div>
       {message ? <p>{message}</p> : null}
       {version ? <code>version: {version}</code> : null}

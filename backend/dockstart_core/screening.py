@@ -58,6 +58,7 @@ from dockstart_core.screening_models import (
     ScreeningToolSnapshot,
 )
 from dockstart_core.settings import load_settings
+from dockstart_core.report_language import get_report_language, localized_report, rt
 
 
 STATE_RELATIVE_PATH = Path("screening", "screening.json")
@@ -11373,17 +11374,17 @@ def _markdown_cell(value: Any) -> str:
 
 def _screening_status_label(status: Any) -> str:
     return {
-        "ready": "已就绪",
-        "running": "运行中",
-        "cancel_requested": "等待安全取消",
-        "canceled": "已取消",
-        "interrupted": "已中断",
-        "completed": "已完成",
-        "completed_with_failures": "完成（含失败项）",
-        "pending": "待处理",
-        "succeeded": "成功",
-        "failed": "失败",
-    }.get(str(status or ""), str(status or "未知"))
+        "ready": rt('已就绪'),
+        "running": rt('运行中'),
+        "cancel_requested": rt('等待安全取消'),
+        "canceled": rt('已取消'),
+        "interrupted": rt('已中断'),
+        "completed": rt('已完成'),
+        "completed_with_failures": rt('完成（含失败项）'),
+        "pending": rt('待处理'),
+        "succeeded": rt('成功'),
+        "failed": rt('失败'),
+    }.get(str(status or ""), str(status or rt('未知')))
 
 
 def _screening_report_text(state: dict[str, Any]) -> str:
@@ -11473,7 +11474,7 @@ def _screening_report_text(state: dict[str, Any]) -> str:
     )
     top_limit = max(1, int(state.get("top_n") or 20))
     max_evals_label = (
-        "Vina 自动决定"
+        rt('Vina 自动决定')
         if vina.get("max_evals") == 0
         else _markdown_cell(vina.get("max_evals"))
     )
@@ -11503,9 +11504,9 @@ def _screening_report_text(state: dict[str, Any]) -> str:
                     or item.get("source_file")
                 ),
                 integrity=(
-                    "已验证"
+                    rt('已验证')
                     if item.get("topology_integrity") == "verified"
-                    else "不可用"
+                    else rt('不可用')
                 ),
                 charge=_markdown_cell(facts.get("formal_charge")),
                 heavy=_markdown_cell(facts.get("heavy_atom_count")),
@@ -11513,9 +11514,9 @@ def _screening_report_text(state: dict[str, Any]) -> str:
                     facts.get("rotatable_bond_count")
                 ),
                 macrocycle=(
-                    "是"
+                    rt('是')
                     if facts.get("has_macrocycle") is True
-                    else "否"
+                    else rt('否')
                     if facts.get("has_macrocycle") is False
                     else "—"
                 ),
@@ -11523,82 +11524,77 @@ def _screening_report_text(state: dict[str, Any]) -> str:
         )
 
     lines = [
-        "# DockStart 批量筛选实验记录",
+        rt('# DockStart 批量筛选实验记录'),
         "",
-        "> Docking score 仅供结构结合趋势参考，不能替代实验验证。",
+        rt('> Docking score 仅供结构结合趋势参考，不能替代实验验证。'),
         "",
-        "## 任务概览",
+        rt('## 任务概览'),
         "",
-        f"- 筛选编号：`{_markdown_cell(state.get('screening_id'))}`",
-        f"- 状态：{_screening_status_label(state.get('status'))}",
-        f"- 创建时间：{_markdown_cell(state.get('created_at'))}",
-        f"- 开始时间：{_markdown_cell(state.get('started_at'))}",
-        f"- 结束时间：{_markdown_cell(state.get('finished_at'))}",
-        f"- 配体总数：{counts['total']}",
-        f"- 成功：{counts['succeeded']}",
-        f"- 失败：{counts['failed']}",
-        f"- 未完成：{counts['unfinished']}",
+        rt('- 筛选编号：`{0}`', f"{_markdown_cell(state.get('screening_id'))}"),
+        rt('- 状态：{0}', f"{_screening_status_label(state.get('status'))}"),
+        rt('- 创建时间：{0}', f"{_markdown_cell(state.get('created_at'))}"),
+        rt('- 开始时间：{0}', f"{_markdown_cell(state.get('started_at'))}"),
+        rt('- 结束时间：{0}', f"{_markdown_cell(state.get('finished_at'))}"),
+        rt('- 配体总数：{0}', f"{counts['total']}"),
+        rt('- 成功：{0}', f"{counts['succeeded']}"),
+        rt('- 失败：{0}', f"{counts['failed']}"),
+        rt('- 未完成：{0}', f"{counts['unfinished']}"),
         "",
-        "## 冻结输入与工具",
+        rt('## 冻结输入与工具'),
         "",
-        f"- 受体快照：`{_markdown_cell(receptor.get('file'))}`",
-        f"- 受体 SHA256：`{_markdown_cell(receptor.get('sha256'))}`",
+        rt('- 受体快照：`{0}`', f"{_markdown_cell(receptor.get('file'))}"),
+        rt('- 受体 SHA256：`{0}`', f"{_markdown_cell(receptor.get('sha256'))}"),
         (
-            "- 原始配体拓扑覆盖："
-            f"{_markdown_cell(topology_summary.get('status'))}，"
-            f"{_markdown_cell(topology_summary.get('available_count'))}/"
-            f"{_markdown_cell(topology_summary.get('total_count'))}"
+            rt('- 原始配体拓扑覆盖：{0}，{1}/{2}', f"{_markdown_cell(topology_summary.get('status'))}", f"{_markdown_cell(topology_summary.get('available_count'))}", f"{_markdown_cell(topology_summary.get('total_count'))}")
         ),
         f"- AutoDock Vina：{_markdown_cell(vina_tool.get('version'))}",
-        f"- Vina 来源：{_markdown_cell(vina_tool.get('source'))}",
+        rt('- Vina 来源：{0}', f"{_markdown_cell(vina_tool.get('source'))}"),
         f"- Vina SHA256：`{_markdown_cell(vina_tool.get('sha256'))}`",
-        f"- 评分协议：{'标准 AutoDock4 maps' if is_ad4 else 'Vina / Vinardo'}",
-        f"- 评分函数：{_markdown_cell(vina.get('scoring'))}",
+        rt('- 评分协议：{0}', f"{(rt('标准 AutoDock4 maps') if is_ad4 else 'Vina / Vinardo')}"),
+        rt('- 评分函数：{0}', f"{_markdown_cell(vina.get('scoring'))}"),
         *(
             [
-                f"- maps 集合：`{_markdown_cell(ad4_maps.get('map_set_id'))}`",
-                f"- maps 前缀：`{_markdown_cell(ad4_maps.get('prefix'))}`",
-                f"- maps 文件数：{len(ad4_map_files)}",
+                rt('- maps 集合：`{0}`', f"{_markdown_cell(ad4_maps.get('map_set_id'))}"),
+                rt('- maps 前缀：`{0}`', f"{_markdown_cell(ad4_maps.get('prefix'))}"),
+                rt('- maps 文件数：{0}', f'{len(ad4_map_files)}'),
                 f"- maps manifest SHA256：`{_markdown_cell(ad4_manifest.get('sha256'))}`",
             ]
             if is_ad4
             else []
         ),
-        f"- 搜索彻底程度：{_markdown_cell(vina.get('exhaustiveness'))}",
-        f"- 单条搜索链最大评估次数：{max_evals_label}",
-        f"- 输出构象数：{_markdown_cell(vina.get('num_modes'))}",
-        f"- 构象最小间距：{_markdown_cell(vina.get('min_rmsd'))} Å",
-        f"- 能量范围：{_markdown_cell(vina.get('energy_range'))} kcal/mol",
-        f"- 网格间距：{_markdown_cell(vina.get('spacing'))} Å",
-        f"- 日志详细程度：{_markdown_cell(vina.get('verbosity'))}",
-        f"- 关闭显式受体原子精修：{'是' if vina.get('no_refine') else '否'}",
-        f"- 网格体素数取偶数：{'是' if vina.get('force_even_voxels') else '否'}",
-        f"- 单任务 CPU：{_markdown_cell(vina.get('cpu'))}",
-        f"- 随机种子：{_markdown_cell(vina.get('seed'))}",
-        f"- 失败重试上限：{_markdown_cell(state.get('max_retries'))}",
+        rt('- 搜索彻底程度：{0}', f"{_markdown_cell(vina.get('exhaustiveness'))}"),
+        rt('- 单条搜索链最大评估次数：{0}', f'{max_evals_label}'),
+        rt('- 输出构象数：{0}', f"{_markdown_cell(vina.get('num_modes'))}"),
+        rt('- 构象最小间距：{0} Å', f"{_markdown_cell(vina.get('min_rmsd'))}"),
+        rt('- 能量范围：{0} kcal/mol', f"{_markdown_cell(vina.get('energy_range'))}"),
+        rt('- 网格间距：{0} Å', f"{_markdown_cell(vina.get('spacing'))}"),
+        rt('- 日志详细程度：{0}', f"{_markdown_cell(vina.get('verbosity'))}"),
+        rt('- 关闭显式受体原子精修：{0}', f"{(rt('是') if vina.get('no_refine') else rt('否'))}"),
+        rt('- 网格体素数取偶数：{0}', f"{(rt('是') if vina.get('force_even_voxels') else rt('否'))}"),
+        rt('- 单任务 CPU：{0}', f"{_markdown_cell(vina.get('cpu'))}"),
+        rt('- 随机种子：{0}', f"{_markdown_cell(vina.get('seed'))}"),
+        rt('- 失败重试上限：{0}', f"{_markdown_cell(state.get('max_retries'))}"),
         "",
-        "### 对接箱体",
+        rt('### 对接箱体'),
         "",
-        "| 参数 | X | Y | Z |",
+        rt('| 参数 | X | Y | Z |'),
         "|---|---:|---:|---:|",
         (
-            f"| 中心（Å） | {_markdown_cell(box.get('center_x'))} | "
-            f"{_markdown_cell(box.get('center_y'))} | {_markdown_cell(box.get('center_z'))} |"
+            rt('| 中心（Å） | {0} | {1} | {2} |', f"{_markdown_cell(box.get('center_x'))}", f"{_markdown_cell(box.get('center_y'))}", f"{_markdown_cell(box.get('center_z'))}")
         ),
         (
-            f"| 尺寸（Å） | {_markdown_cell(box.get('size_x'))} | "
-            f"{_markdown_cell(box.get('size_y'))} | {_markdown_cell(box.get('size_z'))} |"
+            rt('| 尺寸（Å） | {0} | {1} | {2} |', f"{_markdown_cell(box.get('size_x'))}", f"{_markdown_cell(box.get('size_y'))}", f"{_markdown_cell(box.get('size_z'))}")
         ),
         "",
-        "### 配体原始拓扑与化学事实",
+        rt('### 配体原始拓扑与化学事实'),
         "",
-        "| 队列项 | 原始记录 | 拓扑 | 形式电荷 | 重原子数 | 可旋转键数 | 大环 |",
+        rt('| 队列项 | 原始记录 | 拓扑 | 形式电荷 | 重原子数 | 可旋转键数 | 大环 |'),
         "|---|---|---|---:|---:|---:|---|",
         *(topology_rows or ["| — | — | — | — | — | — | — |"]),
         "",
         f"## Top {min(top_limit, len(ranked))}",
         "",
-        "| 排名 | 配体 | 最佳评分（kcal/mol） | 尝试次数 | 输出 PDBQT |",
+        rt('| 排名 | 配体 | 最佳评分（kcal/mol） | 尝试次数 | 输出 PDBQT |'),
         "|---:|---|---:|---:|---|",
     ]
     if ranked:
@@ -11613,14 +11609,14 @@ def _screening_report_text(state: dict[str, Any]) -> str:
                 )
             )
     else:
-        lines.append("| — | 尚无成功结果 | — | — | — |")
+        lines.append(rt('| — | 尚无成功结果 | — | — | — |'))
 
     lines.extend(
         [
             "",
-            "## 完整结果",
+            rt('## 完整结果'),
             "",
-            "| 原始顺序 | 排名 | 配体 | 状态 | 尝试次数 | 最佳评分（kcal/mol） | 输出 SHA256 | 错误 |",
+            rt('| 原始顺序 | 排名 | 配体 | 状态 | 尝试次数 | 最佳评分（kcal/mol） | 输出 SHA256 | 错误 |'),
             "|---:|---:|---|---|---:|---:|---|---|",
         ]
     )
@@ -11644,77 +11640,68 @@ def _screening_report_text(state: dict[str, Any]) -> str:
             )
         )
     if not ordered:
-        lines.append("| — | — | 尚无配体 | — | — | — | — | — |")
+        lines.append(rt('| — | — | 尚无配体 | — | — | — | — | — |'))
 
     lines.extend(
         [
             "",
-            "## 输出文件",
+            rt('## 输出文件'),
             "",
-            f"- 完整汇总：`{_markdown_cell(outputs.get('summary_csv'))}`",
-            f"- Top N 汇总：`{_markdown_cell(outputs.get('top_n_csv'))}`",
+            rt('- 完整汇总：`{0}`', f"{_markdown_cell(outputs.get('summary_csv'))}"),
+            rt('- Top N 汇总：`{0}`', f"{_markdown_cell(outputs.get('top_n_csv'))}"),
             (
                 (
-                    f"- SDF：`{_markdown_cell(sdf.get('file'))}`"
-                    f"（{_markdown_cell(sdf.get('status'))}；"
-                    f"{_markdown_cell(sdf_coverage.get('exported_items'))}"
-                    "/"
-                    f"{_markdown_cell(sdf_coverage.get('succeeded_items'))}"
-                    " 个成功配体）"
+                    rt('- SDF：`{0}`（{1}；{2}/{3} 个成功配体）', f"{_markdown_cell(sdf.get('file'))}", f"{_markdown_cell(sdf.get('status'))}", f"{_markdown_cell(sdf_coverage.get('exported_items'))}", f"{_markdown_cell(sdf_coverage.get('succeeded_items'))}")
                 )
                 if sdf.get("generated")
-                else f"- SDF：未生成。{_markdown_cell(sdf.get('reason'))}"
+                else rt('- SDF：未生成。{0}', f"{_markdown_cell(sdf.get('reason'))}")
             ),
             (
-                f"- SDF 拓扑验证清单：`{_markdown_cell(sdf.get('manifest_file'))}`"
+                rt('- SDF 拓扑验证清单：`{0}`', f"{_markdown_cell(sdf.get('manifest_file'))}")
                 if sdf.get("manifest_file")
-                else "- SDF 拓扑验证清单：—"
+                else rt('- SDF 拓扑验证清单：—')
             ),
             (
-                "- SDF 导出工具链："
-                f"Python {_markdown_cell(sdf_python_tool.get('version'))}；"
-                f"RDKit {_markdown_cell(sdf_rdkit_tool.get('version'))}；"
-                f"Meeko {_markdown_cell(sdf_meeko_tool.get('version'))}"
+                rt('- SDF 导出工具链：Python {0}；RDKit {1}；Meeko {2}', f"{_markdown_cell(sdf_python_tool.get('version'))}", f"{_markdown_cell(sdf_rdkit_tool.get('version'))}", f"{_markdown_cell(sdf_meeko_tool.get('version'))}")
                 if sdf.get("generated")
-                else "- SDF 导出工具链：—"
+                else rt('- SDF 导出工具链：—')
             ),
             (
-                "- SDF 工具链快照 SHA256："
-                f"`{_markdown_cell(sdf_toolchain.get('snapshot_sha256'))}`"
+                rt('- SDF 工具链快照 SHA256：`{0}`', f"{_markdown_cell(sdf_toolchain.get('snapshot_sha256'))}")
                 if sdf.get("generated")
-                else "- SDF 工具链快照 SHA256：—"
+                else rt('- SDF 工具链快照 SHA256：—')
             ),
             "",
-            "## 科学边界",
+            rt('## 科学边界'),
             "",
             (
-                "- 本任务按固定受体与冻结 AutoDock4 maps 逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。"
+                rt('- 本任务按固定受体与冻结 AutoDock4 maps 逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。')
                 if is_ad4
-                else "- 本任务按固定受体、Box 与 Vina 参数逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。"
+                else rt('- 本任务按固定受体、Box 与 Vina 参数逐个运行配体，不是多个配体同时进入一个结合位点的联合对接。')
             ),
             (
-                "- 排名只在本批次相同 AD4 maps 和搜索参数下按 AD4 数值排序，不应与 Vina、Vinardo 或其他网格条件直接比较。"
+                rt('- 排名只在本批次相同 AD4 maps 和搜索参数下按 AD4 数值排序，不应与 Vina、Vinardo 或其他网格条件直接比较。')
                 if is_ad4
-                else "- 排名只在本批次相同评分协议和参数下按 Vina 数值排序，不应与其他评分函数或其他输入条件直接比较。"
+                else rt('- 排名只在本批次相同评分协议和参数下按 Vina 数值排序，不应与其他评分函数或其他输入条件直接比较。')
             ),
-            "- 单项失败不会自动说明该配体不能结合；应结合错误日志、输入质量和必要的进一步计算或实验判断。",
-            "- PDBQT 不保存可靠完整的键级信息；没有受控原始拓扑时，DockStart 不会据此猜测并生成 SDF。",
-            "- 批量结果 SDF 只收录经 Meeko 拓扑映射导出且与冻结原始重原子图一致的构象；失败或缺失覆盖会在清单中显式记录。",
+            rt('- 单项失败不会自动说明该配体不能结合；应结合错误日志、输入质量和必要的进一步计算或实验判断。'),
+            rt('- PDBQT 不保存可靠完整的键级信息；没有受控原始拓扑时，DockStart 不会据此猜测并生成 SDF。'),
+            rt('- 批量结果 SDF 只收录经 Meeko 拓扑映射导出且与冻结原始重原子图一致的构象；失败或缺失覆盖会在清单中显式记录。'),
             "",
         ]
     )
     if parameter_warnings or legacy_zero_applied:
-        lines.extend(["## 参数兼容与排除说明", ""])
+        lines.extend([rt('## 参数兼容与排除说明'), ""])
         if legacy_zero_applied:
             lines.append(
-                "- 本记录沿用历史 schema v1 的 `energy_range = 0`；"
-                "该兼容仅用于恢复既有批量任务，新任务必须使用大于 0 的值。"
+                rt('- 本记录沿用历史 schema v1 的 `energy_range = 0`；该兼容仅用于恢复既有批量任务，新任务必须使用大于 0 的值。')
             )
         lines.extend(f"- {_markdown_cell(warning)}" for warning in parameter_warnings)
         lines.append("")
     return "\n".join(lines)
 
 
+@localized_report
 def export_screening_markdown_report(project_dir: str) -> dict[str, Any]:
     """Write a terminal screening snapshot as one auditable Markdown record."""
 
@@ -11753,6 +11740,7 @@ def export_screening_markdown_report(project_dir: str) -> dict[str, Any]:
         outputs["report_sha256"] = _sha256(report_path)
         outputs["report_size_bytes"] = report_path.stat().st_size
         outputs["reported_at"] = _now_iso()
+        outputs["report_language"] = get_report_language()
         _write_state(root, state)
         return {
             "ok": True,
@@ -11849,6 +11837,7 @@ def _persist_interrupted_run_failure(
         pass
 
 
+@localized_report
 @_serialized_screening_execution
 def run_screening(
     project_dir: str,
@@ -12044,6 +12033,8 @@ def _build_parser() -> argparse.ArgumentParser:
         command.add_argument("--project", required=True)
         if name == "run":
             command.add_argument("--max-items", type=int)
+        if name in {"run", "report"}:
+            command.add_argument("--report-language", choices=("zh-CN", "en-US"))
     return parser
 
 
@@ -12078,7 +12069,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "status":
         result = get_screening_status(args.project)
     elif args.command == "run":
-        result = run_screening(args.project, max_items=args.max_items)
+        result = run_screening(args.project, max_items=args.max_items, report_language=args.report_language)
     elif args.command == "cancel":
         result = request_screening_cancel(args.project)
     elif args.command == "resume":
@@ -12101,7 +12092,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "archive-compare":
         result = compare_screening_archives(args.project, args.archive_id)
     else:
-        result = export_screening_markdown_report(args.project)
+        result = export_screening_markdown_report(args.project, report_language=args.report_language)
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("ok") else 1
 

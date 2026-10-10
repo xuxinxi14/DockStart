@@ -1,3 +1,6 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLanguage } from "../i18n/language";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -171,6 +174,7 @@ export default function MultiLigandDockingPanel({
   onOpenResult,
   onStatusChange,
 }: MultiLigandDockingPanelProps) {
+  useLanguage();
   const [preview, setPreview] = useState<LigandImportPreview | null>(null);
   const [selection, setSelection] = useState<string[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
@@ -401,6 +405,7 @@ export default function MultiLigandDockingPanel({
         await invoke<string>("start_multiple_ligand_task", {
           projectDir,
           runId,
+          reportLanguage: getLanguage(),
         }),
       );
       if (!started.ok || !started.task_id) throw new Error(backgroundError(started));
@@ -516,50 +521,44 @@ export default function MultiLigandDockingPanel({
       <div className="run-cockpit-section-heading">
         <div>
           <span className="run-cockpit-kicker">
-            {isAd4 ? "实验性协议 · 标准 AD4 maps" : "实验性协议"}
+            {translate(isAd4 ? "实验性协议 · 标准 AD4 maps" : "实验性协议")}
           </span>
-          <h2 id="multiple-ligand-docking-title">多配体共同对接</h2>
+          <h2 id="multiple-ligand-docking-title">{translate("多配体共同对接")}</h2>
         </div>
         <StatusBadge tone={runTone(runStatus)}>
-          {runStatusLabel(runStatus)}
+          {translate(runStatusLabel(runStatus))}
         </StatusBadge>
       </div>
 
       <div className="multiple-ligand-definition">
         <Flask aria-hidden="true" size={24} weight="duotone" />
         <div>
-          <strong>
-            两个配体在同一次{isAd4 ? " AutoDock4 maps" : " Vina/Vinardo"}全局搜索中共同优化
-          </strong>
-          <p>
-            这不是串行批量筛选。每个 Mode 同时包含两个成员，Vina 只给出整个联合体系的一个评分，
-            不提供单个成员的独立贡献。
-          </p>
+          <strong>{translate("两个配体在同一次")}{translate(isAd4 ? " AutoDock4 maps" : " Vina/Vinardo")}{translate("全局搜索中共同优化")}</strong>
+          <p>{translate("这不是串行批量筛选。每个 Mode 同时包含两个成员，Vina 只给出整个联合体系的一个评分， 不提供单个成员的独立贡献。")}</p>
         </div>
       </div>
 
-      {disabledExplanation ? (
-        <WarningCallout title="当前设置不能运行共同对接">
-          <p>{disabledExplanation}</p>
+      {translate(disabledExplanation ? (
+        <WarningCallout title={translate("当前设置不能运行共同对接")}>
+          <p>{translate(disabledExplanation)}</p>
         </WarningCallout>
-      ) : null}
+      ) : null)}
 
       <div className="multiple-ligand-builder">
         <section className="multiple-ligand-candidates" aria-labelledby="multiple-ligand-members-title">
           <header>
             <div>
-              <span>01 · 成员</span>
-              <h3 id="multiple-ligand-members-title">选择两个 staging 配体</h3>
+              <span>{translate("01 · 成员")}</span>
+              <h3 id="multiple-ligand-members-title">{translate("选择两个 staging 配体")}</h3>
             </div>
             <strong>{selection.length} / 2</strong>
           </header>
 
           <div className="multiple-ligand-candidate-toolbar">
-            <span>
-              可用 {candidates.length}
-              {preview && preview.counts.total !== candidates.length
+            <span>{translate("可用 ")}{candidates.length}
+              {translate(preview && preview.counts.total !== candidates.length
                 ? ` · 另有 ${preview.counts.duplicate} 个重复、${preview.counts.invalid} 个失败`
-                : ""}
+                : "")}
             </span>
             <div>
               <ActionButton
@@ -567,12 +566,9 @@ export default function MultiLigandDockingPanel({
                 disabled={loadingCandidates || busy}
                 onClick={() => void refreshCandidates()}
               >
-                {loadingCandidates ? <SpinnerGap className="multiple-ligand-spinner" size={15} /> : null}
-                重新读取
-              </ActionButton>
+                {loadingCandidates ? <SpinnerGap className="multiple-ligand-spinner" size={15} /> : null}{translate("重新读取")}</ActionButton>
               <ActionButton variant="text" disabled={busy} onClick={onOpenImport}>
-                <FolderOpen size={15} /> 导入配体
-              </ActionButton>
+                <FolderOpen size={15} />{translate(" 导入配体")}</ActionButton>
             </div>
           </div>
 
@@ -591,13 +587,13 @@ export default function MultiLigandDockingPanel({
                     onClick={() => toggleCandidate(candidate.id)}
                   >
                     <span className="multiple-ligand-candidate-marker">
-                      {selected ? order + 1 : ""}
+                      {translate(selected ? order + 1 : "")}
                     </span>
                     <span className="multiple-ligand-candidate-copy">
                       <strong>{candidate.displayName}</strong>
                       <small>
-                        {candidate.sourceFormat.toUpperCase()} · {formatBytes(candidate.sizeBytes)}
-                        {candidate.sha256 ? ` · ${candidate.sha256.slice(0, 10)}…` : ""}
+                        {translate(candidate.sourceFormat.toUpperCase())} · {translate(formatBytes(candidate.sizeBytes))}
+                        {translate(candidate.sha256 ? ` · ${candidate.sha256.slice(0, 10)}…` : "")}
                       </small>
                       <code>{candidate.stagedFile}</code>
                     </span>
@@ -608,11 +604,11 @@ export default function MultiLigandDockingPanel({
           ) : (
             <div className="multiple-ligand-empty">
               {loadingCandidates ? (
-                <><SpinnerGap className="multiple-ligand-spinner" size={20} /> 正在读取配体 staging…</>
+                <><SpinnerGap className="multiple-ligand-spinner" size={20} />{translate(" 正在读取配体 staging…")}</>
               ) : (
                 <>
                   <WarningCircle size={20} />
-                  <span>尚无可用配体。请先在结构导入页一次导入多个配体。</span>
+                  <span>{translate("尚无可用配体。请先在结构导入页一次导入多个配体。")}</span>
                 </>
               )}
             </div>
@@ -621,25 +617,25 @@ export default function MultiLigandDockingPanel({
 
         <section className="multiple-ligand-order" aria-labelledby="multiple-ligand-order-title">
           <header>
-            <span>02 · 输入顺序</span>
-            <h3 id="multiple-ligand-order-title">确认成员 1 与成员 2</h3>
+            <span>{translate("02 · 输入顺序")}</span>
+            <h3 id="multiple-ligand-order-title">{translate("确认成员 1 与成员 2")}</h3>
           </header>
-          <p>输出中的成员按此顺序保存；顺序会写入 run 快照。</p>
+          <p>{translate("输出中的成员按此顺序保存；顺序会写入 run 快照。")}</p>
           <ol>
-            {[0, 1].map((slot) => {
+            {translate([0, 1].map((slot) => {
               const candidate = selectedCandidates[slot];
               return (
                 <li key={slot} className={candidate ? "is-filled" : ""}>
                   <span>{slot + 1}</span>
                   <div>
-                    <strong>{candidate?.displayName || `请选择成员 ${slot + 1}`}</strong>
-                    <small>{candidate?.stagedFile ? basename(candidate.stagedFile) : "等待选择"}</small>
+                    <strong>{candidate?.displayName || translate(`请选择成员 ${slot + 1}`)}</strong>
+                    <small>{candidate?.stagedFile ? basename(candidate.stagedFile) : translate("等待选择")}</small>
                   </div>
                   {candidate ? (
                     <div className="multiple-ligand-order-actions">
                       <button
                         type="button"
-                        aria-label={`将 ${candidate.displayName} 上移`}
+                        aria-label={translate("将 {0} 上移", [candidate.displayName])}
                         disabled={slot === 0 || busy}
                         onClick={() => setSelection((current) => moveMultipleLigandMember(current, candidate.id, -1))}
                       >
@@ -647,7 +643,7 @@ export default function MultiLigandDockingPanel({
                       </button>
                       <button
                         type="button"
-                        aria-label={`将 ${candidate.displayName} 下移`}
+                        aria-label={translate("将 {0} 下移", [candidate.displayName])}
                         disabled={slot === 1 || busy}
                         onClick={() => setSelection((current) => moveMultipleLigandMember(current, candidate.id, 1))}
                       >
@@ -657,43 +653,40 @@ export default function MultiLigandDockingPanel({
                   ) : null}
                 </li>
               );
-            })}
+            }))}
           </ol>
         </section>
       </div>
 
       <section className="multiple-ligand-protocol-snapshot" aria-labelledby="multiple-ligand-snapshot-title">
         <div>
-          <span>03 · 共同运行条件</span>
-          <h3 id="multiple-ligand-snapshot-title">当前受体、Box 与 Vina 参数</h3>
+          <span>{translate("03 · 共同运行条件")}</span>
+          <h3 id="multiple-ligand-snapshot-title">{translate("当前受体、Box 与 Vina 参数")}</h3>
         </div>
         <dl>
-          <div><dt>受体</dt><dd>{receptorFile || "未导入"}</dd></div>
+          <div><dt>{translate("受体")}</dt><dd>{receptorFile || translate("未导入")}</dd></div>
           <div>
             <dt>Box</dt>
             <dd>
               {box.size_x} × {box.size_y} × {box.size_z} Å
-              <small>中心 {box.center_x}, {box.center_y}, {box.center_z}</small>
+              <small>{translate("中心 ")}{box.center_x}, {box.center_y}, {box.center_z}</small>
             </dd>
           </div>
-          <div><dt>评分</dt><dd>{vina.scoring === "vinardo" ? "Vinardo" : "Vina"}</dd></div>
+          <div><dt>{translate("评分")}</dt><dd>{translate(vina.scoring === "vinardo" ? "Vinardo" : "Vina")}</dd></div>
           <div>
-            <dt>搜索</dt>
+            <dt>{translate("搜索")}</dt>
             <dd>
               exhaustiveness {vina.exhaustiveness}
-              <small>{vina.num_modes} 个候选 Mode · CPU {vina.cpu || "自动"}</small>
+              <small>{vina.num_modes}{translate(" 个候选 Mode · CPU ")}{translate(vina.cpu || "自动")}</small>
             </dd>
           </div>
         </dl>
         {vina.exhaustiveness < 32 ? (
-          <p className="multiple-ligand-search-note">
-            两个配体会增加联合搜索自由度。官方示例使用 exhaustiveness 32；当前值不会被自动修改，
-            应结合体系规模与重复运行收敛性决定。
-          </p>
+          <p className="multiple-ligand-search-note">{translate("两个配体会增加联合搜索自由度。官方示例使用 exhaustiveness 32；当前值不会被自动修改， 应结合体系规模与重复运行收敛性决定。")}</p>
         ) : null}
       </section>
 
-      {run ? (
+      {translate(run ? (
         <section className={`multiple-ligand-run-state is-${runStatus}`} aria-live="polite">
           <header>
             <div>
@@ -703,17 +696,15 @@ export default function MultiLigandDockingPanel({
                   ? <WarningCircle size={21} weight="fill" />
                   : <SpinnerGap className={runStatus === "running" ? "multiple-ligand-spinner" : ""} size={21} />}
               <div>
-                <strong>{currentRunId} · {runStatusLabel(runStatus)}</strong>
-                <span>{run.message || progressMessage}</span>
+                <strong>{translate(currentRunId)} · {translate(runStatusLabel(runStatus))}</strong>
+                <span>{translate(run.message || progressMessage)}</span>
               </div>
             </div>
             {runStatus === "finished" && currentRunId ? (
-              <ActionButton variant="secondary" onClick={() => onOpenResult(currentRunId)}>
-                查看联合结果
-              </ActionButton>
+              <ActionButton variant="secondary" onClick={() => onOpenResult(currentRunId)}>{translate("查看联合结果")}</ActionButton>
             ) : null}
           </header>
-          {(runStatus === "running" || busy) ? (
+          {translate((runStatus === "running" || busy) ? (
             <>
               <div
                 className="multiple-ligand-progress"
@@ -724,14 +715,14 @@ export default function MultiLigandDockingPanel({
               >
                 <span style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
               </div>
-              <p>{progressMessage || "正在等待 AutoDock Vina 更新…"}</p>
+              <p>{translate(progressMessage || "正在等待 AutoDock Vina 更新…")}</p>
             </>
-          ) : null}
+          ) : null)}
           {bestMode ? (
             <dl className="multiple-ligand-result-summary">
-              <div><dt>可查看 Mode</dt><dd>{run.available_modes?.length ?? 0}</dd></div>
-              <div><dt>最佳联合评分</dt><dd>{bestMode.joint_affinity_kcal_mol} kcal/mol</dd></div>
-              <div><dt>成员数</dt><dd>{run.members?.length ?? 2}</dd></div>
+              <div><dt>{translate("可查看 Mode")}</dt><dd>{run.available_modes?.length ?? 0}</dd></div>
+              <div><dt>{translate("最佳联合评分")}</dt><dd>{bestMode.joint_affinity_kcal_mol} kcal/mol</dd></div>
+              <div><dt>{translate("成员数")}</dt><dd>{run.members?.length ?? 2}</dd></div>
             </dl>
           ) : null}
           {runStatus === "prepared" && currentRunId ? (
@@ -740,46 +731,45 @@ export default function MultiLigandDockingPanel({
               disabled={busy || !compatible}
               onClick={() => void startPreparedRun(currentRunId)}
             >
-              <Play size={17} weight="fill" /> 开始已冻结的共同对接
-            </ActionButton>
+              <Play size={17} weight="fill" />{translate(" 开始已冻结的共同对接")}</ActionButton>
           ) : null}
-          {runStatus === "running" && currentRunId ? (
+          {translate(runStatus === "running" && currentRunId ? (
             <ActionButton
               variant="text"
               disabled={task?.stage === "cancelling" || task?.stage === "cancel_pending"}
               onClick={() => void cancelActiveRun()}
             >
-              {task?.stage === "cancelling" || task?.stage === "cancel_pending"
+              {translate(task?.stage === "cancelling" || task?.stage === "cancel_pending"
                 ? "正在取消…"
-                : "取消共同对接"}
+                : "取消共同对接")}
             </ActionButton>
-          ) : null}
+          ) : null)}
         </section>
-      ) : null}
+      ) : null)}
 
       <div className="multiple-ligand-actions">
         <div>
-          <strong>{selectedFiles.length === 2 ? "两个成员已按顺序选定" : "需要恰好选择两个成员"}</strong>
-          <span>创建后会复制输入并记录 SHA256；不会覆盖项目当前单配体。</span>
+          <strong>{translate(selectedFiles.length === 2 ? "两个成员已按顺序选定" : "需要恰好选择两个成员")}</strong>
+          <span>{translate("创建后会复制输入并记录 SHA256；不会覆盖项目当前单配体。")}</span>
         </div>
         <ActionButton
           variant="primary"
           disabled={!canCreate}
-          title={!canCreate ? disabledExplanation || "请选择两个配体并完成运行前检查。" : undefined}
+          title={translate(!canCreate ? disabledExplanation || "请选择两个配体并完成运行前检查。" : undefined)}
           onClick={() => void createAndRun()}
         >
           {busy ? <SpinnerGap className="multiple-ligand-spinner" size={18} /> : <Play size={18} weight="fill" />}
-          {busy ? "共同对接运行中…" : "创建并开始共同对接"}
+          {translate(busy ? "共同对接运行中…" : "创建并开始共同对接")}
         </ActionButton>
       </div>
 
-      {message && !run ? <p className="multiple-ligand-message" role="status">{message}</p> : null}
+      {message && !run ? <p className="multiple-ligand-message" role="status">{translate(message)}</p> : null}
       {rawError ? (
-        <WarningCallout title="共同对接操作未完成">
+        <WarningCallout title={translate("共同对接操作未完成")}>
           <p>{rawError}</p>
-          {run?.error?.suggestion ? <small>{run.error.suggestion}</small> : null}
+          {run?.error?.suggestion ? <small>{translate(run.error.suggestion)}</small> : null}
           {run?.error?.raw_error ? (
-            <AdvancedDetails summary="查看原始诊断">
+            <AdvancedDetails summary={translate("查看原始诊断")}>
               <pre>{run.error.raw_error}</pre>
             </AdvancedDetails>
           ) : null}

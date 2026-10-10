@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import type { ReactNode } from "react";
 import type { WorkbenchStatus } from "./StatusPill";
 import StatusPill from "./StatusPill";
@@ -19,12 +21,13 @@ export default function StatusCard({
   action,
   className = "",
 }: StatusCardProps) {
+  useLanguage();
   return (
     <section className={`status-card ${status} ${className}`.trim()}>
-      <StatusPill status={status}>{statusLabel ?? title}</StatusPill>
+      <StatusPill status={status}>{translate(statusLabel ?? title)}</StatusPill>
       <strong>{title}</strong>
       <p>{description}</p>
-      {action ? <div>{action}</div> : null}
+      {action ? <div>{translate(action)}</div> : null}
     </section>
   );
 }

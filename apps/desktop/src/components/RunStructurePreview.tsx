@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -150,6 +152,7 @@ export default function RunStructurePreview({
   onResidueSelectionComplete,
   useActiveReceptorInputs = false,
 }: RunStructurePreviewProps) {
+  useLanguage();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
   const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
@@ -567,7 +570,7 @@ export default function RunStructurePreview({
   return (
     <section
       className={`run-preview ${isFullscreen ? "is-fullscreen" : ""} ${showFullscreenInspector ? "has-fullscreen-inspector" : ""} ${residueSelectionActive ? "is-residue-selection" : ""}`.trim()}
-      aria-label="运行前结构预览"
+      aria-label={translate("运行前结构预览")}
     >
       <div
         className={`run-preview-canvas ${residueSelectionActive ? "is-residue-picking" : ""}`.trim()}
@@ -575,31 +578,31 @@ export default function RunStructurePreview({
         ref={containerRef}
         tabIndex={0}
         aria-label={
-          wheelBinding
+          translate(wheelBinding
             ? `受体、配体和搜索范围三维视图；滚轮当前调整${runBoxFieldLabels[wheelBinding]}`
-            : "受体、配体和搜索范围三维视图；滚轮缩放"
+            : "受体、配体和搜索范围三维视图；滚轮缩放")
         }
       />
 
-      <div className="run-preview-toolbar" aria-label="3D 视图工具">
-        <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大结构">
+      <div className="run-preview-toolbar" aria-label={translate("3D 视图工具")}>
+        <button type="button" onClick={() => zoom(1.18)} title={translate("放大")} aria-label={translate("放大结构")}>
           <MagnifyingGlassPlus size={18} />
         </button>
-        <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小结构">
+        <button type="button" onClick={() => zoom(0.84)} title={translate("缩小")} aria-label={translate("缩小结构")}>
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={() => void renderScene(true)} title="适应窗口" aria-label="让结构适应窗口">
+        <button type="button" onClick={() => void renderScene(true)} title={translate("适应窗口")} aria-label={translate("让结构适应窗口")}>
           <ArrowsOut size={18} />
         </button>
-        <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label={isSpinning ? "停止自动旋转" : "开始自动旋转"}>
+        <button type="button" onClick={toggleSpin} title={translate(isSpinning ? "停止旋转" : "自动旋转")} aria-label={translate(isSpinning ? "停止自动旋转" : "开始自动旋转")}>
           {isSpinning ? <Pause size={18} /> : <Play size={18} />}
         </button>
         <button
           type="button"
           className={showAxes ? "is-active" : ""}
           onClick={() => setShowAxes((current) => !current)}
-          title={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
-          aria-label={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
+          title={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
+          aria-label={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
           aria-pressed={showAxes}
         >
           <Crosshair size={18} />
@@ -607,22 +610,21 @@ export default function RunStructurePreview({
         <button
           type="button"
           onClick={toggleFullscreen}
-          title={residueSelectionActive ? "选择完成" : isFullscreen ? "关闭全屏" : "全屏查看"}
-          aria-label={residueSelectionActive ? "完成柔性残基点选" : isFullscreen ? "关闭全屏" : "全屏查看"}
+          title={translate(residueSelectionActive ? "选择完成" : isFullscreen ? "关闭全屏" : "全屏查看")}
+          aria-label={translate(residueSelectionActive ? "完成柔性残基点选" : isFullscreen ? "关闭全屏" : "全屏查看")}
         >
           {residueSelectionActive ? <CheckCircle size={18} /> : isFullscreen ? <CornersIn size={18} /> : <CornersOut size={18} />}
         </button>
       </div>
 
-      {isFullscreen ? (
+      {translate(isFullscreen ? (
         <>
-          {showFullscreenInspector ? fullscreenInspector : null}
-          {residueSelectionActive ? (
+          {translate(showFullscreenInspector ? fullscreenInspector : null)}
+          {translate(residueSelectionActive ? (
             <div className="run-preview-fullscreen-controls run-residue-selection-controls" aria-live="polite">
-              <span>已选择 <strong>{selectedResidues.length}</strong>/8</span>
+              <span>{translate("已选择 ")}<strong>{selectedResidues.length}</strong>/8</span>
               <button type="button" onClick={finishResidueSelection} className="primary-button compact-btn fullscreen-close-btn">
-                <CheckCircle size={15} /> 选择完成
-              </button>
+                <CheckCircle size={15} />{translate(" 选择完成")}</button>
             </div>
           ) : (
             <div className="run-preview-fullscreen-controls">
@@ -631,43 +633,36 @@ export default function RunStructurePreview({
                   type="button"
                   className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
                   onClick={() => setShowReceptor(!showReceptor)}
-                  title={showReceptor ? "隐藏受体" : "显示受体"}
+                  title={translate(showReceptor ? "隐藏受体" : "显示受体")}
                   aria-pressed={showReceptor}
                 >
                   <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-                  {useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体"}
+                  {translate(useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体")}
                 </button>
                 <button
                   type="button"
                   className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
                   onClick={() => setShowLigand(!showLigand)}
-                  title={showLigand ? "隐藏配体" : "显示配体"}
+                  title={translate(showLigand ? "隐藏配体" : "显示配体")}
                   aria-pressed={showLigand}
                 >
-                  <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
-                  配体
-                </button>
+                  <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />{translate("配体")}</button>
                 <button
                   type="button"
                   className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
                   onClick={() => setShowBox(!showBox)}
-                  title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
+                  title={translate(showBox ? "隐藏搜索范围" : "显示搜索范围")}
                   aria-pressed={showBox}
                 >
-                  <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
-                  搜索范围
-                </button>
+                  <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />{translate("搜索范围")}</button>
               </div>
               <div className="fullscreen-actions">
-                <button type="button" onClick={() => renderScene(true)} className="secondary-button compact-btn">
-                  适应视图
-                </button>
+                <button type="button" onClick={() => renderScene(true)} className="secondary-button compact-btn">{translate("适应视图")}</button>
                 <button type="button" onClick={toggleFullscreen} className="primary-button compact-btn fullscreen-close-btn">
-                  <CornersIn size={14} /> 关闭全屏
-                </button>
+                  <CornersIn size={14} />{translate(" 关闭全屏")}</button>
               </div>
             </div>
-          )}
+          ))}
         </>
       ) : (
         <div className="run-preview-legend" aria-live="polite">
@@ -675,35 +670,31 @@ export default function RunStructurePreview({
             type="button"
             className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
             onClick={() => setShowReceptor(!showReceptor)}
-            title={showReceptor ? "隐藏受体" : "显示受体"}
+            title={translate(showReceptor ? "隐藏受体" : "显示受体")}
             aria-pressed={showReceptor}
           >
             <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-            {useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体"}
+            {translate(useActiveReceptorInputs ? "运行受体（含柔性侧链）" : "受体")}
           </button>
           <button
             type="button"
             className={`legend-toggle-btn ${showLigand ? "is-active" : "is-inactive"}`}
             onClick={() => setShowLigand(!showLigand)}
-            title={showLigand ? "隐藏配体" : "显示配体"}
+            title={translate(showLigand ? "隐藏配体" : "显示配体")}
             aria-pressed={showLigand}
           >
-            <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />
-            配体
-          </button>
+            <i className={`run-preview-dot ligand ${showLigand ? "" : "muted"}`} />{translate("配体")}</button>
           <button
             type="button"
             className={`legend-toggle-btn ${showBox ? "is-active" : "is-inactive"}`}
             onClick={() => setShowBox(!showBox)}
-            title={showBox ? "隐藏搜索范围" : "显示搜索范围"}
+            title={translate(showBox ? "隐藏搜索范围" : "显示搜索范围")}
             aria-pressed={showBox}
           >
-            <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />
-            搜索范围
-          </button>
-          <strong>{message}</strong>
+            <Cube className={showBox ? "" : "muted"} aria-hidden="true" size={14} />{translate("搜索范围")}</button>
+          <strong>{translate(message)}</strong>
         </div>
-      )}
+      ))}
     </section>
   );
 }

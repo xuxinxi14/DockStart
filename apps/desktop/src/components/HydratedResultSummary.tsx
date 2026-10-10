@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import type { HydratedResultsSuccess } from "../types";
 import StatusBadge from "./StatusBadge";
 
@@ -18,6 +20,7 @@ export default function HydratedResultSummary({
   selectedMode,
   onSelectMode,
 }: HydratedResultSummaryProps) {
+  useLanguage();
   return (
     <section
       aria-labelledby="hydrated-result-summary-title"
@@ -25,35 +28,32 @@ export default function HydratedResultSummary({
     >
       <div className="hydrated-section-heading">
         <div>
-          <span>水分子后处理</span>
-          <h2 id="hydrated-result-summary-title">逐构象水分子统计</h2>
+          <span>{translate("水分子后处理")}</span>
+          <h2 id="hydrated-result-summary-title">{translate("逐构象水分子统计")}</h2>
         </div>
-        <StatusBadge tone="warning">处理后评分未计算</StatusBadge>
+        <StatusBadge tone="warning">{translate("处理后评分未计算")}</StatusBadge>
       </div>
-      <p className="hydrated-result-semantics">
-        Raw AD4 affinity 保持不变；强、弱、置换与保留水仅用于本次
-        run 的结构解释。
-      </p>
+      <p className="hydrated-result-semantics">{translate("Raw AD4 affinity 保持不变；强、弱、置换与保留水仅用于本次 run 的结构解释。")}</p>
       <div className="hydrated-water-summary">
         <article>
-          <span>原始候选水</span>
-          <strong>{count(results.water_summary.raw_water_count)}</strong>
+          <span>{translate("原始候选水")}</span>
+          <strong>{translate(count(results.water_summary.raw_water_count))}</strong>
         </article>
         <article>
-          <span>保留水</span>
-          <strong>{count(results.water_summary.retained_water_count)}</strong>
+          <span>{translate("保留水")}</span>
+          <strong>{translate(count(results.water_summary.retained_water_count))}</strong>
         </article>
         <article>
-          <span>强水</span>
-          <strong>{count(results.water_summary.strong_water_count)}</strong>
+          <span>{translate("强水")}</span>
+          <strong>{translate(count(results.water_summary.strong_water_count))}</strong>
         </article>
         <article>
-          <span>弱水</span>
-          <strong>{count(results.water_summary.weak_water_count)}</strong>
+          <span>{translate("弱水")}</span>
+          <strong>{translate(count(results.water_summary.weak_water_count))}</strong>
         </article>
         <article>
-          <span>置换水</span>
-          <strong>{count(results.water_summary.displaced_water_count)}</strong>
+          <span>{translate("置换水")}</span>
+          <strong>{translate(count(results.water_summary.displaced_water_count))}</strong>
         </article>
       </div>
       <div className="hydrated-results-table-wrap">
@@ -62,10 +62,10 @@ export default function HydratedResultSummary({
             <tr>
               <th scope="col">Mode</th>
               <th scope="col">Raw AD4 affinity</th>
-              <th scope="col">保留水</th>
-              <th scope="col">强水</th>
-              <th scope="col">弱水</th>
-              <th scope="col">置换水</th>
+              <th scope="col">{translate("保留水")}</th>
+              <th scope="col">{translate("强水")}</th>
+              <th scope="col">{translate("弱水")}</th>
+              <th scope="col">{translate("置换水")}</th>
             </tr>
           </thead>
           <tbody>
@@ -89,12 +89,12 @@ export default function HydratedResultSummary({
                 </th>
                 <td>{mode.raw_affinity_kcal_mol} kcal/mol</td>
                 <td>
-                  {count(mode.water_summary.retained_water_count)}
+                  {translate(count(mode.water_summary.retained_water_count))}
                 </td>
-                <td>{count(mode.water_summary.strong_water_count)}</td>
-                <td>{count(mode.water_summary.weak_water_count)}</td>
+                <td>{translate(count(mode.water_summary.strong_water_count))}</td>
+                <td>{translate(count(mode.water_summary.weak_water_count))}</td>
                 <td>
-                  {count(mode.water_summary.displaced_water_count)}
+                  {translate(count(mode.water_summary.displaced_water_count))}
                 </td>
               </tr>
             ))}

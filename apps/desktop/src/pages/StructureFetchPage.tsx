@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import {
   lazy,
   Suspense,
@@ -157,6 +159,7 @@ function SearchHistoryInput({
   placeholder,
   value,
 }: SearchHistoryInputProps) {
+  useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = `${id}-history`;
@@ -177,7 +180,7 @@ function SearchHistoryInput({
         disabled={disabled}
         id={id}
         name={`dockstart-${id}`}
-        placeholder={placeholder}
+        placeholder={translate(placeholder)}
         spellCheck={false}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -186,37 +189,37 @@ function SearchHistoryInput({
           if (event.key === "Escape") setIsOpen(false);
         }}
       />
-      {isOpen && history.length ? (
-        <div className="structure-search-history-menu" id={menuId} role="dialog" aria-label="历史输入">
-          <span className="structure-search-history-label">历史输入</span>
+      {translate(isOpen && history.length ? (
+        <div className="structure-search-history-menu" id={menuId} role="dialog" aria-label={translate("历史输入")}>
+          <span className="structure-search-history-label">{translate("历史输入")}</span>
           <ul>
-            {history.map((item) => (
+            {translate(history.map((item) => (
               <li key={item}>
                 <button
                   className="structure-search-history-value"
                   type="button"
-                  title={item}
+                  title={translate(item)}
                   onClick={() => {
                     onChange(item);
                     setIsOpen(false);
                   }}
                 >
-                  {item}
+                  {translate(item)}
                 </button>
                 <button
-                  aria-label={`删除历史输入 ${item}`}
+                  aria-label={translate("删除历史输入 {0}", [item])}
                   className="structure-search-history-delete"
                   type="button"
-                  title="删除记录"
+                  title={translate("删除记录")}
                   onClick={() => onDelete(item)}
                 >
                   <X aria-hidden="true" size={15} weight="bold" />
                 </button>
               </li>
-            ))}
+            )))}
           </ul>
         </div>
-      ) : null}
+      ) : null)}
     </div>
   );
 }
@@ -506,6 +509,7 @@ export default function StructureFetchPage({
   onOpenPreparation,
   onProjectChange,
 }: StructureFetchPageProps) {
+  useLanguage();
   const [project, setProject] = useState<DockStartProject>(initialProject);
   const [files, setFiles] = useState<RunFileStatus[]>([]);
   const [receptorRaw, setReceptorRaw] = useState<RawStructureStatus | null>(null);
@@ -1034,10 +1038,10 @@ export default function StructureFetchPage({
       const selected = await open({
         directory: false,
         multiple: !isReceptor,
-        title: isReceptor ? "选择受体 PDB / CIF" : "选择一个或多个配体 SDF / MOL / MOL2",
+        title: translate(isReceptor ? "选择受体 PDB / CIF" : "选择一个或多个配体 SDF / MOL / MOL2"),
         filters: [isReceptor
-          ? { name: "受体原始结构", extensions: ["pdb", "cif"] }
-          : { name: "配体原始结构", extensions: ["sdf", "mol", "mol2"] }],
+          ? { name: translate("受体原始结构"), extensions: ["pdb", "cif"] }
+          : { name: translate("配体原始结构"), extensions: ["sdf", "mol", "mol2"] }],
       });
       const selectedPaths = Array.isArray(selected) ? selected : selected ? [selected] : [];
       const sourcePath = selectedPaths[0] ?? "";
@@ -1165,28 +1169,28 @@ export default function StructureFetchPage({
   const renderTechnicalDetails = (status: RawStructureStatus | null, fallbackRawFile: string) => (
     <dl className="meta-list">
       <div>
-        <dt>来源</dt>
-        <dd>{valueOrEmpty(status?.source)}</dd>
+        <dt>{translate("来源")}</dt>
+        <dd>{translate(valueOrEmpty(status?.source))}</dd>
       </div>
       <div>
-        <dt>查询</dt>
-        <dd>{valueOrEmpty(status?.query_type)} · {valueOrEmpty(status?.source_id)}</dd>
+        <dt>{translate("查询")}</dt>
+        <dd>{translate(valueOrEmpty(status?.query_type))} · {valueOrEmpty(status?.source_id)}</dd>
       </div>
       <div>
         <dt>raw_file</dt>
         <dd><code>{status?.raw_file || fallbackRawFile || "未记录"}</code></dd>
       </div>
       <div>
-        <dt>大小 / 修改时间</dt>
-        <dd>{formatBytes(status?.size_bytes ?? status?.size)} · {valueOrEmpty(status?.modified_at)}</dd>
+        <dt>{translate("大小 / 修改时间")}</dt>
+        <dd>{translate(formatBytes(status?.size_bytes ?? status?.size))} · {translate(valueOrEmpty(status?.modified_at))}</dd>
       </div>
       <div>
-        <dt>绝对路径</dt>
+        <dt>{translate("绝对路径")}</dt>
         <dd><code>{valueOrEmpty(status?.absolute_path)}</code></dd>
       </div>
       <div>
-        <dt>记录一致性</dt>
-        <dd>{status?.record_consistent ? "一致" : "需检查"}</dd>
+        <dt>{translate("记录一致性")}</dt>
+        <dd>{translate(status?.record_consistent ? "一致" : "需检查")}</dd>
       </div>
     </dl>
   );
@@ -1199,15 +1203,15 @@ export default function StructureFetchPage({
     return (
       <section
         className={`structure-candidate-panel${preview ? " has-preview" : ""}`}
-        aria-label={`${label}候选列表`}
+        aria-label={translate("{0}候选列表", [label])}
       >
         <div className="structure-candidate-heading">
           <div>
-            <strong>搜索结果</strong>
-            <span>查询“{response.query}” · 显示 {response.returned_count} / {response.total_count} 个候选</span>
+            <strong>{translate("搜索结果")}</strong>
+            <span>{translate("查询“")}{response.query}{translate("” · 显示 ")}{response.returned_count} / {response.total_count}{translate(" 个候选")}</span>
           </div>
           <StatusBadge tone={response.candidates.length ? "info" : "warning"}>
-            {response.candidates.length ? "等待选择" : "无结果"}
+            {translate(response.candidates.length ? "等待选择" : "无结果")}
           </StatusBadge>
         </div>
         <div className="structure-candidate-body">
@@ -1231,12 +1235,12 @@ export default function StructureFetchPage({
                         <strong>{candidate.source_id}</strong>
                         <span>{candidate.title || candidate.source_id}</span>
                       </div>
-                      {candidate.subtitle ? <p>{candidate.subtitle}</p> : null}
-                      {details.length ? (
-                        <ul className="structure-candidate-meta" aria-label="候选元数据">
-                          {details.map((detail) => <li key={detail}>{detail}</li>)}
+                      {candidate.subtitle ? <p>{translate(candidate.subtitle)}</p> : null}
+                      {translate(details.length ? (
+                        <ul className="structure-candidate-meta" aria-label={translate("候选元数据")}>
+                          {details.map((detail) => <li key={detail}>{translate(detail)}</li>)}
                         </ul>
-                      ) : null}
+                      ) : null)}
                     </div>
                     <div className="structure-candidate-actions">
                       <ActionButton
@@ -1246,7 +1250,7 @@ export default function StructureFetchPage({
                         disabled={isBusy || isLoadingDetails}
                         onClick={() => void toggleCandidateDetails(target, candidate)}
                       >
-                        {isLoadingDetails ? "读取参数中…" : isExpanded ? "收起详细参数" : "展开详细参数"}
+                        {translate(isLoadingDetails ? "读取参数中…" : isExpanded ? "收起详细参数" : "展开详细参数")}
                         {isExpanded ? <CaretUp size={14} /> : <CaretDown size={14} />}
                       </ActionButton>
                       <ActionButton
@@ -1255,7 +1259,7 @@ export default function StructureFetchPage({
                         aria-label={`临时预览 ${candidate.source_id}`}
                         onClick={() => void previewCandidate(target, candidate, response.candidates)}
                       >
-                        {previewingCandidateId === previewKey ? "加载中…" : "3D 预览"}
+                        {translate(previewingCandidateId === previewKey ? "加载中…" : "3D 预览")}
                       </ActionButton>
                       <ActionButton
                         aria-describedby={statusId}
@@ -1263,20 +1267,17 @@ export default function StructureFetchPage({
                         disabled={isBusy}
                         aria-label={`选择 ${candidate.source_id} 并自动准备${label} PDBQT`}
                         onClick={() => void selectAndPrepareCandidate(target, candidate)}
-                      >
-                        选择并准备
-                      </ActionButton>
+                      >{translate("选择并准备")}</ActionButton>
                     </div>
                     {isExpanded ? (
                       <section className="structure-candidate-details" id={detailsId} aria-label={`${candidate.source_id} 详细参数`}>
                         <header>
-                          <strong>详细参数</strong>
-                          <span>{candidate.provider === "rcsb" ? "RCSB 结构记录" : "PubChem 化合物记录"}</span>
+                          <strong>{translate("详细参数")}</strong>
+                          <span>{translate(candidate.provider === "rcsb" ? "RCSB 结构记录" : "PubChem 化合物记录")}</span>
                         </header>
-                        {isLoadingDetails ? <p className="structure-candidate-details-state">正在读取标准化合物记录…</p> : null}
+                        {isLoadingDetails ? <p className="structure-candidate-details-state">{translate("正在读取标准化合物记录…")}</p> : null}
                         {candidateDetailErrors[candidate.candidate_id] ? (
-                          <p className="structure-candidate-details-state is-error">
-                            详细参数读取失败；基础搜索信息仍可使用。{candidateDetailErrors[candidate.candidate_id]}
+                          <p className="structure-candidate-details-state is-error">{translate("详细参数读取失败；基础搜索信息仍可使用。")}{translate(candidateDetailErrors[candidate.candidate_id])}
                           </p>
                         ) : null}
                         <dl>
@@ -1288,9 +1289,7 @@ export default function StructureFetchPage({
                           ))}
                         </dl>
                         {candidate.provider === "pubchem" ? (
-                          <p className="structure-candidate-detail-note">
-                            总电荷和组分信息来自 PubChem 记录；DockStart 不据此推断生理 pH 下的质子化状态。
-                          </p>
+                          <p className="structure-candidate-detail-note">{translate("总电荷和组分信息来自 PubChem 记录；DockStart 不据此推断生理 pH 下的质子化状态。")}</p>
                         ) : null}
                       </section>
                     ) : null}
@@ -1299,28 +1298,26 @@ export default function StructureFetchPage({
               })}
             </div>
           ) : (
-            <p className="structure-candidate-empty">没有找到候选。请调整关键词、查询类型或候选数量后重试。</p>
+            <p className="structure-candidate-empty">{translate("没有找到候选。请调整关键词、查询类型或候选数量后重试。")}</p>
           )}
           {preview ? (
-            <section className="structure-candidate-preview-panel" aria-label={`${preview.label} 临时 3D 预览`}>
+            <section className="structure-candidate-preview-panel" aria-label={translate("{0} 临时 3D 预览", [preview.label])}>
               <header>
-                <div><span>只读 3D 预览</span><strong>{preview.label}</strong></div>
-                <StatusBadge tone="info">未写入项目</StatusBadge>
+                <div><span>{translate("只读 3D 预览")}</span><strong>{translate(preview.label)}</strong></div>
+                <StatusBadge tone="info">{translate("未写入项目")}</StatusBadge>
               </header>
-              <Suspense fallback={<div className="run-preview-loading">正在加载 3D 查看器…</div>}>
+              <Suspense fallback={<div className="run-preview-loading">{translate("正在加载 3D 查看器…")}</div>}>
                 <CandidateStructurePreview
                   content={preview.response.content}
                   format={preview.response.format}
-                  label={preview.label}
+                  label={translate(preview.label)}
                 />
               </Suspense>
-              <p>确认结构无误后，点击候选卡片中的“选择并准备”写入项目并生成 PDBQT。</p>
+              <p>{translate("确认结构无误后，点击候选卡片中的“选择并准备”写入项目并生成 PDBQT。")}</p>
             </section>
           ) : null}
         </div>
-        <p className="structure-candidate-note">
-          搜索不会自动下载候选；可先查看详细参数或 3D 结构，再选择目标。
-        </p>
+        <p className="structure-candidate-note">{translate("搜索不会自动下载候选；可先查看详细参数或 3D 结构，再选择目标。")}</p>
       </section>
     );
   };
@@ -1329,22 +1326,22 @@ export default function StructureFetchPage({
     <PageShell labelledBy="structure-fetch-title">
       <OperationLoadingDialog
         open={isBusy && Boolean(loadingTitle)}
-        title={loadingTitle}
-        message={message || "正在处理当前操作。"}
+        title={translate(loadingTitle)}
+        message={translate(message || "正在处理当前操作。")}
         detail={busyAction?.startsWith("search-")
-          ? "搜索速度取决于网络连接。"
-          : "raw 文件会先保存到当前项目，再尝试生成 PDBQT。"}
+          ? translate("搜索速度取决于网络连接。")
+          : translate("raw 文件会先保存到当前项目，再尝试生成 PDBQT。")}
       />
       <PageHero
-        eyebrow="结构来源 · SOURCE"
-        title="搜索、选择并准备结构"
+        eyebrow={translate("结构来源 · SOURCE")}
+        title={translate("搜索、选择并准备结构")}
         titleId="structure-fetch-title"
-        description="先查看 RCSB / PubChem 候选，再明确选择目标；下载或本地导入后会立即尝试转换为 Vina 使用的 PDBQT。"
+        description={translate("先查看 RCSB / PubChem 候选，再明确选择目标；下载或本地导入后会立即尝试转换为 Vina 使用的 PDBQT。")}
         actions={
           <>
-            <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+            <ActionButton variant="text" onClick={onBack}>{translate("返回")}</ActionButton>
             <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>
-              {busyAction === "refresh" ? "正在刷新…" : "刷新状态"}
+              {busyAction === "refresh" ? translate("正在刷新…") : translate("刷新状态")}
             </ActionButton>
           </>
         }
@@ -1353,8 +1350,8 @@ export default function StructureFetchPage({
       <BodyGrid className="structure-source-body-grid">
         <MainPanel>
           <div className="main-panel-content structure-source-content">
-            <WarningCallout title="自动转换不等于科学检查">
-              <p>下载或导入后会立即尝试生成 PDBQT，但仍需人工检查受体链、水、金属、辅因子，以及配体质子化、电荷和构象。</p>
+            <WarningCallout title={translate("自动转换不等于科学检查")}>
+              <p>{translate("下载或导入后会立即尝试生成 PDBQT，但仍需人工检查受体链、水、金属、辅因子，以及配体质子化、电荷和构象。")}</p>
             </WarningCallout>
 
             <div className="structure-source-grid">
@@ -1368,38 +1365,38 @@ export default function StructureFetchPage({
                 <div className="structure-source-summary">
                   <div className="structure-source-summary-header">
                     <span className="structure-source-step">01 · RECEPTOR</span>
-                    <h2 id="receptor-source-title">受体</h2>
+                    <h2 id="receptor-source-title">{translate("受体")}</h2>
                   </div>
                   <span aria-live="polite" className="viewer-sr-only" id="receptor-operation-status">
-                    {receptorBusy ? message || "正在处理受体结构。" : ""}
+                    {translate(receptorBusy ? message || "正在处理受体结构。" : "")}
                   </span>
                   <StatusBadge tone={statusTone(receptorStatus?.status)}>
-                    {`raw ${statusLabel(receptorStatus?.status)}`}
+                    {translate(`raw ${statusLabel(receptorStatus?.status)}`)}
                   </StatusBadge>
                   <div className="structure-source-status-item">
-                    <span>当前 raw 文件</span>
-                    <code title={receptorStatus?.raw_file || project.receptor.raw_file || "未记录 raw 文件"}>
+                    <span>{translate("当前 raw 文件")}</span>
+                    <code title={receptorStatus?.raw_file || project.receptor.raw_file || translate("未记录 raw 文件")}>
                       {receptorStatus?.raw_file || project.receptor.raw_file || "未记录"}
                     </code>
                   </div>
                   <div className="structure-source-status-item">
-                    <span>Vina 输入</span>
-                    <strong>{project.receptor.file ? "PDBQT 已准备" : "PDBQT 未准备"}</strong>
+                    <span>{translate("Vina 输入")}</span>
+                    <strong>{project.receptor.file ? translate("PDBQT 已准备") : translate("PDBQT 未准备")}</strong>
                   </div>
                 </div>
 
                 <section className="structure-source-workspace" aria-labelledby="receptor-source-workspace-title">
                   <header className="structure-source-workspace-header">
                     <div>
-                      <span>在线结构库</span>
-                      <h3 id="receptor-source-workspace-title">搜索 RCSB 并预览受体</h3>
+                      <span>{translate("在线结构库")}</span>
+                      <h3 id="receptor-source-workspace-title">{translate("搜索 RCSB 并预览受体")}</h3>
                     </div>
-                    <p>可先查看候选原始结构；明确选择后才会写入项目并转换。</p>
+                    <p>{translate("可先查看候选原始结构；明确选择后才会写入项目并转换。")}</p>
                   </header>
 
                   <div className="structure-search-controls">
                     <div className="field-stack structure-search-query">
-                      <label htmlFor="rcsb-query">RCSB PDB ID 或关键词</label>
+                      <label htmlFor="rcsb-query">{translate("RCSB PDB ID 或关键词")}</label>
                       <SearchHistoryInput
                         disabled={isBusy}
                         history={rcsbSearchHistory.history}
@@ -1414,11 +1411,11 @@ export default function StructureFetchPage({
                           setReceptorPreview(null);
                           setPreviewingCandidateId("");
                         }}
-                        placeholder="例如 1IEP 或 c-Abl imatinib"
+                        placeholder={translate("例如 1IEP 或 c-Abl imatinib")}
                       />
                     </div>
                     <div className="field-stack">
-                      <label htmlFor="rcsb-query-type">搜索方式</label>
+                      <label htmlFor="rcsb-query-type">{translate("搜索方式")}</label>
                       <select
                         disabled={isBusy}
                         id="rcsb-query-type"
@@ -1432,13 +1429,13 @@ export default function StructureFetchPage({
                           setPreviewingCandidateId("");
                         }}
                       >
-                        <option value="auto">自动识别</option>
+                        <option value="auto">{translate("自动识别")}</option>
                         <option value="pdb_id">PDB ID</option>
-                        <option value="keyword">关键词</option>
+                        <option value="keyword">{translate("关键词")}</option>
                       </select>
                     </div>
                     <div className="field-stack">
-                      <label htmlFor="rcsb-limit">候选数量</label>
+                      <label htmlFor="rcsb-limit">{translate("候选数量")}</label>
                       <input
                         disabled={isBusy}
                         id="rcsb-limit"
@@ -1458,7 +1455,7 @@ export default function StructureFetchPage({
                       />
                     </div>
                     <div className="field-stack">
-                      <label htmlFor="pdb-format">下载格式</label>
+                      <label htmlFor="pdb-format">{translate("下载格式")}</label>
                       <select disabled={isBusy} id="pdb-format" value={pdbFormat} onChange={(event) => {
                         previewGenerationRef.current.receptor += 1;
                         setPdbFormat(event.target.value);
@@ -1476,7 +1473,7 @@ export default function StructureFetchPage({
                       disabled={isBusy || !rcsbQuery.trim()}
                       onClick={() => void searchCandidates("rcsb")}
                       >
-                        {busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选"}
+                        {translate(busyAction === "search-receptor" ? "正在搜索…" : "搜索受体候选")}
                       </ActionButton>
                     </div>
                   </div>
@@ -1486,9 +1483,7 @@ export default function StructureFetchPage({
                       checked={overwritePdb}
                       disabled={isBusy}
                       onChange={(event) => setOverwritePdb(event.target.checked)}
-                    />
-                    允许覆盖项目中同名的在线受体 raw 文件
-                  </label>
+                    />{translate("允许覆盖项目中同名的在线受体 raw 文件")}</label>
 
                   {renderCandidates("receptor", rcsbResults)}
                 </section>
@@ -1496,11 +1491,11 @@ export default function StructureFetchPage({
                 <details className="structure-source-local-drawer">
                   <summary>
                     <span className="structure-source-actions-copy">
-                      <span>或者使用本地文件</span>
-                      <strong>从电脑导入 PDB / CIF</strong>
-                      <small>导入后立即尝试生成受体 PDBQT。</small>
+                      <span>{translate("或者使用本地文件")}</span>
+                      <strong>{translate("从电脑导入 PDB / CIF")}</strong>
+                      <small>{translate("导入后立即尝试生成受体 PDBQT。")}</small>
                     </span>
-                    <span className="structure-source-drawer-trigger">展开 <CaretDown aria-hidden="true" size={15} /></span>
+                    <span className="structure-source-drawer-trigger">{translate("展开 ")}<CaretDown aria-hidden="true" size={15} /></span>
                   </summary>
                   <div className="structure-source-actions">
                     <ActionButton
@@ -1509,21 +1504,17 @@ export default function StructureFetchPage({
                       disabled={isBusy}
                       onClick={() => void importLocalRaw("receptor")}
                     >
-                      {busyAction === "prepare-receptor" ? "正在处理…" : "选择文件并转换"}
+                      {translate(busyAction === "prepare-receptor" ? "正在处理…" : "选择文件并转换")}
                     </ActionButton>
-                    <AdvancedDetails className="structure-source-manage" summary="文件记录与详细信息">
+                    <AdvancedDetails className="structure-source-manage" summary={translate("文件记录与详细信息")}>
                       <label className="checkbox-row">
                         <input
                           type="checkbox"
                           checked={deleteReceptorRawFile}
                           disabled={isBusy}
                           onChange={(event) => setDeleteReceptorRawFile(event.target.checked)}
-                        />
-                        清除记录时同时删除项目中的 raw 文件
-                      </label>
-                      <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>
-                        清除受体记录
-                      </ActionButton>
+                        />{translate("清除记录时同时删除项目中的 raw 文件")}</label>
+                      <ActionButton variant="text" disabled={isBusy || !(receptorStatus?.raw_file || project.receptor.raw_file)} onClick={() => void clearRawRecord("receptor")}>{translate("清除受体记录")}</ActionButton>
                       {renderTechnicalDetails(receptorStatus, project.receptor.raw_file)}
                     </AdvancedDetails>
                   </div>
@@ -1540,38 +1531,38 @@ export default function StructureFetchPage({
                 <div className="structure-source-summary">
                   <div className="structure-source-summary-header">
                     <span className="structure-source-step">02 · LIGAND</span>
-                    <h2 id="ligand-source-title">配体</h2>
+                    <h2 id="ligand-source-title">{translate("配体")}</h2>
                   </div>
                   <span aria-live="polite" className="viewer-sr-only" id="ligand-operation-status">
-                    {ligandBusy ? message || "正在处理配体结构。" : ""}
+                    {translate(ligandBusy ? message || "正在处理配体结构。" : "")}
                   </span>
                   <StatusBadge tone={statusTone(ligandStatus?.status)}>
-                    {`raw ${statusLabel(ligandStatus?.status)}`}
+                    {translate(`raw ${statusLabel(ligandStatus?.status)}`)}
                   </StatusBadge>
                   <div className="structure-source-status-item">
-                    <span>当前 raw 文件</span>
-                    <code title={ligandStatus?.raw_file || project.ligand.raw_file || "未记录 raw 文件"}>
+                    <span>{translate("当前 raw 文件")}</span>
+                    <code title={ligandStatus?.raw_file || project.ligand.raw_file || translate("未记录 raw 文件")}>
                       {ligandStatus?.raw_file || project.ligand.raw_file || "未记录"}
                     </code>
                   </div>
                   <div className="structure-source-status-item">
-                    <span>Vina 输入</span>
-                    <strong>{project.ligand.file ? "PDBQT 已准备" : "PDBQT 未准备"}</strong>
+                    <span>{translate("Vina 输入")}</span>
+                    <strong>{project.ligand.file ? translate("PDBQT 已准备") : translate("PDBQT 未准备")}</strong>
                   </div>
                 </div>
 
                 <section className="structure-source-workspace" aria-labelledby="ligand-source-workspace-title">
                   <header className="structure-source-workspace-header">
                     <div>
-                      <span>在线化合物库</span>
-                      <h3 id="ligand-source-workspace-title">搜索 PubChem 并预览配体</h3>
+                      <span>{translate("在线化合物库")}</span>
+                      <h3 id="ligand-source-workspace-title">{translate("搜索 PubChem 并预览配体")}</h3>
                     </div>
-                    <p>名称搜索会返回多个候选，可先预览再选择目标化合物。</p>
+                    <p>{translate("名称搜索会返回多个候选，可先预览再选择目标化合物。")}</p>
                   </header>
 
                   <div className="structure-search-controls">
                     <div className="field-stack structure-search-query">
-                      <label htmlFor="pubchem-query">PubChem CID、名称或关键词</label>
+                      <label htmlFor="pubchem-query">{translate("PubChem CID、名称或关键词")}</label>
                       <SearchHistoryInput
                         disabled={isBusy}
                         history={pubchemSearchHistory.history}
@@ -1586,11 +1577,11 @@ export default function StructureFetchPage({
                           setLigandPreview(null);
                           setPreviewingCandidateId("");
                         }}
-                        placeholder="例如 5291 或 imatinib"
+                        placeholder={translate("例如 5291 或 imatinib")}
                       />
                     </div>
                     <div className="field-stack">
-                      <label htmlFor="pubchem-query-type">搜索方式</label>
+                      <label htmlFor="pubchem-query-type">{translate("搜索方式")}</label>
                       <select
                         disabled={isBusy}
                         id="pubchem-query-type"
@@ -1604,14 +1595,14 @@ export default function StructureFetchPage({
                           setPreviewingCandidateId("");
                         }}
                       >
-                        <option value="auto">自动识别</option>
+                        <option value="auto">{translate("自动识别")}</option>
                         <option value="cid">CID</option>
-                        <option value="name">名称</option>
-                        <option value="keyword">关键词</option>
+                        <option value="name">{translate("名称")}</option>
+                        <option value="keyword">{translate("关键词")}</option>
                       </select>
                     </div>
                     <div className="field-stack">
-                      <label htmlFor="pubchem-limit">候选数量</label>
+                      <label htmlFor="pubchem-limit">{translate("候选数量")}</label>
                       <input
                         disabled={isBusy}
                         id="pubchem-limit"
@@ -1637,7 +1628,7 @@ export default function StructureFetchPage({
                         disabled={isBusy || !pubchemQuery.trim()}
                         onClick={() => void searchCandidates("pubchem")}
                       >
-                        {busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选"}
+                        {translate(busyAction === "search-ligand" ? "正在搜索…" : "搜索配体候选")}
                       </ActionButton>
                     </div>
                   </div>
@@ -1647,9 +1638,7 @@ export default function StructureFetchPage({
                       checked={overwritePubchem}
                       disabled={isBusy}
                       onChange={(event) => setOverwritePubchem(event.target.checked)}
-                    />
-                    允许覆盖项目中同名的在线配体 raw 文件
-                  </label>
+                    />{translate("允许覆盖项目中同名的在线配体 raw 文件")}</label>
 
                   {renderCandidates("ligand", pubchemResults)}
                 </section>
@@ -1657,11 +1646,11 @@ export default function StructureFetchPage({
                 <details className="structure-source-local-drawer">
                   <summary>
                     <span className="structure-source-actions-copy">
-                      <span>或者使用本地文件</span>
-                      <strong>从电脑导入 SDF / MOL</strong>
-                      <small>导入后立即尝试生成配体 PDBQT。</small>
+                      <span>{translate("或者使用本地文件")}</span>
+                      <strong>{translate("从电脑导入 SDF / MOL")}</strong>
+                      <small>{translate("导入后立即尝试生成配体 PDBQT。")}</small>
                     </span>
-                    <span className="structure-source-drawer-trigger">展开 <CaretDown aria-hidden="true" size={15} /></span>
+                    <span className="structure-source-drawer-trigger">{translate("展开 ")}<CaretDown aria-hidden="true" size={15} /></span>
                   </summary>
                   <div className="structure-source-actions">
                     <ActionButton
@@ -1670,21 +1659,17 @@ export default function StructureFetchPage({
                       disabled={isBusy}
                       onClick={() => void importLocalRaw("ligand")}
                     >
-                      {busyAction === "prepare-ligand" ? "正在处理…" : "选择文件并转换"}
+                      {translate(busyAction === "prepare-ligand" ? "正在处理…" : "选择文件并转换")}
                     </ActionButton>
-                    <AdvancedDetails className="structure-source-manage" summary="文件记录与详细信息">
+                    <AdvancedDetails className="structure-source-manage" summary={translate("文件记录与详细信息")}>
                       <label className="checkbox-row">
                         <input
                           type="checkbox"
                           checked={deleteLigandRawFile}
                           disabled={isBusy}
                           onChange={(event) => setDeleteLigandRawFile(event.target.checked)}
-                        />
-                        清除记录时同时删除项目中的 raw 文件
-                      </label>
-                      <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>
-                        清除配体记录
-                      </ActionButton>
+                        />{translate("清除记录时同时删除项目中的 raw 文件")}</label>
+                      <ActionButton variant="text" disabled={isBusy || !(ligandStatus?.raw_file || project.ligand.raw_file)} onClick={() => void clearRawRecord("ligand")}>{translate("清除配体记录")}</ActionButton>
                       {renderTechnicalDetails(ligandStatus, project.ligand.raw_file)}
                     </AdvancedDetails>
                   </div>
@@ -1694,16 +1679,16 @@ export default function StructureFetchPage({
 
             <div className="next-step-strip">
               <div>
-                <strong>自动转换已启用</strong>
-                <p>选择在线候选或导入本地原始结构后，DockStart 会立即尝试生成 PDBQT；失败时 raw 文件仍会保留。</p>
+                <strong>{translate("自动转换已启用")}</strong>
+                <p>{translate("选择在线候选或导入本地原始结构后，DockStart 会立即尝试生成 PDBQT；失败时 raw 文件仍会保留。")}</p>
               </div>
               <div className="button-row end">
-                <ActionButton onClick={() => onOpenImportPdbqt(project)}>导入已有 PDBQT</ActionButton>
-                <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>查看转换状态与日志</ActionButton>
+                <ActionButton onClick={() => onOpenImportPdbqt(project)}>{translate("导入已有 PDBQT")}</ActionButton>
+                <ActionButton variant="primary" onClick={() => onOpenPreparation(project)}>{translate("查看转换状态与日志")}</ActionButton>
               </div>
             </div>
 
-            <CommandResultPanel title="结构搜索与准备结果" message={message} rawError={rawError} />
+            <CommandResultPanel title={translate("结构搜索与准备结果")} message={translate(message)} rawError={rawError} />
           </div>
         </MainPanel>
       </BodyGrid>

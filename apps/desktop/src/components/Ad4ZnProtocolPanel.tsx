@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, CheckCircle, WarningCircle } from "@phosphor-icons/react";
@@ -132,6 +134,7 @@ export default function Ad4ZnProtocolPanel({
   onProtocolStatus,
   onStatusChange,
 }: Ad4ZnProtocolPanelProps) {
+  useLanguage();
   const [status, setStatus] = useState<Ad4ZnStatusResponse | null>(null);
   const [mapsStatus, setMapsStatus] = useState<AutoGridMapsStatusResponse | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState("");
@@ -375,33 +378,33 @@ export default function Ad4ZnProtocolPanel({
           ? <CheckCircle aria-hidden="true" size={22} weight="fill" />
           : <WarningCircle aria-hidden="true" size={22} weight="fill" />}
         <div>
-          <strong>{workflowReady ? "AutoDock4Zn beta 已就绪" : "AutoDock4Zn beta 尚未就绪"}</strong>
-          <p>{workflowReady ? `${mapsStatus?.map_set_id || "当前 maps"} 可用于运行` : "完成 Zn 复核、TZ 受体、参数文件与 maps。"}</p>
+          <strong>{translate(workflowReady ? "AutoDock4Zn beta 已就绪" : "AutoDock4Zn beta 尚未就绪")}</strong>
+          <p>{translate(workflowReady ? `${mapsStatus?.map_set_id || "当前 maps"} 可用于运行` : "完成 Zn 复核、TZ 受体、参数文件与 maps。")}</p>
         </div>
         <StatusBadge tone={autoGridCompatible ? "ok" : "warning"}>
-          {autoGridCompatible ? `AutoGrid4 ${autoGridVersion}` : "需要 AutoGrid4 4.2.7+"}
+          {translate(autoGridCompatible ? `AutoGrid4 ${autoGridVersion}` : "需要 AutoGrid4 4.2.7+")}
         </StatusBadge>
       </div>
 
-      <ol className="ad4zn-progress" aria-label="AD4Zn 准备进度">
-        {progressItems.map((item, index) => (
+      <ol className="ad4zn-progress" aria-label={translate("AD4Zn 准备进度")}>
+        {translate(progressItems.map((item, index) => (
           <li className={item.ready ? "ready" : ""} key={item.key}>
             <span aria-hidden="true">
               {item.ready ? <Check size={12} weight="bold" /> : index + 1}
             </span>
-            <strong>{item.label}</strong>
-            <small>{item.ready ? "完成" : "待处理"}</small>
+            <strong>{translate(item.label)}</strong>
+            <small>{translate(item.ready ? "完成" : "待处理")}</small>
           </li>
-        ))}
+        )))}
       </ol>
 
       {status?.issues?.length ? (
         <div className="ad4zn-issues" role={!protocolReady ? "alert" : "status"}>
           {status.issues.map((issue, index) => (
             <div key={issue.code || `issue-${index}`}>
-              <strong>{issue.title}</strong>
-              <p>{issue.message}</p>
-              {issue.suggestion ? <small>{issue.suggestion}</small> : null}
+              <strong>{translate(issue.title)}</strong>
+              <p>{translate(issue.message)}</p>
+              {issue.suggestion ? <small>{translate(issue.suggestion)}</small> : null}
             </div>
           ))}
         </div>
@@ -410,18 +413,18 @@ export default function Ad4ZnProtocolPanel({
       <section className="ad4zn-section" aria-labelledby="ad4zn-review-title">
         <div className="ad4zn-section-heading">
           <div>
-            <span>步骤 1</span>
-            <h3 id="ad4zn-review-title">Zn 位点复核</h3>
+            <span>{translate("步骤 1")}</span>
+            <h3 id="ad4zn-review-title">{translate("Zn 位点复核")}</h3>
           </div>
           <StatusBadge tone={status?.review?.valid ? "ok" : "warning"}>
-            {reviewStateLabel}
+            {translate(reviewStateLabel)}
           </StatusBadge>
         </div>
 
         {status?.sites?.length ? (
           <>
             <label className="ad4zn-site-picker" htmlFor="ad4zn-site">
-              <span>Zn 位点</span>
+              <span>{translate("Zn 位点")}</span>
               <select
                 id="ad4zn-site"
                 value={selectedSiteId}
@@ -442,34 +445,34 @@ export default function Ad4ZnProtocolPanel({
             {selectedSite ? (
               <div className="ad4zn-site-details">
                 <dl className="ad4zn-site-summary">
-                  <div><dt>Zn 原子</dt><dd>{`${selectedSite.zn.name || "ZN"} · serial ${selectedSite.zn.serial}`}</dd></div>
-                  <div><dt>残基</dt><dd>{atomResidueLabel(selectedSite.zn)}</dd></div>
-                  <div><dt>坐标（Å）</dt><dd>{coordinateLabel(selectedSite.zn.coordinate)}</dd></div>
-                  <div><dt>配位数</dt><dd>{selectedSite.coordination_number}</dd></div>
-                  <div><dt>自动准备</dt><dd>{selectedSite.can_generate ? "支持" : "需要人工处理"}</dd></div>
-                  <div><dt>TZ 候选距离</dt><dd>{selectedSite.tz_candidate ? `${selectedSite.tz_candidate.distance.toFixed(2)} Å` : "不可生成"}</dd></div>
-                  <div><dt>TZ 候选坐标</dt><dd>{coordinateLabel(selectedSite.tz_candidate?.coordinate)}</dd></div>
+                  <div><dt>{translate("Zn 原子")}</dt><dd>{`${selectedSite.zn.name || "ZN"} · serial ${selectedSite.zn.serial}`}</dd></div>
+                  <div><dt>{translate("残基")}</dt><dd>{translate(atomResidueLabel(selectedSite.zn))}</dd></div>
+                  <div><dt>{translate("坐标（Å）")}</dt><dd>{translate(coordinateLabel(selectedSite.zn.coordinate))}</dd></div>
+                  <div><dt>{translate("配位数")}</dt><dd>{selectedSite.coordination_number}</dd></div>
+                  <div><dt>{translate("自动准备")}</dt><dd>{translate(selectedSite.can_generate ? "支持" : "需要人工处理")}</dd></div>
+                  <div><dt>{translate("TZ 候选距离")}</dt><dd>{translate(selectedSite.tz_candidate ? `${selectedSite.tz_candidate.distance.toFixed(2)} Å` : "不可生成")}</dd></div>
+                  <div><dt>{translate("TZ 候选坐标")}</dt><dd>{translate(coordinateLabel(selectedSite.tz_candidate?.coordinate))}</dd></div>
                 </dl>
 
                 <div className="ad4zn-coordination-table">
-                  <table aria-label="所选 Zn 位点的邻近与配位原子">
+                  <table aria-label={translate("所选 Zn 位点的邻近与配位原子")}>
                     <thead>
-                      <tr><th>原子</th><th>残基</th><th>距离（Å）</th><th>判定</th></tr>
+                      <tr><th>{translate("原子")}</th><th>{translate("残基")}</th><th>{translate("距离（Å）")}</th><th>{translate("判定")}</th></tr>
                     </thead>
                     <tbody>
                       {coordinationRows.length ? coordinationRows.map((neighbor) => (
                         <tr key={neighbor.atom.atom_id}>
                           <td>{`${neighbor.atom.name} · ${neighbor.atom.serial}`}</td>
-                          <td>{atomResidueLabel(neighbor.atom)}</td>
-                          <td>{neighbor.distance.toFixed(3)}</td>
-                          <td>{neighbor.coordinating
+                          <td>{translate(atomResidueLabel(neighbor.atom))}</td>
+                          <td>{translate(neighbor.distance.toFixed(3))}</td>
+                          <td>{translate(neighbor.coordinating
                             ? "配位"
                             : neighbor.excluded_by_connectivity
                               ? "邻接排除"
-                              : neighbor.eligible ? "候选" : "邻近"}</td>
+                              : neighbor.eligible ? "候选" : "邻近")}</td>
                         </tr>
                       )) : (
-                        <tr><td colSpan={4}>未识别到配位原子或候选原子。</td></tr>
+                        <tr><td colSpan={4}>{translate("未识别到配位原子或候选原子。")}</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -477,14 +480,14 @@ export default function Ad4ZnProtocolPanel({
               </div>
             ) : null}
 
-            {selectedSite && !selectedSite.can_generate ? (
+            {translate(selectedSite && !selectedSite.can_generate ? (
               <p className="ad4zn-site-warning" role="alert">
-                {selectedSite.geometry_message || "当前位点不满足自动生成 TZ 的条件。"}
+                {translate(selectedSite.geometry_message || "当前位点不满足自动生成 TZ 的条件。")}
               </p>
-            ) : null}
+            ) : null)}
 
             <fieldset className="ad4zn-confirmations">
-              <legend>结构确认</legend>
+              <legend>{translate("结构确认")}</legend>
               {confirmationDefinitions.map((item) => (
                 <label key={item.key}>
                   <input
@@ -496,7 +499,7 @@ export default function Ad4ZnProtocolPanel({
                       [item.key]: event.target.checked,
                     }))}
                   />
-                  <span>{item.label}</span>
+                  <span>{translate(item.label)}</span>
                 </label>
               ))}
             </fieldset>
@@ -506,26 +509,24 @@ export default function Ad4ZnProtocolPanel({
                 variant="primary"
                 disabled={disabled || isBusy || !status?.step_readiness?.review || !selectedSite?.can_generate || !allConfirmed}
                 onClick={() => void saveReview()}
-              >
-                保存 Zn 复核
-              </ActionButton>
-              {!allConfirmed ? <small>完成全部确认后保存。</small> : null}
+              >{translate("保存 Zn 复核")}</ActionButton>
+              {!allConfirmed ? <small>{translate("完成全部确认后保存。")}</small> : null}
             </div>
           </>
         ) : (
-          <p className="ad4zn-empty">当前受体未识别到可复核的 Zn 位点。</p>
+          <p className="ad4zn-empty">{translate("当前受体未识别到可复核的 Zn 位点。")}</p>
         )}
       </section>
 
       <div className="ad4zn-preparation-grid">
         <section className="ad4zn-section" aria-labelledby="ad4zn-tz-title">
           <div className="ad4zn-section-heading">
-            <div><span>步骤 2</span><h3 id="ad4zn-tz-title">TZ 受体</h3></div>
+            <div><span>{translate("步骤 2")}</span><h3 id="ad4zn-tz-title">{translate("TZ 受体")}</h3></div>
             <StatusBadge tone={status?.prepared_receptor?.valid ? "ok" : "warning"}>
-              {preparedReceptorStateLabel}
+              {translate(preparedReceptorStateLabel)}
             </StatusBadge>
           </div>
-          <p>根据已保存的 Zn 位点生成带 TZ 伪原子的受体 PDBQT。</p>
+          <p>{translate("根据已保存的 Zn 位点生成带 TZ 伪原子的受体 PDBQT。")}</p>
           {status?.prepared_receptor?.relative_path ? (
             <code className="ad4zn-file-path">{status.prepared_receptor.relative_path}</code>
           ) : null}
@@ -533,23 +534,23 @@ export default function Ad4ZnProtocolPanel({
             disabled={disabled || isBusy || !status?.step_readiness?.prepare}
             onClick={() => void prepareReceptor()}
           >
-            {status?.prepared_receptor?.recorded ? "重新生成 TZ 受体" : "生成 TZ 受体"}
+            {translate(status?.prepared_receptor?.recorded ? "重新生成 TZ 受体" : "生成 TZ 受体")}
           </ActionButton>
         </section>
 
         <section className="ad4zn-section" aria-labelledby="ad4zn-parameter-title">
           <div className="ad4zn-section-heading">
-            <div><span>步骤 3</span><h3 id="ad4zn-parameter-title">AD4Zn 参数</h3></div>
+            <div><span>{translate("步骤 3")}</span><h3 id="ad4zn-parameter-title">{translate("AD4Zn 参数")}</h3></div>
             <StatusBadge tone={status?.parameter_file?.valid ? "ok" : "warning"}>
-              {parameterFileStateLabel}
+              {translate(parameterFileStateLabel)}
             </StatusBadge>
           </div>
-          <p>选择 AD4Zn 参数文件；DockStart 会核对 v1.2.7 关键参数与 GPL 声明，再复制到项目并记录校验值。</p>
+          <p>{translate("选择 AD4Zn 参数文件；DockStart 会核对 v1.2.7 关键参数与 GPL 声明，再复制到项目并记录校验值。")}</p>
           {status?.parameter_file?.relative_path ? (
             <code className="ad4zn-file-path">{status.parameter_file.relative_path}</code>
           ) : null}
           <label className="ad4zn-parameter-picker" htmlFor="ad4zn-parameter-file">
-            <span>参数文件</span>
+            <span>{translate("参数文件")}</span>
             <PathInput
               id="ad4zn-parameter-file"
               value={parameterFile}
@@ -557,34 +558,32 @@ export default function Ad4ZnProtocolPanel({
               disabled={disabled || isBusy}
               mode="file"
               filters={[{ name: "AD4Zn parameter", extensions: ["dat"] }]}
-              title="选择 AD4Zn 参数文件"
-              placeholder="选择 AD4Zn.dat"
-              ariaLabel="AD4Zn 参数文件"
+              title={translate("选择 AD4Zn 参数文件")}
+              placeholder={translate("选择 AD4Zn.dat")}
+              ariaLabel={translate("AD4Zn 参数文件")}
             />
           </label>
           <ActionButton
             disabled={disabled || isBusy || !parameterFile.trim()}
             onClick={() => void saveParameterFile()}
-          >
-            复制并校验参数
-          </ActionButton>
+          >{translate("复制并校验参数")}</ActionButton>
         </section>
       </div>
 
       <section className="ad4zn-section ad4zn-maps-section" aria-labelledby="ad4zn-maps-title">
         <div className="ad4zn-section-heading">
-          <div><span>步骤 4</span><h3 id="ad4zn-maps-title">AutoDock4Zn maps</h3></div>
-          <StatusBadge tone={mapsReady ? "ok" : "warning"}>{mapsStateLabel}</StatusBadge>
+          <div><span>{translate("步骤 4")}</span><h3 id="ad4zn-maps-title">AutoDock4Zn maps</h3></div>
+          <StatusBadge tone={mapsReady ? "ok" : "warning"}>{translate(mapsStateLabel)}</StatusBadge>
         </div>
-        <p>使用 TZ 受体、AD4Zn 参数与当前项目 Box 生成 maps。</p>
-        {!mapsReady ? (
+        <p>{translate("使用 TZ 受体、AD4Zn 参数与当前项目 Box 生成 maps。")}</p>
+        {translate(!mapsReady ? (
           <p className="ad4zn-map-status-note">
-            {mapsStatus?.issues?.[0]
+            {translate(mapsStatus?.issues?.[0]
               || mapsStatus?.error?.message
               || mapsStatus?.message
-              || "正在读取 maps 状态。"}
+              || "正在读取 maps 状态。")}
           </p>
-        ) : null}
+        ) : null)}
         {mapsReady && mapsStatus?.map_set_id ? (
           <code className="ad4zn-file-path">{mapsStatus.map_set_id}</code>
         ) : null}
@@ -594,21 +593,21 @@ export default function Ad4ZnProtocolPanel({
             disabled={disabled || isBusy || !status?.step_readiness?.run || !autoGridCompatible}
             onClick={() => void generateMaps()}
           >
-            {mapsReady ? "重新生成 AD4Zn maps" : "生成 AD4Zn maps"}
+            {translate(mapsReady ? "重新生成 AD4Zn maps" : "生成 AD4Zn maps")}
           </ActionButton>
-          {!autoGridCompatible ? <small>需要 AutoGrid4 4.2.7 或更高版本。</small> : null}
+          {!autoGridCompatible ? <small>{translate("需要 AutoGrid4 4.2.7 或更高版本。")}</small> : null}
         </div>
       </section>
 
-      {disabled && disabledReason ? <p className="ad4-disabled-reason">{disabledReason}</p> : null}
-      {message ? <p className="run-inline-message" role={rawError ? "alert" : "status"}>{message}</p> : null}
-      {rawError ? <AdvancedDetails className="diagnostic-details" summary="查看诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+      {disabled && disabledReason ? <p className="ad4-disabled-reason">{translate(disabledReason)}</p> : null}
+      {message ? <p className="run-inline-message" role={rawError ? "alert" : "status"}>{translate(message)}</p> : null}
+      {rawError ? <AdvancedDetails className="diagnostic-details" summary={translate("查看诊断")}><pre>{rawError}</pre></AdvancedDetails> : null}
 
       <OperationLoadingDialog
         open={busyAction === "review" || busyAction === "prepare" || busyAction === "parameter"}
-        title={loadingCopy.title}
-        message={loadingCopy.message}
-        detail="完成后会自动刷新协议状态。"
+        title={translate(loadingCopy.title)}
+        message={translate(loadingCopy.message)}
+        detail={translate("完成后会自动刷新协议状态。")}
       />
     </div>
   );

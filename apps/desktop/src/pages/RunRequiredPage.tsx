@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import ActionButton from "../components/ActionButton";
 import EmptyState from "../components/EmptyState";
 import VinaWorkflowBar from "../components/VinaWorkflowBar";
@@ -42,6 +44,7 @@ function pageText(
 }
 
 export default function RunRequiredPage({ project, requestedPage, onNavigate }: RunRequiredPageProps) {
+  useLanguage();
   const runMode = projectRunMode(project);
   const text = pageText(requestedPage, runMode);
 
@@ -52,15 +55,13 @@ export default function RunRequiredPage({ project, requestedPage, onNavigate }: 
         runMode={runMode}
       />
       <EmptyState
-        title={text.title}
+        title={translate(text.title)}
         description={`${text.description} 项目：${project.project_name}`}
         action={
           <>
-            <ActionButton variant="primary" onClick={() => onNavigate("vina-config")}>
-              从生成运行配置开始
-            </ActionButton>
-            <ActionButton onClick={() => onNavigate("run-prepare")}>进入运行前检查</ActionButton>
-            <ActionButton onClick={() => onNavigate("home")}>回到项目总览</ActionButton>
+            <ActionButton variant="primary" onClick={() => onNavigate("vina-config")}>{translate("从生成运行配置开始")}</ActionButton>
+            <ActionButton onClick={() => onNavigate("run-prepare")}>{translate("进入运行前检查")}</ActionButton>
+            <ActionButton onClick={() => onNavigate("home")}>{translate("回到项目总览")}</ActionButton>
           </>
         }
       />

@@ -6,6 +6,7 @@
  * exposes. There is deliberately no second theme mechanism:
  *
  *   theme mode  system | light | dark       stored in `dockstart-theme`
+ *   palette     blue | green               stored in `dockstart-palette`
  *   appearance  default | soft | contrast   stored in `dockstart-appearance`
  *   accent      default | cyan | graphite   stored in `dockstart-accent`
  *
@@ -23,17 +24,20 @@ export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 export type AppearanceId = "default" | "soft" | "contrast";
 export type AccentId = "default" | "cyan" | "graphite";
+export type PaletteId = "blue" | "green";
 
 export type AppearanceState = {
   mode: ThemeMode;
   appearance: AppearanceId;
   accent: AccentId;
+  palette: PaletteId;
 };
 
 /** `dockstart-theme` keeps storing the mode; existing installs stay valid. */
 export const THEME_STORAGE_KEY = "dockstart-theme";
 export const APPEARANCE_STORAGE_KEY = "dockstart-appearance";
 export const ACCENT_STORAGE_KEY = "dockstart-accent";
+export const PALETTE_STORAGE_KEY = "dockstart-palette";
 
 /** Fired on `window` whenever any visual preference changes. */
 export const APPEARANCE_CHANGE_EVENT = "dockstart-appearance-change";
@@ -42,6 +46,7 @@ export const THEME_DATASET_KEY = "theme";
 export const THEME_MODE_DATASET_KEY = "themeMode";
 export const APPEARANCE_DATASET_KEY = "appearance";
 export const ACCENT_DATASET_KEY = "accent";
+export const PALETTE_DATASET_KEY = "palette";
 /** Must match the media query used in `index.html`. */
 export const SYSTEM_DARK_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
@@ -52,16 +57,19 @@ export const SYSTEM_DARK_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 export const DEFAULT_THEME_MODE: ThemeMode = "dark";
 export const DEFAULT_APPEARANCE: AppearanceId = "default";
 export const DEFAULT_ACCENT: AccentId = "default";
+export const DEFAULT_PALETTE: PaletteId = "blue";
 
 export const DEFAULT_APPEARANCE_STATE: AppearanceState = {
   mode: DEFAULT_THEME_MODE,
   appearance: DEFAULT_APPEARANCE,
   accent: DEFAULT_ACCENT,
+  palette: DEFAULT_PALETTE,
 };
 
 export const THEME_MODES: readonly ThemeMode[] = ["system", "light", "dark"];
 export const APPEARANCE_IDS: readonly AppearanceId[] = ["default", "soft", "contrast"];
 export const ACCENT_IDS: readonly AccentId[] = ["default", "cyan", "graphite"];
+export const PALETTE_IDS: readonly PaletteId[] = ["blue", "green"];
 
 export function normalizeThemeMode(value: unknown): ThemeMode {
   if (typeof value !== "string") return DEFAULT_THEME_MODE;
@@ -83,6 +91,10 @@ export function normalizeAccentId(value: unknown): AccentId {
   const normalized = value.trim().toLowerCase();
   if (normalized === "cyan" || normalized === "graphite") return normalized;
   return DEFAULT_ACCENT;
+}
+
+export function normalizePaletteId(value: unknown): PaletteId {
+  return typeof value === "string" && value.trim().toLowerCase() === "green" ? "green" : DEFAULT_PALETTE;
 }
 
 /**
@@ -136,6 +148,7 @@ export function readAppearanceState(): AppearanceState {
     mode: normalizeThemeMode(readStored(THEME_STORAGE_KEY)),
     appearance: normalizeAppearanceId(readStored(APPEARANCE_STORAGE_KEY)),
     accent: normalizeAccentId(readStored(ACCENT_STORAGE_KEY)),
+    palette: normalizePaletteId(readStored(PALETTE_STORAGE_KEY)),
   };
 }
 
@@ -154,6 +167,7 @@ export function applyAppearanceState(
   root.dataset[THEME_MODE_DATASET_KEY] = state.mode;
   root.dataset[APPEARANCE_DATASET_KEY] = state.appearance;
   root.dataset[ACCENT_DATASET_KEY] = state.accent;
+  root.dataset[PALETTE_DATASET_KEY] = normalizePaletteId(state.palette);
   root.style.colorScheme = resolved;
   return resolved;
 }
@@ -191,6 +205,21 @@ export function setAppearancePreference(appearance: AppearanceId): ResolvedTheme
 
 export function setAccentPreference(accent: AccentId): ResolvedTheme {
   const next: AppearanceState = { ...readAppearanceState(), accent: normalizeAccentId(accent) };
+  writeStored(ACCENT_STORAGE_KEY, next.accent);
+  return commit(next);
+}
+
+/** A named theme is a complete base palette, not an accent-only change. */
+export function setThemePreset(palette: PaletteId, mode: ResolvedTheme): ResolvedTheme {
+  const next: AppearanceState = {
+    mode: normalizeThemeMode(mode),
+    palette: normalizePaletteId(palette),
+    appearance: DEFAULT_APPEARANCE,
+    accent: DEFAULT_ACCENT,
+  };
+  writeStored(THEME_STORAGE_KEY, next.mode);
+  writeStored(PALETTE_STORAGE_KEY, next.palette);
+  writeStored(APPEARANCE_STORAGE_KEY, next.appearance);
   writeStored(ACCENT_STORAGE_KEY, next.accent);
   return commit(next);
 }

@@ -40,6 +40,7 @@ from dockstart_core.preparation_models import (
     preparation_state_from_dict,
 )
 from dockstart_core.settings import docking_default_overrides, load_settings
+from dockstart_core.report_language import get_report_language, localized_report, rt
 from dockstart_core.structure_review import build_structure_review
 
 PROJECT_DIRS = ("raw", "prepared", "configs", "runs", "results", "reports", "preparation", "maps")
@@ -11520,7 +11521,7 @@ def analyze_vina_run_results(project_dir: str, run_id: str) -> dict[str, Any]:
 
 def _markdown_cell(value: Any) -> str:
     if value is None or value == "":
-        text = "未记录"
+        text = rt('未记录')
     elif isinstance(value, float):
         text = _format_config_number(value)
     else:
@@ -11703,7 +11704,7 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         return loaded
     project = _project_from_dict(loaded["project"], Path(project_dir).expanduser())
     run_mode = _metadata_run_mode(metadata)
-    mode_label = "当前姿势评分" if run_mode == "score_only" else "当前姿势局部优化"
+    mode_label = rt('当前姿势评分') if run_mode == "score_only" else rt('当前姿势局部优化')
     output_normalization = (
         metadata.get("output_normalization")
         if isinstance(metadata.get("output_normalization"), dict)
@@ -11741,11 +11742,11 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         and math.isfinite(float(unbound_reference.get("value_kcal_mol")))
     )
     unbound_reference_label = (
-        f"{_format_config_number(float(unbound_reference['value_kcal_mol']))} kcal/mol（显式）"
+        rt('{0} kcal/mol（显式）', f"{_format_config_number(float(unbound_reference['value_kcal_mol']))}")
         if explicit_unbound
-        else "未显式指定（Vina 默认处理）"
+        else rt('未显式指定（Vina 默认处理）')
         if run_mode == "score_only"
-        else "不适用"
+        else rt('不适用')
     )
     optimized_terms = {
         str(item.get("key") or ""): item
@@ -11774,7 +11775,7 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             )
             energy_rows.append(
                 [
-                    optimized_item.get("label") or input_item.get("label") or key,
+                    rt(optimized_item.get("label") or input_item.get("label") or key),
                     input_value,
                     optimized_value,
                     delta,
@@ -11783,7 +11784,7 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
     else:
         energy_rows = [
             [
-                item.get("label"),
+                rt(item.get("label")),
                 item.get("value_kcal_mol"),
                 item.get("term_number") if item.get("term_number") is not None else "—",
             ]
@@ -11791,51 +11792,51 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             if isinstance(item, dict)
         ]
     file_rows = [
-        ["受体快照", Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()],
+        [rt('受体快照'), Path("runs", run_id, "inputs", "receptor.pdbqt").as_posix()],
         *(
-            [["柔性侧链快照", flex_input_file]]
+            [[rt('柔性侧链快照'), flex_input_file]]
             if flex_input_file
             else []
         ),
-        ["输入配体姿势", evaluation.get("input_pose_file")],
+        [rt('输入配体姿势'), evaluation.get("input_pose_file")],
         *(
-            [["局部优化后姿势", evaluation.get("output_pose_file")]]
+            [[rt('局部优化后姿势'), evaluation.get("output_pose_file")]]
             if run_mode == "local_only"
             else []
         ),
         *(
             [
                 [
-                    "Vina 原始输出（字节证据）",
+                    rt('Vina 原始输出（字节证据）'),
                     output_normalization.get("raw_output_file"),
                 ]
             ]
             if output_normalization.get("raw_output_file")
             else []
         ),
-        ["配置快照", metadata.get("config_snapshot")],
+        [rt('配置快照'), metadata.get("config_snapshot")],
         *(
-            [["输入评分日志", (evaluation.get("comparison") or {}).get("baseline_log_file")]]
+            [[rt('输入评分日志'), (evaluation.get("comparison") or {}).get("baseline_log_file")]]
             if run_mode == "local_only"
             and isinstance(evaluation.get("comparison"), dict)
             and (evaluation.get("comparison") or {}).get("baseline_log_file")
             else []
         ),
-        ["运行日志", metadata.get("log_file")],
-        ["评价结果", evaluation_payload.get("evaluation_file")],
+        [rt('运行日志'), metadata.get("log_file")],
+        [rt('评价结果'), evaluation_payload.get("evaluation_file")],
     ]
     grid = evaluation.get("grid") if isinstance(evaluation.get("grid"), dict) else {}
     grid_rows = [
         [
-            "范围来源",
-            "按输入配体自动建立（autobox）"
+            rt('范围来源'),
+            rt('按输入配体自动建立（autobox）')
             if evaluation.get("autobox")
-            else "项目 Box / 预计算 maps",
+            else rt('项目 Box / 预计算 maps'),
             "",
         ],
-        ["中心记录", grid.get("center"), ""],
-        ["尺寸记录", grid.get("size"), ""],
-        ["网格间距", grid.get("spacing_angstrom"), "Å"],
+        [rt('中心记录'), grid.get("center"), ""],
+        [rt('尺寸记录'), grid.get("size"), ""],
+        [rt('网格间距'), grid.get("spacing_angstrom"), "Å"],
     ]
     reproducibility_rows = [
         ["DockStart version", metadata.get("app_version")],
@@ -11852,19 +11853,17 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         *(
             [
                 [
-                    "Vina 输出标准化",
+                    rt('Vina 输出标准化'),
                     (
-                        f"{output_normalization.get('status') or '未记录'}；"
-                        f"方法={output_normalization.get('method') or '未记录'}；"
-                        f"移除 NUL={output_normalization.get('nul_bytes_removed') or 0}"
+                        rt('{0}；方法={1}；移除 NUL={2}', f"{output_normalization.get('status') or rt('未记录')}", f"{output_normalization.get('method') or rt('未记录')}", f"{output_normalization.get('nul_bytes_removed') or 0}")
                     ),
                 ],
                 [
-                    "Vina 原始输出 SHA256",
+                    rt('Vina 原始输出 SHA256'),
                     output_normalization.get("source_sha256"),
                 ],
                 [
-                    "标准 PDBQT SHA256",
+                    rt('标准 PDBQT SHA256'),
                     output_normalization.get("normalized_sha256"),
                 ],
             ]
@@ -11872,26 +11871,26 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             else []
         ),
         [
-            "姿势坐标系确认",
+            rt('姿势坐标系确认'),
             (
-                "用户已确认；DockStart 仅校验记录与输入快照哈希，不自动验证科学有效性"
+                rt('用户已确认；DockStart 仅校验记录与输入快照哈希，不自动验证科学有效性')
                 if pose_input_attestation
-                else "历史运行未记录"
+                else rt('历史运行未记录')
             ),
         ],
-        ["确认时间", pose_input_attestation.get("confirmed_at")],
-        ["确认声明", pose_input_attestation.get("claim")],
-        ["确认 receptor SHA256", pose_input_attestation.get("receptor_sha256")],
+        [rt('确认时间'), pose_input_attestation.get("confirmed_at")],
+        [rt('确认声明'), pose_input_attestation.get("claim")],
+        [rt('确认 receptor SHA256'), pose_input_attestation.get("receptor_sha256")],
         *(
-            [["确认 flex SHA256", pose_input_attestation.get("flex_sha256")]]
+            [[rt('确认 flex SHA256'), pose_input_attestation.get("flex_sha256")]]
             if pose_input_attestation.get("flex_sha256")
             else []
         ),
-        ["确认 ligand SHA256", pose_input_attestation.get("ligand_sha256")],
+        [rt('确认 ligand SHA256'), pose_input_attestation.get("ligand_sha256")],
         [
             "spacing",
             (
-                "由预计算 maps 固定"
+                rt('由预计算 maps 固定')
                 if _metadata_scoring_protocol(metadata) == "ad4_maps"
                 else vina_snapshot.get("spacing", 0.375)
             ),
@@ -11899,17 +11898,17 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         [
             "no_refine",
             (
-                "不适用"
+                rt('不适用')
                 if _metadata_scoring_protocol(metadata) == "ad4_maps"
-                else "开启" if vina_snapshot.get("no_refine", False) else "关闭"
+                else rt('开启') if vina_snapshot.get("no_refine", False) else rt('关闭')
             ),
         ],
         [
             "force_even_voxels",
             (
-                "不适用"
+                rt('不适用')
                 if _metadata_scoring_protocol(metadata) == "ad4_maps"
-                else "开启" if vina_snapshot.get("force_even_voxels", False) else "关闭"
+                else rt('开启') if vina_snapshot.get("force_even_voxels", False) else rt('关闭')
             ),
         ],
         ["unbound_energy", unbound_reference_label],
@@ -11921,14 +11920,13 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
     ]
     scientific_lines = (
         [
-            "- 本次只计算输入姿势的能量分解；",
-            "- 未执行全局构象搜索；",
-            "- 未生成新的配体构象文件；",
-            "- 该分值不能作为一组候选构象中的“最佳结果”。",
+            rt('- 本次只计算输入姿势的能量分解；'),
+            rt('- 未执行全局构象搜索；'),
+            rt('- 未生成新的配体构象文件；'),
+            rt('- 该分值不能作为一组候选构象中的“最佳结果”。'),
             *(
                 [
-                    "- 本次显式指定未结合态参考能量；"
-                    "只与输入、结构准备、评分函数和参考能量相同的运行比较。"
+                    rt('- 本次显式指定未结合态参考能量；只与输入、结构准备、评分函数和参考能量相同的运行比较。')
                 ]
                 if explicit_unbound
                 else []
@@ -11936,36 +11934,36 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         ]
         if run_mode == "score_only"
         else [
-            "- 本次只在输入姿势附近执行局部优化；",
-            "- 已保存局部优化后的单个 PDBQT；",
-            "- 未执行全局构象搜索，不能据此排除其他结合姿势；",
-            "- 该结果不能作为全局对接排名。",
+            rt('- 本次只在输入姿势附近执行局部优化；'),
+            rt('- 已保存局部优化后的单个 PDBQT；'),
+            rt('- 未执行全局构象搜索，不能据此排除其他结合姿势；'),
+            rt('- 该结果不能作为全局对接排名。'),
         ]
     )
     scientific_lines.append(
-        "- 输入姿势坐标关系由用户确认；DockStart 记录确认并绑定文件哈希，但不会自动证明受体与配体属于科学上有效的同一坐标系。"
+        rt('- 输入姿势坐标关系由用户确认；DockStart 记录确认并绑定文件哈希，但不会自动证明受体与配体属于科学上有效的同一坐标系。')
     )
     report_lines = [
-            f"# DockStart {mode_label}报告",
+            rt('# DockStart {0}报告', f'{mode_label}'),
             "",
-            "## 1. 项目与任务",
+            rt('## 1. 项目与任务'),
             "",
-            f"- 项目名称: {_markdown_cell(project.project_name)}",
+            rt('- 项目名称: {0}', f'{_markdown_cell(project.project_name)}'),
             f"- run_id: {_markdown_cell(run_id)}",
-            f"- 任务类型: {_markdown_cell(run_mode)}",
-            f"- 评分函数: {_markdown_cell(evaluation.get('scoring_function'))}",
-            f"- 主要评分: {_markdown_cell(evaluation.get('primary_score_kcal_mol'))} kcal/mol",
-            f"- 未结合态参考能量: {_markdown_cell(unbound_reference_label)}",
+            rt('- 任务类型: {0}', f'{_markdown_cell(run_mode)}'),
+            rt('- 评分函数: {0}', f"{_markdown_cell(evaluation.get('scoring_function'))}"),
+            rt('- 主要评分: {0} kcal/mol', f"{_markdown_cell(evaluation.get('primary_score_kcal_mol'))}"),
+            rt('- 未结合态参考能量: {0}', f'{_markdown_cell(unbound_reference_label)}'),
             "",
-            "## 2. 输入与输出文件",
+            rt('## 2. 输入与输出文件'),
             "",
-            _markdown_table(["项目", "路径"], file_rows),
+            _markdown_table([rt('项目'), rt('路径')], file_rows),
             "",
-            "## 3. 评价范围",
+            rt('## 3. 评价范围'),
             "",
-            _markdown_table(["项目", "记录值", "单位"], grid_rows),
+            _markdown_table([rt('项目'), rt('记录值'), rt('单位')], grid_rows),
             "",
-            "## 4. 能量分解",
+            rt('## 4. 能量分解'),
             "",
     ]
     if run_mode == "local_only":
@@ -11980,40 +11978,40 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             else {}
         )
         comparison_rows = [
-            ["输入姿势评分", comparison.get("input_score_kcal_mol"), "kcal/mol"],
-            ["优化后评分", comparison.get("optimized_score_kcal_mol"), "kcal/mol"],
+            [rt('输入姿势评分'), comparison.get("input_score_kcal_mol"), "kcal/mol"],
+            [rt('优化后评分'), comparison.get("optimized_score_kcal_mol"), "kcal/mol"],
             [
-                "评分变化（优化后－输入）",
+                rt('评分变化（优化后－输入）'),
                 comparison.get("delta_score_kcal_mol"),
                 "kcal/mol",
             ],
             [
-                "可比较",
-                "是" if comparison.get("comparable") else "否",
-                comparison.get("reason") or "",
+                rt('可比较'),
+                rt('是') if comparison.get("comparable") else rt('否'),
+                rt(comparison.get("reason") or ""),
             ],
         ]
         geometry_rows = (
             [
-                ["原子映射", geometry.get("mapping_method"), ""],
-                ["匹配重原子", geometry.get("heavy_atom_count"), "个"],
+                [rt('原子映射'), geometry.get("mapping_method"), ""],
+                [rt('匹配重原子'), geometry.get("heavy_atom_count"), rt('个')],
                 [
-                    "未对齐重原子 RMSD",
+                    rt('未对齐重原子 RMSD'),
                     geometry.get("heavy_atom_rmsd_no_alignment_angstrom"),
                     "Å",
                 ],
                 [
-                    "平均重原子位移",
+                    rt('平均重原子位移'),
                     geometry.get("mean_heavy_atom_displacement_angstrom"),
                     "Å",
                 ],
                 [
-                    "最大重原子位移",
+                    rt('最大重原子位移'),
                     geometry.get("max_heavy_atom_displacement_angstrom"),
                     "Å",
                 ],
                 [
-                    "几何质心位移",
+                    rt('几何质心位移'),
                     geometry.get("centroid_displacement_angstrom"),
                     "Å",
                 ],
@@ -12021,15 +12019,15 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
             if geometry.get("ok")
             else [
                 [
-                    "几何比较",
-                    "不可用",
-                    str((geometry.get("error") or {}).get("message") or "未记录"),
+                    rt('几何比较'),
+                    rt('不可用'),
+                    rt(str((geometry.get("error") or {}).get("message") or rt('未记录'))),
                 ]
             ]
         )
         stage_labels = {
-            "input_score": "输入姿势评分",
-            "local_optimization": "局部优化",
+            "input_score": rt('输入姿势评分'),
+            "local_optimization": rt('局部优化'),
         }
         stage_rows = [
             [
@@ -12046,71 +12044,71 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         ]
         report_lines.extend(
             [
-                _markdown_table(["能量项", "输入", "优化后", "Δ（优化后－输入）"], energy_rows)
+                _markdown_table([rt('能量项'), rt('输入'), rt('优化后'), rt('Δ（优化后－输入）')], energy_rows)
                 if input_terms
-                else "未记录输入姿势能量分解；仅保留优化后能量项。",
+                else rt('未记录输入姿势能量分解；仅保留优化后能量项。'),
                 "",
-                "## 5. 优化前后评分比较",
+                rt('## 5. 优化前后评分比较'),
                 "",
-                _markdown_table(["项目", "记录值", "单位 / 说明"], comparison_rows),
+                _markdown_table([rt('项目'), rt('记录值'), rt('单位 / 说明')], comparison_rows),
                 "",
-                "负的评分变化只表示在本次 Vina 评分协议下数值降低，不等同于真实结合自由能改善。",
+                rt('负的评分变化只表示在本次 Vina 评分协议下数值降低，不等同于真实结合自由能改善。'),
                 "",
-                "## 6. 姿势位移",
+                rt('## 6. 姿势位移'),
                 "",
-                _markdown_table(["项目", "记录值", "单位 / 说明"], geometry_rows),
+                _markdown_table([rt('项目'), rt('记录值'), rt('单位 / 说明')], geometry_rows),
                 "",
-                str(geometry.get("scientific_note") or ""),
+                rt(str(geometry.get("scientific_note") or "")),
                 "",
-                "## 7. 分阶段运行记录",
+                rt('## 7. 分阶段运行记录'),
                 "",
                 (
                     _markdown_table(
-                        ["阶段", "状态", "开始", "结束", "耗时 (s)", "退出码", "日志"],
+                        [rt('阶段'), rt('状态'), rt('开始'), rt('结束'), rt('耗时 (s)'), rt('退出码'), rt('日志')],
                         stage_rows,
                     )
                     if stage_rows
-                    else "该历史运行未记录分阶段执行信息。"
+                    else rt('该历史运行未记录分阶段执行信息。')
                 ),
                 "",
-                "## 8. 执行计划",
+                rt('## 8. 执行计划'),
                 "",
                 "```json",
                 json.dumps(command_record, ensure_ascii=False, indent=2),
                 "```",
                 "",
-                "## 9. 可复现记录",
+                rt('## 9. 可复现记录'),
                 "",
-                _markdown_table(["项目", "记录值"], reproducibility_rows),
+                _markdown_table([rt('项目'), rt('记录值')], reproducibility_rows),
                 "",
-                "## 10. 科学边界",
+                rt('## 10. 科学边界'),
                 "",
                 *scientific_lines,
                 "",
-                DOCKING_SCORE_DISCLAIMER,
+                rt(DOCKING_SCORE_DISCLAIMER),
                 "",
             ]
         )
     else:
         report_lines.extend(
             [
-                _markdown_table(["能量项", "数值 (kcal/mol)", "Vina 项号"], energy_rows),
+                _markdown_table([rt('能量项'), rt('数值 (kcal/mol)'), rt('Vina 项号')], energy_rows),
                 "",
-                "## 5. 执行命令",
+                rt('## 5. 执行命令'),
                 "",
                 "```json",
                 json.dumps(command_record, ensure_ascii=False, indent=2),
                 "```",
                 "",
-                "## 6. 可复现记录",
+                rt('## 6. 可复现记录'),
                 "",
-                _markdown_table(["项目", "记录值"], reproducibility_rows),
+                _markdown_table([rt('项目'), rt('记录值')], reproducibility_rows),
                 "",
-                "## 7. 科学边界",
+                rt('## 7. 科学边界'),
                 "",
                 *scientific_lines,
                 "",
-                DOCKING_SCORE_DISCLAIMER,
+                rt(DOCKING_SCORE_DISCLAIMER),
                 "",
             ]
         )
@@ -12124,11 +12122,12 @@ def _build_vina_evaluation_report(project_dir: str, run_id: str) -> dict[str, An
         "evaluation": evaluation,
         "evaluation_file": evaluation_payload.get("evaluation_file"),
         "report_text": report_text,
-        "message": f"{mode_label}报告内容已生成。",
+        "message": rt('{0}报告内容已生成。', f'{mode_label}'),
         "error": None,
     }
 
 
+@localized_report
 def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     metadata, metadata_error = _read_run_metadata(project_dir, run_id)
     if metadata_error:
@@ -12197,19 +12196,19 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     )
 
     input_rows = [
-        ["receptor 文件", context["receptor_file"]],
-        ["ligand 文件", context["ligand_file"]],
-        *([["flex 侧链文件", context["flex_file"]]] if context.get("flex_file") else []),
+        [rt('receptor 文件'), context["receptor_file"]],
+        [rt('ligand 文件'), context["ligand_file"]],
+        *([[rt('flex 侧链文件'), context["flex_file"]]] if context.get("flex_file") else []),
         ["vina_config.txt", context["config_file"]],
         ["log.txt", str(metadata.get("log_file") or Path("runs", run_id, "log.txt").as_posix())],
         ["out.pdbqt", str(metadata.get("output_file") or Path("runs", run_id, "out.pdbqt").as_posix())],
         *(
-            [["柔性运动分析", flexible_movement_file]]
+            [[rt('柔性运动分析'), flexible_movement_file]]
             if flexible_movement_file
             else []
         ),
         *(
-            [["Vina 原始输出（字节证据）", raw_vina_output_file]]
+            [[rt('Vina 原始输出（字节证据）'), raw_vina_output_file]]
             if raw_vina_output_file
             else []
         ),
@@ -12263,7 +12262,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         [
             "spacing",
             (
-                "由预计算 maps 固定"
+                rt('由预计算 maps 固定')
                 if is_ad4_maps or is_vina_maps
                 else vina_snapshot.get("spacing", 0.375)
             ),
@@ -12271,27 +12270,27 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         [
             "no_refine",
             (
-                "grid-only（等价于 no-refine）"
+                rt('grid-only（等价于 no-refine）')
                 if is_vina_maps
-                else "不适用"
+                else rt('不适用')
                 if is_ad4_maps
-                else "开启" if recorded_vina_snapshot.get("no_refine", False) else "关闭"
+                else rt('开启') if recorded_vina_snapshot.get("no_refine", False) else rt('关闭')
             ),
         ],
         [
             "force_even_voxels",
             (
-                "仅生成 maps 时适用"
+                rt('仅生成 maps 时适用')
                 if is_vina_maps
-                else "不适用"
+                else rt('不适用')
                 if is_ad4_maps
-                else "开启" if recorded_vina_snapshot.get("force_even_voxels", False) else "关闭"
+                else rt('开启') if recorded_vina_snapshot.get("force_even_voxels", False) else rt('关闭')
             ),
         ],
-        ["unbound_energy", "不适用（仅用于 score_only）"],
+        ["unbound_energy", rt('不适用（仅用于 score_only）')],
         ["verbosity", vina_snapshot.get("verbosity", 1)],
         ["cpu", vina_snapshot["cpu"]],
-        ["seed", vina_snapshot["seed"] if vina_snapshot.get("seed") is not None else "未设置"],
+        ["seed", vina_snapshot["seed"] if vina_snapshot.get("seed") is not None else rt('未设置')],
     ]
     score_rows = [
         [score["mode"], score["affinity_kcal_mol"], score["rmsd_lb"], score["rmsd_ub"]]
@@ -12349,14 +12348,14 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         *(
             [
                 [
-                    "柔性运动分析 SHA256",
+                    rt('柔性运动分析 SHA256'),
                     flexible_movement_artifact.get("sha256"),
                 ],
                 [
-                    "柔性运动分析方法",
+                    rt('柔性运动分析方法'),
                     flexible_movement.get("method")
                     if flexible_movement
-                    else "旧版未记录",
+                    else rt('旧版未记录'),
                 ],
             ]
             if docking_protocol.get("mode") == "flexible"
@@ -12364,9 +12363,9 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ),
         *(
             [
-                ["柔性受体原始结构 SHA256", docking_protocol.get("source_sha256")],
+                [rt('柔性受体原始结构 SHA256'), docking_protocol.get("source_sha256")],
                 [
-                    "rigid/flex 原子划分 SHA256",
+                    rt('rigid/flex 原子划分 SHA256'),
                     (
                         docking_protocol.get("atom_partition")
                         if isinstance(docking_protocol.get("atom_partition"), dict)
@@ -12380,16 +12379,16 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         *(
             [
                 [
-                    "mmCIF 身份合同 SHA256",
+                    rt('mmCIF 身份合同 SHA256'),
                     flexible_identity.get("identity_contract_sha256"),
                 ],
                 [
-                    "柔性残基选择合同 SHA256",
+                    rt('柔性残基选择合同 SHA256'),
                     flexible_identity.get("selection_sha256"),
                 ],
-                ["Gemmi 桥接 PDB SHA256", flexible_identity.get("bridge_sha256")],
+                [rt('Gemmi 桥接 PDB SHA256'), flexible_identity.get("bridge_sha256")],
                 [
-                    "Gemmi 桥接验证 SHA256",
+                    rt('Gemmi 桥接验证 SHA256'),
                     flexible_identity.get("bridge_verification_sha256"),
                 ],
             ]
@@ -12400,19 +12399,17 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         *(
             [
                 [
-                    "Vina 输出标准化",
+                    rt('Vina 输出标准化'),
                     (
-                        f"{output_normalization.get('status') or '未记录'}；"
-                        f"方法={output_normalization.get('method') or '未记录'}；"
-                        f"移除 NUL={output_normalization.get('nul_bytes_removed') or 0}"
+                        rt('{0}；方法={1}；移除 NUL={2}', f"{output_normalization.get('status') or rt('未记录')}", f"{output_normalization.get('method') or rt('未记录')}", f"{output_normalization.get('nul_bytes_removed') or 0}")
                     ),
                 ],
                 [
-                    "Vina 原始输出 SHA256",
+                    rt('Vina 原始输出 SHA256'),
                     output_normalization.get("source_sha256"),
                 ],
                 [
-                    "标准 PDBQT SHA256",
+                    rt('标准 PDBQT SHA256'),
                     output_normalization.get("normalized_sha256"),
                 ],
             ]
@@ -12426,20 +12423,20 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         ),
         *(
             [
-                ["AD4Zn 原始受体 SHA256", ad4zn_hashes.get("original_receptor")],
+                [rt('AD4Zn 原始受体 SHA256'), ad4zn_hashes.get("original_receptor")],
                 ["AD4Zn.dat SHA256", ad4zn_hashes.get("parameter_file")],
                 ["AD4Zn GPF SHA256", ad4zn_hashes.get("gpf")],
-                ["AD4Zn 协议记录 SHA256", ad4zn_hashes.get("protocol_record")],
+                [rt('AD4Zn 协议记录 SHA256'), ad4zn_hashes.get("protocol_record")],
             ]
             if is_ad4zn
             else []
         ),
         *(
             [
-                ["大环合同 SHA256", macrocycle_summary.get("contract_sha256") or "旧版未记录"],
-                ["大环 worker 证据 SHA256", macrocycle_summary.get("evidence_sha256") or "旧版未记录"],
-                ["大环冻结输入 SHA256", macrocycle_summary.get("frozen_input_sha256") or "旧版未记录"],
-                ["大环键拓扑 SHA256", macrocycle_summary.get("bond_topology_sha256") or "旧版未记录"],
+                [rt('大环合同 SHA256'), macrocycle_summary.get("contract_sha256") or rt('旧版未记录')],
+                [rt('大环 worker 证据 SHA256'), macrocycle_summary.get("evidence_sha256") or rt('旧版未记录')],
+                [rt('大环冻结输入 SHA256'), macrocycle_summary.get("frozen_input_sha256") or rt('旧版未记录')],
+                [rt('大环键拓扑 SHA256'), macrocycle_summary.get("bond_topology_sha256") or rt('旧版未记录')],
             ]
             if is_macrocycle_preparation
             else []
@@ -12485,11 +12482,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         )
         if author and label_identity:
             detail = (
-                f"auth {selector} {author.get('component_id') or ''} → "
-                f"label {label_identity.get('chain_id') or '?'}:"
-                f"{label_identity.get('sequence_id') or '?'} "
-                f"{label_identity.get('component_id') or ''}；"
-                f"插入码={insertion_code or '无'}"
+                rt('auth {0} {1} → label {2}:{3} {4}；插入码={5}', f'{selector}', f"{author.get('component_id') or ''}", f"{label_identity.get('chain_id') or '?'}", f"{label_identity.get('sequence_id') or '?'}", f"{label_identity.get('component_id') or ''}", f"{insertion_code or rt('无')}")
             ).strip()
             if selected_altloc:
                 detail += (
@@ -12499,71 +12492,63 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                 )
             else:
                 detail += (
-                    "；altloc=无；occupancy="
-                    f"{occupancy_fact.get('minimum', '?')}–"
-                    f"{occupancy_fact.get('maximum', '?')}"
+                    rt('；altloc=无；occupancy={0}–{1}', f"{occupancy_fact.get('minimum', '?')}", f"{occupancy_fact.get('maximum', '?')}")
                 )
             flexible_residue_details.append(detail)
         else:
             flexible_residue_details.append(
-                f"{selector or raw_residue}；"
-                f"插入码={insertion_code or '无'}；"
-                f"altloc={selected_altloc or '无'}；occupancy="
-                f"{occupancy_fact.get('minimum', '?')}–"
-                f"{occupancy_fact.get('maximum', '?')}"
+                rt('{0}；插入码={1}；altloc={2}；occupancy={3}–{4}', f'{selector or raw_residue}', f"{insertion_code or rt('无')}", f"{selected_altloc or rt('无')}", f"{occupancy_fact.get('minimum', '?')}", f"{occupancy_fact.get('maximum', '?')}")
             )
 
     protocol_rows = [
         [
-            "评分协议",
-            "AutoDock4Zn beta（TZ + AD4Zn.dat + 预计算 maps）"
+            rt('评分协议'),
+            rt('AutoDock4Zn beta（TZ + AD4Zn.dat + 预计算 maps）')
             if is_ad4zn
-            else "AutoDock4（预计算 maps）"
+            else rt('AutoDock4（预计算 maps）')
             if is_ad4_maps
-            else "Vina / Vinardo（预计算 maps，grid-only）"
+            else rt('Vina / Vinardo（预计算 maps，grid-only）')
             if is_vina_maps
             else "Vina / Vinardo",
         ],
-        ["评分函数", "ad4" if is_ad4_maps else vina_snapshot.get("scoring") or "vina"],
-        ["受体模式", "有限柔性侧链" if docking_protocol.get("mode") == "flexible" else "刚性受体"],
+        [rt('评分函数'), "ad4" if is_ad4_maps else vina_snapshot.get("scoring") or "vina"],
+        [rt('受体模式'), rt('有限柔性侧链') if docking_protocol.get("mode") == "flexible" else rt('刚性受体')],
         [
-            "本次允许运动的对象",
+            rt('本次允许运动的对象'),
             (
-                "配体的平移、转动与可旋转键，以及已选受体侧链；"
-                "受体主链和未选受体原子保持刚性"
+                rt('配体的平移、转动与可旋转键，以及已选受体侧链；受体主链和未选受体原子保持刚性')
                 if docking_protocol.get("mode") == "flexible"
-                else "配体的平移、转动与可旋转键；受体全部原子保持刚性"
+                else rt('配体的平移、转动与可旋转键；受体全部原子保持刚性')
             ),
         ],
         [
-            "柔性残基",
-            "；".join(flexible_residue_details) or "不适用",
+            rt('柔性残基'),
+            "；".join(flexible_residue_details) or rt('不适用'),
         ],
-        ["柔性准备记录", docking_protocol.get("preparation_id") or "不适用"],
+        [rt('柔性准备记录'), docking_protocol.get("preparation_id") or rt('不适用')],
         *(
             [
                 [
-                    "mmCIF 模型",
+                    rt('mmCIF 模型'),
                     (
                         flexible_identity.get("model")
                         if isinstance(flexible_identity.get("model"), dict)
                         else {}
                     ).get("id")
-                    or "未记录",
+                    or rt('未记录'),
                 ],
                 [
-                    "残基编号体系",
-                    "点选/Meeko 使用 auth_asym_id + auth_seq_id + 插入码；"
-                    "报告同时冻结 label_asym_id + label_seq_id",
+                    rt('残基编号体系'),
+                    rt('点选/Meeko 使用 auth_asym_id + auth_seq_id + 插入码；报告同时冻结 label_asym_id + label_seq_id'),
                 ],
             ]
             if flexible_identity
             else []
         ),
-        ["配体准备协议", ligand_preparation.get("protocol") if ligand_preparation.get("matched") else "外部或未匹配"],
-        ["配体准备记录", ligand_preparation.get("prep_id") or "不适用"],
-        ["Meeko 版本", ligand_preparation.get("meeko_version") or "未记录"],
-        ["RDKit 版本", ligand_preparation.get("rdkit_version") or "未记录"],
+        [rt('配体准备协议'), ligand_preparation.get("protocol") if ligand_preparation.get("matched") else rt('外部或未匹配')],
+        [rt('配体准备记录'), ligand_preparation.get("prep_id") or rt('不适用')],
+        [rt('Meeko 版本'), ligand_preparation.get("meeko_version") or rt('未记录')],
+        [rt('RDKit 版本'), ligand_preparation.get("rdkit_version") or rt('未记录')],
     ]
     if is_macrocycle_preparation:
         break_bond_labels = ", ".join(
@@ -12576,50 +12561,50 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         protocol_rows.extend(
             [
                 [
-                    "大环证据等级",
-                    "正式审查（完整证据）"
+                    rt('大环证据等级'),
+                    rt('正式审查（完整证据）')
                     if formal_reviewed
-                    else "旧版兼容（部分证据，非正式审查）",
+                    else rt('旧版兼容（部分证据，非正式审查）'),
                 ],
                 [
-                    "大环选择模式",
-                    "人工确认断环候选"
+                    rt('大环选择模式'),
+                    rt('人工确认断环候选')
                     if selection_mode == "candidate"
-                    else "刚性大环"
+                    else rt('刚性大环')
                     if selection_mode == "rigid"
-                    else f"旧版 {selection_mode or '未记录'}",
+                    else rt('旧版 {0}', f"{selection_mode or rt('未记录')}"),
                 ],
                 [
-                    "大环 review ID",
-                    macrocycle_summary.get("review_id") or "旧版未记录",
+                    rt('大环 review ID'),
+                    macrocycle_summary.get("review_id") or rt('旧版未记录'),
                 ],
                 [
-                    "断环候选 ID",
+                    rt('断环候选 ID'),
                     macrocycle_summary.get("candidate_id")
                     or (
-                        "不适用（刚性大环）"
+                        rt('不适用（刚性大环）')
                         if selection_mode == "rigid"
-                        else "旧版未记录"
+                        else rt('旧版未记录')
                     ),
                 ],
                 [
-                    "确认断环键（一基编号）",
+                    rt('确认断环键（一基编号）'),
                     break_bond_labels
                     or (
-                        "不打开环键"
+                        rt('不打开环键')
                         if selection_mode == "rigid"
-                        else "旧版未冻结精确断环键"
+                        else rt('旧版未冻结精确断环键')
                     ),
                 ],
                 [
-                    "G* 胶合伪原子",
+                    rt('G* 胶合伪原子'),
                     macrocycle_summary.get("glue_pseudo_atom_count")
                     if macrocycle_summary.get("glue_pseudo_atom_count") is not None
-                    else "旧版未可靠记录",
+                    else rt('旧版未可靠记录'),
                 ],
                 [
-                    "显式氢策略",
-                    macrocycle_summary.get("hydrogen_policy") or "旧版未记录",
+                    rt('显式氢策略'),
+                    macrocycle_summary.get("hydrogen_policy") or rt('旧版未记录'),
                 ],
             ]
         )
@@ -12628,15 +12613,15 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         grid_points = grid.get("grid_points") if isinstance(grid.get("grid_points"), dict) else {}
         protocol_rows.extend(
             [
-                ["map set", ad4_maps.get("map_set_id") or "未记录"],
+                ["map set", ad4_maps.get("map_set_id") or rt('未记录')],
                 [
-                    "网格点数",
+                    rt('网格点数'),
                     " × ".join(str(grid_points.get(axis)) for axis in ("x", "y", "z"))
                     if all(grid_points.get(axis) is not None for axis in ("x", "y", "z"))
-                    else "未记录",
+                    else rt('未记录'),
                 ],
-                ["网格间距", f"{grid.get('spacing')} Å" if grid.get("spacing") is not None else "未记录"],
-                ["配体原子类型", ", ".join(str(value) for value in ad4_maps.get("ligand_atom_types", [])) or "未记录"],
+                [rt('网格间距'), f"{grid.get('spacing')} Å" if grid.get("spacing") is not None else rt('未记录')],
+                [rt('配体原子类型'), ", ".join(str(value) for value in ad4_maps.get("ligand_atom_types", [])) or rt('未记录')],
             ]
         )
         if is_ad4zn:
@@ -12706,7 +12691,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                     if isinstance(selected_site.get("zn"), dict)
                     else None
                 )
-                or "未记录"
+                or rt('未记录')
             )
             tz_coordinates = (
                 coverage_tz.get("coordinate_angstrom")
@@ -12715,118 +12700,118 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                 or tz_candidate.get("coordinate")
                 or prepared_receptor.get("tz_coordinates")
                 or prepared_receptor.get("tz")
-                or "未记录"
+                or rt('未记录')
             )
             protocol_rows.extend(
                 [
                     [
-                        "Zn 位点",
+                        rt('Zn 位点'),
                         selected_site.get("site_id")
                         or selected_site.get("id")
                         or selected_site.get("selector")
-                        or "未记录",
+                        or rt('未记录'),
                     ],
-                    ["受体配位点数量", len(coordination_atoms) or "未记录"],
+                    [rt('受体配位点数量'), len(coordination_atoms) or rt('未记录')],
                     [
-                        "ZN 坐标",
+                        rt('ZN 坐标'),
                         json.dumps(zn_coordinates, ensure_ascii=False)
                         if isinstance(zn_coordinates, (dict, list))
                         else zn_coordinates,
                     ],
                     [
-                        "TZ 坐标",
+                        rt('TZ 坐标'),
                         json.dumps(tz_coordinates, ensure_ascii=False)
                         if isinstance(tz_coordinates, (dict, list))
                         else tz_coordinates,
                     ],
                     [
-                        "请求 Box 边界",
+                        rt('请求 Box 边界'),
                         json.dumps(
                             ad4zn_box_coverage.get(
                                 "requested_box_bounds_angstrom"
                             )
-                            or "未记录",
+                            or rt('未记录'),
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
                     ],
                     [
-                        "实际 AutoGrid 网格边界",
+                        rt('实际 AutoGrid 网格边界'),
                         json.dumps(
                             ad4zn_box_coverage.get(
                                 "effective_grid_bounds_angstrom"
                             )
-                            or "未记录",
+                            or rt('未记录'),
                             ensure_ascii=False,
                             sort_keys=True,
                         ),
                     ],
                     [
-                        "ZN/TZ 位于请求 Box",
+                        rt('ZN/TZ 位于请求 Box'),
                         (
-                            "通过"
+                            rt('通过')
                             if ad4zn_box_coverage.get(
                                 "all_zn_tz_inside_requested_box"
                             )
                             is True
-                            else "未通过"
+                            else rt('未通过')
                         ),
                     ],
                     [
-                        "ZN/TZ 位于实际网格",
+                        rt('ZN/TZ 位于实际网格'),
                         (
-                            "通过"
+                            rt('通过')
                             if ad4zn_box_coverage.get(
                                 "all_zn_tz_inside_effective_grid"
                             )
                             is True
-                            else "未通过"
+                            else rt('未通过')
                         ),
                     ],
                     [
-                        "TZ 受体",
+                        rt('TZ 受体'),
                         prepared_receptor.get("relative_path")
                         or prepared_receptor.get("file")
-                        or "未记录",
+                        or rt('未记录'),
                     ],
                     [
-                        "AD4Zn.dat 本机来源",
+                        rt('AD4Zn.dat 本机来源'),
                         parameter_file.get("source_path")
                         or parameter_file.get("relative_path")
-                        or "用户提供，来源未记录",
+                        or rt('用户提供，来源未记录'),
                     ],
                     [
-                        "AD4Zn.dat 支持配置",
+                        rt('AD4Zn.dat 支持配置'),
                         parameter_file.get("supported_profile_id")
-                        or "未记录",
+                        or rt('未记录'),
                     ],
                     [
-                        "AD4Zn.dat 上游参考",
+                        rt('AD4Zn.dat 上游参考'),
                         parameter_file.get("upstream_reference")
-                        or "未记录",
+                        or rt('未记录'),
                     ],
                     [
-                        "与上游参考 SHA256 一致",
+                        rt('与上游参考 SHA256 一致'),
                         (
-                            "是"
+                            rt('是')
                             if parameter_file.get("matches_reference_sha256")
                             is True
-                            else "否或未记录"
+                            else rt('否或未记录')
                         ),
                     ],
                     [
-                        "AD4Zn.dat 许可证",
+                        rt('AD4Zn.dat 许可证'),
                         parameter_file.get("license_id")
                         or "GPL-2.0-or-later",
                     ],
                     [
-                        "人工复核时间",
+                        rt('人工复核时间'),
                         review.get("confirmed_at")
                         or review.get("reviewed_at")
                         or review.get("saved_at")
-                        or "未记录",
+                        or rt('未记录'),
                     ],
-                    ["协议稳定性", "beta"],
+                    [rt('协议稳定性'), "beta"],
                 ]
             )
     elif is_vina_maps:
@@ -12843,22 +12828,22 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         )
         protocol_rows.extend(
             [
-                ["map set", vina_maps.get("map_set_id") or "未记录"],
-                ["网格来源", "预计算 affinity maps（未传 --receptor）"],
+                ["map set", vina_maps.get("map_set_id") or rt('未记录')],
+                [rt('网格来源'), rt('预计算 affinity maps（未传 --receptor）')],
                 [
-                    "网格点数",
+                    rt('网格点数'),
                     " × ".join(str(nelements.get(axis)) for axis in ("x", "y", "z"))
                     if all(nelements.get(axis) is not None for axis in ("x", "y", "z"))
-                    else "未记录",
+                    else rt('未记录'),
                 ],
-                ["网格间距", f"{grid.get('spacing')} Å" if grid.get("spacing") is not None else "未记录"],
-                ["map 原子类型", ", ".join(str(value) for value in vina_maps.get("atom_types", [])) or "未记录"],
+                [rt('网格间距'), f"{grid.get('spacing')} Å" if grid.get("spacing") is not None else rt('未记录')],
+                [rt('map 原子类型'), ", ".join(str(value) for value in vina_maps.get("atom_types", [])) or rt('未记录')],
                 [
-                    "最终精修语义",
-                    "grid-only / no-refine 等价"
+                    rt('最终精修语义'),
+                    rt('grid-only / no-refine 等价')
                     if semantics.get("grid_only") is True
                     and semantics.get("no_refine_equivalent") is True
-                    else "记录不完整",
+                    else rt('记录不完整'),
                 ],
             ]
         )
@@ -12872,10 +12857,10 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         )
         reference_rmsd_text = "\n".join(
             [
-                "### 共晶参考 RMSD",
+                rt('### 共晶参考 RMSD'),
                 "",
                 _markdown_table(
-                    ["构象", "重原子 RMSD (Å)", "方法", "参考配体"],
+                    [rt('构象'), rt('重原子 RMSD (Å)'), rt('方法'), rt('参考配体')],
                     [[
                         f"Mode {reference_rmsd.get('mode')}",
                         reference_rmsd.get("rmsd_angstrom"),
@@ -12884,11 +12869,11 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                     ]],
                 ),
                 "",
-                "该值是对接构象与所选参考配体的重原子、对称性修正 RMSD；不是 Vina 表格中相对 Mode 1 的 RMSD。",
+                rt('该值是对接构象与所选参考配体的重原子、对称性修正 RMSD；不是 Vina 表格中相对 Mode 1 的 RMSD。'),
             ]
         )
     else:
-        reference_rmsd_text = "### 共晶参考 RMSD\n\n尚未选择共晶参考配体，因此未计算该项。"
+        reference_rmsd_text = rt('### 共晶参考 RMSD\n\n尚未选择共晶参考配体，因此未计算该项。')
 
     affinities = [float(score["affinity_kcal_mol"]) for score in scores]
     sorted_affinities = sorted(affinities)
@@ -12903,25 +12888,25 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     best_affinity = affinities[0]
     second_gap = affinities[1] - best_affinity if score_count > 1 else None
     score_summary_rows = [
-        ["输出构象数量", score_count, "个"],
-        ["最佳评分", best_affinity, "kcal/mol"],
-        ["第二名与最佳评分差", second_gap if second_gap is not None else "无第二构象", "kcal/mol" if second_gap is not None else "—"],
-        ["评分均值", round(mean_affinity, 4), "kcal/mol"],
-        ["评分中位数", round(median_affinity, 4), "kcal/mol"],
-        ["评分标准差", round(score_std, 4), "kcal/mol"],
-        ["评分跨度", round(max(affinities) - min(affinities), 4), "kcal/mol"],
-        ["距最佳评分 1 kcal/mol 内", sum(value <= best_affinity + 1 for value in affinities), "个"],
-        ["距最佳评分 2 kcal/mol 内", sum(value <= best_affinity + 2 for value in affinities), "个"],
+        [rt('输出构象数量'), score_count, rt('个')],
+        [rt('最佳评分'), best_affinity, "kcal/mol"],
+        [rt('第二名与最佳评分差'), second_gap if second_gap is not None else rt('无第二构象'), "kcal/mol" if second_gap is not None else "—"],
+        [rt('评分均值'), round(mean_affinity, 4), "kcal/mol"],
+        [rt('评分中位数'), round(median_affinity, 4), "kcal/mol"],
+        [rt('评分标准差'), round(score_std, 4), "kcal/mol"],
+        [rt('评分跨度'), round(max(affinities) - min(affinities), 4), "kcal/mol"],
+        [rt('距最佳评分 1 kcal/mol 内'), sum(value <= best_affinity + 1 for value in affinities), rt('个')],
+        [rt('距最佳评分 2 kcal/mol 内'), sum(value <= best_affinity + 2 for value in affinities), rt('个')],
     ]
     alternate_scores = [score for score in scores if int(score["mode"]) != int(scores[0]["mode"])]
     rmsd_lb_values = [float(score["rmsd_lb"]) for score in alternate_scores]
     rmsd_ub_values = [float(score["rmsd_ub"]) for score in alternate_scores]
     pose_dispersion_rows = [
-        ["参考构象", f"Mode {scores[0]['mode']}", "Vina 输出中的最佳预测构象"],
-        ["RMSD l.b. ≤ 2 Å", sum(value <= 2 for value in rmsd_lb_values), "只表示相对 Mode 1 的下界"],
-        ["RMSD l.b. > 4 Å", sum(value > 4 for value in rmsd_lb_values), "提示输出中存在几何差异较大的构象"],
-        ["最大 RMSD l.b.", max(rmsd_lb_values) if rmsd_lb_values else None, "Å"],
-        ["最大 RMSD u.b.", max(rmsd_ub_values) if rmsd_ub_values else None, "Å"],
+        [rt('参考构象'), f"Mode {scores[0]['mode']}", rt('Vina 输出中的最佳预测构象')],
+        ["RMSD l.b. ≤ 2 Å", sum(value <= 2 for value in rmsd_lb_values), rt('只表示相对 Mode 1 的下界')],
+        ["RMSD l.b. > 4 Å", sum(value > 4 for value in rmsd_lb_values), rt('提示输出中存在几何差异较大的构象')],
+        [rt('最大 RMSD l.b.'), max(rmsd_lb_values) if rmsd_lb_values else None, "Å"],
+        [rt('最大 RMSD u.b.'), max(rmsd_ub_values) if rmsd_ub_values else None, "Å"],
     ]
     flexible_movement_text = ""
     if docking_protocol.get("mode") == "flexible":
@@ -13003,60 +12988,55 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
                     )
             flexible_movement_text = "\n".join(
                 [
-                    "### 配体运动（与冻结输入分别比较）",
+                    rt('### 配体运动（与冻结输入分别比较）'),
                     "",
                     _markdown_table(
                         [
                             "Mode",
-                            "重原子数",
-                            "直接 RMSD (Å)",
-                            "平均位移 (Å)",
-                            "最大位移 (Å)",
-                            "质心位移 (Å)",
+                            rt('重原子数'),
+                            rt('直接 RMSD (Å)'),
+                            rt('平均位移 (Å)'),
+                            rt('最大位移 (Å)'),
+                            rt('质心位移 (Å)'),
                         ],
                         ligand_movement_rows,
                     ),
                     "",
-                    "### 柔性侧链运动（与各自冻结输入分别比较）",
+                    rt('### 柔性侧链运动（与各自冻结输入分别比较）'),
                     "",
                     _markdown_table(
                         [
                             "Mode",
-                            "柔性残基",
-                            "侧链重原子数",
-                            "直接 RMSD (Å)",
-                            "平均位移 (Å)",
-                            "最大位移 (Å)",
-                            "质心位移 (Å)",
+                            rt('柔性残基'),
+                            rt('侧链重原子数'),
+                            rt('直接 RMSD (Å)'),
+                            rt('平均位移 (Å)'),
+                            rt('最大位移 (Å)'),
+                            rt('质心位移 (Å)'),
                         ],
                         sidechain_movement_rows,
                     ),
                     "",
                     (
-                        "上述两组指标在同一受体坐标系中直接比较，没有做刚体对齐；"
-                        "配体指标包含整体平移、旋转和内部构象变化，柔性残基指标单独计算，"
-                        "并排除 H/HD/HS、非物理伪原子和 CA 根原子。"
+                        rt('上述两组指标在同一受体坐标系中直接比较，没有做刚体对齐；配体指标包含整体平移、旋转和内部构象变化，柔性残基指标单独计算，并排除 H/HD/HS、非物理伪原子和 CA 根原子。')
                     ),
                     (
-                        "这些“直接 RMSD / 位移”不是 Vina 表格中相对 Mode 1 的 "
-                        "RMSD l.b./u.b.，也不是相对共晶配体的恢复 RMSD。"
+                        rt('这些“直接 RMSD / 位移”不是 Vina 表格中相对 Mode 1 的 RMSD l.b./u.b.，也不是相对共晶配体的恢复 RMSD。')
                     ),
                     (
-                        "运动大小与 docking score 只描述本次输入和协议下的计算结果，"
-                        "不能单独证明真实结合、构象合理性或药效。"
+                        rt('运动大小与 docking score 只描述本次输入和协议下的计算结果，不能单独证明真实结合、构象合理性或药效。')
                     ),
                 ]
             )
         else:
             flexible_movement_text = "\n".join(
                 [
-                    "### 配体与柔性侧链运动",
+                    rt('### 配体与柔性侧链运动'),
                     "",
                     str(
                         context.get("flexible_movement_warning")
                         or (
-                            "该旧版柔性 run 未保存配体与柔性侧链的分离运动分析，"
-                            "本报告只能保留评分和运行证据。"
+                            rt('该旧版柔性 run 未保存配体与柔性侧链的分离运动分析，本报告只能保留评分和运行证据。')
                         )
                     ),
                 ]
@@ -13073,49 +13053,49 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
 
     def yes_no_unknown(value: Any) -> str:
         if value is True:
-            return "是"
+            return rt('是')
         if value is False:
-            return "否"
-        return "无法可靠判定"
+            return rt('否')
+        return rt('无法可靠判定')
 
     structure_fact_rows = [
-        ["受体重原子数", receptor_facts.get("heavy_atom_count"), context["receptor_file"]],
-        ["受体三维坐标", yes_no_unknown(receptor_facts.get("has_3d_coordinates")), "由坐标记录判断"],
-        ["配体连接组分", ligand_facts.get("fragment_count"), "优先读取 PDBQT REMARK SMILES / ROOT"],
-        ["配体总形式电荷", ligand_facts.get("formal_charge"), ligand_facts.get("formal_charge_source")],
-        ["配体重原子数", ligand_facts.get("heavy_atom_count"), context["ligand_file"]],
-        ["配体是否包含盐/多片段", yes_no_unknown(ligand_facts.get("contains_salt")), "仅依据连接组分"],
-        ["配体未定义立体信息", yes_no_unknown(ligand_facts.get("undefined_stereochemistry")), "PDBQT 通常不足以可靠判断"],
-        ["配体三维坐标", yes_no_unknown(ligand_facts.get("has_3d_coordinates")), "由原子坐标记录判断"],
-        ["PDBQT 活动扭转数量", ligand_facts.get("torsdof"), "TORSDOF"],
+        [rt('受体重原子数'), receptor_facts.get("heavy_atom_count"), context["receptor_file"]],
+        [rt('受体三维坐标'), yes_no_unknown(receptor_facts.get("has_3d_coordinates")), rt('由坐标记录判断')],
+        [rt('配体连接组分'), ligand_facts.get("fragment_count"), rt('优先读取 PDBQT REMARK SMILES / ROOT')],
+        [rt('配体总形式电荷'), ligand_facts.get("formal_charge"), rt(ligand_facts.get("formal_charge_source"))],
+        [rt('配体重原子数'), ligand_facts.get("heavy_atom_count"), context["ligand_file"]],
+        [rt('配体是否包含盐/多片段'), yes_no_unknown(ligand_facts.get("contains_salt")), rt('仅依据连接组分')],
+        [rt('配体未定义立体信息'), yes_no_unknown(ligand_facts.get("undefined_stereochemistry")), rt('PDBQT 通常不足以可靠判断')],
+        [rt('配体三维坐标'), yes_no_unknown(ligand_facts.get("has_3d_coordinates")), rt('由原子坐标记录判断')],
+        [rt('PDBQT 活动扭转数量'), ligand_facts.get("torsdof"), "TORSDOF"],
     ]
     review_rows = [
-        [check.get("name"), check.get("status"), check.get("message"), check.get("evidence")]
+        [rt(check.get("name")), rt(check.get("status")), rt(check.get("message")), check.get("evidence")]
         for check in structure_review.get("checks", [])
         if isinstance(check, dict)
     ]
-    second_gap_text = _format_config_number(second_gap) if second_gap is not None else "无第二构象"
+    second_gap_text = _format_config_number(second_gap) if second_gap is not None else rt('无第二构象')
     interpretation_lines = [
-        f"- 本次最佳预测为 Mode {scores[0]['mode']}，评分 {_format_config_number(best_affinity)} kcal/mol。",
+        rt('- 本次最佳预测为 Mode {0}，评分 {1} kcal/mol。', f"{scores[0]['mode']}", f'{_format_config_number(best_affinity)}'),
         (
-            f"- 第二名与最佳评分差为 {second_gap_text} kcal/mol；该差值只描述本次输出的内部排序，不代表结合概率或置信度。"
+            rt('- 第二名与最佳评分差为 {0} kcal/mol；该差值只描述本次输出的内部排序，不代表结合概率或置信度。', f'{second_gap_text}')
             if second_gap is not None
-            else "- 本次只有一个输出构象，没有可计算的第二名评分差。"
+            else rt('- 本次只有一个输出构象，没有可计算的第二名评分差。')
         ),
-        f"- {sum(value <= best_affinity + 1 for value in affinities)} / {score_count} 个构象位于最佳评分 1 kcal/mol 范围内。",
-        "- Vina 表格中的 RMSD l.b./u.b. 是相对最佳预测构象的距离界限，不是相对共晶配体的验证 RMSD。",
+        rt('- {0} / {1} 个构象位于最佳评分 1 kcal/mol 范围内。', f'{sum((value <= best_affinity + 1 for value in affinities))}', f'{score_count}'),
+        rt('- Vina 表格中的 RMSD l.b./u.b. 是相对最佳预测构象的距离界限，不是相对共晶配体的验证 RMSD。'),
         *(
             [
-                "- 本次使用 AutoDock4Zn beta：TZ 是几何伪原子，Vina 通过 AD4Zn 专用 maps 以 `--scoring ad4` 运行；该评分不能与标准 AutoDock4、Vina 或 Vinardo 直接横向比较。"
+                rt('- 本次使用 AutoDock4Zn beta：TZ 是几何伪原子，Vina 通过 AD4Zn 专用 maps 以 `--scoring ad4` 运行；该评分不能与标准 AutoDock4、Vina 或 Vinardo 直接横向比较。')
             ]
             if is_ad4zn
-            else ["- 本次使用 AutoDock4 maps 评分；该评分不能与 Vina 或 Vinardo 结果直接横向比较。"]
+            else [rt('- 本次使用 AutoDock4 maps 评分；该评分不能与 Vina 或 Vinardo 结果直接横向比较。')]
             if is_ad4_maps
             else []
         ),
         *(
             [
-                "- 本次使用 Vina/Vinardo 预计算 maps；运行命令未传入 --receptor，最终优化和评分只使用网格，不使用显式受体原子。"
+                rt('- 本次使用 Vina/Vinardo 预计算 maps；运行命令未传入 --receptor，最终优化和评分只使用网格，不使用显式受体原子。')
             ]
             if is_vina_maps
             else []
@@ -13123,22 +13103,17 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         *(
             [
                 (
-                    "- 本次配体使用经过人工确认、合同与 worker 证据交叉校验的"
-                    " Meeko 大环准备；确认的断环键和 G* 数量只说明本次 PDBQT"
-                    " 的闭环约束实现，不证明所选构象、质子化、电荷或结合模式正确。"
+                    rt('- 本次配体使用经过人工确认、合同与 worker 证据交叉校验的 Meeko 大环准备；确认的断环键和 G* 数量只说明本次 PDBQT 的闭环约束实现，不证明所选构象、质子化、电荷或结合模式正确。')
                 ),
                 (
-                    "- 对接后的 PDBQT 不是原始闭环化学拓扑；用于 SDF 或后续分析前，"
-                    "仍须使用受支持的 Meeko 拓扑重建流程并人工检查闭环与立体化学。"
+                    rt('- 对接后的 PDBQT 不是原始闭环化学拓扑；用于 SDF 或后续分析前，仍须使用受支持的 Meeko 拓扑重建流程并人工检查闭环与立体化学。')
                 ),
             ]
             if is_macrocycle_preparation
             and ligand_preparation.get("formal_reviewed") is True
             else [
                 (
-                    "- 本次配体沿用旧版大环 auto/rigid 准备记录；该记录只有部分证据，"
-                    "没有正式人工确认合同和精确断环键，不得视为正式大环审查，"
-                    "也不得仅凭 G* 伪原子反推原始断环键。"
+                    rt('- 本次配体沿用旧版大环 auto/rigid 准备记录；该记录只有部分证据，没有正式人工确认合同和精确断环键，不得视为正式大环审查，也不得仅凭 G* 伪原子反推原始断环键。')
                 )
             ]
             if is_macrocycle_preparation
@@ -13148,116 +13123,116 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
 
     report_text = "\n".join(
         [
-            "# DockStart Docking Report · 深度结果分析",
+            rt('# DockStart Docking Report · 深度结果分析'),
             "",
-            "## 1. 项目信息",
+            rt('## 1. 项目信息'),
             "",
-            f"- 项目名称: {_markdown_cell(project.project_name)}",
-            f"- 项目路径: {_markdown_cell(project.project_dir)}",
-            f"- 创建时间: {_markdown_cell(project.created_at)}",
-            f"- 更新时间: {_markdown_cell(project.updated_at)}",
+            rt('- 项目名称: {0}', f'{_markdown_cell(project.project_name)}'),
+            rt('- 项目路径: {0}', f'{_markdown_cell(project.project_dir)}'),
+            rt('- 创建时间: {0}', f'{_markdown_cell(project.created_at)}'),
+            rt('- 更新时间: {0}', f'{_markdown_cell(project.updated_at)}'),
             f"- run_id: {_markdown_cell(run_id)}",
             "",
-            "## 2. 输入文件",
+            rt('## 2. 输入文件'),
             "",
-            _markdown_table(["项目", "路径"], input_rows),
+            _markdown_table([rt('项目'), rt('路径')], input_rows),
             "",
-            "## 3. Box / Grid 参数",
+            rt('## 3. Box / Grid 参数'),
             "",
-            _markdown_table(["参数", "值", "单位"], box_rows),
+            _markdown_table([rt('参数'), rt('值'), rt('单位')], box_rows),
             "",
-            "## 4. 运行参数",
+            rt('## 4. 运行参数'),
             "",
-            _markdown_table(["参数", "值"], vina_rows),
+            _markdown_table([rt('参数'), rt('值')], vina_rows),
             "",
-            "### 受体对接协议",
+            rt('### 受体对接协议'),
             "",
-            _markdown_table(["项目", "记录值"], protocol_rows),
+            _markdown_table([rt('项目'), rt('记录值')], protocol_rows),
             "",
-            "## 5. 运行信息",
+            rt('## 5. 运行信息'),
             "",
-            f"- Vina 路径: {_markdown_cell(vina_path)}",
-            f"- Vina 版本: {_markdown_cell(metadata.get('vina_version'))}",
+            rt('- Vina 路径: {0}', f'{_markdown_cell(vina_path)}'),
+            rt('- Vina 版本: {0}', f"{_markdown_cell(metadata.get('vina_version'))}"),
             f"- started_at: {_markdown_cell(metadata.get('started_at'))}",
             f"- finished_at: {_markdown_cell(metadata.get('finished_at'))}",
             f"- exit_code: {_markdown_cell(metadata.get('exit_code'))}",
             "",
-            "命令数组:",
+            rt('命令数组:'),
             "",
             "```json",
             command_text,
             "```",
             "",
-            "## 6. 可复现记录",
+            rt('## 6. 可复现记录'),
             "",
-            _markdown_table(["项目", "记录值"], reproducibility_rows),
+            _markdown_table([rt('项目'), rt('记录值')], reproducibility_rows),
             "",
-            "## 7. AutoDock4Zn beta Score 结果"
+            rt('## 7. AutoDock4Zn beta Score 结果')
             if is_ad4zn
-            else "## 7. AutoDock4 Score 结果"
+            else rt('## 7. AutoDock4 Score 结果')
             if is_ad4_maps
-            else "## 7. Docking Score 结果",
+            else rt('## 7. Docking Score 结果'),
             "",
             _markdown_table(["Mode", "Affinity kcal/mol", "RMSD l.b.", "RMSD u.b."], score_rows),
             "",
-            "## 8. 评分统计摘要",
+            rt('## 8. 评分统计摘要'),
             "",
-            _markdown_table(["指标", "值", "单位/说明"], score_summary_rows),
+            _markdown_table([rt('指标'), rt('值'), rt('单位/说明')], score_summary_rows),
             "",
-            "### 受控解读",
+            rt('### 受控解读'),
             "",
             *interpretation_lines,
             "",
-            "## 9. 构象离散度",
+            rt('## 9. 构象离散度'),
             "",
-            _markdown_table(["指标", "值", "说明"], pose_dispersion_rows),
+            _markdown_table([rt('指标'), rt('值'), rt('说明')], pose_dispersion_rows),
             "",
             *(
                 [flexible_movement_text, ""]
                 if flexible_movement_text
                 else []
             ),
-            "## 10. 输入结构事实",
+            rt('## 10. 输入结构事实'),
             "",
-            _markdown_table(["项目", "记录值", "依据"], structure_fact_rows),
+            _markdown_table([rt('项目'), rt('记录值'), rt('依据')], structure_fact_rows),
             "",
-            "## 11. 结构审查摘要",
+            rt('## 11. 结构审查摘要'),
             "",
-            _markdown_table(["检查项", "状态", "说明", "证据文件"], review_rows),
+            _markdown_table([rt('检查项'), rt('状态'), rt('说明'), rt('证据文件')], review_rows),
             "",
-            structure_review.get("disclaimer", ""),
+            rt(structure_review.get("disclaimer", "")),
             "",
-            "## 12. 参考姿势验证",
+            rt('## 12. 参考姿势验证'),
             "",
             reference_rmsd_text,
             "",
-            "## 13. 重要说明",
+            rt('## 13. 重要说明'),
             "",
-            DOCKING_SCORE_DISCLAIMER,
+            rt(DOCKING_SCORE_DISCLAIMER),
             "",
             *(
                 [
-                    "- AutoDock4Zn beta 仅适用于经人工确认的 Zn 位点；TZ 是几何伪原子，未显式描述极化、电荷转移或水介导配位；",
-                    "- AutoDock4Zn beta、标准 AutoDock4、Vina 与 Vinardo 使用不同的评分协议，评分不可直接横向比较；",
+                    rt('- AutoDock4Zn beta 仅适用于经人工确认的 Zn 位点；TZ 是几何伪原子，未显式描述极化、电荷转移或水介导配位；'),
+                    rt('- AutoDock4Zn beta、标准 AutoDock4、Vina 与 Vinardo 使用不同的评分协议，评分不可直接横向比较；'),
                 ]
                 if is_ad4zn
                 else [
-                    "- AutoDock4 maps、Vina 与 Vinardo 使用不同的评分协议，评分不可直接横向比较；",
+                    rt('- AutoDock4 maps、Vina 与 Vinardo 使用不同的评分协议，评分不可直接横向比较；'),
                 ]
                 if is_ad4_maps
                 else []
             ),
             *(
                 [
-                    "- 本次为 grid-only 预计算 maps 运行，等价于 no-refine；受体 PDBQT 仅作为来源与 SHA256 溯源快照，不作为 Vina 命令参数；",
+                    rt('- 本次为 grid-only 预计算 maps 运行，等价于 no-refine；受体 PDBQT 仅作为来源与 SHA256 溯源快照，不作为 Vina 命令参数；'),
                 ]
                 if is_vina_maps
                 else []
             ),
-            "- 本报告不证明真实药效；",
-            "- 本报告不包含相互作用分析；",
-            "- 本报告不包含分子动力学验证；",
-            "- 结果依赖输入结构、box、参数和 Vina 版本。",
+            rt('- 本报告不证明真实药效；'),
+            rt('- 本报告不包含相互作用分析；'),
+            rt('- 本报告不包含分子动力学验证；'),
+            rt('- 结果依赖输入结构、box、参数和 Vina 版本。'),
             "",
         ],
     )
@@ -13274,7 +13249,7 @@ def build_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
         "flexible_movement": flexible_movement,
         "flexible_movement_file": flexible_movement_file,
         "report_text": report_text,
-        "message": "Markdown 报告内容已生成。",
+        "message": rt('Markdown 报告内容已生成。'),
         "error": None,
     }
 
@@ -13446,6 +13421,7 @@ def get_report_status(project_dir: str, run_id: str) -> dict[str, Any]:
     }
 
 
+@localized_report
 def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     built = build_markdown_report(project_dir, run_id)
     if not built.get("ok"):
@@ -13509,11 +13485,25 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             )
 
     def merge_report(current: dict[str, Any]) -> dict[str, Any]:
+        artifacts = dict(current.get("artifacts") or {})
+        previous = {key: copy.deepcopy(artifacts[key]) for key in report_artifacts if isinstance(artifacts.get(key), dict)}
+        if previous:
+            history = list(current.get("report_history") or [])
+            history.append({
+                "report_language": current.get("report_language") or "zh-CN",
+                "reported_at": current.get("reported_at"),
+                "artifacts": previous,
+            })
+            current["report_history"] = history
+        # Reports are explicitly regenerable derived artifacts. Replace only
+        # their hashes; execution/input/score hashes remain immutable evidence.
+        current["artifacts"] = {**artifacts, **copy.deepcopy(report_artifacts)}
         current.update(
             {
                 "report_file": run_report_file,
                 "project_report_file": project_report_file,
                 "reported_at": reported_at,
+                "report_language": get_report_language(),
             },
         )
         _with_artifact_hashes(current, report_artifacts)
@@ -13531,6 +13521,7 @@ def export_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
             "report_file": run_report_file,
             "project_report_file": project_report_file,
             "reported_at": reported_at,
+            "report_language": get_report_language(),
         },
     )
     if not project_update.get("ok"):
@@ -19369,7 +19360,7 @@ def main() -> None:
         if len(sys.argv) < 4:
             _print_json(_error("REPORT_EXPORT_ARGS", "导出 Markdown 报告需要 project_dir 和 run_id 参数。"))
             return
-        _print_json(export_markdown_report(sys.argv[2], sys.argv[3]))
+        _print_json(export_markdown_report(sys.argv[2], sys.argv[3], report_language=sys.argv[4] if len(sys.argv) > 4 else None))
         return
 
     if command == "report-status":

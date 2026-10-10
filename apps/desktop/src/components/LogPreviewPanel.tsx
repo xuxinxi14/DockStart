@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 type LogPreviewPanelProps = {
   title?: string;
   content?: string;
@@ -5,10 +7,11 @@ type LogPreviewPanelProps = {
 };
 
 export default function LogPreviewPanel({
-  title = "日志预览",
+  title = translate("日志预览"),
   content = "",
-  emptyText = "暂无日志内容。",
+  emptyText = translate("暂无日志内容。"),
 }: LogPreviewPanelProps) {
+  useLanguage();
   return (
     <section className="log-preview-panel">
       <strong>{title}</strong>

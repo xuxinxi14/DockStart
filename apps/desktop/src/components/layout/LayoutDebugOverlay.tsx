@@ -1,3 +1,5 @@
+import { translate } from "../../i18n/translate";
+import { useLanguage } from "../../i18n/useLanguage";
 import { useCallback, useEffect, useState } from "react";
 
 type LayoutRect = {
@@ -188,6 +190,7 @@ function runLayoutLint() {
 }
 
 export default function LayoutDebugOverlay() {
+  useLanguage();
   const [visible, setVisible] = useState(false);
   const [rects, setRects] = useState<LayoutRect[]>([]);
 
@@ -238,7 +241,7 @@ export default function LayoutDebugOverlay() {
             height: rect.height,
           }}
         >
-          <span>{rect.label}</span>
+          <span>{translate(rect.label)}</span>
         </div>
       ))}
     </div>

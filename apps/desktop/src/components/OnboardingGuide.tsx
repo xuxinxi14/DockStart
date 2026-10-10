@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import type { PageId } from "../navigation/pages";
 import type { AppCapabilityProfile, UsageMode } from "../types";
 import StatusBadge from "./StatusBadge";
@@ -88,22 +90,23 @@ function blockingSummary(profile: AppCapabilityProfile | null | undefined): stri
 }
 
 export default function OnboardingGuide({ profile, onNavigate }: OnboardingGuideProps) {
+  useLanguage();
   const recommendedMode = profile?.recommended_mode ?? "setup";
   return (
     <div className="first-run-guide">
       <header className="first-run-header">
         <div>
-          <span className="eyebrow">首次使用</span>
-          <h2>你想怎么开始？</h2>
-          <p>选择最接近你手头数据的路径。RDKit / Meeko 缺失不会阻止已有 PDBQT 的最低依赖流程。</p>
+          <span className="eyebrow">{translate("首次使用")}</span>
+          <h2>{translate("你想怎么开始？")}</h2>
+          <p>{translate("选择最接近你手头数据的路径。RDKit / Meeko 缺失不会阻止已有 PDBQT 的最低依赖流程。")}</p>
         </div>
         <StatusBadge tone={profile?.recommended_mode === "setup" ? "warning" : "info"}>
-          {recommendedTitle(recommendedMode)}
+          {translate(recommendedTitle(recommendedMode))}
         </StatusBadge>
       </header>
 
       <div className="onboarding-choice-grid">
-        {choices.map((choice) => {
+        {translate(choices.map((choice) => {
           const available = isModeAvailable(profile, choice.mode);
           const recommended = recommendedMode === choice.mode;
           const target = available === false ? choice.blockedTarget : choice.readyTarget;
@@ -113,33 +116,33 @@ export default function OnboardingGuide({ profile, onNavigate }: OnboardingGuide
           return (
             <article className={recommended ? "onboarding-choice recommended" : "onboarding-choice"} key={choice.mode}>
               <div className="onboarding-choice-title">
-                <strong>{choice.title}</strong>
-                <StatusBadge tone={tone}>{statusText}</StatusBadge>
+                <strong>{translate(choice.title)}</strong>
+                <StatusBadge tone={tone}>{translate(statusText)}</StatusBadge>
               </div>
-              <p>{choice.summary}</p>
-              <span className="onboarding-choice-needs">{choice.needs}</span>
+              <p>{translate(choice.summary)}</p>
+              <span className="onboarding-choice-needs">{translate(choice.needs)}</span>
               {onNavigate ? (
                 <button className={recommended ? "primary-button" : "secondary-button"} type="button" onClick={() => onNavigate(target)}>
-                  {action}
+                  {translate(action)}
                 </button>
               ) : null}
             </article>
           );
-        })}
+        }))}
       </div>
 
       <section className="first-run-next">
         <div>
-          <strong>当前缺什么？</strong>
+          <strong>{translate("当前缺什么？")}</strong>
           <ul>
             {blockingSummary(profile).map((item) => (
-              <li key={item}>{item}</li>
+              <li key={item}>{translate(item)}</li>
             ))}
           </ul>
         </div>
         <div>
-          <strong>下一步做什么？</strong>
-          <p>{profile?.next_action ?? "读取状态后会给出建议。你也可以先打开示例或创建项目。"}</p>
+          <strong>{translate("下一步做什么？")}</strong>
+          <p>{translate(profile?.next_action ?? "读取状态后会给出建议。你也可以先打开示例或创建项目。")}</p>
         </div>
       </section>
     </div>

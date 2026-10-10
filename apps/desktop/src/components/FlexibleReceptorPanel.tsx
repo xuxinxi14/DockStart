@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle, Crosshair, SpinnerGap } from "@phosphor-icons/react";
@@ -126,6 +128,7 @@ export default function FlexibleReceptorPanel({
   onResiduesChange,
   onIdentityContextChange,
 }: Props) {
+  useLanguage();
   const [status, setStatus] = useState<FlexibleStatus | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -395,11 +398,11 @@ export default function FlexibleReceptorPanel({
     <section className="run-cockpit-card flexible-receptor-panel">
       <div className="run-cockpit-section-heading">
         <div>
-          <span className="run-cockpit-kicker">受体协议</span>
-          <h2>受体柔性设置</h2>
+          <span className="run-cockpit-kicker">{translate("受体协议")}</span>
+          <h2>{translate("受体柔性设置")}</h2>
         </div>
         <StatusBadge tone={status?.effective_mode === "flexible" ? "ok" : "muted"}>
-          {status?.effective_mode === "flexible" ? "柔性模式" : "刚性受体"}
+          {translate(status?.effective_mode === "flexible" ? "柔性模式" : "刚性受体")}
         </StatusBadge>
       </div>
 
@@ -407,49 +410,47 @@ export default function FlexibleReceptorPanel({
         <div className="flexible-receptor-explainer">
           <p>
             <span className="field-hint-row">
-              <strong>受体柔性 × 配体柔性。</strong>
+              <strong>{translate("受体柔性 × 配体柔性。")}</strong>
               <FieldHint
                 subject="柔性残基"
-                label="柔性残基允许受体部分侧链在对接时发生构象变化。通常只选择与结合口袋直接相关、且有合理结构依据的少量残基；不要机械地把所有邻近残基都设为柔性。第一次使用或没有明确结构依据时，可以保持默认的刚性受体。"
+                label={translate("柔性残基允许受体部分侧链在对接时发生构象变化。通常只选择与结合口袋直接相关、且有合理结构依据的少量残基；不要机械地把所有邻近残基都设为柔性。第一次使用或没有明确结构依据时，可以保持默认的刚性受体。")}
               />
-            </span>
-            两种模式下，配体始终按 Vina 标准柔性处理（可旋转键自动保留）。区别只在于受体是否允许少量残基参与柔性变化。
-          </p>
+            </span>{translate("两种模式下，配体始终按 Vina 标准柔性处理（可旋转键自动保留）。区别只在于受体是否允许少量残基参与柔性变化。")}</p>
           <ul>
-            <li><strong>标准对接</strong>：受体刚性 + 配体柔性。受体不发生侧链柔性变化，配体仍按 Vina 标准保留可旋转键，无需选择柔性残基。</li>
-            <li><strong>受体有限柔性对接</strong>：受体部分柔性 + 配体柔性。在标准对接的基础上，额外允许选定少量受体残基发生柔性变化。</li>
+            <li><strong>{translate("标准对接")}</strong>{translate("：受体刚性 + 配体柔性。受体不发生侧链柔性变化，配体仍按 Vina 标准保留可旋转键，无需选择柔性残基。")}</li>
+            <li><strong>{translate("受体有限柔性对接")}</strong>{translate("：受体部分柔性 + 配体柔性。在标准对接的基础上，额外允许选定少量受体残基发生柔性变化。")}</li>
           </ul>
         </div>
 
-        <nav className="flexible-mode-switch" aria-label="受体柔性模式">
-          <button type="button" className={viewMode === "rigid" ? "active" : ""} onClick={() => setViewMode("rigid")}>刚性受体</button>
-          <button type="button" className={viewMode === "flexible" ? "active" : ""} onClick={() => setViewMode("flexible")}>有限柔性</button>
+        <nav className="flexible-mode-switch" aria-label={translate("受体柔性模式")}>
+          <button type="button" className={viewMode === "rigid" ? "active" : ""} onClick={() => setViewMode("rigid")}>{translate("刚性受体")}</button>
+          <button type="button" className={viewMode === "flexible" ? "active" : ""} onClick={() => setViewMode("flexible")}>{translate("有限柔性")}</button>
         </nav>
 
         {viewMode === "flexible" ? <div className="flexible-receptor-body">
           <div className="flexible-receptor-editor">
             <label>
-              <span>柔性残基（最多 8 个）</span>
+              <span>{translate("柔性残基（最多 8 个）")}</span>
               <input
                 value={input}
                 disabled={disabled || busy}
-                placeholder="例如 A:315, A:381 或 A:315:B"
+                placeholder={translate("例如 A:315, A:381 或 A:315:B")}
                 onChange={(event) => {
                   setInput(event.target.value);
                   setPointSelectionContextSha256("");
                 }}
               />
             </label>
-            <small>格式：A:315；带插入码时使用 A:315:B。</small>
+            <small>{translate("格式：A:315；带插入码时使用 A:315:B。")}</small>
             {altlocRequirements.length ? (
               <div className="flexible-altloc-review">
-                <strong>替代构象选择</strong>
+                <strong>{translate("替代构象选择")}</strong>
                 {altlocRequirements.map((residue) => {
                   const ids = residue.alternate_locations?.ids ?? [];
                   const occupancy = residue.alternate_locations?.occupancy ?? {};
                   return (
                     <label key={residue.selector}>
-                      <span>{residue.selector} {residue.author?.component_id || ""}</span>
+                      <span>{translate(residue.selector)} {translate(residue.author?.component_id || "")}</span>
                       <select
                         value={resolvedAltlocs[residue.selector] || ""}
                         disabled={disabled || busy}
@@ -458,19 +459,19 @@ export default function FlexibleReceptorPanel({
                           [residue.selector]: event.target.value,
                         }))}
                       >
-                        <option value="">请选择 altloc</option>
+                        <option value="">{translate("请选择 altloc")}</option>
                         {ids.map((id) => {
                           const facts = occupancy[id];
                           const range = facts
                             ? `${facts.minimum ?? "?"}–${facts.maximum ?? "?"}`
                             : "未记录";
-                          return <option key={id} value={id}>{id}（occupancy {range}）</option>;
+                          return <option key={id} value={id}>{translate(id)}（occupancy {translate(range)}）</option>;
                         })}
                       </select>
                     </label>
                   );
                 })}
-                {unresolvedAltlocs.length ? <small>DockStart 不会按 occupancy 自动选择。</small> : null}
+                {unresolvedAltlocs.length ? <small>{translate("DockStart 不会按 occupancy 自动选择。")}</small> : null}
               </div>
             ) : null}
             <div className="flexible-receptor-actions">
@@ -479,11 +480,9 @@ export default function FlexibleReceptorPanel({
                 disabled={disabled || busy || selectionActive}
                 onClick={() => void startPointSelection()}
               >
-                <Crosshair size={16} />{selectionActive ? "正在点选" : "3D 点选"}
+                <Crosshair size={16} />{translate(selectionActive ? "正在点选" : "3D 点选")}
               </ActionButton>
-              <ActionButton variant="secondary" disabled={disabled || busy || !residues.length || residues.length > 8} onClick={() => void validate()}>
-                检查选择
-              </ActionButton>
+              <ActionButton variant="secondary" disabled={disabled || busy || !residues.length || residues.length > 8} onClick={() => void validate()}>{translate("检查选择")}</ActionButton>
               <ActionButton
                 variant="primary"
                 disabled={
@@ -495,15 +494,13 @@ export default function FlexibleReceptorPanel({
                 }
                 onClick={() => void prepare()}
               >
-                {busy ? <SpinnerGap className="run-monitor-spinner" size={16} /> : <CheckCircle size={16} />}
-                准备并启用
-              </ActionButton>
+                {busy ? <SpinnerGap className="run-monitor-spinner" size={16} /> : <CheckCircle size={16} />}{translate("准备并启用")}</ActionButton>
             </div>
             {badResidues.length ? (
               <div className="flexible-bad-residue-review" role="alert">
-                <strong>Meeko 将删除 {badResidues.length} 个无法匹配模板的残基</strong>
-                <p>严格准备已停止，项目仍使用刚性受体。请核对完整清单；确认后再次点击“准备并启用”。</p>
-                <AdvancedDetails summary="查看将被忽略的完整残基列表">
+                <strong>{translate("Meeko 将删除 ")}{badResidues.length}{translate(" 个无法匹配模板的残基")}</strong>
+                <p>{translate("严格准备已停止，项目仍使用刚性受体。请核对完整清单；确认后再次点击“准备并启用”。")}</p>
+                <AdvancedDetails summary={translate("查看将被忽略的完整残基列表")}>
                   <pre>{badResidues.join(", ")}</pre>
                 </AdvancedDetails>
                 <label className="flexible-bad-residue-confirm">
@@ -513,40 +510,40 @@ export default function FlexibleReceptorPanel({
                     disabled={disabled || busy}
                     onChange={(event) => setBadResiduesConfirmed(event.target.checked)}
                   />
-                  <span>我已核对完整列表，同意本次忽略这些残基。</span>
+                  <span>{translate("我已核对完整列表，同意本次忽略这些残基。")}</span>
                 </label>
               </div>
             ) : null}
           </div>
         </div> : (
           <div className="flexible-receptor-rigid-summary">
-            <strong>刚性受体</strong>
-            {status?.effective_mode === "flexible" ? <ActionButton disabled={disabled || busy} onClick={() => void setMode("rigid")}>切回刚性受体</ActionButton> : <StatusBadge tone="ok">当前使用</StatusBadge>}
+            <strong>{translate("刚性受体")}</strong>
+            {status?.effective_mode === "flexible" ? <ActionButton disabled={disabled || busy} onClick={() => void setMode("rigid")}>{translate("切回刚性受体")}</ActionButton> : <StatusBadge tone="ok">{translate("当前使用")}</StatusBadge>}
           </div>
         )}
 
-        {viewMode === "flexible" && status?.flexible_ready ? (
+        {translate(viewMode === "flexible" && status?.flexible_ready ? (
           <div className="flexible-receptor-ready">
             <div className="flexible-receptor-ready-summary">
-              <span className="flexible-receptor-ready-label">已验证柔性受体</span>
-              <strong>{status.flexible_receptor?.preparation_id || "准备记录可用"}</strong>
+              <span className="flexible-receptor-ready-label">{translate("已验证柔性受体")}</span>
+              <strong>{translate(status.flexible_receptor?.preparation_id || "准备记录可用")}</strong>
               <dl>
-                <div><dt>柔性残基</dt><dd>{selected.map(residueLabel).join("、") || "残基记录可用"}</dd></div>
+                <div><dt>{translate("柔性残基")}</dt><dd>{translate(selected.map(residueLabel).join("、") || "残基记录可用")}</dd></div>
                 {status.flexible_receptor?.scientific_review?.allow_bad_res ? (
-                  <div><dt>已确认忽略</dt><dd>{status.flexible_receptor.scientific_review.detected_bad_residues?.length ?? 0} 个残基</dd></div>
+                  <div><dt>{translate("已确认忽略")}</dt><dd>{status.flexible_receptor.scientific_review.detected_bad_residues?.length ?? 0}{translate(" 个残基")}</dd></div>
                 ) : null}
               </dl>
             </div>
             <div className="flexible-receptor-actions">
-              <ActionButton variant={status.effective_mode === "rigid" ? "primary" : "secondary"} disabled={disabled || busy} onClick={() => void setMode("rigid")}>使用刚性</ActionButton>
-              <ActionButton variant={status.effective_mode === "flexible" ? "primary" : "secondary"} disabled={disabled || busy} onClick={() => void setMode("flexible")}>使用柔性</ActionButton>
+              <ActionButton variant={status.effective_mode === "rigid" ? "primary" : "secondary"} disabled={disabled || busy} onClick={() => void setMode("rigid")}>{translate("使用刚性")}</ActionButton>
+              <ActionButton variant={status.effective_mode === "flexible" ? "primary" : "secondary"} disabled={disabled || busy} onClick={() => void setMode("flexible")}>{translate("使用柔性")}</ActionButton>
             </div>
           </div>
-        ) : null}
+        ) : null)}
 
-        {message && !(viewMode === "flexible" && status?.flexible_ready) ? <p className="flexible-receptor-message" role="status">{message}</p> : null}
-        {suggestion ? <div className="flexible-receptor-suggestion" role="status"><strong>建议怎么做</strong><p>{suggestion}</p></div> : null}
-        {rawError ? <AdvancedDetails summary="柔性受体诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+        {message && !(viewMode === "flexible" && status?.flexible_ready) ? <p className="flexible-receptor-message" role="status">{translate(message)}</p> : null}
+        {suggestion ? <div className="flexible-receptor-suggestion" role="status"><strong>{translate("建议怎么做")}</strong><p>{translate(suggestion)}</p></div> : null}
+        {rawError ? <AdvancedDetails summary={translate("柔性受体诊断")}><pre>{rawError}</pre></AdvancedDetails> : null}
       </div>
     </section>
   );

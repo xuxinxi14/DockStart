@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FolderSimple, Monitor } from "@phosphor-icons/react";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,6 +18,7 @@ import {
   SYSTEM_DARK_MEDIA_QUERY,
   applyAppearanceState,
   normalizeThemeMode,
+  normalizePaletteId,
   prefersDarkColorScheme,
   readAppearanceState,
   resolveThemeMode,
@@ -51,6 +54,7 @@ export default function AppShell({
   onOpenProject,
   children,
 }: AppShellProps) {
+  const language = useLanguage();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readInitialSidebarState);
   const [compactViewport, setCompactViewport] = useState(readInitialCompactViewport);
   const [appearance, setAppearance] = useState<AppearanceState>(readAppearanceState);
@@ -165,7 +169,7 @@ export default function AppShell({
   useEffect(() => {
     const handleAppearanceChange = (event: Event) => {
       const detail = (event as CustomEvent<AppearanceState>).detail;
-      setAppearance(detail ? { mode: normalizeThemeMode(detail.mode), appearance: detail.appearance, accent: detail.accent } : readAppearanceState());
+      setAppearance(detail ? { mode: normalizeThemeMode(detail.mode), appearance: detail.appearance, accent: detail.accent, palette: normalizePaletteId(detail.palette) } : readAppearanceState());
     };
     window.addEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange as EventListener);
     return () => window.removeEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange as EventListener);
@@ -181,17 +185,20 @@ export default function AppShell({
       if (!main) return;
       main.scrollTo({ top: 0, behavior: "auto" });
       main.focus({ preventScroll: true });
-      document.title = `DockStart · ${pageTitles[currentPage]}`;
     });
     return () => window.cancelAnimationFrame(animationFrame);
   }, [currentPage]);
+
+  useEffect(() => {
+    document.title = `DockStart · ${translate(pageTitles[currentPage])}`;
+  }, [currentPage, language]);
 
   const effectiveSidebarCollapsed = sidebarCollapsed || compactViewport;
   const resolvedTheme: ResolvedTheme = resolveThemeMode(appearance.mode, systemPrefersDark);
 
   return (
     <div className={`dockstart-shell ${effectiveSidebarCollapsed ? "sidebar-collapsed" : ""}`.trim()}>
-      <a className="skip-link" href="#main-content">跳到主要内容</a>
+      <a className="skip-link" href="#main-content">{translate("跳到主要内容")}</a>
       <Sidebar
         collapsed={effectiveSidebarCollapsed}
         currentPage={currentPage}
@@ -214,22 +221,20 @@ export default function AppShell({
           onOpenProject={onOpenProject}
         />
         <main className="app-content" data-layout="app-content" id="main-content" ref={mainContentRef} tabIndex={-1}>
-          <span aria-live="polite" className="ds-visually-hidden">已进入{pageTitles[currentPage]}</span>
+          <span aria-live="polite" className="ds-visually-hidden">{translate("已进入")}{translate(pageTitles[currentPage])}</span>
           <div className="app-page-frame" key={currentPage}>{children}</div>
         </main>
-        <footer className="app-statusbar" aria-label="当前工作区状态">
-          <Tooltip className="statusbar-project-tooltip" label={project?.project_dir || "尚未加载项目"}>
+        <footer className="app-statusbar" aria-label={translate("当前工作区状态")}>
+          <Tooltip className="statusbar-project-tooltip" label={project?.project_dir || translate("尚未加载项目")}>
             <span className="statusbar-project">
               <FolderSimple aria-hidden="true" size={15} weight="duotone" />
-              <span>{project?.project_dir || "尚未加载项目"}</span>
+              <span>{project?.project_dir || translate("尚未加载项目")}</span>
             </span>
           </Tooltip>
-          <span className="statusbar-stage">当前阶段：{pageTitles[currentPage]}</span>
+          <span className="statusbar-stage">{translate("当前阶段：")}{translate(pageTitles[currentPage])}</span>
           <span className="statusbar-local">
-            <Monitor aria-hidden="true" size={15} />
-            仅在本机运行
-          </span>
-          <span className="statusbar-version">DockStart v{appVersion}</span>
+            <Monitor aria-hidden="true" size={15} />{translate("仅在本机运行")}</span>
+          <span className="statusbar-version">DockStart v{translate(appVersion)}</span>
         </footer>
       </div>
       {import.meta.env.DEV ? <LayoutDebugOverlay /> : null}

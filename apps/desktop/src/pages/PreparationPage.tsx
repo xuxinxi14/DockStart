@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -172,6 +174,7 @@ function coordinateBoundsLabel(value: unknown): string {
 }
 
 function FactValue({ children, source }: { children: ReactNode; source: string }) {
+  useLanguage();
   return (
     <dd
       aria-label={`${String(children)}；数据来源：${source}`}
@@ -188,6 +191,7 @@ export default function PreparationPage({
   onOpenBoxSetup,
   onProjectChange,
 }: PreparationPageProps) {
+  useLanguage();
   const [project, setProject] = useState(initialProject);
   const [response, setResponse] = useState<PreparationStatusResponse | null>(null);
   const [message, setMessage] = useState("");
@@ -472,9 +476,9 @@ export default function PreparationPage({
       const selected = await open({
         directory: false,
         multiple: false,
-        title: isReceptor ? "选择受体结构" : "选择配体结构",
+        title: translate(isReceptor ? "选择受体结构" : "选择配体结构"),
         filters: [{
-          name: isReceptor ? "受体结构" : "配体结构",
+          name: translate(isReceptor ? "受体结构" : "配体结构"),
           extensions: isReceptor ? ["pdbqt", "pdb", "cif"] : ["pdbqt", "sdf", "mol", "mol2"],
         }],
       });
@@ -1076,124 +1080,122 @@ export default function PreparationPage({
           <div className="preparation-target-primary">
             <span className="preparation-target-icon"><FileArrowUp aria-hidden="true" size={24} /></span>
             <div>
-              <span>{label}</span>
+              <span>{translate(label)}</span>
               <strong>{fileName}</strong>
-              <small>{isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL / MOL2") : "等待文件"}</small>
+              <small>{translate(isReady ? "PDBQT 已就绪" : rawReady ? (isReceptor ? "PDB / CIF" : "SDF / MOL / MOL2") : "等待文件")}</small>
             </div>
           </div>
-          <dl className="preparation-structure-facts preparation-structure-facts-summary" aria-label={`${label}核心结构事实`}>
-            <div><dt>准备状态</dt><FactValue source="当前文件检查">{preparationState}</FactValue></div>
-            {isReady && isReceptor ? (
+          <dl className="preparation-structure-facts preparation-structure-facts-summary" aria-label={translate("{0}核心结构事实", [translate(label)])}>
+            <div><dt>{translate("准备状态")}</dt><FactValue source="当前文件检查">{translate(preparationState)}</FactValue></div>
+            {translate(isReady && isReceptor ? (
               <>
-                <div><dt>链 ID</dt><FactValue source={receptorDisplaySource}>{factStringList(receptorDisplayFacts.chains)}</FactValue></div>
-                <div><dt>总原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "atom_count") ?? "原子记录无法解析"}</FactValue></div>
+                <div><dt>{translate("链 ID")}</dt><FactValue source={receptorDisplaySource}>{translate(factStringList(receptorDisplayFacts.chains))}</FactValue></div>
+                <div><dt>{translate("总原子数")}</dt><FactValue source={receptorDisplaySource}>{translate(factNumber(receptorDisplayFacts, "atom_count") ?? "原子记录无法解析")}</FactValue></div>
               </>
-            ) : null}
-            {isReady && !isReceptor ? (
-              <div><dt>重原子数</dt><FactValue source={ligandDisplaySource}>{heavyAtomCount ?? "无法可靠判定"}</FactValue></div>
-            ) : null}
-            {criticalWarning ? (
+            ) : null)}
+            {translate(isReady && !isReceptor ? (
+              <div><dt>{translate("重原子数")}</dt><FactValue source={ligandDisplaySource}>{translate(heavyAtomCount ?? "无法可靠判定")}</FactValue></div>
+            ) : null)}
+            {translate(criticalWarning ? (
               <div className="preparation-structure-warning">
-                <dt>关键警告</dt>
-                <FactValue source={isReceptor ? "结构审查" : ligandDisplaySource}>{criticalWarning}</FactValue>
+                <dt>{translate("关键警告")}</dt>
+                <FactValue source={isReceptor ? "结构审查" : ligandDisplaySource}>{translate(criticalWarning)}</FactValue>
               </div>
-            ) : null}
+            ) : null)}
           </dl>
-          {isReady ? (
-            <AdvancedDetails className="preparation-structure-audit-details" summary={`查看${label}完整结构审计`}>
-              <dl className="preparation-structure-facts preparation-structure-facts-audit" aria-label={`${label}完整结构审计事实`}>
-                {isReceptor ? (
+          {translate(isReady ? (
+            <AdvancedDetails className="preparation-structure-audit-details" summary={translate("查看{0}完整结构审计", [translate(label)])}>
+              <dl className="preparation-structure-facts preparation-structure-facts-audit" aria-label={translate("{0}完整结构审计事实", [translate(label)])}>
+                {translate(isReceptor ? (
                   <>
-                    <div><dt>重原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "heavy_atom_count") ?? "原子类型无法解析"}</FactValue></div>
-                    <div><dt>氢原子数</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "hydrogen_atom_count") ?? "原子类型无法解析"}</FactValue></div>
-                    <div><dt>三维坐标</dt><FactValue source={receptorDisplaySource}>{factBooleanLabel(receptorDisplayFacts.has_3d_coordinates, "坐标列无法完整解析")}</FactValue></div>
-                    <div><dt>坐标边界</dt><FactValue source={receptorDisplaySource}>{coordinateBoundsLabel(receptorDisplayFacts.coordinate_bounds)}</FactValue></div>
-                    <div><dt>残基数量</dt><FactValue source={receptorDisplaySource}>{factNumber(receptorDisplayFacts, "residue_count") ?? "残基记录无法解析"}</FactValue></div>
-                    <div><dt>AutoDock 类型</dt><FactValue source="最终 PDBQT">{receptorHasPdbqtFacts ? factStringList(receptorPdbqtFacts.autodock_atom_types) : "尚无最终 PDBQT"}</FactValue></div>
+                    <div><dt>{translate("重原子数")}</dt><FactValue source={receptorDisplaySource}>{translate(factNumber(receptorDisplayFacts, "heavy_atom_count") ?? "原子类型无法解析")}</FactValue></div>
+                    <div><dt>{translate("氢原子数")}</dt><FactValue source={receptorDisplaySource}>{translate(factNumber(receptorDisplayFacts, "hydrogen_atom_count") ?? "原子类型无法解析")}</FactValue></div>
+                    <div><dt>{translate("三维坐标")}</dt><FactValue source={receptorDisplaySource}>{translate(factBooleanLabel(receptorDisplayFacts.has_3d_coordinates, "坐标列无法完整解析"))}</FactValue></div>
+                    <div><dt>{translate("坐标边界")}</dt><FactValue source={receptorDisplaySource}>{translate(coordinateBoundsLabel(receptorDisplayFacts.coordinate_bounds))}</FactValue></div>
+                    <div><dt>{translate("残基数量")}</dt><FactValue source={receptorDisplaySource}>{translate(factNumber(receptorDisplayFacts, "residue_count") ?? "残基记录无法解析")}</FactValue></div>
+                    <div><dt>{translate("AutoDock 类型")}</dt><FactValue source="最终 PDBQT">{translate(receptorHasPdbqtFacts ? factStringList(receptorPdbqtFacts.autodock_atom_types) : "尚无最终 PDBQT")}</FactValue></div>
                     <div>
-                      <dt>部分电荷总和</dt>
-                      <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorPartialCharge === null ? "PDBQT 部分电荷列无法完整解析" : receptorPartialCharge.toFixed(4)}</FactValue>
+                      <dt>{translate("部分电荷总和")}</dt>
+                      <FactValue source="最终 PDBQT">{translate(!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorPartialCharge === null ? "PDBQT 部分电荷列无法完整解析" : receptorPartialCharge.toFixed(4))}</FactValue>
                     </div>
-                    <div><dt>PDBQT 模式</dt><FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "flexible" ? "柔性受体" : receptorMode === "rigid" ? "刚性受体" : "无法判定"}</FactValue></div>
+                    <div><dt>{translate("PDBQT 模式")}</dt><FactValue source="最终 PDBQT">{translate(!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "flexible" ? "柔性受体" : receptorMode === "rigid" ? "刚性受体" : "无法判定")}</FactValue></div>
                     <div>
-                      <dt>活动扭转</dt>
-                      <FactValue source="最终 PDBQT">{!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "rigid" ? "不适用（刚性受体）" : receptorActiveTorsions ?? "柔性拓扑未给出扭转计数"}</FactValue>
+                      <dt>{translate("活动扭转")}</dt>
+                      <FactValue source="最终 PDBQT">{translate(!receptorHasPdbqtFacts ? "尚无最终 PDBQT" : receptorMode === "rigid" ? "不适用（刚性受体）" : receptorActiveTorsions ?? "柔性拓扑未给出扭转计数")}</FactValue>
                     </div>
                     <div>
-                      <dt>离子与非聚合物组分</dt>
-                      <FactValue source="原始结构">{receptorRawAvailable ? `${receptorIonComponents.length} 项` : RECEPTOR_RAW_REQUIRED}</FactValue>
+                      <dt>{translate("离子与非聚合物组分")}</dt>
+                      <FactValue source="原始结构">{translate(receptorRawAvailable ? `${receptorIonComponents.length} 项` : RECEPTOR_RAW_REQUIRED)}</FactValue>
                     </div>
-                    <div><dt>替代构象</dt><FactValue source="原始结构">{receptorRawAvailable ? (receptorAltlocs.length ? receptorAltlocs.join("、") : "未检测到") : RECEPTOR_RAW_REQUIRED}</FactValue></div>
+                    <div><dt>{translate("替代构象")}</dt><FactValue source="原始结构">{translate(receptorRawAvailable ? (receptorAltlocs.length ? receptorAltlocs.join("、") : "未检测到") : RECEPTOR_RAW_REQUIRED)}</FactValue></div>
                     <div>
-                      <dt>残基模板异常</dt>
+                      <dt>{translate("残基模板异常")}</dt>
                       <FactValue source="Meeko">
-                        {receptorRawAvailable
+                        {translate(receptorRawAvailable
                           ? "当前准备记录未包含足够的 Meeko 残基模板校验信息"
-                          : RECEPTOR_RAW_REQUIRED}
+                          : RECEPTOR_RAW_REQUIRED)}
                       </FactValue>
                     </div>
                     <div>
-                      <dt>非标准手性或几何异常</dt>
+                      <dt>{translate("非标准手性或几何异常")}</dt>
                       <FactValue source="原始结构">
-                        {receptorRawAvailable ? "原始结构已保留；尚未执行专用手性与几何模板校验" : RECEPTOR_RAW_REQUIRED}
+                        {translate(receptorRawAvailable ? "原始结构已保留；尚未执行专用手性与几何模板校验" : RECEPTOR_RAW_REQUIRED)}
                       </FactValue>
                     </div>
-                    {receptorRepresentations.length > 1 ? (
+                    {translate(receptorRepresentations.length > 1 ? (
                       <div className="preparation-representation-row">
-                        <dt>关联格式</dt>
+                        <dt>{translate("关联格式")}</dt>
                         <FactValue source="准备快照">
-                          {receptorRepresentations.map((item) => String(factRecord(item).format || "").toUpperCase()).filter(Boolean).join(" + ")}
+                          {translate(receptorRepresentations.map((item) => String(factRecord(item).format || "").toUpperCase()).filter(Boolean).join(" + "))}
                         </FactValue>
                       </div>
-                    ) : null}
+                    ) : null)}
                   </>
                 ) : (
                   <>
-                    <div><dt>连接组分</dt><FactValue source={ligandDisplaySource}>{fragmentCount ?? "无法可靠判定"}</FactValue></div>
-                    <div><dt>总形式电荷</dt><FactValue source={ligandDisplaySource}>{formalChargeLabel(formalCharge)}</FactValue></div>
-                    <div><dt>包含盐</dt><FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.contains_salt)}</FactValue></div>
+                    <div><dt>{translate("连接组分")}</dt><FactValue source={ligandDisplaySource}>{translate(fragmentCount ?? "无法可靠判定")}</FactValue></div>
+                    <div><dt>{translate("总形式电荷")}</dt><FactValue source={ligandDisplaySource}>{translate(formalChargeLabel(formalCharge))}</FactValue></div>
+                    <div><dt>{translate("包含盐")}</dt><FactValue source={ligandDisplaySource}>{translate(factBooleanLabel(sourceFacts.contains_salt))}</FactValue></div>
                     <div>
-                      <dt>未定义立体信息</dt>
-                      <FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定")}</FactValue>
+                      <dt>{translate("未定义立体信息")}</dt>
+                      <FactValue source={ligandDisplaySource}>{translate(factBooleanLabel(sourceFacts.undefined_stereochemistry, stereoEncoded ? "无法判定（已记录立体标记）" : "无法可靠判定"))}</FactValue>
                     </div>
-                    <div><dt>三维坐标</dt><FactValue source={ligandDisplaySource}>{factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到")}</FactValue></div>
-                    <div><dt>PDBQT 活动扭转</dt><FactValue source="最终 PDBQT">{torsdof ?? "无法从 TORSDOF 读取"}</FactValue></div>
+                    <div><dt>{translate("三维坐标")}</dt><FactValue source={ligandDisplaySource}>{translate(factBooleanLabel(sourceFacts.has_3d_coordinates, "未检测到"))}</FactValue></div>
+                    <div><dt>{translate("PDBQT 活动扭转")}</dt><FactValue source="最终 PDBQT">{translate(torsdof ?? "无法从 TORSDOF 读取")}</FactValue></div>
                   </>
-                )}
+                ))}
               </dl>
             </AdvancedDetails>
-          ) : null}
+          ) : null)}
         </div>
 
         {shouldLoadPreview ? (
-          <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">正在加载 3D 预览…</div>}>
+          <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">{translate("正在加载 3D 预览…")}</div>}>
             <StructureMiniPreview
               fileKind={isReceptor ? "receptor_prepared" : "ligand_prepared"}
-              label={label}
+              label={translate(label)}
               projectDir={project.project_dir}
               refreshKey={previewRevision[target]}
             />
           </Suspense>
         ) : (
           <div className="structure-mini-preview structure-mini-preview-gate">
-            {isReady ? (
+            {translate(isReady ? (
               <>
-                <strong>3D 预览按需加载</strong>
+                <strong>{translate("3D 预览按需加载")}</strong>
                 <span>
-                  {preparedSize > 0
+                  {translate(preparedSize > 0
                     ? `文件大小 ${preparedSize.toLocaleString()} B；点击加载 3D 预览。`
-                    : "点击加载 3D 预览。"}
+                    : "点击加载 3D 预览。")}
                 </span>
-                <ActionButton onClick={() => setPreviewRequested((current) => ({ ...current, [target]: true }))}>
-                  加载 3D 预览
-                </ActionButton>
+                <ActionButton onClick={() => setPreviewRequested((current) => ({ ...current, [target]: true }))}>{translate("加载 3D 预览")}</ActionButton>
               </>
             ) : (
               <>
-                <strong>{rawReady ? "等待转换为 PDBQT" : "等待导入结构"}</strong>
-                <span>{rawReady ? "完成转换后即可查看 PDBQT。" : "PDBQT 可直接预览，原始结构需要先转换。"}</span>
+                <strong>{translate(rawReady ? "等待转换为 PDBQT" : "等待导入结构")}</strong>
+                <span>{translate(rawReady ? "完成转换后即可查看 PDBQT。" : "PDBQT 可直接预览，原始结构需要先转换。")}</span>
               </>
-            )}
+            ))}
           </div>
         )}
 
@@ -1201,13 +1203,13 @@ export default function PreparationPage({
           <div className={`preparation-file-check ${isReady ? "is-ready" : "is-missing"}`}>
             {isReady ? <CheckCircle aria-hidden="true" size={18} weight="fill" /> : <Info aria-hidden="true" size={18} weight="fill" />}
             <div>
-              <strong>{isReady ? "PDBQT 已就绪" : rawReady ? "可以开始转换" : "等待原始文件"}</strong>
-              <span>{preparedFile?.size ? `${preparedFile.size.toLocaleString()} B` : statusLabel(prep?.status)}</span>
+              <strong>{translate(isReady ? "PDBQT 已就绪" : rawReady ? "可以开始转换" : "等待原始文件")}</strong>
+              <span>{translate(preparedFile?.size ? `${preparedFile.size.toLocaleString()} B` : statusLabel(prep?.status))}</span>
             </div>
           </div>
 
           <ActionButton variant={displayFile ? "secondary" : "primary"} disabled={interactionBusy} onClick={() => void pickStructureFile(target)}>
-            {displayFile ? "更改结构文件" : "选择结构文件"}
+            {translate(displayFile ? "更改结构文件" : "选择结构文件")}
           </ActionButton>
           {rawReady ? (
             <>
@@ -1217,9 +1219,9 @@ export default function PreparationPage({
                   checked={isReceptor ? overwriteReceptor : overwriteLigand}
                   onChange={(event) => (isReceptor ? setOverwriteReceptor(event.target.checked) : setOverwriteLigand(event.target.checked))}
                 />
-                {isReady ? "从原始文件重新转换" : "覆盖已有 PDBQT"}
+                {translate(isReady ? "从原始文件重新转换" : "覆盖已有 PDBQT")}
               </label>
-              {!isReceptor && macrocycleMode === "reviewed"
+              {translate(!isReceptor && macrocycleMode === "reviewed"
                 ? null
                 : badResidues.length || alternateLocations.length
                   ? null
@@ -1236,13 +1238,13 @@ export default function PreparationPage({
                   }
                   onClick={() => void prepareTarget(target)}
                 >
-                  {isReceptor
+                  {translate(isReceptor
                     ? badResidues.length || alternateLocations.length ? "确认并重新转换" : "转换受体为 PDBQT"
                     : macrocyclePreparationBlocked
                       ? "先确认大环方案"
-                      : "转换配体为 PDBQT"}
+                      : "转换配体为 PDBQT")}
                 </ActionButton>
-                  )}
+                  ))}
             </>
           ) : null}
 
@@ -1251,9 +1253,7 @@ export default function PreparationPage({
             variant="secondary"
             aria-haspopup="dialog"
             onClick={() => setDetailTarget(target)}
-          >
-            查看详情
-          </ActionButton>
+          >{translate("查看详情")}</ActionButton>
         </div>
         {detailTarget === target ? (
           <div
@@ -1270,11 +1270,11 @@ export default function PreparationPage({
               aria-labelledby={`preparation-${target}-details-title`}
             >
               <header>
-                <h2 id={`preparation-${target}-details-title`}>{label} · 结构与准备详情</h2>
+                <h2 id={`preparation-${target}-details-title`}>{translate(label)}{translate(" · 结构与准备详情")}</h2>
                 <button
                   type="button"
                   className="preparation-details-close"
-                  aria-label="关闭详情弹窗"
+                  aria-label={translate("关闭详情弹窗")}
                   autoFocus
                   onClick={() => setDetailTarget(null)}
                 >
@@ -1283,34 +1283,34 @@ export default function PreparationPage({
               </header>
               <div className="preparation-details-body">
                 <dl className="meta-list">
-                  <div><dt>当前文件</dt><dd><code>{fileName}</code></dd></div>
-                  <div><dt>准备状态</dt><dd>{preparationState}</dd></div>
-                  <div><dt>原始输入</dt><dd><code>{fileLine(rawFile, projectRawFile)}</code></dd></div>
-                  <div><dt>准备方法</dt><dd>{prep?.method ?? "外部或手动导入"}</dd></div>
-                  <div><dt>日志</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
+                  <div><dt>{translate("当前文件")}</dt><dd><code>{fileName}</code></dd></div>
+                  <div><dt>{translate("准备状态")}</dt><dd>{translate(preparationState)}</dd></div>
+                  <div><dt>{translate("原始输入")}</dt><dd><code>{fileLine(rawFile, projectRawFile)}</code></dd></div>
+                  <div><dt>{translate("准备方法")}</dt><dd>{translate(prep?.method ?? "外部或手动导入")}</dd></div>
+                  <div><dt>{translate("日志")}</dt><dd><code>{prep?.log_file || "未生成"}</code></dd></div>
                 </dl>
               </div>
               <footer>
-                <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={interactionBusy}>读取日志</ActionButton>
-                <ActionButton variant="secondary" onClick={() => void resetTarget(target)} disabled={interactionBusy}>重置状态</ActionButton>
-                <ActionButton variant="primary" onClick={() => setDetailTarget(null)}>关闭</ActionButton>
+                <ActionButton variant="text" onClick={() => void loadLog(target)} disabled={interactionBusy}>{translate("读取日志")}</ActionButton>
+                <ActionButton variant="secondary" onClick={() => void resetTarget(target)} disabled={interactionBusy}>{translate("重置状态")}</ActionButton>
+                <ActionButton variant="primary" onClick={() => setDetailTarget(null)}>{translate("关闭")}</ActionButton>
               </footer>
             </section>
           </div>
         ) : null}
         {badResidues.length || alternateLocations.length ? (
-          <section className="preparation-target-review" aria-label="受体结构审查">
+          <section className="preparation-target-review" aria-label={translate("受体结构审查")}>
             <header>
               <div>
-                <span className="section-kicker">结构审查</span>
-                <strong>确认不完整残基与替代构象</strong>
+                <span className="section-kicker">{translate("结构审查")}</span>
+                <strong>{translate("确认不完整残基与替代构象")}</strong>
               </div>
-              <span>{badResidues.length + alternateLocations.length} 项待确认</span>
+              <span>{badResidues.length + alternateLocations.length}{translate(" 项待确认")}</span>
             </header>
             <div className="preparation-target-review-grid">
               {badResidues.length ? (
                 <div className="preparation-review-group">
-                  <strong>不完整残基（{badResidues.length}）</strong>
+                  <strong>{translate("不完整残基（")}{badResidues.length}）</strong>
                   <div className="preparation-bad-residue-list">
                     {badResidues.map((residue) => <code key={residue}>{residue}</code>)}
                   </div>
@@ -1320,16 +1320,16 @@ export default function PreparationPage({
                       checked={badResidueReviewConfirmed}
                       onChange={(event) => setBadResidueReviewConfirmed(event.target.checked)}
                     />
-                    <span>已检查并同意本次转换忽略这些残基</span>
+                    <span>{translate("已检查并同意本次转换忽略这些残基")}</span>
                   </label>
                 </div>
               ) : null}
               {alternateLocations.length ? (
                 <div className="preparation-review-group preparation-altloc-review">
-                  <strong>替代构象（{alternateLocations.length}）</strong>
+                  <strong>{translate("替代构象（")}{alternateLocations.length}）</strong>
                   {alternateLocations.map((item) => (
                     <label key={item.selector}>
-                      <span>{item.selector}{item.residue_name ? ` ${item.residue_name}` : ""}</span>
+                      <span>{translate(item.selector)}{translate(item.residue_name ? ` ${item.residue_name}` : "")}</span>
                       <select
                         value={receptorAltlocSelections[item.selector] ?? ""}
                         onChange={(event) => setReceptorAltlocSelections((current) => ({
@@ -1337,8 +1337,8 @@ export default function PreparationPage({
                           [item.selector]: event.target.value,
                         }))}
                       >
-                        <option value="">请选择构象</option>
-                        {item.ids.map((id) => <option key={id} value={id}>{id}</option>)}
+                        <option value="">{translate("请选择构象")}</option>
+                        {item.ids.map((id) => <option key={id} value={id}>{translate(id)}</option>)}
                       </select>
                     </label>
                   ))}
@@ -1346,7 +1346,7 @@ export default function PreparationPage({
               ) : null}
             </div>
             <footer>
-              <span>完成以上选择后，将使用本次确认重新准备受体。</span>
+              <span>{translate("完成以上选择后，将使用本次确认重新准备受体。")}</span>
               <ActionButton
                 variant="primary"
                 disabled={
@@ -1357,9 +1357,7 @@ export default function PreparationPage({
                   || (isReady && !overwriteReceptor)
                 }
                 onClick={() => void prepareTarget("receptor")}
-              >
-                确认并重新转换
-              </ActionButton>
+              >{translate("确认并重新转换")}</ActionButton>
             </footer>
           </section>
         ) : null}
@@ -1377,12 +1375,12 @@ export default function PreparationPage({
         <header>
           <div>
             <span className="section-kicker">02 · LIGAND LIBRARY</span>
-            <strong>批量配体（{candidates.length}）</strong>
+            <strong>{translate("批量配体（")}{candidates.length}）</strong>
           </div>
-          <span>{batchReadyLigands.length} 个对接快照{candidates.length !== batchReadyLigands.length ? ` · ${candidates.length} 条来源记录` : ""}</span>
+          <span>{batchReadyLigands.length}{translate(" 个对接快照")}{translate(candidates.length !== batchReadyLigands.length ? ` · ${candidates.length} 条来源记录` : "")}</span>
         </header>
-        <div className="preparation-batch-list" role="listbox" aria-label="选择要预览的批量配体">
-          {candidates.map((candidate, index) => {
+        <div className="preparation-batch-list" role="listbox" aria-label={translate("选择要预览的批量配体")}>
+          {translate(candidates.map((candidate, index) => {
             const active = candidate.id === selected.id;
             const facts = candidate.chemicalFacts;
             return (
@@ -1394,25 +1392,25 @@ export default function PreparationPage({
                 aria-selected={active}
                 onClick={() => setSelectedBatchLigandId(candidate.id)}
               >
-                <span>{String(index + 1).padStart(2, "0")}</span>
+                <span>{translate(String(index + 1).padStart(2, "0"))}</span>
                 <span>
                   <strong>{candidate.displayName}</strong>
                   <small>{candidate.originalName || candidate.sourceFile}</small>
                 </span>
                 <span>
-                  {candidate.sourceFormat.toUpperCase()} → PDBQT
-                  {candidate.status === "duplicate" ? " · 重复结构" : ""}
-                  {facts?.heavyAtomCount !== null && facts?.heavyAtomCount !== undefined
+                  {translate(candidate.sourceFormat.toUpperCase())} → PDBQT
+                  {translate(candidate.status === "duplicate" ? " · 重复结构" : "")}
+                  {translate(facts?.heavyAtomCount !== null && facts?.heavyAtomCount !== undefined
                     ? ` · ${facts.heavyAtomCount} 重原子`
-                    : ""}
+                    : "")}
                 </span>
               </button>
             );
-          })}
+          }))}
         </div>
       </div>
 
-      <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">正在加载 3D 预览…</div>}>
+      <Suspense fallback={<div className="structure-mini-preview structure-mini-preview-loading">{translate("正在加载 3D 预览…")}</div>}>
         <StructureMiniPreview
           fileKind="ligand_prepared"
           label={selected.displayName}
@@ -1426,21 +1424,21 @@ export default function PreparationPage({
           <CheckCircle aria-hidden="true" size={18} weight="fill" />
           <div>
             <strong>{selected.displayName}</strong>
-            <span>当前 3D 预览</span>
+            <span>{translate("当前 3D 预览")}</span>
           </div>
         </div>
         <dl className="preparation-batch-facts">
-          <div><dt>原始文件</dt><dd>{selected.originalName || "未记录"}</dd></div>
-          <div><dt>记录</dt><dd>{selected.recordIndex}</dd></div>
-          <div><dt>形式电荷</dt><dd>{selected.chemicalFacts?.formalCharge ?? "未记录"}</dd></div>
-          <div><dt>可旋转键</dt><dd>{selected.chemicalFacts?.rotatableBondCount ?? "未记录"}</dd></div>
+          <div><dt>{translate("原始文件")}</dt><dd>{selected.originalName || translate("未记录")}</dd></div>
+          <div><dt>{translate("记录")}</dt><dd>{selected.recordIndex}</dd></div>
+          <div><dt>{translate("形式电荷")}</dt><dd>{translate(selected.chemicalFacts?.formalCharge ?? "未记录")}</dd></div>
+          <div><dt>{translate("可旋转键")}</dt><dd>{translate(selected.chemicalFacts?.rotatableBondCount ?? "未记录")}</dd></div>
         </dl>
-        <ActionButton onClick={onBack}>更改配体库</ActionButton>
-        <AdvancedDetails className="preparation-target-details" summary="查看候选身份">
+        <ActionButton onClick={onBack}>{translate("更改配体库")}</ActionButton>
+        <AdvancedDetails className="preparation-target-details" summary={translate("查看候选身份")}>
           <dl className="meta-list">
-            <div><dt>候选编号</dt><dd><code>{selected.id}</code></dd></div>
-            <div><dt>来源格式</dt><dd>{selected.sourceFormat.toUpperCase()}</dd></div>
-            <div><dt>准备后快照</dt><dd><code>{selected.stagedFile || "未生成"}</code></dd></div>
+            <div><dt>{translate("候选编号")}</dt><dd><code>{selected.id}</code></dd></div>
+            <div><dt>{translate("来源格式")}</dt><dd>{translate(selected.sourceFormat.toUpperCase())}</dd></div>
+            <div><dt>{translate("准备后快照")}</dt><dd><code>{selected.stagedFile || "未生成"}</code></dd></div>
           </dl>
         </AdvancedDetails>
       </div>
@@ -1451,13 +1449,13 @@ export default function PreparationPage({
     <PageShell labelledBy="preparation-title" className="preparation-workspace-page">
       <OperationLoadingDialog
         open={isCheckingTools || interactionBusy}
-        title={loadingTitle || "正在处理结构转换"}
-        message={isMacrocycleBusy
+        title={translate(loadingTitle || "正在处理结构转换")}
+        message={translate(isMacrocycleBusy
           ? message || "正在更新大环审查记录。"
           : isCheckingTools
           ? "正在检测 Python、RDKit 与 Meeko。"
-          : activeTask?.progress.message || message || "结构转换任务正在本机运行。"}
-        detail="转换完成后仍需人工检查结构与化学状态。"
+          : activeTask?.progress.message || message || "结构转换任务正在本机运行。")}
+        detail={translate("转换完成后仍需人工检查结构与化学状态。")}
         actionLabel={activeTask && !["cancelled", "failed", "finished"].includes(activeTask.status)
           ? (activeTask.status === "queued" ? "取消排队" : "终止准备")
           : undefined}
@@ -1466,28 +1464,26 @@ export default function PreparationPage({
           : undefined}
       />
       <PageHero
-        eyebrow="格式转换 · PDBQT PREPARATION"
-        title="格式转换与 PDBQT 准备"
+        eyebrow={translate("格式转换 · PDBQT PREPARATION")}
+        title={translate("格式转换与 PDBQT 准备")}
         titleId="preparation-title"
-        description={(
-          <>
-            将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。
-            <FieldHint
+        description={translate((
+          <>{translate("将受体 PDB/CIF 与配体 SDF/MOL/MOL2 准备并转换为 PDBQT，或直接导入已有 PDBQT。")}<FieldHint
               placement="bottom"
               subject="PDB 与 PDBQT 的区别"
               label="PDB 是结构文件；PDBQT 是供 AutoDock/Vina 使用的准备后文件，包含对接所需的原子类型、电荷等信息，以及配体可旋转键信息。原始文件与准备后的对接输入文件不是一回事。"
             />
           </>
-        )}
+        ))}
         actions={(
           <>
-            <ActionButton onClick={onBack}>在线搜索并下载</ActionButton>
+            <ActionButton onClick={onBack}>{translate("在线搜索并下载")}</ActionButton>
             {activeTask && !["cancelled", "failed", "finished"].includes(activeTask.status) ? (
               <ActionButton onClick={() => void cancelPreparation()}>
-                {activeTask.status === "queued" ? "取消排队" : "终止准备"}
+                {activeTask.status === "queued" ? translate("取消排队") : translate("终止准备")}
               </ActionButton>
             ) : null}
-            <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新状态"}</ActionButton>
+            <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? translate("刷新中…") : translate("刷新状态")}</ActionButton>
           </>
         )}
       />
@@ -1502,7 +1498,7 @@ export default function PreparationPage({
           </div>
 
           {!isBatchPreparation ? (
-          <section className="preparation-macrocycle-panel" aria-label="Meeko 大环配体准备">
+          <section className="preparation-macrocycle-panel" aria-label={translate("Meeko 大环配体准备")}>
             <MacrocycleBondSelector
               projectDir={project.project_dir}
               mode={macrocycleMode}
@@ -1531,71 +1527,67 @@ export default function PreparationPage({
 
           <div className="preparation-feedback">
             <ScientificDisclaimer kind="preparation" />
-            {message || rawError ? <CommandResultPanel title="格式转换状态" message={message} rawError={rawError} /> : null}
+            {message || rawError ? <CommandResultPanel title={translate("格式转换状态")} message={translate(message)} rawError={rawError} /> : null}
           </div>
 
           <footer className="preparation-action-bar">
-            <p>自动准备结果仍需人工检查质子化、电荷、构象和缺失残基。</p>
+            <p>{translate("自动准备结果仍需人工检查质子化、电荷、构象和缺失残基。")}</p>
             <div>
-              <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{isBusy ? "刷新中…" : "刷新文件状态"}</ActionButton>
+              <ActionButton onClick={() => void reloadStatus()} disabled={isBusy}>{translate(isBusy ? "刷新中…" : "刷新文件状态")}</ActionButton>
               {!isBatchPreparation && macrocycleMode === "reviewed" ? (
-                <span className="preparation-next-step-status">请在大环准备模块完成并继续</span>
+                <span className="preparation-next-step-status">{translate("请在大环准备模块完成并继续")}</span>
               ) : readyForBox ? (
-                <ActionButton variant="primary" onClick={() => onOpenBoxSetup(project)}>
-                  设置搜索范围
-                </ActionButton>
-              ) : <span className="preparation-next-step-status">受体与配体准备完成后可继续</span>}
+                <ActionButton variant="primary" onClick={() => onOpenBoxSetup(project)}>{translate("设置搜索范围")}</ActionButton>
+              ) : <span className="preparation-next-step-status">{translate("受体与配体准备完成后可继续")}</span>}
             </div>
           </footer>
         </MainPanel>
 
         <RightRail className="preparation-context-rail">
-          <RightRailSection title="当前输入">
+          <RightRailSection title={translate("当前输入")}>
             <dl className="mode-context-list">
-              <div><dt>受体</dt><dd>{project.receptor.source_id || files?.receptor_prepared?.path || files?.receptor_raw?.path || project.receptor.file || project.receptor.raw_file || "未选择"}</dd></div>
+              <div><dt>{translate("受体")}</dt><dd>{project.receptor.source_id || files?.receptor_prepared?.path || files?.receptor_raw?.path || project.receptor.file || project.receptor.raw_file || translate("未选择")}</dd></div>
               {isBatchPreparation && selectedBatchLigand ? (
                 <>
-                  <div><dt>配体库</dt><dd>{batchViewableLigands.length} 条来源记录 · {batchReadyLigands.length} 个对接快照</dd></div>
-                  <div><dt>当前预览</dt><dd>{selectedBatchLigand.displayName}</dd></div>
+                  <div><dt>{translate("配体库")}</dt><dd>{batchViewableLigands.length}{translate(" 条来源记录 · ")}{batchReadyLigands.length}{translate(" 个对接快照")}</dd></div>
+                  <div><dt>{translate("当前预览")}</dt><dd>{selectedBatchLigand.displayName}</dd></div>
                 </>
               ) : (
-                <div><dt>配体</dt><dd>{project.ligand.source_id || files?.ligand_prepared?.path || files?.ligand_raw?.path || project.ligand.file || project.ligand.raw_file || "未选择"}</dd></div>
+                <div><dt>{translate("配体")}</dt><dd>{project.ligand.source_id || files?.ligand_prepared?.path || files?.ligand_raw?.path || project.ligand.file || project.ligand.raw_file || translate("未选择")}</dd></div>
               )}
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="文件检查">
+          <RightRailSection title={translate("文件检查")}>
             <div className="preparation-check-list">
-              <span className={files?.receptor_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> 受体 PDBQT</span>
-              <span className={isBatchPreparation || files?.ligand_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> {isBatchPreparation ? `${batchReadyLigands.length} 个配体 PDBQT` : "配体 PDBQT"}</span>
+              <span className={files?.receptor_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" />{translate(" 受体 PDBQT")}</span>
+              <span className={isBatchPreparation || files?.ligand_prepared?.status === "ok" ? "ready" : "missing"}><CheckCircle aria-hidden="true" size={16} weight="fill" /> {translate(isBatchPreparation ? `${batchReadyLigands.length} 个配体 PDBQT` : "配体 PDBQT")}</span>
             </div>
           </RightRailSection>
 
-          <RightRailSection title="工具状态">
-            {files?.receptor_raw?.status === "ok" || files?.ligand_raw?.status === "ok" ? (
+          <RightRailSection title={translate("工具状态")}>
+            {translate(files?.receptor_raw?.status === "ok" || files?.ligand_raw?.status === "ok" ? (
               <>
-                <p className="preparation-profile-hint">
-                  Assisted 本地候选随附 RDKit / Meeko；Basic 本地候选默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。
-                </p>
-                <p>{tools ? "转换工具状态已读取。" : "开始转换时会自动检查所需工具。"}</p>
+                <p className="preparation-profile-hint">{translate("Assisted 本地候选随附 RDKit / Meeko；Basic 本地候选默认直接导入 PDBQT，也可使用已配置的兼容 Python 工具链。")}</p>
+                <p>{translate(tools ? "转换工具状态已读取。" : "开始转换时会自动检查所需工具。")}</p>
                 <ActionButton disabled={isCheckingTools || interactionBusy} onClick={() => void checkConversionTools()}>
-                  {isCheckingTools ? "检测中…" : "检查转换工具"}
+                  {translate(isCheckingTools ? "检测中…" : "检查转换工具")}
                 </ActionButton>
-                {tools ? (
-                  <AdvancedDetails className="preparation-tool-details" summary="查看检测详情">
+                {translate(tools ? (
+                  <AdvancedDetails className="preparation-tool-details" summary={translate("查看检测详情")}>
                     <dl className="mode-context-list">
-                      <div><dt>Python</dt><dd>{statusLabel(tools.python?.status)} · {toolVersion(tools.python)}</dd></div>
-                      <div><dt>RDKit</dt><dd>{statusLabel(tools.rdkit?.status)} · {capabilityLine(tools.rdkit, "sdf_inline_read")}</dd></div>
-                      <div><dt>Meeko</dt><dd>{statusLabel(tools.meeko?.status)}</dd></div>
+                      <div><dt>Python</dt><dd>{translate(statusLabel(tools.python?.status))} · {translate(toolVersion(tools.python))}</dd></div>
+                      <div><dt>RDKit</dt><dd>{translate(statusLabel(tools.rdkit?.status))} · {translate(capabilityLine(tools.rdkit, "sdf_inline_read"))}</dd></div>
+                      <div><dt>Meeko</dt><dd>{translate(statusLabel(tools.meeko?.status))}</dd></div>
                     </dl>
                   </AdvancedDetails>
-                ) : null}
+                ) : null)}
               </>
-            ) : <p>当前 PDBQT 可直接使用，不需要 RDKit / Meeko。</p>}
+            ) : <p>{translate("当前 PDBQT 可直接使用，不需要 RDKit / Meeko。")}</p>)}
           </RightRailSection>
 
-          <RightRailSection title="下一步">
-            <p>{readyForBox ? "设置对接搜索范围，然后在同一工作台复核 Vina 参数。" : "先补全受体与配体 PDBQT。"}</p>
+          <RightRailSection title={translate("下一步")}>
+            <p>{translate(readyForBox ? "设置对接搜索范围，然后在同一工作台复核 Vina 参数。" : "先补全受体与配体 PDBQT。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

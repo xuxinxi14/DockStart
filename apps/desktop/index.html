@@ -23,6 +23,8 @@
         if (appearance !== "soft" && appearance !== "contrast") appearance = "default";
         var accent = read("dockstart-accent");
         if (accent !== "cyan" && accent !== "graphite") accent = "default";
+        var palette = read("dockstart-palette");
+        if (palette !== "green") palette = "blue";
         var prefersDark = true;
         try {
           prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -35,6 +37,7 @@
         root.dataset.themeMode = mode;
         root.dataset.appearance = appearance;
         root.dataset.accent = accent;
+        root.dataset.palette = palette;
         root.style.colorScheme = resolved;
       })();
     </script>

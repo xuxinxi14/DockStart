@@ -1,3 +1,5 @@
+import { translate } from "../../i18n/translate";
+import { useLanguage } from "../../i18n/useLanguage";
 import { useId, type KeyboardEvent, type ReactNode } from "react";
 
 type PageShellProps = {
@@ -35,6 +37,7 @@ type ModeTabsProps<TMode extends string> = {
 };
 
 export function PageShell({ labelledBy, className = "", children }: PageShellProps) {
+  useLanguage();
   return (
     <section
       aria-labelledby={labelledBy}
@@ -47,6 +50,7 @@ export function PageShell({ labelledBy, className = "", children }: PageShellPro
 }
 
 export function PageHero({ eyebrow, title, titleId, description, actions }: PageHeroProps) {
+  useLanguage();
   return (
     <header className="page-hero" data-layout="page-hero">
       <div className="page-hero-main">
@@ -54,12 +58,13 @@ export function PageHero({ eyebrow, title, titleId, description, actions }: Page
         <h1 id={titleId}>{title}</h1>
         <p>{description}</p>
       </div>
-      {actions ? <div className="page-hero-actions">{actions}</div> : null}
+      {actions ? <div className="page-hero-actions">{translate(actions)}</div> : null}
     </header>
   );
 }
 
 export function BodyGrid({ children, className = "" }: BodyGridProps) {
+  useLanguage();
   return (
     <div className={`page-body-grid ${className}`.trim()} data-layout="body-grid">
       {children}
@@ -68,6 +73,7 @@ export function BodyGrid({ children, className = "" }: BodyGridProps) {
 }
 
 export function MainPanel({ children, className = "" }: PanelProps) {
+  useLanguage();
   return (
     <div className={`main-panel ${className}`.trim()} data-layout="main-panel">
       {children}
@@ -76,6 +82,7 @@ export function MainPanel({ children, className = "" }: PanelProps) {
 }
 
 export function RightRail({ children, className = "" }: PanelProps) {
+  useLanguage();
   return (
     <aside className={`right-rail ${className}`.trim()} data-layout="right-rail">
       {children}
@@ -84,6 +91,7 @@ export function RightRail({ children, className = "" }: PanelProps) {
 }
 
 export function RightRailSection({ children, className = "", title }: PanelProps & { title: string }) {
+  useLanguage();
   return (
     <section className={`right-rail-section ${className}`.trim()}>
       <h2>{title}</h2>
@@ -100,6 +108,7 @@ export function ModeTabs<TMode extends string>({
   onChange,
   orientation = "horizontal",
 }: ModeTabsProps<TMode>) {
+  useLanguage();
   const generatedId = useId().replace(/:/g, "");
   const tabListId = id ?? `mode-tabs-${generatedId}`;
   const hasActiveOption = options.some((option) => option.id === active);
@@ -165,7 +174,7 @@ export function ModeTabs<TMode extends string>({
             tabIndex={isActive || (!hasActiveOption && index === 0) ? 0 : -1}
             type="button"
           >
-            {option.label}
+            {translate(option.label)}
           </button>
         );
       })}

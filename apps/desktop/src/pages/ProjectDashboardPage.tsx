@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
@@ -386,14 +388,15 @@ function DockingStepper({
   labels?: string[];
   ariaLabel?: string;
 }) {
+  useLanguage();
   return (
-    <ol className="first-run-stepper" aria-label={ariaLabel}>
+    <ol className="first-run-stepper" aria-label={translate(ariaLabel)}>
       {labels.map((label, index) => {
         const state = stepperState(index, activeIndex);
         return (
           <li className={state} key={label}>
             <span aria-hidden="true">{index + 1}</span>
-            <strong>{label}</strong>
+            <strong>{translate(label)}</strong>
           </li>
         );
       })}
@@ -408,6 +411,7 @@ export default function ProjectDashboardPage({
   onProjectChange,
   onWorkflowChange,
 }: ProjectDashboardPageProps) {
+  useLanguage();
   const [workflow, setWorkflow] = useState<ProjectWorkflowStatusResponse | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -627,35 +631,33 @@ export default function ProjectDashboardPage({
     return (
       <PageShell className="first-run-landing" labelledBy="first-run-title">
         <PageHero
-          title="新建分子任务"
+          title={translate("新建分子任务")}
           titleId="first-run-title"
-          description="先选择文件来源；已有受体中的配体姿势也可直接评分或局部优化。"
+          description={translate("先选择文件来源；已有受体中的配体姿势也可直接评分或局部优化。")}
           actions={
-            <ActionButton variant="text" onClick={onOpenProject}>
-              打开已有项目
-            </ActionButton>
+            <ActionButton variant="text" onClick={onOpenProject}>{translate("打开已有项目")}</ActionButton>
           }
         />
 
         <BodyGrid className="first-run-workspace">
           <MainPanel className="first-run-main-panel">
             <div className="main-panel-content">
-              <section className="first-run-stepper-shell" aria-label="对接流程">
-                <p className="first-run-stepper-status">未开始</p>
+              <section className="first-run-stepper-shell" aria-label={translate("对接流程")}>
+                <p className="first-run-stepper-status">{translate("未开始")}</p>
                 <DockingStepper activeIndex={null} />
               </section>
 
               <section className="start-route-section" aria-labelledby="start-route-title">
                 <div className="start-route-heading">
-                  <h2 id="start-route-title">选择开始方式</h2>
+                  <h2 id="start-route-title">{translate("选择开始方式")}</h2>
                 </div>
                 <div className="start-route-grid">
                   <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "basic" })}>
                     <div className="start-route-card-copy">
-                      <h3>已有 PDBQT（直接使用）</h3>
-                      <p>导入受体和配体 PDBQT，跳过格式转换。</p>
+                      <h3>{translate("已有 PDBQT（直接使用）")}</h3>
+                      <p>{translate("导入受体和配体 PDBQT，跳过格式转换。")}</p>
                     </div>
-                    <span className="secondary-button start-route-button start-route-button-proxy">选择 PDBQT 文件</span>
+                    <span className="secondary-button start-route-button start-route-button-proxy">{translate("选择 PDBQT 文件")}</span>
                   </button>
 
                   <button
@@ -665,27 +667,27 @@ export default function ProjectDashboardPage({
                     onClick={() => onNavigate("project-create", { startMode: "assisted" })}
                   >
                     <div className="start-route-card-copy">
-                      <h3>PDB/CIF + SDF/MOL（准备并转换）</h3>
-                      <p>在线搜索并下载，或导入本地原始结构，再转换为 PDBQT。</p>
+                      <h3>{translate("PDB/CIF + SDF/MOL（准备并转换）")}</h3>
+                      <p>{translate("在线搜索并下载，或导入本地原始结构，再转换为 PDBQT。")}</p>
                     </div>
-                    <span className="secondary-button start-route-button start-route-button-proxy">选择结构来源</span>
+                    <span className="secondary-button start-route-button start-route-button-proxy">{translate("选择结构来源")}</span>
                   </button>
 
                   <button className="start-route-card" data-layout="task-card" type="button" onClick={() => onNavigate("project-create", { startMode: "demo" })}>
                     <div className="start-route-card-copy">
-                      <h3>示例项目（快速体验）</h3>
-                      <p>使用内置示例完成一次对接。</p>
+                      <h3>{translate("示例项目（快速体验）")}</h3>
+                      <p>{translate("使用内置示例完成一次对接。")}</p>
                     </div>
-                    <span className="secondary-button start-route-button start-route-button-proxy">打开示例</span>
+                    <span className="secondary-button start-route-button start-route-button-proxy">{translate("打开示例")}</span>
                   </button>
                 </div>
               </section>
 
               <section className="dashboard-pose-task-entry" aria-labelledby="dashboard-pose-task-title">
                 <div>
-                  <span>已有受体中的配体姿势</span>
-                  <h2 id="dashboard-pose-task-title">评价当前姿势</h2>
-                  <p>受体与配体需处在同一坐标系；这些任务不会搜索新的结合位点。</p>
+                  <span>{translate("已有受体中的配体姿势")}</span>
+                  <h2 id="dashboard-pose-task-title">{translate("评价当前姿势")}</h2>
+                  <p>{translate("受体与配体需处在同一坐标系；这些任务不会搜索新的结合位点。")}</p>
                 </div>
                 <div>
                   <button
@@ -695,8 +697,8 @@ export default function ProjectDashboardPage({
                       taskIntent: "score_only",
                     })}
                   >
-                    <strong>姿势评分</strong>
-                    <span>计算当前姿势的能量项</span>
+                    <strong>{translate("姿势评分")}</strong>
+                    <span>{translate("计算当前姿势的能量项")}</span>
                   </button>
                   <button
                     type="button"
@@ -705,72 +707,70 @@ export default function ProjectDashboardPage({
                       taskIntent: "local_only",
                     })}
                   >
-                    <strong>局部优化</strong>
-                    <span>从当前姿势附近优化</span>
+                    <strong>{translate("局部优化")}</strong>
+                    <span>{translate("从当前姿势附近优化")}</span>
                   </button>
                 </div>
               </section>
 
-              <p className="first-run-storage-note">
-                DockStart 项目将保存受体、配体、任务类型、范围参数、运行日志和结果报告。
-              </p>
+              <p className="first-run-storage-note">{translate("DockStart 项目将保存受体、配体、任务类型、范围参数、运行日志和结果报告。")}</p>
               </div>
           </MainPanel>
 
           <RightRail className="first-run-side-rail">
-            <RightRailSection title="当前状态">
+            <RightRailSection title={translate("当前状态")}>
               <dl className="side-rail-list">
                 <div>
-                  <dt>项目</dt>
-                  <dd>未加载项目</dd>
+                  <dt>{translate("项目")}</dt>
+                  <dd>{translate("未加载项目")}</dd>
                 </div>
                 <div>
-                  <dt>下一步</dt>
-                  <dd>选择一种开始方式</dd>
+                  <dt>{translate("下一步")}</dt>
+                  <dd>{translate("选择一种开始方式")}</dd>
                 </div>
               </dl>
             </RightRailSection>
 
-            <RightRailSection title="工具链">
+            <RightRailSection title={translate("工具链")}>
               <dl className="side-rail-list toolchain-summary-list">
                 <div>
                   <dt>Vina</dt>
                   <dd className={toolStatusClass(firstRunToolchain?.vinaStatus, toolchainPending)}>
-                    {vinaStatusSummary(firstRunToolchain?.vinaStatus, toolchainPending)}
+                    {translate(vinaStatusSummary(firstRunToolchain?.vinaStatus, toolchainPending))}
                   </dd>
                 </div>
                 <div>
                   <dt>Python</dt>
                   <dd className={toolStatusClass(firstRunToolchain?.pythonStatus, toolchainPending)}>
-                    {pythonStatusSummary(firstRunToolchain?.pythonStatus, toolchainPending)}
+                    {translate(pythonStatusSummary(firstRunToolchain?.pythonStatus, toolchainPending))}
                   </dd>
                 </div>
                 <div>
                   <dt>RDKit / Meeko</dt>
                   <dd className={preparationStatusClass(firstRunToolchain, toolchainPending)}>
-                    {preparationStatusSummary(firstRunToolchain, toolchainPending)}
+                    {translate(preparationStatusSummary(firstRunToolchain, toolchainPending))}
                   </dd>
                 </div>
               </dl>
             </RightRailSection>
 
-            <RightRailSection title="最近项目">
-              <p className="side-rail-muted">暂无最近项目</p>
+            <RightRailSection title={translate("最近项目")}>
+              <p className="side-rail-muted">{translate("暂无最近项目")}</p>
             </RightRailSection>
 
-            <RightRailSection title="快速帮助">
+            <RightRailSection title={translate("快速帮助")}>
               <div className="side-rail-help">
                 <p>
-                  <strong>已有 receptor.pdbqt 和 ligand.pdbqt？</strong>
-                  <span>选择“已有 PDBQT（直接使用）”。</span>
+                  <strong>{translate("已有 receptor.pdbqt 和 ligand.pdbqt？")}</strong>
+                  <span>{translate("选择“已有 PDBQT（直接使用）”。")}</span>
                 </p>
                 <p>
-                  <strong>只有 PDB 或 SDF？</strong>
-                  <span>选择“PDB/CIF + SDF/MOL（准备并转换）”。</span>
+                  <strong>{translate("只有 PDB 或 SDF？")}</strong>
+                  <span>{translate("选择“PDB/CIF + SDF/MOL（准备并转换）”。")}</span>
                 </p>
                 <p>
-                  <strong>已经有放在受体中的配体姿势？</strong>
-                  <span>使用姿势评分或局部优化入口。</span>
+                  <strong>{translate("已经有放在受体中的配体姿势？")}</strong>
+                  <span>{translate("使用姿势评分或局部优化入口。")}</span>
                 </p>
               </div>
             </RightRailSection>
@@ -785,18 +785,17 @@ export default function ProjectDashboardPage({
   return (
     <PageShell labelledBy="project-dashboard-title">
       <PageHero
-        eyebrow="项目总览"
-        title={project.project_name || "DockStart 项目"}
+        eyebrow={translate("项目总览")}
+        title={project.project_name || translate("DockStart 项目")}
         titleId="project-dashboard-title"
-        description={taskIntent === "dock"
+        description={translate(taskIntent === "dock"
           ? workflow?.next_recommended_action || taskCopy.heroDescription
-          : taskCopy.heroDescription}
+          : taskCopy.heroDescription)}
         actions={
           <ActionButton
             variant="primary"
             onClick={() => onNavigate(nextPage, { runId: nextRunId })}
-          >
-            继续：{taskCopy.stepperSteps[dashboardStepperIndex]}
+          >{translate("继续：")}{translate(taskCopy.stepperSteps[dashboardStepperIndex])}
           </ActionButton>
         }
       />
@@ -806,21 +805,19 @@ export default function ProjectDashboardPage({
           <div className="main-panel-content">
             <FilePathText value={project.project_dir} />
 
-            <div className="dashboard-utility-actions" role="group" aria-label="项目辅助操作">
+            <div className="dashboard-utility-actions" role="group" aria-label={translate("项目辅助操作")}>
               <ActionButton variant="text" onClick={() => void loadWorkflow()}>
-                {isBusy ? "刷新中..." : "刷新状态"}
+                {translate(isBusy ? "刷新中..." : "刷新状态")}
               </ActionButton>
-              <ActionButton variant="text" onClick={() => onNavigate("project-create")}>
-                新建其他项目
-              </ActionButton>
+              <ActionButton variant="text" onClick={() => onNavigate("project-create")}>{translate("新建其他项目")}</ActionButton>
             </div>
 
             <SectionCard
-              title="本次任务"
-              description="选择当前结构要执行的计算类型；切换任务不会把姿势评分解释为全局位点搜索。"
+              title={translate("本次任务")}
+              description={translate("选择当前结构要执行的计算类型；切换任务不会把姿势评分解释为全局位点搜索。")}
             >
-              <div className="project-task-switch" role="group" aria-label="切换运行任务类型">
-                {projectTaskOptions.map((option) => {
+              <div className="project-task-switch" role="group" aria-label={translate("切换运行任务类型")}>
+                {translate(projectTaskOptions.map((option) => {
                   const active = taskIntent === option.id;
                   return (
                     <button
@@ -832,31 +829,26 @@ export default function ProjectDashboardPage({
                       type="button"
                     >
                       <span>
-                        <strong>{option.label}</strong>
-                        <small>{option.description}</small>
+                        <strong>{translate(option.label)}</strong>
+                        <small>{translate(option.description)}</small>
                       </span>
                       <StatusBadge tone={active ? "ok" : "info"}>
-                        {active ? "当前任务" : taskSwitching === option.id ? "切换中" : "切换"}
+                        {translate(active ? "当前任务" : taskSwitching === option.id ? "切换中" : "切换")}
                       </StatusBadge>
                     </button>
                   );
-                })}
+                }))}
               </div>
               {taskIntent !== "dock" ? (
-                <p className="project-task-context-note">
-                  受体与配体应处在同一坐标系；{taskIntentLabel(taskIntent)}不会搜索新的结合位点。
-                </p>
+                <p className="project-task-context-note">{translate("受体与配体应处在同一坐标系；")}{translate(taskIntentLabel(taskIntent))}{translate("不会搜索新的结合位点。")}</p>
               ) : null}
               {taskSwitchBlockedByActiveRun ? (
-                <p className="project-task-context-note">
-                  当前 Vina 运行尚未结束。请先打开运行工作台等待完成或安全取消，再切换任务类型。
-                </p>
+                <p className="project-task-context-note">{translate("当前 Vina 运行尚未结束。请先打开运行工作台等待完成或安全取消，再切换任务类型。")}</p>
               ) : null}
             </SectionCard>
 
-            <section className="dashboard-progress-strip" aria-label={taskCopy.stepperLabel}>
-              <p className="first-run-stepper-status active">
-                第 {dashboardStepperIndex + 1} 步 / 共 4 步：{taskCopy.stepperSteps[dashboardStepperIndex]}
+            <section className="dashboard-progress-strip" aria-label={translate(taskCopy.stepperLabel)}>
+              <p className="first-run-stepper-status active">{translate("第 ")}{dashboardStepperIndex + 1}{translate(" 步 / 共 4 步：")}{translate(taskCopy.stepperSteps[dashboardStepperIndex])}
               </p>
               <DockingStepper
                 activeIndex={dashboardStepperIndex}
@@ -866,8 +858,8 @@ export default function ProjectDashboardPage({
             </section>
 
             <SectionCard
-              title="四阶段工作流"
-              description="依次确认结构、范围、运行记录和结果产物；状态异常时可直接进入对应阶段检查。"
+              title={translate("四阶段工作流")}
+              description={translate("依次确认结构、范围、运行记录和结果产物；状态异常时可直接进入对应阶段检查。")}
             >
               <div className="dashboard-timeline dashboard-stage-grid">
                 {rows.map((row) => row.substeps ? (
@@ -876,11 +868,11 @@ export default function ProjectDashboardPage({
                     key={row.title}
                   >
                     <div className="workflow-stage-summary">
-                      <span>{row.title}</span>
-                      <strong>{row.text}</strong>
-                      <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
+                      <span>{translate(row.title)}</span>
+                      <strong>{translate(row.text)}</strong>
+                      <StatusBadge tone={statusTone(row.state)}>{translate(row.state)}</StatusBadge>
                     </div>
-                    <div className="workflow-substeps" aria-label="结构准备子状态">
+                    <div className="workflow-substeps" aria-label={translate("结构准备子状态")}>
                       {row.substeps.map((substep) => (
                         <button
                           className="workflow-substep action-card"
@@ -888,9 +880,9 @@ export default function ProjectDashboardPage({
                           type="button"
                           onClick={() => onNavigate(substep.target)}
                         >
-                          <span>{substep.title}</span>
-                          <strong>{substep.text}</strong>
-                          <StatusBadge tone={statusTone(substep.state)}>{substep.state}</StatusBadge>
+                          <span>{translate(substep.title)}</span>
+                          <strong>{translate(substep.text)}</strong>
+                          <StatusBadge tone={statusTone(substep.state)}>{translate(substep.state)}</StatusBadge>
                         </button>
                       ))}
                     </div>
@@ -902,96 +894,96 @@ export default function ProjectDashboardPage({
                     type="button"
                     onClick={() => onNavigate(row.target, { runId: row.runId })}
                   >
-                    <span>{row.title}</span>
-                    <strong>{row.text}</strong>
-                    <StatusBadge tone={statusTone(row.state)}>{row.state}</StatusBadge>
+                    <span>{translate(row.title)}</span>
+                    <strong>{translate(row.text)}</strong>
+                    <StatusBadge tone={statusTone(row.state)}>{translate(row.state)}</StatusBadge>
                   </button>
                 ))}
               </div>
             </SectionCard>
 
-            <SectionCard title="项目产物">
+            <SectionCard title={translate("项目产物")}>
               <div className="compact-grid">
                 {artifacts.map((item) => (
                   <article className="file-card" key={item.label}>
-                    <span>{item.label}</span>
-                    <strong>{item.detail}</strong>
-                    <StatusBadge tone={statusTone(item.state)}>{item.state}</StatusBadge>
+                    <span>{translate(item.label)}</span>
+                    <strong>{translate(item.detail)}</strong>
+                    <StatusBadge tone={statusTone(item.state)}>{translate(item.state)}</StatusBadge>
                   </article>
                 ))}
               </div>
             </SectionCard>
 
-            <SectionCard title="风险提示">
+            <SectionCard title={translate("风险提示")}>
               <div className="two-column-grid">
                 <ScientificDisclaimer kind="score" />
                 <ScientificDisclaimer kind="preparation" />
               </div>
             </SectionCard>
 
-            <ErrorRecoveryPanel error={workflow?.error ?? null} message={errorMessage} rawError={rawError} />
+            <ErrorRecoveryPanel error={workflow?.error ?? null} message={translate(errorMessage)} rawError={rawError} />
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="项目事实">
+          <RightRailSection title={translate("项目事实")}>
             <dl className="mode-context-list">
               <div>
-                <dt>任务类型</dt>
-                <dd>{taskIntentLabel(taskIntent)}</dd>
+                <dt>{translate("任务类型")}</dt>
+                <dd>{translate(taskIntentLabel(taskIntent))}</dd>
               </div>
               <div>
-                <dt>计算协议</dt>
-                <dd>{isAd4Maps ? "AutoDock4 maps" : "AutoDock Vina"}</dd>
+                <dt>{translate("计算协议")}</dt>
+                <dd>{translate(isAd4Maps ? "AutoDock4 maps" : "AutoDock Vina")}</dd>
               </div>
               <div>
-                <dt>结构输入</dt>
+                <dt>{translate("结构输入")}</dt>
                 <dd>
-                  {fileReady(workflow?.prepared?.receptor) && fileReady(workflow?.prepared?.ligand)
+                  {translate(fileReady(workflow?.prepared?.receptor) && fileReady(workflow?.prepared?.ligand)
                     ? "受体 / 配体 PDBQT 已就绪"
-                    : "尚未完成结构准备"}
+                    : "尚未完成结构准备")}
                 </dd>
               </div>
               <div>
-                <dt>范围来源</dt>
+                <dt>{translate("范围来源")}</dt>
                 <dd>
-                  {isAd4Maps
+                  {translate(isAd4Maps
                     ? "AutoDock4 maps 网格"
                     : taskAutobox
                       ? "围绕输入姿势自动建立"
                       : workflow?.box?.status === "ok"
                         ? "项目 Box 已记录"
-                        : "项目 Box 尚未设置"}
+                        : "项目 Box 尚未设置")}
                 </dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="最近运行">
+          <RightRailSection title={translate("最近运行")}>
             <dl className="mode-context-list">
               <div>
-                <dt>运行记录</dt>
-                <dd>{currentTaskRun?.run_id ? String(currentTaskRun.run_id) : "尚未创建"}</dd>
+                <dt>{translate("运行记录")}</dt>
+                <dd>{currentTaskRun?.run_id ? String(currentTaskRun.run_id) : translate("尚未创建")}</dd>
               </div>
               <div>
-                <dt>状态</dt>
+                <dt>{translate("状态")}</dt>
                 <dd>
                   <StatusBadge tone={statusTone(runState(workflow, taskIntent))}>
-                    {runState(workflow, taskIntent)}
+                    {translate(runState(workflow, taskIntent))}
                   </StatusBadge>
                 </dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="需要注意">
+          <RightRailSection title={translate("需要注意")}>
             {taskSwitchBlockedByActiveRun ? (
-              <p>当前运行尚未结束；等待完成或安全取消后，才能切换任务类型。</p>
+              <p>{translate("当前运行尚未结束；等待完成或安全取消后，才能切换任务类型。")}</p>
             ) : null}
             <p>
-              {taskIntent === "dock"
+              {translate(taskIntent === "dock"
                 ? "Docking score 仅供结构结合趋势参考，不能替代实验验证。"
-                : "姿势评分与局部优化只适用于单个配体，且不会搜索新的结合位点。"}
+                : "姿势评分与局部优化只适用于单个配体，且不会搜索新的结合位点。")}
             </p>
           </RightRailSection>
         </RightRail>

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 export type WorkflowStepState = "not_started" | "available" | "warning" | "done" | "blocked" | "failed";
 
 export type WorkflowStep = {
@@ -24,16 +26,17 @@ const statusLabel: Record<WorkflowStepState, string> = {
 };
 
 export default function WorkflowStepper({ steps, compact = false, onAction }: WorkflowStepperProps) {
+  useLanguage();
   return (
     <ol className={compact ? "workflow-stepper compact" : "workflow-stepper"}>
       {steps.map((step) => (
         <li className={`workflow-step workflow-${step.status}`} key={step.title}>
-          <span>{statusLabel[step.status]}</span>
-          <strong>{step.title}</strong>
-          {!compact ? <p>{step.description}</p> : null}
+          <span>{translate(statusLabel[step.status])}</span>
+          <strong>{translate(step.title)}</strong>
+          {!compact ? <p>{translate(step.description)}</p> : null}
           {!compact && step.actionLabel && onAction ? (
             <button className="text-button inline" type="button" onClick={() => onAction(step)}>
-              {step.actionLabel}
+              {translate(step.actionLabel)}
             </button>
           ) : null}
         </li>

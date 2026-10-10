@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { initializeLanguage } from "./i18n/language";
 import { applyAppearanceState, readAppearanceState } from "./utils/themePreference";
 import "./styles/tokens.css";
 import "./styles.css";
@@ -16,8 +17,10 @@ import "./styles/multiple-ligand-docking.css";
 import "./styles/screening-archive-comparison.css";
 import "./styles/help-center.css";
 import "./styles/settings.css";
+import "./styles/language-switcher.css";
 
 applyAppearanceState(readAppearanceState());
+initializeLanguage();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

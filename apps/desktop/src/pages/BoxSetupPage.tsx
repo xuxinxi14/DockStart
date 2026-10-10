@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
@@ -66,6 +68,7 @@ export default function BoxSetupPage({
   onProjectChange,
   onOpenVinaParams,
 }: BoxSetupPageProps) {
+  useLanguage();
   const [project, setProject] = useState<DockStartProject>(initialProject);
   const [boxForm, setBoxForm] = useState<BoxFormState>(() => boxToForm(initialProject));
   const [message, setMessage] = useState("");
@@ -145,12 +148,12 @@ export default function BoxSetupPage({
   return (
     <PageShell labelledBy="box-setup-title">
       <PageHero
-        eyebrow="工作流 3"
-        title="设置搜索范围"
+        eyebrow={translate("工作流 3")}
+        title={translate("设置搜索范围")}
         titleId="box-setup-title"
-        description="编辑 docking box 的中心和尺寸，单位为 Å。"
+        description={translate("编辑 docking box 的中心和尺寸，单位为 Å。")}
         actions={
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>{translate("返回")}</ActionButton>
         }
       />
 
@@ -159,28 +162,28 @@ export default function BoxSetupPage({
           <div className="main-panel-content">
             <div className="status-strip">
               <article className="metric-card">
-                <span>受体 PDBQT</span>
-                <strong>{project.receptor.file || "未导入"}</strong>
-                <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
+                <span>{translate("受体 PDBQT")}</span>
+                <strong>{project.receptor.file || translate("未导入")}</strong>
+                <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? translate("已完成") : translate("缺失")}</StatusBadge>
               </article>
               <article className="metric-card">
-                <span>配体 PDBQT</span>
-                <strong>{project.ligand.file || "未导入"}</strong>
-                <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
+                <span>{translate("配体 PDBQT")}</span>
+                <strong>{project.ligand.file || translate("未导入")}</strong>
+                <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? translate("已完成") : translate("缺失")}</StatusBadge>
               </article>
             </div>
 
-            {!hasPreparedFiles(project) ? (
-              <WarningCallout title="输入文件缺失">
-                <p>可以先保存搜索范围，但运行对接前需要补全受体和配体 PDBQT。</p>
+            {translate(!hasPreparedFiles(project) ? (
+              <WarningCallout title={translate("输入文件缺失")}>
+                <p>{translate("可以先保存搜索范围，但运行对接前需要补全受体和配体 PDBQT。")}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
-            <SectionCard title="Box 参数">
+            <SectionCard title={translate("Box 参数")}>
               <div className="box-form">
                 {boxFields.map((field) => (
                   <label className="box-field" key={field.key}>
-                    <span>{field.label}</span>
+                    <span>{translate(field.label)}</span>
                     <input
                       type="text"
                       value={boxForm[field.key]}
@@ -191,30 +194,28 @@ export default function BoxSetupPage({
                 ))}
               </div>
               <div className="button-row end">
-                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadBox()}>重新加载</ActionButton>
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadBox()}>{translate("重新加载")}</ActionButton>
                 <ActionButton variant="primary" disabled={isBusy} onClick={() => void saveBox()}>
-                  {isBusy ? "保存中..." : "保存搜索范围"}
+                  {translate(isBusy ? "保存中..." : "保存搜索范围")}
                 </ActionButton>
               </div>
             </SectionCard>
 
             <div className="next-step-strip">
               <div>
-                <strong>{canOpenVinaParams ? "下一步：设置 Vina 参数" : "保存后继续设置 Vina 参数"}</strong>
-                <p>Box 是搜索空间，不等于真实结合位点。</p>
+                <strong>{translate(canOpenVinaParams ? "下一步：设置 Vina 参数" : "保存后继续设置 Vina 参数")}</strong>
+                <p>{translate("Box 是搜索空间，不等于真实结合位点。")}</p>
               </div>
-              <ActionButton variant="primary" disabled={!canOpenVinaParams} onClick={() => onOpenVinaParams(project)}>
-                进入 Vina 参数
-              </ActionButton>
+              <ActionButton variant="primary" disabled={!canOpenVinaParams} onClick={() => onOpenVinaParams(project)}>{translate("进入 Vina 参数")}</ActionButton>
             </div>
 
-            {warnings.map((warning) => (
-              <WarningCallout key={warning} title="搜索范围提示">
-                <p>{warning}</p>
+            {translate(warnings.map((warning) => (
+              <WarningCallout key={warning} title={translate("搜索范围提示")}>
+                <p>{translate(warning)}</p>
               </WarningCallout>
-            ))}
+            )))}
 
-            {message ? <p className="message-line">{message}</p> : null}
+            {message ? <p className="message-line">{translate(message)}</p> : null}
             {rawError ? (
               <AdvancedDetails>
                 <pre>{rawError}</pre>
@@ -224,34 +225,34 @@ export default function BoxSetupPage({
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="输入状态">
+          <RightRailSection title={translate("输入状态")}>
             <dl className="mode-context-list">
               <div>
-                <dt>受体</dt>
-                <dd>{project.receptor.file ? "已导入" : "缺失"}</dd>
+                <dt>{translate("受体")}</dt>
+                <dd>{project.receptor.file ? translate("已导入") : translate("缺失")}</dd>
               </div>
               <div>
-                <dt>配体</dt>
-                <dd>{project.ligand.file ? "已导入" : "缺失"}</dd>
+                <dt>{translate("配体")}</dt>
+                <dd>{project.ligand.file ? translate("已导入") : translate("缺失")}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="搜索范围">
+          <RightRailSection title={translate("搜索范围")}>
             <dl className="mode-context-list">
               <div>
-                <dt>中心</dt>
+                <dt>{translate("中心")}</dt>
                 <dd>{project.box.center_x}, {project.box.center_y}, {project.box.center_z}</dd>
               </div>
               <div>
-                <dt>尺寸</dt>
+                <dt>{translate("尺寸")}</dt>
                 <dd>{project.box.size_x}, {project.box.size_y}, {project.box.size_z}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="下一步">
-            <p>{canOpenVinaParams ? "进入 Vina 参数设置。" : "保存搜索范围后继续。"}</p>
+          <RightRailSection title={translate("下一步")}>
+            <p>{translate(canOpenVinaParams ? "进入 Vina 参数设置。" : "保存搜索范围后继续。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

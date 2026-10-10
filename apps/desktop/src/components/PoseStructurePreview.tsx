@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -16,6 +18,9 @@ import type {
   ViewerStructureResult,
 } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
+import ReceptorTransparencyControl from "./ReceptorTransparencyControl";
+import { DEFAULT_RECEPTOR_TRANSPARENCY, DEFAULT_REPORT_RECEPTOR_TRANSPARENCY, normalizeReceptorTransparency, receptorOpacity, workspaceReceptorStyle } from "./receptorTransparency";
+import { reportLigandStyle, reportPocketAtomIndices, reportPocketStyle, reportReceptorStyle } from "./reportPoseStyle";
 import {
   load3Dmol,
   structureFingerprint,
@@ -37,6 +42,8 @@ type PoseStructurePreviewProps = {
   refreshKey?: number;
   className?: string;
   compact?: boolean;
+  presentation?: "workspace" | "report";
+  receptorTransparency?: number;
 };
 
 type ModelRecord = {
@@ -83,7 +90,11 @@ export default function PoseStructurePreview({
   refreshKey = 0,
   className = "",
   compact = false,
+  presentation = "workspace",
+  receptorTransparency,
 }: PoseStructurePreviewProps) {
+  useLanguage();
+  const isReportFigure = presentation === "report";
   const isLocalPosePair = localPoseView !== undefined;
   const isScreeningPose = Boolean(screeningItemId);
   const sourceIdentity = isScreeningPose
@@ -119,6 +130,11 @@ export default function PoseStructurePreview({
   const [showReceptor, setShowReceptor] = useState(true);
   const [showPose, setShowPose] = useState(true);
   const [showAxes, setShowAxes] = useState(!compact);
+  const [transparency, setTransparency] = useState(isReportFigure ? DEFAULT_REPORT_RECEPTOR_TRANSPARENCY : DEFAULT_RECEPTOR_TRANSPARENCY);
+  const effectiveTransparency = normalizeReceptorTransparency(receptorTransparency ?? transparency);
+  const opacity = receptorOpacity(effectiveTransparency);
+  const opacityRef = useRef(opacity);
+  opacityRef.current = opacity;
 
   const showInputPose = localPoseView === "input" || localPoseView === "overlay";
   const showOptimizedPose = localPoseView === "optimized" || localPoseView === "overlay";
@@ -134,13 +150,16 @@ export default function PoseStructurePreview({
       const container = containerRef.current;
       viewerInitRef.current = load3Dmol().then(($3Dmol) => {
         if (!container.isConnected) return null;
-        const background = getComputedStyle(document.documentElement).getPropertyValue("--ds-viewer-bg").trim();
-        viewerRef.current = $3Dmol.createViewer(container, { backgroundColor: background || "#061c31" });
+        const background = getComputedStyle(document.documentElement).getPropertyValue(isReportFigure ? "--ds-report-figure-bg" : "--ds-viewer-bg").trim();
+        viewerRef.current = $3Dmol.createViewer(container, {
+          backgroundColor: background || "#061c31",
+          ...(isReportFigure ? { antialias: true, upscale: true, orthographic: true, disableFog: true } : {}),
+        });
         return viewerRef.current;
       });
     }
     return viewerInitRef.current;
-  }, []);
+  }, [isReportFigure]);
 
   const replaceModel = useCallback((
     viewer: ThreeDmolViewer,
@@ -163,21 +182,53 @@ export default function PoseStructurePreview({
     return { fingerprint, model };
   }, []);
 
+  const applyReceptorStyle = useCallback((currentOpacity: number) => {
+    const receptorModel = receptorModelRef.current?.model;
+    if (isReportFigure) {
+      const color = getComputedStyle(document.documentElement).getPropertyValue("--ds-report-receptor-color").trim();
+      receptorModel?.setStyle({}, reportReceptorStyle(color, currentOpacity));
+      const ligandModel = poseModelRef.current?.model;
+      if (receptorModel && ligandModel) {
+        const indices = reportPocketAtomIndices(receptorModel.selectedAtoms({}), ligandModel.selectedAtoms({}));
+        if (indices.length) receptorModel.setStyle({ index: indices }, reportPocketStyle(color, currentOpacity), true);
+      }
+    } else {
+      receptorModel?.setStyle({}, workspaceReceptorStyle(currentOpacity));
+    }
+    if (showReceptor && currentOpacity > 0) receptorModel?.show();
+    else receptorModel?.hide();
+    for (const [record, visible, radius, colorscheme] of [
+      [inputFlexModelRef.current, showInputPose, 0.14, "cyanCarbon"],
+      [optimizedFlexModelRef.current, showOptimizedPose, 0.2, "orangeCarbon"],
+    ] as const) {
+      record?.model.setStyle({}, { stick: { radius, colorscheme, opacity: currentOpacity } });
+      if (showReceptor && visible && currentOpacity > 0) record?.model.show();
+      else record?.model.hide();
+    }
+  }, [isReportFigure, showInputPose, showOptimizedPose, showReceptor]);
+
+  useEffect(() => {
+    // Coalesce dragging updates without reloading models or refocusing the camera.
+    const frame = requestAnimationFrame(() => {
+      applyReceptorStyle(opacity);
+      viewerRef.current?.render();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [applyReceptorStyle, opacity]);
+
   const renderScene = useCallback(async (fit = false) => {
     const sceneGeneration = sceneGenerationRef.current;
     const viewer = await ensureViewer();
     if (!viewer || sceneGeneration !== sceneGenerationRef.current) return;
     const previousView = fit ? null : (viewer as unknown as { getView?: () => unknown }).getView?.();
+    const receptorColor = getComputedStyle(document.documentElement).getPropertyValue("--ds-report-receptor-color").trim();
 
     receptorModelRef.current = replaceModel(
       viewer,
       receptorModelRef.current,
       sceneReceptor,
-      `${sceneReceptor?.relative_path || ""}:${refreshKey}`,
-      {
-        cartoon: { color: "spectrum", opacity: 0.74 },
-        stick: { radius: 0.1, colorscheme: "Jmol" },
-      },
+      `${presentation}:${sceneReceptor?.relative_path || ""}:${refreshKey}`,
+      isReportFigure ? reportReceptorStyle(receptorColor, opacityRef.current) : workspaceReceptorStyle(opacityRef.current),
     );
     if (showReceptor) receptorModelRef.current?.model.show();
     else receptorModelRef.current?.model.hide();
@@ -233,8 +284,8 @@ export default function PoseStructurePreview({
         viewer,
         poseModelRef.current,
         matchingPose,
-        `${sourceIdentity}:${mode}:${poseKind || "default"}:${pose?.relative_path || ""}:${refreshKey}`,
-        {
+        `${presentation}:${sourceIdentity}:${mode}:${poseKind || "default"}:${pose?.relative_path || ""}:${refreshKey}`,
+        isReportFigure ? reportLigandStyle() : {
           stick: { radius: 0.25, colorscheme: "greenCarbon" },
           sphere: { scale: 0.22 },
         },
@@ -242,6 +293,14 @@ export default function PoseStructurePreview({
       if (showPose) poseModelRef.current?.model.show();
       else poseModelRef.current?.model.hide();
     }
+
+    if (isReportFigure) {
+      const ligandModel = poseModelRef.current?.model;
+      // No whole-receptor sticks or invented contact lines: keep only a faint
+      // local geometric context, with the ligand fully opaque in front.
+      ligandModel?.setStyle({ predicate: atom => ["H", "D"].includes(atom.elem || "") }, {});
+    }
+    applyReceptorStyle(opacityRef.current);
 
     viewer.removeAllShapes();
     viewer.removeAllLabels();
@@ -251,13 +310,17 @@ export default function PoseStructurePreview({
       (viewer as unknown as { setView?: (view: unknown) => void }).setView?.(previousView);
     } else if (compact && poseModelRef.current) {
       viewer.zoomTo({ model: poseModelRef.current.model } as never);
+      if (isReportFigure) viewer.zoom(1.35);
     } else {
       viewer.zoomTo();
     }
     viewer.render();
   }, [
+    applyReceptorStyle,
     ensureViewer,
     compact,
+    isReportFigure,
+    presentation,
     isLocalPosePair,
     localPair,
     mode,
@@ -632,99 +695,103 @@ export default function PoseStructurePreview({
 
   return (
     <div
-      className={`run-preview pose-structure-preview ${compact ? "is-compact" : ""} ${className}`.trim()}
-      aria-label="构象 3D 预览"
+      className={`run-preview pose-structure-preview ${compact ? "is-compact" : ""} ${isReportFigure ? "is-report-figure" : ""} ${className}`.trim()}
+      aria-label={translate("构象 3D 预览")}
       aria-busy={isBusy}
     >
-      {!compact ? <div className="run-preview-toolbar" aria-label="3D 视图工具">
-        <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大">
+      {translate(!compact ? <div className="run-preview-toolbar" aria-label={translate("3D 视图工具")}>
+        <button type="button" onClick={() => zoom(1.18)} title={translate("放大")} aria-label={translate("放大")}>
           <MagnifyingGlassPlus size={18} />
         </button>
-        <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小">
+        <button type="button" onClick={() => zoom(0.84)} title={translate("缩小")} aria-label={translate("缩小")}>
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={() => void renderScene(true)} title="适应窗口" aria-label="适应窗口">
+        <button type="button" onClick={() => void renderScene(true)} title={translate("适应窗口")} aria-label={translate("适应窗口")}>
           <ArrowsOut size={18} />
         </button>
-        <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label="旋转">
+        <button type="button" onClick={toggleSpin} title={translate(isSpinning ? "停止旋转" : "自动旋转")} aria-label={translate("旋转")}>
           {isSpinning ? <Pause size={18} /> : <Play size={18} />}
         </button>
         <button
           type="button"
           className={showAxes ? "is-active" : ""}
           onClick={() => setShowAxes((current) => !current)}
-          title={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
-          aria-label={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
+          title={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
+          aria-label={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
           aria-pressed={showAxes}
         >
           <Crosshair size={18} />
         </button>
-      </div> : null}
+      </div> : null)}
+      {!compact ? (
+        <div className="pose-transparency-controls">
+          <ReceptorTransparencyControl
+            value={effectiveTransparency}
+            defaultValue={DEFAULT_RECEPTOR_TRANSPARENCY}
+            onChange={setTransparency}
+            disabled={!sceneReceptor?.ok || !showReceptor}
+          />
+        </div>
+      ) : null}
       <div
-        aria-label={canvasLabel}
+        aria-label={translate(canvasLabel)}
         className="run-preview-canvas"
         style={{ height: "100%" }}
         ref={containerRef}
         role="img"
         tabIndex={0}
       />
-      {!compact ? <div className="run-preview-legend">
+      {translate(!compact ? <div className="run-preview-legend">
         <button
           type="button"
           className={`legend-toggle-btn ${showReceptor ? "is-active" : "is-inactive"}`}
           onClick={() => setShowReceptor(!showReceptor)}
-          title={showReceptor ? "隐藏受体" : "显示受体"}
+          title={translate(showReceptor ? "隐藏受体" : "显示受体")}
           aria-pressed={showReceptor}
         >
-          <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-          受体
-        </button>
-        {isLocalPosePair ? (
+          <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />{translate("受体")}</button>
+        {translate(isLocalPosePair ? (
           <>
             <button
               type="button"
               className={`legend-toggle-btn ${showInputPose ? "is-active" : "is-inactive"}`}
               onClick={() => toggleLocalPose("input")}
-              title={showInputPose ? "隐藏输入姿势" : "显示输入姿势"}
+              title={translate(showInputPose ? "隐藏输入姿势" : "显示输入姿势")}
               aria-pressed={showInputPose}
             >
-              <i className={`run-preview-dot input-pose ${showInputPose ? "" : "muted"}`} />
-              输入姿势
-            </button>
+              <i className={`run-preview-dot input-pose ${showInputPose ? "" : "muted"}`} />{translate("输入姿势")}</button>
             <button
               type="button"
               className={`legend-toggle-btn ${showOptimizedPose ? "is-active" : "is-inactive"}`}
               onClick={() => toggleLocalPose("optimized")}
-              title={showOptimizedPose ? "隐藏优化后姿势" : "显示优化后姿势"}
+              title={translate(showOptimizedPose ? "隐藏优化后姿势" : "显示优化后姿势")}
               aria-pressed={showOptimizedPose}
             >
-              <i className={`run-preview-dot optimized-pose ${showOptimizedPose ? "" : "muted"}`} />
-              优化后姿势
-            </button>
+              <i className={`run-preview-dot optimized-pose ${showOptimizedPose ? "" : "muted"}`} />{translate("优化后姿势")}</button>
           </>
         ) : (
           <button
             type="button"
             className={`legend-toggle-btn ${showPose ? "is-active" : "is-inactive"}`}
             onClick={() => setShowPose(!showPose)}
-            title={showPose ? "隐藏构象" : "显示构象"}
+            title={translate(showPose ? "隐藏构象" : "显示构象")}
             aria-pressed={showPose}
           >
             <i className={`run-preview-dot ligand ${showPose ? "" : "muted"}`} />
-            {displayPoseLabel}
+            {translate(displayPoseLabel)}
           </button>
-        )}
+        ))}
         <strong
           aria-live={messageTone === "error" ? "assertive" : "polite"}
           role={messageTone === "error" ? "alert" : "status"}
         >
-          {message}
+          {translate(message)}
         </strong>
       </div> : isBusy || messageTone === "error" ? (
         <div className={`pose-preview-compact-status ${messageTone}`} role={messageTone === "error" ? "alert" : "status"}>
-          {message}
+          {translate(message)}
         </div>
-      ) : null}
+      ) : null)}
     </div>
   );
 }

@@ -1765,6 +1765,66 @@
   text-align: right;
 }
 
+.pose-transparency-controls {
+  position: absolute;
+  z-index: 3;
+  top: 14px;
+  right: 14px;
+  width: min(264px, calc(100% - 84px));
+  border: 1px solid var(--ds-viewer-border-default);
+  border-radius: var(--ds-radius-md);
+  background: var(--ds-viewer-bg-raised);
+  padding: 8px 10px;
+  color: var(--ds-viewer-text-secondary);
+}
+
+.receptor-transparency-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+.receptor-transparency-control label { font-weight: 600; }
+.receptor-transparency-control output { font-variant-numeric: tabular-nums; }
+.receptor-transparency-control input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ds-brand);
+  cursor: pointer;
+}
+.pose-transparency-controls input[type="range"] { accent-color: var(--ds-viewer-brand); }
+.receptor-transparency-control button {
+  min-height: 26px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  padding: 2px 6px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.receptor-transparency-control button:hover:not(:disabled) { background: var(--ds-surface-hover); }
+.receptor-transparency-control :disabled { cursor: not-allowed; opacity: 0.55; }
+.receptor-transparency-control :focus-visible { outline: 2px solid var(--ds-focus-outline); outline-offset: 2px; }
+
+.report-body-grid.is-context-collapsed { grid-template-columns: minmax(0, 1fr); }
+.report-run-context { min-width: 0; }
+.report-run-context[hidden] { display: none; }
+.report-pose-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-bottom: 14px;
+  color: var(--ds-text-secondary);
+}
+.report-pose-controls .receptor-transparency-control { width: min(100%, 320px); }
+.report-pose-controls > span { font-size: 12px; }
+
 .result-local-geometry {
   display: grid;
   gap: 0;
@@ -1774,6 +1834,31 @@
 
 .report-pose-gallery-section {
   min-width: 0;
+}
+
+.report-language-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+.report-action-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.report-action-strip > .button-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.report-language-picker select {
+  width: auto;
+  min-width: 135px;
+  height: 36px;
 }
 
 .report-pose-gallery {
@@ -1810,7 +1895,7 @@
 }
 
 .report-pose-card > header span {
-  color: var(--ds-brand);
+  color: var(--ds-accent);
   font-family: var(--ds-font-mono);
   font-size: 12px;
   font-weight: 700;
@@ -1838,6 +1923,21 @@
   place-items: center;
   color: var(--ds-viewer-text-muted);
   font-size: 12px;
+}
+
+.report-pose-card .pose-structure-preview.is-report-figure {
+  height: 320px;
+  min-height: 320px;
+  background: var(--ds-report-figure-bg);
+}
+
+.is-report-figure .run-preview-canvas {
+  min-height: 0;
+}
+
+.is-report-figure .pose-preview-compact-status {
+  color: var(--ds-report-figure-text);
+  background: var(--ds-report-figure-bg);
 }
 
 .pose-preview-compact-status {

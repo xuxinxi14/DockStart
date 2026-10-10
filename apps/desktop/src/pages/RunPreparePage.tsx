@@ -1,3 +1,7 @@
+import { getLocale } from "../i18n/language";
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLanguage } from "../i18n/language";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -18,6 +22,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import ActionButton from "../components/ActionButton";
+
 import AdvancedDetails from "../components/AdvancedDetails";
 import AutoGridMapsPanel from "../components/AutoGridMapsPanel";
 import BatchScreeningPanel from "../components/BatchScreeningPanel";
@@ -232,7 +237,7 @@ function formatTime(value: string): string {
   if (!value) return "未记录";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(getLocale(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -324,6 +329,7 @@ export default function RunPreparePage({
   onOpenResultPage,
   onNavigate,
 }: RunPreparePageProps) {
+  useLanguage();
   const [project, setProject] = useState(initialProject);
   const [boxForm, setBoxForm] = useState<BoxForm>(() => boxToForm(initialProject));
   const [vinaForm, setVinaForm] = useState<VinaForm>(() => vinaToForm(initialProject));
@@ -1001,6 +1007,7 @@ export default function RunPreparePage({
       const reportPayload = await invoke<string>("export_markdown_report", {
         projectDir: analyzedProject.project_dir,
         runId,
+        reportLanguage: getLanguage(),
       });
       const reportResponse = parseProjectResponse(reportPayload);
       if (!reportResponse.ok) throw new Error(reportResponse.error?.message ?? "实验记录导出失败。");
@@ -1113,9 +1120,9 @@ export default function RunPreparePage({
     <section className={`run-cockpit-page is-${workspaceMode}-mode`} aria-labelledby="run-cockpit-title">
       <header className="run-cockpit-header">
         <div>
-          <span>VINA 运行工作台 · VINA RUN CONSOLE</span>
+          <span>{translate("VINA 运行工作台 · VINA RUN CONSOLE")}</span>
           <h1 id="run-cockpit-title">
-            {workspaceMode === "batch"
+            {translate(workspaceMode === "batch"
               ? "串行批量筛选"
               : workspaceMode === "simultaneous"
                 ? "多配体共同对接"
@@ -1123,9 +1130,9 @@ export default function RunPreparePage({
                 ? "当前姿势评分"
                 : runMode === "local_only"
                   ? "当前姿势局部优化"
-                  : "搜索范围与运行"}
+                  : "搜索范围与运行")}
           </h1>
-          <p>{workspaceMode === "batch"
+          <p>{translate(workspaceMode === "batch"
             ? "检查共享受体，设置统一 Box 与 Vina 参数，然后创建逐个运行、可恢复的配体队列。"
             : workspaceMode === "simultaneous"
               ? "选择两个配体，让它们在同一次 Vina 全局搜索中共同优化并输出联合构象。"
@@ -1135,11 +1142,11 @@ export default function RunPreparePage({
                 ? "在输入姿势附近进行局部优化，并保存优化后的单个 PDBQT。"
                 : isAd4Maps
                   ? "复核网格范围与 AutoDock4 maps，检查运行条件并开始本地对接。"
-                  : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。"}</p>
+                  : "可视化设置搜索范围与 Vina 参数，检查运行条件并开始本地对接。")}</p>
         </div>
         <div className="run-cockpit-header-actions">
           <StatusBadge tone={preflight?.ready && !isDirty ? "ok" : preflight ? "warning" : "muted"}>
-            {isDirty
+            {translate(isDirty
               ? "参数待保存"
               : preflight?.ready
                 ? workspaceMode === "batch"
@@ -1148,92 +1155,89 @@ export default function RunPreparePage({
                     ? multipleLigandIssues.length
                       ? "共同对接不可用"
                       : "可选择两个成员"
-                    : `可开始${vinaRunModeLabels[runMode]}`
+                    : translate("可开始{0}", [translate(vinaRunModeLabels[runMode])])
                 : preflight
                   ? `${preflight.blockers.length} 个阻塞项`
-                  : "检查中"}
+                  : "检查中")}
           </StatusBadge>
-          <ActionButton variant="text" onClick={onBack}>返回格式转换</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>{translate("返回格式转换")}</ActionButton>
+
         </div>
       </header>
 
-      <nav className="run-workspace-mode" aria-label="配体运行模式">
-        <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>单配体任务</button>
+      <nav className="run-workspace-mode" aria-label={translate("配体运行模式")}>
+        <button type="button" className={workspaceMode === "single" ? "active" : ""} aria-pressed={workspaceMode === "single"} onClick={() => selectWorkspaceMode("single")}>{translate("单配体任务")}</button>
         <button
           type="button"
           className={workspaceMode === "batch" ? "active" : ""}
           aria-pressed={workspaceMode === "batch"}
           disabled={(isAd4Maps && !isStandardAd4Maps) || isEvaluationMode}
           title={
-            isAd4Maps && !isStandardAd4Maps
+            translate(isAd4Maps && !isStandardAd4Maps
               ? "串行批量 AD4 仅支持标准 AutoDock4 maps，不支持 AD4Zn 或水合协议"
               : isEvaluationMode
                 ? "串行批量筛选仅支持全局对接"
-                : undefined
+                : undefined)
           }
           onClick={() => selectWorkspaceMode("batch")}
-        >
-          串行批量筛选
-        </button>
+        >{translate("串行批量筛选")}</button>
         <button
           type="button"
           className={workspaceMode === "simultaneous" ? "active" : ""}
           aria-pressed={workspaceMode === "simultaneous"}
           disabled={multipleLigandIssues.length > 0 && workspaceMode !== "simultaneous"}
-          title={multipleLigandIssues.length ? multipleLigandIssues.join("；") : undefined}
+          title={translate(multipleLigandIssues.length ? multipleLigandIssues.join("；") : undefined)}
           onClick={() => selectWorkspaceMode("simultaneous")}
-        >
-          多配体共同对接 <small>实验性</small>
+        >{translate("多配体共同对接 ")}<small>{translate("实验性")}</small>
         </button>
       </nav>
       {multipleLigandIssues.length && workspaceMode !== "simultaneous" ? (
-        <p className="run-workspace-mode-availability" role="status">
-          多配体共同对接暂不可用：{multipleLigandIssues.join("；")}。
+        <p className="run-workspace-mode-availability" role="status">{translate("多配体共同对接暂不可用：")}{translate(multipleLigandIssues.join("；"))}。
         </p>
       ) : null}
 
-      {workspaceMode === "single" ? (
-        <nav className="run-task-mode-switch" aria-label="Vina 任务类型">
-          {(Object.keys(vinaRunModeLabels) as VinaRunMode[]).map((mode) => (
+      {translate(workspaceMode === "single" ? (
+        <nav className="run-task-mode-switch" aria-label={translate("Vina 任务类型")}>
+          {translate((Object.keys(vinaRunModeLabels) as VinaRunMode[]).map((mode) => (
             <button
               key={mode}
               type="button"
               className={runMode === mode ? "active" : ""}
               aria-pressed={runMode === mode}
               disabled={isBusy || activeRunBlocked}
-              title={activeRunBlocked ? "当前 Vina 运行尚未结束，不能切换任务类型" : undefined}
+              title={translate(activeRunBlocked ? "当前 Vina 运行尚未结束，不能切换任务类型" : undefined)}
               onClick={() => selectRunMode(mode)}
             >
-              <strong>{vinaRunModeLabels[mode]}</strong>
+              <strong>{translate(vinaRunModeLabels[mode])}</strong>
               <span>
-                {mode === "dock"
+                {translate(mode === "dock"
                   ? "搜索并输出多个候选构象"
                   : mode === "score_only"
                     ? "评价输入姿势，不生成新构象"
-                    : "优化输入姿势并输出单个构象"}
+                    : "优化输入姿势并输出单个构象")}
               </span>
             </button>
-          ))}
+          )))}
         </nav>
-      ) : null}
+      ) : null)}
 
       <div className="run-cockpit-layout">
         <main className="run-cockpit-main">
           <section className="run-cockpit-card run-preview-card">
             <div className="run-cockpit-section-heading">
               <div>
-                <span className="run-cockpit-kicker">结构复核</span>
+                <span className="run-cockpit-kicker">{translate("结构复核")}</span>
                 <h2>
-                  {isEvaluationMode
+                  {translate(isEvaluationMode
                     ? "受体与当前配体姿势"
                     : workspaceMode === "simultaneous"
                       ? "受体、参考配体与搜索范围"
-                      : "受体、配体与搜索范围"}
+                      : "受体、配体与搜索范围")}
                 </h2>
               </div>
             </div>
             <div className="run-preview-grid">
-              <Suspense fallback={<div className="run-preview run-preview-loading"><SpinnerGap className="run-monitor-spinner" size={24} /><span>正在加载 3D 复核视图…</span></div>}>
+              <Suspense fallback={<div className="run-preview run-preview-loading"><SpinnerGap className="run-monitor-spinner" size={24} /><span>{translate("正在加载 3D 复核视图…")}</span></div>}>
                 <RunStructurePreview
                   projectDir={project.project_dir}
                   box={displayBox}
@@ -1281,9 +1285,11 @@ export default function RunPreparePage({
                       onCenterOnReceptor={centerBoxOnReceptor}
                       onReset={resetBoxToInitial}
                     />
+
                   )}
                 />
               </Suspense>
+
               <RunBoxInspector
                 boxForm={boxForm}
                 volume={volume}
@@ -1306,7 +1312,7 @@ export default function RunPreparePage({
             </div>
           </section>
 
-          {workspaceMode === "single" ? (
+          {translate(workspaceMode === "single" ? (
             <AutoGridMapsPanel
               project={project}
               disabled={isBusy || isDirty || activeRunBlocked}
@@ -1326,9 +1332,9 @@ export default function RunPreparePage({
                 void refreshPreflight(true);
               }}
             />
-          ) : null}
+          ) : null)}
 
-          {workspaceMode === "single" && isEvaluationMode ? (
+          {translate(workspaceMode === "single" && isEvaluationMode ? (
             <section
               className={`run-pose-attestation ${poseInputConfirmed ? "is-confirmed" : "is-required"}`}
               aria-labelledby="pose-input-attestation-title"
@@ -1340,25 +1346,22 @@ export default function RunPreparePage({
               </div>
               <div className="run-pose-attestation-copy">
                 <div>
-                  <h2 id="pose-input-attestation-title">确认输入姿势</h2>
+                  <h2 id="pose-input-attestation-title">{translate("确认输入姿势")}</h2>
                   <StatusBadge tone={poseInputConfirmed ? "ok" : "warning"}>
-                    {poseInputConfirmed ? "用户已确认" : "运行前需要确认"}
+                    {translate(poseInputConfirmed ? "用户已确认" : "运行前需要确认")}
                   </StatusBadge>
                 </div>
-                <p>
-                  请在上方 3D 视图中确认配体已经位于受体中的待评价位置，并与受体使用同一坐标系。
-                  DockStart 只记录你的确认，不会把几何显示当作科学验证。
-                </p>
+                <p>{translate("请在上方 3D 视图中确认配体已经位于受体中的待评价位置，并与受体使用同一坐标系。 DockStart 只记录你的确认，不会把几何显示当作科学验证。")}</p>
                 <small>
-                  {poseInputConfirmed
+                  {translate(poseInputConfirmed
                     ? `确认时间 ${formatTime(poseInputAttestation?.confirmed_at ?? "")} · 记录已绑定当前${attestedFlexSha256 ? "运行受体、柔性侧链与配体" : "受体与配体"} SHA256`
-                    : poseInputAttestation?.message || `确认会绑定当前${receptorMode === "flexible" ? "运行受体、柔性侧链与配体" : "受体与配体"} PDBQT 的 SHA256；重新导入或替换任一文件后自动失效。`}
+                    : poseInputAttestation?.message || `确认会绑定当前${receptorMode === "flexible" ? "运行受体、柔性侧链与配体" : "受体与配体"} PDBQT 的 SHA256；重新导入或替换任一文件后自动失效。`)}
                 </small>
                 {attestedReceptorSha256 && attestedLigandSha256 ? (
                   <dl className="run-pose-attestation-hashes">
-                    <div><dt>运行受体</dt><dd>{attestedReceptorSha256.slice(0, 12)}…</dd></div>
-                    {attestedFlexSha256 ? <div><dt>柔性侧链</dt><dd>{attestedFlexSha256.slice(0, 12)}…</dd></div> : null}
-                    <div><dt>配体</dt><dd>{attestedLigandSha256.slice(0, 12)}…</dd></div>
+                    <div><dt>{translate("运行受体")}</dt><dd>{translate(attestedReceptorSha256.slice(0, 12))}…</dd></div>
+                    {attestedFlexSha256 ? <div><dt>{translate("柔性侧链")}</dt><dd>{translate(attestedFlexSha256.slice(0, 12))}…</dd></div> : null}
+                    <div><dt>{translate("配体")}</dt><dd>{translate(attestedLigandSha256.slice(0, 12))}…</dd></div>
                   </dl>
                 ) : null}
               </div>
@@ -1376,40 +1379,40 @@ export default function RunPreparePage({
                 {isConfirmingPose
                   ? <SpinnerGap className="run-monitor-spinner" size={17} />
                   : <ShieldCheck size={17} />}
-                {isConfirmingPose
+                {translate(isConfirmingPose
                   ? "正在记录…"
                   : poseInputConfirmed
                     ? "重新确认当前文件"
-                    : "确认当前输入姿势"}
+                    : "确认当前输入姿势")}
               </ActionButton>
             </section>
-          ) : null}
+          ) : null)}
 
           <section className="run-cockpit-card run-settings-card">
             <div className="run-cockpit-section-heading">
               <div>
-                <span className="run-cockpit-kicker">运行设置</span>
-                <h2>{workspaceMode === "single" ? "输入、参数与输出" : "共享输入、参数与输出"}</h2>
+                <span className="run-cockpit-kicker">{translate("运行设置")}</span>
+                <h2>{translate(workspaceMode === "single" ? "输入、参数与输出" : "共享输入、参数与输出")}</h2>
               </div>
               <span className={`run-save-state ${isDirty ? "dirty" : "saved"}`}>
                 <FloppyDisk aria-hidden="true" size={15} />
-                {isDirty ? "有未保存更改" : `已保存 ${formatTime(project.updated_at)}`}
+                {translate(isDirty ? "有未保存更改" : `已保存 ${formatTime(project.updated_at)}`)}
               </span>
             </div>
 
             <div className="run-settings-ledger">
               <div className="run-ledger-group">
-                <h3>受体 / 配体</h3>
+                <h3>{translate("受体 / 配体")}</h3>
                 <div className="run-ledger-row">
-                  <span>受体 PDBQT</span>
-                  <strong>{project.receptor.file || "未导入"}</strong>
-                  <small>{receptor ? `${receptor.atom_count.toLocaleString()} 原子 · 链 ${receptor.chains.join(", ") || "未标注"}` : "等待检查"}</small>
-                  <button type="button" onClick={() => onNavigate("import-pdbqt")}>查看</button>
+                  <span>{translate("受体 PDBQT")}</span>
+                  <strong>{project.receptor.file || translate("未导入")}</strong>
+                  <small>{translate(receptor ? `${receptor.atom_count.toLocaleString()} 原子 · 链 ${receptor.chains.join(", ") || "未标注"}` : "等待检查")}</small>
+                  <button type="button" onClick={() => onNavigate("import-pdbqt")}>{translate("查看")}</button>
                 </div>
                 <div className="run-ledger-row">
-                  <span>{workspaceMode === "single" ? "配体 PDBQT" : "当前预览配体"}</span>
-                  <strong>{project.ligand.file || "未导入"}</strong>
-                  <small>{workspaceMode !== "single"
+                  <span>{translate(workspaceMode === "single" ? "配体 PDBQT" : "当前预览配体")}</span>
+                  <strong>{project.ligand.file || translate("未导入")}</strong>
+                  <small>{translate(workspaceMode !== "single"
                     ? ligand
                       ? `${ligand.atom_count.toLocaleString()} 原子 · ${
                         workspaceMode === "batch"
@@ -1421,46 +1424,44 @@ export default function RunPreparePage({
                         : "用于 3D 预览；共同对接成员在下方面板中选择"
                     : ligand
                       ? `${ligand.atom_count.toLocaleString()} 原子 · PDBQT 活性扭转 ${ligand.torsdof ?? "未记录"}`
-                      : "等待检查"}</small>
-                  <button type="button" onClick={() => onNavigate("import-pdbqt")}>查看</button>
+                      : "等待检查")}</small>
+                  <button type="button" onClick={() => onNavigate("import-pdbqt")}>{translate("查看")}</button>
                 </div>
               </div>
 
               <div className="run-ledger-group">
-                <h3>{isAd4Maps ? "AutoDock4 运行参数" : `${vinaRunModeLabels[runMode]}参数`}</h3>
+                <h3>{isAd4Maps ? translate("AutoDock4 运行参数") : translate("{0}参数", [translate(vinaRunModeLabels[runMode])])}</h3>
                 <div className="run-task-mode-summary">
-                  <span>任务类型</span>
-                  <strong>{vinaRunModeLabels[runMode]}</strong>
+                  <span>{translate("任务类型")}</span>
+                  <strong>{translate(vinaRunModeLabels[runMode])}</strong>
                   <small>
-                    {runMode === "dock"
+                    {translate(runMode === "dock"
                       ? "生成构象排名、scores.csv 与对接报告"
                       : runMode === "score_only"
                         ? "只读取当前姿势的评分和能量分解"
-                        : "先记录输入评分，再输出 optimized.pdbqt 并比较前后变化"}
+                        : "先记录输入评分，再输出 optimized.pdbqt 并比较前后变化")}
                   </small>
                 </div>
                 <div className="run-vina-fields">
                   <label>
-                    <span className="field-hint-row">
-                      评分协议
-                      <FieldHint
+                    <span className="field-hint-row">{translate("评分协议")}<FieldHint
                         subject="评分协议"
-                        label="评分协议决定 Vina 用什么方法给候选结合构象打分。不同评分方法（如 Vina 与 Vinardo）给出的分值不能直接比较；AutoDock4 需要预先计算 affinity maps。"
+                        label={translate("评分协议决定 Vina 用什么方法给候选结合构象打分。不同评分方法（如 Vina 与 Vinardo）给出的分值不能直接比较；AutoDock4 需要预先计算 affinity maps。")}
                       />
                     </span>
                     {isAd4Maps ? (
-                      <input aria-label="评分协议" disabled value="AutoDock4 (maps)" />
+                      <input aria-label={translate("评分协议")} disabled value="AutoDock4 (maps)" />
                     ) : (
                       <select disabled={isBusy} value={vinaForm.scoring} onChange={(event) => updateVinaField("scoring", event.target.value)}>
                         <option value="vina">Vina</option>
                         <option value="vinardo">Vinardo</option>
                       </select>
                     )}
-                    <small>{isAd4Maps ? "与 Vina / Vinardo 评分不可直接比较" : "Vina 与 Vinardo 分值不可直接比较"}</small>
+                    <small>{translate(isAd4Maps ? "与 Vina / Vinardo 评分不可直接比较" : "Vina 与 Vinardo 分值不可直接比较")}</small>
                   </label>
                   {isEvaluationMode ? (
                     <label className="run-autobox-option">
-                      <span>评价范围</span>
+                      <span>{translate("评价范围")}</span>
                       <span className="run-autobox-toggle">
                         <input
                           type="checkbox"
@@ -1472,9 +1473,9 @@ export default function RunPreparePage({
                             dirtyRef.current = true;
                           }}
                         />
-                        <strong>{isAd4Maps ? "由 AutoDock4 maps 定义" : autobox ? "按当前配体自动建立" : "使用项目 Box"}</strong>
+                        <strong>{translate(isAd4Maps ? "由 AutoDock4 maps 定义" : autobox ? "按当前配体自动建立" : "使用项目 Box")}</strong>
                       </span>
-                      <small>{isAd4Maps ? "预计算 maps 已固定网格范围" : "autobox 只用于仅评分和局部优化"}</small>
+                      <small>{translate(isAd4Maps ? "预计算 maps 已固定网格范围" : "autobox 只用于仅评分和局部优化")}</small>
                     </label>
                   ) : null}
                   {vinaFields.filter((field) => runMode === "dock" || field.key === "cpu").map((field) => {
@@ -1485,62 +1486,60 @@ export default function RunPreparePage({
                     return (
                       <label key={field.key} className={invalid ? "is-invalid" : ""}>
                         <span className="field-hint-row">
-                          {field.label}
-                          <FieldHint subject={field.label} label={field.explain} />
+                          {translate(field.label)}
+                          <FieldHint subject={field.label} label={translate(field.explain)} />
                         </span>
                         <input disabled={isBusy} value={value} inputMode={field.key === "energy_range" ? "decimal" : "numeric"} onChange={(event) => updateVinaField(field.key, event.target.value)} aria-invalid={invalid} />
-                        <small>{field.hint}</small>
+                        <small>{translate(field.hint)}</small>
                       </label>
                     );
                   })}
                 </div>
                 <AdvancedDetails
                   className="run-vina-advanced"
-                  summary={`高级设置 · ${advancedVinaCustomCount ? `已自定义 ${advancedVinaCustomCount} 项` : isAd4Maps ? "AutoDock4 默认" : "Vina 默认"}`}
+                  summary={translate("高级设置 · {0}", [translate(advancedVinaCustomCount ? `已自定义 ${advancedVinaCustomCount} 项` : isAd4Maps ? "AutoDock4 默认" : "Vina 默认")])}
                 >
                     {isAd4Maps ? (
-                      <p className="run-advanced-protocol-note">
-                        AutoDock4 maps 不使用网格间距、体素取偶或受体原子精修选项。
-                      </p>
+                      <p className="run-advanced-protocol-note">{translate("AutoDock4 maps 不使用网格间距、体素取偶或受体原子精修选项。")}</p>
                     ) : null}
                     <div className="run-advanced-groups">
                       {runMode === "dock" ? (
                         <section className="run-advanced-group run-advanced-group-search">
-                          <h4>搜索与构象</h4>
+                          <h4>{translate("搜索与构象")}</h4>
                           <label className={!Number.isInteger(Number(vinaForm.max_evals)) || Number(vinaForm.max_evals) < 0 || Number(vinaForm.max_evals) > 2_147_483_647 ? "is-invalid" : ""}>
-                            <span>每次搜索评估上限</span>
+                            <span>{translate("每次搜索评估上限")}</span>
                             <input
                               disabled={isBusy}
                               inputMode="numeric"
                               value={vinaForm.max_evals}
                               onChange={(event) => updateVinaField("max_evals", event.target.value)}
                             />
-                            <small>0 = Vina 自动</small>
+                            <small>{translate("0 = Vina 自动")}</small>
                           </label>
                           <label className={!Number.isFinite(Number(vinaForm.min_rmsd)) || Number(vinaForm.min_rmsd) < 0 || Number(vinaForm.min_rmsd) > 100 ? "is-invalid" : ""}>
-                            <span>构象最小间距</span>
+                            <span>{translate("构象最小间距")}</span>
                             <input
                               disabled={isBusy}
                               inputMode="decimal"
                               value={vinaForm.min_rmsd}
                               onChange={(event) => updateVinaField("min_rmsd", event.target.value)}
                             />
-                            <small>默认 1 Å；仅全局对接</small>
+                            <small>{translate("默认 1 Å；仅全局对接")}</small>
                           </label>
                         </section>
                       ) : null}
                       {!isAd4Maps ? (
                         <section className="run-advanced-group">
-                          <h4>网格计算</h4>
+                          <h4>{translate("网格计算")}</h4>
                           <label className={!Number.isFinite(Number(vinaForm.spacing)) || Number(vinaForm.spacing) < 0.1 || Number(vinaForm.spacing) > 2 ? "is-invalid" : ""}>
-                            <span>网格间距</span>
+                            <span>{translate("网格间距")}</span>
                             <input
                               disabled={isBusy}
                               inputMode="decimal"
                               value={vinaForm.spacing}
                               onChange={(event) => updateVinaField("spacing", event.target.value)}
                             />
-                            <small>默认 0.375 Å</small>
+                            <small>{translate("默认 0.375 Å")}</small>
                           </label>
                           {forceEvenVoxelsApplicable ? (
                             <label className={`run-advanced-toggle ${forceEvenVoxelsControl.status}${forceEvenVoxelsControl.blocking ? " is-blocking" : ""}`}>
@@ -1553,29 +1552,29 @@ export default function RunPreparePage({
                                   aria-describedby="force-even-voxels-hint force-even-voxels-capability"
                                   onChange={(event) => updateVinaToggle("force_even_voxels", event.target.checked)}
                                 />
-                                <span>网格体素数取偶数</span>
+                                <span>{translate("网格体素数取偶数")}</span>
                               </span>
-                              <small id="force-even-voxels-hint">可能调整实际网格边界</small>
+                              <small id="force-even-voxels-hint">{translate("可能调整实际网格边界")}</small>
                               <small id="force-even-voxels-capability" className="run-advanced-capability">
-                                {capabilityChecking ? "正在检查当前 Vina" : forceEvenVoxelsControl.label}
+                                {translate(capabilityChecking ? "正在检查当前 Vina" : forceEvenVoxelsControl.label)}
                               </small>
                               {vinaForm.force_even_voxels ? (
-                                <small className="run-advanced-active-note">实际网格边界可能随体素取整调整。</small>
+                                <small className="run-advanced-active-note">{translate("实际网格边界可能随体素取整调整。")}</small>
                               ) : null}
                             </label>
                           ) : null}
                         </section>
                       ) : null}
                       <section className="run-advanced-group">
-                        <h4>评分与日志</h4>
+                        <h4>{translate("评分与日志")}</h4>
                         {!isAd4Maps && runMode === "score_only" && receptorMode === "flexible" ? (
-                          <p className="run-advanced-protocol-note">柔性受体暂不开放自定义未结合态参考能量。</p>
+                          <p className="run-advanced-protocol-note">{translate("柔性受体暂不开放自定义未结合态参考能量。")}</p>
                         ) : null}
                         {unboundEnergyApplicable ? (
                           <label
                             className={`run-advanced-capability-field ${unboundEnergyControl.status}${unboundEnergyControl.blocking ? " is-blocking" : ""}${hasUnboundEnergy && !Number.isFinite(Number(vinaForm.unbound_energy)) ? " is-invalid" : ""}`}
                           >
-                            <span>显式未结合体系能量参考（kcal/mol）</span>
+                            <span>{translate("显式未结合体系能量参考（kcal/mol）")}</span>
                             <input
                               type="text"
                               inputMode="decimal"
@@ -1583,15 +1582,15 @@ export default function RunPreparePage({
                               disabled={unboundEnergyControl.disabled}
                               aria-invalid={unboundEnergyControl.blocking || (hasUnboundEnergy && !Number.isFinite(Number(vinaForm.unbound_energy)))}
                               aria-describedby="unbound-energy-hint unbound-energy-capability"
-                              placeholder="留空使用 Vina 默认"
+                              placeholder={translate("留空使用 Vina 默认")}
                               onChange={(event) => updateVinaField("unbound_energy", event.target.value)}
                             />
-                            <small id="unbound-energy-hint">仅用于当前姿势评分；空值由 Vina 计算</small>
+                            <small id="unbound-energy-hint">{translate("仅用于当前姿势评分；空值由 Vina 计算")}</small>
                             <small id="unbound-energy-capability" className="run-advanced-capability">
-                              {capabilityChecking ? "正在检查当前 Vina" : unboundEnergyControl.label}
+                              {translate(capabilityChecking ? "正在检查当前 Vina" : unboundEnergyControl.label)}
                             </small>
                             {hasUnboundEnergy && Number.isFinite(Number(vinaForm.unbound_energy)) ? (
-                              <small className="run-advanced-active-note">不是实验结合自由能；只与相同设置的结果比较。</small>
+                              <small className="run-advanced-active-note">{translate("不是实验结合自由能；只与相同设置的结果比较。")}</small>
                             ) : null}
                           </label>
                         ) : null}
@@ -1606,74 +1605,72 @@ export default function RunPreparePage({
                                 aria-describedby="no-refine-hint no-refine-capability"
                                 onChange={(event) => updateVinaToggle("no_refine", event.target.checked)}
                               />
-                              <span>关闭显式受体原子精修</span>
+                              <span>{translate("关闭显式受体原子精修")}</span>
                             </span>
-                            <small id="no-refine-hint">使用网格完成最终精修与评分</small>
+                            <small id="no-refine-hint">{translate("使用网格完成最终精修与评分")}</small>
                             <small id="no-refine-capability" className="run-advanced-capability">
-                              {capabilityChecking ? "正在检查当前 Vina" : noRefineControl.label}
+                              {translate(capabilityChecking ? "正在检查当前 Vina" : noRefineControl.label)}
                             </small>
                             {vinaForm.no_refine ? (
-                              <small className="run-advanced-active-note">已关闭显式受体原子精修；只与相同设置的结果比较。</small>
+                              <small className="run-advanced-active-note">{translate("已关闭显式受体原子精修；只与相同设置的结果比较。")}</small>
                             ) : null}
                           </label>
                         ) : null}
                         <label>
-                          <span>日志详细程度</span>
+                          <span>{translate("日志详细程度")}</span>
                           <select
                             disabled={isBusy}
                             value={vinaForm.verbosity}
                             onChange={(event) => updateVinaField("verbosity", event.target.value)}
                           >
-                            <option value="1">标准（1）</option>
-                            <option value="2">详细（2）</option>
+                            <option value="1">{translate("标准（1）")}</option>
+                            <option value="2">{translate("详细（2）")}</option>
                           </select>
-                          <small>详细模式会保存更多 Vina 诊断</small>
+                          <small>{translate("详细模式会保存更多 Vina 诊断")}</small>
                         </label>
                       </section>
                     </div>
                     <div className="run-advanced-toolbar">
                       <div className="run-advanced-toolbar-copy">
                         <strong>
-                          {isAd4Maps
+                          {translate(isAd4Maps
                             ? preflight?.tool?.version
                               ? `Vina ${preflight.tool.version} · AutoDock4 maps`
                               : "AutoDock4 maps"
-                            : advancedCapabilitySummary}
+                            : advancedCapabilitySummary)}
                         </strong>
                         <span>
-                          {workspaceMode === "batch"
+                          {translate(workspaceMode === "batch"
                             ? "适用值会写入项目配置，并冻结到新建的批量队列。"
                             : workspaceMode === "simultaneous"
                               ? "适用值会写入项目配置，并冻结到两个成员共享的联合 run。"
-                            : "非默认值会写入项目配置与本次 run 快照。"}
+                            : "非默认值会写入项目配置与本次 run 快照。")}
                         </span>
                       </div>
                       <ActionButton
                         variant="text"
                         disabled={isBusy || advancedVinaCustomCount === 0}
                         onClick={resetAdvancedVina}
-                      >
-                        恢复 Vina 默认值
-                      </ActionButton>
+                      >{translate("恢复 Vina 默认值")}</ActionButton>
                     </div>
                 </AdvancedDetails>
                 <p className="run-science-note">
-                  {runMode === "score_only"
+                  {translate(runMode === "score_only"
                     ? "仅评分不会搜索新姿势，也不会生成构象排名或新的 PDBQT。"
                     : runMode === "local_only"
                       ? "局部优化只探索输入姿势附近，不等同于全局分子对接。"
                       : isAd4Maps
                     ? "当前运行使用预计算 AutoDock4 网格图；AD4、Vina 与 Vinardo 的分值不能直接横向比较。"
-                    : "Vina 使用随机搜索与局部优化，而不是遗传算法。Vina 与 Vinardo 的分值不能直接横向比较。"}
+                    : "Vina 使用随机搜索与局部优化，而不是遗传算法。Vina 与 Vinardo 的分值不能直接横向比较。")}
                 </p>
-                {workspaceMode === "batch" ? <p className="run-batch-shared-note">这些 Box 与适用的 Vina 参数会冻结到每个配体任务中；显式未结合态参考能量不适用于批量全局对接。修改后需要重新创建队列。</p> : null}
-                {workspaceMode === "simultaneous" ? <p className="run-batch-shared-note">这些 Box 与 Vina 参数会冻结到一个联合 run；两个成员不会分别运行，也不会产生可独立解释的成员评分。</p> : null}
+                {workspaceMode === "batch" ? <p className="run-batch-shared-note">{translate("这些 Box 与适用的 Vina 参数会冻结到每个配体任务中；显式未结合态参考能量不适用于批量全局对接。修改后需要重新创建队列。")}</p> : null}
+                {workspaceMode === "simultaneous" ? <p className="run-batch-shared-note">{translate("这些 Box 与 Vina 参数会冻结到一个联合 run；两个成员不会分别运行，也不会产生可独立解释的成员评分。")}</p> : null}
                 <div className={`run-parameter-save-row ${isDirty ? "dirty" : "saved"}`}>
                   <div>
                     <FloppyDisk aria-hidden="true" size={18} weight="duotone" />
                     <span>
-                      <strong>{isDirty ? "参数有未保存更改" : "当前参数已经保存"}</strong>
-                      <small>保存 Box 与 Vina 参数，并立即重新执行运行前检查。</small>
+                      <strong>{translate(isDirty ? "参数有未保存更改" : "当前参数已经保存")}</strong>
+                      <small>{translate("保存 Box 与 Vina 参数，并立即重新执行运行前检查。")}</small>
                     </span>
                   </div>
                   <ActionButton
@@ -1682,119 +1679,115 @@ export default function RunPreparePage({
                     disabled={isBusy || activeRunBlocked || !formIsValid}
                     onClick={() => void saveAndRefresh()}
                   >
-                    <FloppyDisk size={16} /> 保存参数并重新检查
-                  </ActionButton>
+                    <FloppyDisk size={16} />{translate(" 保存参数并重新检查")}</ActionButton>
                 </div>
               </div>
 
               <div className="run-ledger-group">
-                <h3>输出与工具来源</h3>
+                <h3>{translate("输出与工具来源")}</h3>
                 <div className="run-ledger-row">
-                  <span>输出目录</span>
+                  <span>{translate("输出目录")}</span>
                   <strong>{preflight?.output?.runs_dir || `${project.project_dir}\\runs`}</strong>
-                  <small>剩余 {formatBytes(preflight?.output?.free_bytes ?? 0)}</small>
+                  <small>{translate("剩余 ")}{translate(formatBytes(preflight?.output?.free_bytes ?? 0))}</small>
                   <FolderOpen aria-hidden="true" size={16} />
                 </div>
                 <div className="run-ledger-row">
                   <span>AutoDock Vina</span>
-                  <strong>{preflight?.tool?.version ? `v${preflight.tool.version}` : "等待检测"}</strong>
-                  <small>{preflight?.tool?.source || "unknown"} · {preflight?.tool?.path || "未解析路径"}</small>
-                  <StatusBadge tone={preflight?.tool?.status === "ok" ? "ok" : "warning"}>{preflight?.tool?.status === "ok" ? "可用" : "需配置"}</StatusBadge>
+                  <strong>{translate(preflight?.tool?.version ? `v${preflight.tool.version}` : "等待检测")}</strong>
+                  <small>{translate(preflight?.tool?.source || "unknown")} · {preflight?.tool?.path || translate("未解析路径")}</small>
+                  <StatusBadge tone={preflight?.tool?.status === "ok" ? "ok" : "warning"}>{translate(preflight?.tool?.status === "ok" ? "可用" : "需配置")}</StatusBadge>
                 </div>
               </div>
             </div>
 
             {preflight?.structure_review?.checks?.length ? (
-              <AdvancedDetails summary={`结构审查明细 · ${preflight.structure_review.warning_count} 项警告`}>
+              <AdvancedDetails summary={translate("结构审查明细 · {0} 项警告", [preflight.structure_review.warning_count])}>
                 <div className="run-structure-review-grid">
                   {preflight.structure_review.checks.map((check) => (
                     <article key={check.key} className={`run-structure-review-item ${check.status}`}>
                       <div>
-                        <strong>{check.name}</strong>
+                        <strong>{translate(check.name)}</strong>
                         <StatusBadge tone={check.status === "ok" ? "ok" : "warning"}>
-                          {check.status === "ok" ? "已读取" : check.status === "unknown" ? "需人工确认" : "需复核"}
+                          {translate(check.status === "ok" ? "已读取" : check.status === "unknown" ? "需人工确认" : "需复核")}
                         </StatusBadge>
                       </div>
-                      <p>{check.message}</p>
-                      {check.evidence ? <small>依据：{check.evidence}</small> : null}
+                      <p>{translate(check.message)}</p>
+                      {check.evidence ? <small>{translate("依据：")}{translate(check.evidence)}</small> : null}
                     </article>
                   ))}
                 </div>
-                <p className="run-science-note">{preflight.structure_review.disclaimer}</p>
+                <p className="run-science-note">{translate(preflight.structure_review.disclaimer)}</p>
               </AdvancedDetails>
             ) : null}
 
-            {!numericFormIsValid ? (
-              <WarningCallout title="参数格式需要修正">
-                <p>请检查 Box 尺寸、基础参数和高级设置中的数值范围。</p>
+            {translate(!numericFormIsValid ? (
+              <WarningCallout title={translate("参数格式需要修正")}>
+                <p>{translate("请检查 Box 尺寸、基础参数和高级设置中的数值范围。")}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
-            {expertCapabilityBlocked ? (
-              <WarningCallout title="专家选项尚不可用">
-                <p>已启用的选项未通过当前 Vina 能力检查。请关闭标记的选项，或重新检查工具。</p>
+            {translate(expertCapabilityBlocked ? (
+              <WarningCallout title={translate("专家选项尚不可用")}>
+                <p>{translate("已启用的选项未通过当前 Vina 能力检查。请关闭标记的选项，或重新检查工具。")}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
             {activeRunGuard?.blocked ? (
-              <WarningCallout title={guardedRun ? "已有未完成的 Vina 运行" : "暂时无法确认运行恢复状态"}>
-                <p>{activeRunGuard.message}</p>
-                {activeRunGuard.error ? <small>{activeRunGuard.error}</small> : null}
+              <WarningCallout title={translate(guardedRun ? "已有未完成的 Vina 运行" : "暂时无法确认运行恢复状态")}>
+                <p>{translate(activeRunGuard.message)}</p>
+                {activeRunGuard.error ? <small>{translate(activeRunGuard.error)}</small> : null}
                 {guardedRun ? (
                   <div className="button-row">
-                    <ActionButton variant="secondary" onClick={() => onOpenRunExecute(project, guardedRun.run_id)}>
-                      打开 {guardedRun.run_id} 详情
-                    </ActionButton>
+                    <ActionButton variant="secondary" onClick={() => onOpenRunExecute(project, guardedRun.run_id)}>{translate("打开 ")}{guardedRun.run_id}{translate(" 详情")}</ActionButton>
                     {guardedRun.can_cancel ? (
                       <ActionButton variant="secondary" onClick={() => void cancelRun()}>
-                        <Stop size={15} weight="fill" /> 安全取消
-                      </ActionButton>
+                        <Stop size={15} weight="fill" />{translate(" 安全取消")}</ActionButton>
                     ) : null}
                   </div>
                 ) : null}
               </WarningCallout>
             ) : null}
 
-            {workspaceMode === "single" && (runtime || running || stage === "finished" || stage === "failed" || stage === "cancelled") ? (
+            {translate(workspaceMode === "single" && (runtime || running || stage === "finished" || stage === "failed" || stage === "cancelled") ? (
               <section className={`run-monitor run-monitor-${stage}`} aria-live="polite">
                 <div className="run-monitor-heading">
                   <div>
                     {running ? <SpinnerGap className="run-monitor-spinner" size={20} /> : stage === "finished" ? <CheckCircle size={20} weight="fill" /> : <WarningCircle size={20} weight="fill" />}
                     <div>
-                      <strong>{stageText}</strong>
-                      <span>{activeRunId || preflight?.next_run_id || "待创建"} · {formatDuration(runtime?.elapsed_seconds ?? null)}</span>
+                      <strong>{translate(stageText)}</strong>
+                      <span>{translate(activeRunId || preflight?.next_run_id || "待创建")} · {translate(formatDuration(runtime?.elapsed_seconds ?? null))}</span>
                     </div>
                   </div>
-                  {running ? <ActionButton variant="secondary" onClick={() => void cancelRun()}><Stop size={15} weight="fill" /> 终止运行</ActionButton> : null}
+                  {running ? <ActionButton variant="secondary" onClick={() => void cancelRun()}><Stop size={15} weight="fill" />{translate(" 终止运行")}</ActionButton> : null}
                 </div>
                 <div className="run-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}>
                   <span style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
                 </div>
-                <p>{runtime?.progress?.message || message || stageText}</p>
-                {(runtime?.log_tail || runtime?.stderr_tail) ? (
-                  <AdvancedDetails summary="实时日志与诊断">
+                <p>{translate(runtime?.progress?.message || message || stageText)}</p>
+                {translate((runtime?.log_tail || runtime?.stderr_tail) ? (
+                  <AdvancedDetails summary={translate("实时日志与诊断")}>
                     <pre className="run-log-tail">{runtime.log_tail || runtime.stdout_tail || runtime.stderr_tail}</pre>
                     {runtime.stderr_tail ? <pre className="run-log-tail error">{runtime.stderr_tail}</pre> : null}
                   </AdvancedDetails>
-                ) : null}
+                ) : null)}
               </section>
-            ) : null}
+            ) : null)}
 
-            {workspaceMode === "single" ? <div className="run-action-bar">
+                {workspaceMode === "single" ? <div className="run-action-bar">
               <div className="run-action-context">
                 <span className={`run-action-save-status ${isDirty ? "dirty" : "saved"}`}>
                   <FloppyDisk aria-hidden="true" size={15} />
-                  {isDirty ? "参数尚未保存" : "参数已保存并通过最新检查"}
+                  {translate(isDirty ? "参数尚未保存" : "参数已保存并通过最新检查")}
                 </span>
                 {activeRunId && stage !== "finished" ? (
-                  <ActionButton variant="text" onClick={() => onOpenRunExecute(project, activeRunId)}>打开运行详情</ActionButton>
+                  <ActionButton variant="text" onClick={() => onOpenRunExecute(project, activeRunId)}>{translate("打开运行详情")}</ActionButton>
                 ) : null}
                 {latestCompletedRun && stage === "finished" ? (
-                  <ActionButton variant="text" onClick={() => onOpenResultPage(project, latestCompletedRun)}>查看本次结果</ActionButton>
+                  <ActionButton variant="text" onClick={() => onOpenResultPage(project, latestCompletedRun)}>{translate("查看本次结果")}</ActionButton>
                 ) : null}
               </div>
               <div className="run-primary-action">
-                <div className="run-split-action" role="group" aria-label={`${vinaRunModeLabels[runMode]}执行操作`}>
+                <div className="run-split-action" role="group" aria-label={translate("{0}执行操作", [translate(vinaRunModeLabels[runMode])])}>
                   <ActionButton
                     className="run-split-action-main"
                     variant="primary"
@@ -1802,35 +1795,36 @@ export default function RunPreparePage({
                     onClick={() => void runWorkflow()}
                   >
                     {isBusy ? <SpinnerGap className="run-monitor-spinner" size={18} /> : <Play size={18} weight="fill" />}
-                    {isBusy ? "运行中…" : actionMode === "full" ? vinaRunModeActions[runMode] : runActionLabels[actionMode]}
+                    {translate(isBusy ? "运行中…" : actionMode === "full" ? vinaRunModeActions[runMode] : runActionLabels[actionMode])}
                   </ActionButton>
                   <span
                     className="run-split-action-selector"
-                    title={actionMode === "full" && runMode !== "dock" ? `${vinaRunModeLabels[runMode]}、解析与报告` : runActionDescriptions[actionMode]}
+                    title={translate(actionMode === "full" && runMode !== "dock" ? `${vinaRunModeLabels[runMode]}、解析与报告` : runActionDescriptions[actionMode])}
                   >
                     <select
-                      aria-label="选择执行方式"
+                      aria-label={translate("选择执行方式")}
                       value={actionMode}
                       disabled={isBusy}
                       onChange={(event) => setActionMode(event.target.value as RunActionMode)}
                     >
                       <option value="full">
-                        {runMode === "dock"
+                        {translate(runMode === "dock"
                           ? runActionDescriptions.full
                           : runMode === "score_only"
                             ? "完整流程：评分、解析、报告"
-                            : "完整流程：局部优化、解析、报告"}
+                            : "完整流程：局部优化、解析、报告")}
                       </option>
-                      <option value="prepare">{runActionDescriptions.prepare}</option>
-                      <option value="config">{runActionDescriptions.config}</option>
+                      <option value="prepare">{translate(runActionDescriptions.prepare)}</option>
+                      <option value="config">{translate(runActionDescriptions.config)}</option>
                     </select>
                     <CaretDown aria-hidden="true" size={15} weight="bold" />
                   </span>
                 </div>
               </div>
             </div> : null}
-            {workspaceMode === "single" && message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{message}</p> : null}
-            {rawError ? <AdvancedDetails summary="查看原始诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+            {workspaceMode === "single" && message && !runtime ? <p className="run-inline-message" role={stage === "failed" ? "alert" : "status"}>{translate(message)}</p> : null}
+            {rawError ? <AdvancedDetails summary={translate("查看原始诊断")}><pre>{rawError}</pre></AdvancedDetails> : null}
+
           </section>
 
           {workspaceMode === "single" && (!isAd4Maps || isStandardAd4Maps) ? <FlexibleReceptorPanel
@@ -1918,52 +1912,52 @@ export default function RunPreparePage({
           {workspaceMode === "single" ? <section className="run-cockpit-card run-history-card">
             <div className="run-cockpit-section-heading">
               <div>
-                <span className="run-cockpit-kicker">项目记录</span>
-                <h2>运行历史</h2>
+                <span className="run-cockpit-kicker">{translate("项目记录")}</span>
+                <h2>{translate("运行历史")}</h2>
               </div>
-              <span>{history.length} 条 run</span>
+              <span>{history.length}{translate(" 条 run")}</span>
             </div>
             {history.length ? (
               <div className="run-history-table-wrap">
                 <table className="run-history-table">
-                  <thead><tr><th>Run</th><th>任务 / 协议</th><th>状态</th><th>开始时间</th><th>耗时</th><th>主要结果</th><th>操作</th></tr></thead>
+                  <thead><tr><th>Run</th><th>{translate("任务 / 协议")}</th><th>{translate("状态")}</th><th>{translate("开始时间")}</th><th>{translate("耗时")}</th><th>{translate("主要结果")}</th><th>{translate("操作")}</th></tr></thead>
                   <tbody>
                     {history.slice(0, 8).map((run) => (
                       <tr key={run.run_id}>
                         <td><strong>{run.run_id}</strong></td>
                         <td>
-                          {vinaRunModeLabels[run.run_mode ?? "dock"]} · {run.scoring_protocol === "ad4_maps" ? "AD4 maps" : run.scoring_function === "vinardo" ? "Vinardo" : "Vina"}
+                          {translate(vinaRunModeLabels[run.run_mode ?? "dock"])} · {translate(run.scoring_protocol === "ad4_maps" ? "AD4 maps" : run.scoring_function === "vinardo" ? "Vinardo" : "Vina")}
                         </td>
-                        <td><StatusBadge tone={statusTone(run.status)}>{run.status}</StatusBadge></td>
-                        <td>{formatTime(run.started_at || run.created_at)}</td>
-                        <td>{formatDuration(run.duration_seconds)}</td>
-                        <td>{run.run_mode && run.run_mode !== "dock" ? run.primary_score_kcal_mol ?? "—" : run.best_affinity ?? "—"}</td>
+                        <td><StatusBadge tone={statusTone(run.status)}>{translate(run.status)}</StatusBadge></td>
+                        <td>{translate(formatTime(run.started_at || run.created_at))}</td>
+                        <td>{translate(formatDuration(run.duration_seconds))}</td>
+                        <td>{translate(run.run_mode && run.run_mode !== "dock" ? run.primary_score_kcal_mol ?? "—" : run.best_affinity ?? "—")}</td>
                         <td>
-                          {run.status === "finished" ? <button type="button" onClick={() => onOpenResultPage(project, run.run_id)}>查看结果</button> : <button type="button" onClick={() => onOpenRunExecute(project, run.run_id)}>运行详情</button>}
+                          {run.status === "finished" ? <button type="button" onClick={() => onOpenResultPage(project, run.run_id)}>{translate("查看结果")}</button> : <button type="button" onClick={() => onOpenRunExecute(project, run.run_id)}>{translate("运行详情")}</button>}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            ) : <p className="run-history-empty">尚无运行记录。首次完整运行后可查看状态、耗时和最佳评分。</p>}
+            ) : <p className="run-history-empty">{translate("尚无运行记录。首次完整运行后可查看状态、耗时和最佳评分。")}</p>}
           </section> : null}
         </main>
 
-        <aside className="run-preflight-rail" aria-label="运行前检查">
+        <aside className="run-preflight-rail" aria-label={translate("运行前检查")}>
           <header>
             <div>
               <span>Preflight</span>
               <h2>
-                {workspaceMode === "batch"
+                {translate(workspaceMode === "batch"
                   ? "串行筛选运行前检查"
                   : workspaceMode === "simultaneous"
                     ? "共同对接运行前检查"
-                    : "运行前检查"}
+                    : "运行前检查")}
               </h2>
             </div>
             <button type="button" disabled={isRefreshing || isBusy || activeRunBlocked} onClick={() => void (isDirty ? saveAndRefresh() : refreshPreflight())}>
-              <ArrowRight className={isRefreshing ? "run-monitor-spinner" : ""} size={16} /> {isDirty ? "保存并检查" : "重新检查"}
+              <ArrowRight className={isRefreshing ? "run-monitor-spinner" : ""} size={16} /> {translate(isDirty ? "保存并检查" : "重新检查")}
             </button>
           </header>
 
@@ -1971,7 +1965,7 @@ export default function RunPreparePage({
             {preflight?.ready && !isDirty ? <CheckCircle size={25} weight="fill" /> : <WarningCircle size={25} weight="fill" />}
             <div>
               <strong>
-                {isDirty
+                {translate(isDirty
                   ? "屏幕参数尚未保存"
                   : preflight?.ready
                     ? workspaceMode === "batch"
@@ -1983,10 +1977,10 @@ export default function RunPreparePage({
                         : "执行条件已满足"
                     : preflight
                       ? "仍有阻塞项"
-                      : "正在检查"}
+                      : "正在检查")}
               </strong>
               <p>
-                {isDirty
+                {translate(isDirty
                   ? "请先保存任务类型、范围与 Vina 参数。"
                   : preflight?.ready
                     ? workspaceMode === "batch"
@@ -1996,7 +1990,7 @@ export default function RunPreparePage({
                           ? multipleLigandIssues.join("；")
                           : "受体、Box、Vina 与输出环境可用；请在主工作区选择两个 staging 配体。"
                         : "表示当前文件与环境可执行，不代表结构方案科学正确。"
-                    : preflight?.blockers?.[0] || "正在读取本机状态。"}
+                    : preflight?.blockers?.[0] || "正在读取本机状态。")}
               </p>
             </div>
           </section>
@@ -2008,54 +2002,54 @@ export default function RunPreparePage({
                 <article key={check.key} className={`run-preflight-item ${check.status}`}>
                   {checkIcon(check)}
                   <div>
-                    <strong>{check.name}</strong>
-                    <p>{check.message}</p>
-                    {check.detail ? <small>{check.detail}</small> : null}
+                    <strong>{translate(check.name)}</strong>
+                    <p>{translate(check.message)}</p>
+                    {check.detail ? <small>{translate(check.detail)}</small> : null}
                   </div>
-                  {repairPage && check.status !== "ok" ? <button type="button" onClick={() => onNavigate(repairPage)}>修复</button> : null}
+                  {repairPage && check.status !== "ok" ? <button type="button" onClick={() => onNavigate(repairPage)}>{translate("修复")}</button> : null}
                 </article>
               );
             })}
-            {!preflight?.checks?.length ? <p className="run-preflight-empty">正在汇总输入、工具和本机资源…</p> : null}
+            {!preflight?.checks?.length ? <p className="run-preflight-empty">{translate("正在汇总输入、工具和本机资源…")}</p> : null}
           </div>
 
           <section className="run-rail-section">
-            <div className="run-rail-section-title"><Clock size={18} /><strong>耗时估计</strong></div>
-            <p>{preflight?.estimate?.available ? preflight.estimate.range_label : "暂无可靠估算"}</p>
-            <small>{preflight?.estimate?.message || "完成同机、同协议运行后再基于历史样本给出区间。"}</small>
+            <div className="run-rail-section-title"><Clock size={18} /><strong>{translate("耗时估计")}</strong></div>
+            <p>{translate(preflight?.estimate?.available ? preflight.estimate.range_label : "暂无可靠估算")}</p>
+            <small>{translate(preflight?.estimate?.message || "完成同机、同协议运行后再基于历史样本给出区间。")}</small>
           </section>
 
           <section className="run-rail-section">
-            <div className="run-rail-section-title"><Cpu size={18} /><strong>本机环境</strong></div>
+            <div className="run-rail-section-title"><Cpu size={18} /><strong>{translate("本机环境")}</strong></div>
             <dl>
-              <div><dt>系统</dt><dd>{preflight?.system ? `${preflight.system.system} ${preflight.system.release}` : "检查中"}</dd></div>
-              <div><dt>架构</dt><dd>{preflight?.system?.machine || "—"}</dd></div>
-              <div><dt>逻辑 CPU</dt><dd>{preflight?.system?.cpu_count || "—"}</dd></div>
-              <div><dt>内存</dt><dd>{formatBytes(preflight?.system?.memory_bytes ?? 0)}</dd></div>
+              <div><dt>{translate("系统")}</dt><dd>{translate(preflight?.system ? `${preflight.system.system} ${preflight.system.release}` : "检查中")}</dd></div>
+              <div><dt>{translate("架构")}</dt><dd>{translate(preflight?.system?.machine || "—")}</dd></div>
+              <div><dt>{translate("逻辑 CPU")}</dt><dd>{translate(preflight?.system?.cpu_count || "—")}</dd></div>
+              <div><dt>{translate("内存")}</dt><dd>{translate(formatBytes(preflight?.system?.memory_bytes ?? 0))}</dd></div>
             </dl>
           </section>
 
           <section className="run-rail-section">
-            <div className="run-rail-section-title"><HardDrives size={18} /><strong>项目与输出</strong></div>
+            <div className="run-rail-section-title"><HardDrives size={18} /><strong>{translate("项目与输出")}</strong></div>
             <dl>
-              <div><dt>项目</dt><dd>{project.project_name}</dd></div>
-              <div><dt>下一 run</dt><dd>{preflight?.next_run_id || "待计算"}</dd></div>
-              <div><dt>保存时间</dt><dd>{formatTime(project.updated_at)}</dd></div>
-              <div><dt>磁盘空间</dt><dd>{formatBytes(preflight?.output?.free_bytes ?? 0)}</dd></div>
+              <div><dt>{translate("项目")}</dt><dd>{project.project_name}</dd></div>
+              <div><dt>{translate("下一 run")}</dt><dd>{translate(preflight?.next_run_id || "待计算")}</dd></div>
+              <div><dt>{translate("保存时间")}</dt><dd>{translate(formatTime(project.updated_at))}</dd></div>
+              <div><dt>{translate("磁盘空间")}</dt><dd>{translate(formatBytes(preflight?.output?.free_bytes ?? 0))}</dd></div>
             </dl>
-            <AdvancedDetails summary="命令预览">
+            <AdvancedDetails summary={translate("命令预览")}>
               <pre>{preflight?.command_preview || "保存设置并生成配置后显示。"}</pre>
             </AdvancedDetails>
           </section>
 
           <section className="run-rail-section run-rail-disclaimer">
-            <div className="run-rail-section-title"><Database size={18} /><strong>科学边界</strong></div>
+            <div className="run-rail-section-title"><Database size={18} /><strong>{translate("科学边界")}</strong></div>
             <p>
-              {workspaceMode === "simultaneous"
+              {translate(workspaceMode === "simultaneous"
                 ? "联合评分描述两个成员与受体构成的整体体系，不能拆分成单个成员贡献，也不能替代实验验证。"
                 : isEvaluationMode
                   ? "姿势评分只描述当前输入或其局部优化结果，不能替代全局搜索或实验验证。"
-                  : "Docking score 仅供结构结合趋势参考，不能替代实验验证。"}
+                  : "Docking score 仅供结构结合趋势参考，不能替代实验验证。")}
             </p>
           </section>
         </aside>

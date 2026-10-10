@@ -11,6 +11,9 @@ import {
   APPEARANCE_DATASET_KEY,
   APPEARANCE_IDS,
   APPEARANCE_STORAGE_KEY,
+  PALETTE_DATASET_KEY,
+  PALETTE_STORAGE_KEY,
+  PALETTE_IDS,
   DEFAULT_ACCENT,
   DEFAULT_APPEARANCE,
   DEFAULT_THEME_MODE,
@@ -23,6 +26,7 @@ import {
   normalizeAccentId,
   normalizeAppearanceId,
   normalizeThemeMode,
+  normalizePaletteId,
   prefersDarkColorScheme,
   readAppearanceState,
   readThemePreference,
@@ -30,6 +34,7 @@ import {
   setAccentPreference,
   setAppearancePreference,
   setThemePreference,
+  setThemePreset,
 } from "../src/utils/themePreference.ts";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,17 +116,17 @@ test("默认值保持既有行为：不设置时是深色 + 默认外观 + 默�
   assert.equal(DEFAULT_THEME_MODE, "dark");
   assert.equal(DEFAULT_APPEARANCE, "default");
   assert.equal(DEFAULT_ACCENT, "default");
-  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default", palette: "blue" });
   assert.equal(readThemePreference(), "dark");
   removeDom();
 });
 
 test("没有 window / document 时读取不抛异常并返回默认值", () => {
   removeDom();
-  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default", palette: "blue" });
   assert.equal(readThemePreference(), "dark");
   assert.equal(prefersDarkColorScheme(), true);
-  assert.equal(applyAppearanceState({ mode: "light", appearance: "soft", accent: "cyan" }), "light");
+  assert.equal(applyAppearanceState({ mode: "light", appearance: "soft", accent: "cyan", palette: "blue" }), "light");
 });
 
 test("主题模式归一化保留旧语义并新增 system", () => {
@@ -180,17 +185,17 @@ test("媒体查询字符串与 index.html 首屏脚本保持一致", () => {
   const html = readFileSync(join(desktopRoot, "index.html"), "utf8");
   assert.equal(SYSTEM_DARK_MEDIA_QUERY, "(prefers-color-scheme: dark)");
   assert.ok(html.includes(`"${SYSTEM_DARK_MEDIA_QUERY}"`), "index.html 未使用同一个媒体查询");
-  for (const key of [THEME_STORAGE_KEY, APPEARANCE_STORAGE_KEY, ACCENT_STORAGE_KEY]) {
+  for (const key of [THEME_STORAGE_KEY, APPEARANCE_STORAGE_KEY, ACCENT_STORAGE_KEY, PALETTE_STORAGE_KEY]) {
     assert.ok(html.includes(`"${key}"`), `index.html 首屏脚本未读取 ${key}`);
   }
-  for (const attribute of [THEME_DATASET_KEY, THEME_MODE_DATASET_KEY, APPEARANCE_DATASET_KEY, ACCENT_DATASET_KEY]) {
+  for (const attribute of [THEME_DATASET_KEY, THEME_MODE_DATASET_KEY, APPEARANCE_DATASET_KEY, ACCENT_DATASET_KEY, PALETTE_DATASET_KEY]) {
     assert.ok(html.includes(`dataset.${attribute}`), `index.html 首屏脚本未写入 data-${attribute}`);
   }
 });
 
 test("应用偏好会写入全部属性，data-theme 始终是解析后的值", () => {
   const dom = installDom({ prefersDark: false });
-  const resolved = applyAppearanceState({ mode: "system", appearance: "contrast", accent: "cyan" });
+  const resolved = applyAppearanceState({ mode: "system", appearance: "contrast", accent: "cyan", palette: "blue" });
   assert.equal(resolved, "light");
   assert.equal(dom.dataset.theme, "light", "data-theme 必须是解析后的 light/dark，既有样式表依赖它");
   assert.equal(dom.dataset.themeMode, "system", "原始偏好写在 data-theme-mode");
@@ -207,7 +212,7 @@ test("三个轴的修改可以往返持久化", () => {
   setAccentPreference("graphite");
 
   const state = readAppearanceState();
-  assert.deepEqual(state, { mode: "light", appearance: "soft", accent: "graphite" });
+  assert.deepEqual(state, { mode: "light", appearance: "soft", accent: "graphite", palette: "blue" });
   assert.equal(readThemePreference(), "light");
   removeDom();
 });
@@ -219,13 +224,13 @@ test("修改一个轴不会重置另外两个轴（同一次交互只改一个�
   setAccentPreference("cyan");
 
   setAccentPreference("default");
-  assert.deepEqual(readAppearanceState(), { mode: "light", appearance: "contrast", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "light", appearance: "contrast", accent: "default", palette: "blue" });
 
   setThemePreference("system");
-  assert.deepEqual(readAppearanceState(), { mode: "system", appearance: "contrast", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "system", appearance: "contrast", accent: "default", palette: "blue" });
 
   setAppearancePreference("default");
-  assert.deepEqual(readAppearanceState(), { mode: "system", appearance: "default", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "system", appearance: "default", accent: "default", palette: "blue" });
   removeDom();
 });
 
@@ -234,7 +239,7 @@ test("非法或损坏的存储值回落到默认值，不抛异常", () => {
   dom.storage.set(THEME_STORAGE_KEY, "solarized");
   dom.storage.set(APPEARANCE_STORAGE_KEY, "neon");
   dom.storage.set(ACCENT_STORAGE_KEY, "{}");
-  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default", palette: "blue" });
   removeDom();
 });
 
@@ -243,7 +248,7 @@ test("localStorage 被禁用时切换仍然生效，只是不落盘", () => {
   assert.doesNotThrow(() => setAppearancePreference("soft"));
   assert.equal(dom.dataset.appearance, "soft", "属性必须仍然写入，否则界面不会变化");
   assert.equal(dom.storage.size, 0);
-  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default" });
+  assert.deepEqual(readAppearanceState(), { mode: "dark", appearance: "default", accent: "default", palette: "blue" });
   removeDom();
 });
 
@@ -293,7 +298,51 @@ test("每次修改都会广播一次完整状态，供外壳与其他入口同�
 
   assert.equal(dom.events.length, 3);
   for (const event of dom.events) assert.equal(event.type, APPEARANCE_CHANGE_EVENT);
-  assert.deepEqual(dom.events[0].detail, { mode: "dark", appearance: "soft", accent: "default", resolved: "dark" });
-  assert.deepEqual(dom.events[2].detail, { mode: "light", appearance: "soft", accent: "cyan", resolved: "light" });
+  assert.deepEqual(dom.events[0].detail, { mode: "dark", appearance: "soft", accent: "default", palette: "blue", resolved: "dark" });
+  assert.deepEqual(dom.events[2].detail, { mode: "light", appearance: "soft", accent: "cyan", palette: "blue", resolved: "light" });
+  removeDom();
+});
+
+test("旧主题偏好保留蓝色，新四种主题可完整往返并只广播一次", () => {
+  const dom = installDom();
+  dom.storage.set(THEME_STORAGE_KEY, "light");
+  assert.equal(readAppearanceState().palette, "blue");
+  assert.equal(normalizePaletteId(" GREEN "), "green");
+  assert.equal(normalizePaletteId("invalid"), "blue");
+  for (const palette of PALETTE_IDS) {
+    for (const mode of ["dark", "light"] as const) {
+      const eventCount = dom.events.length;
+      setThemePreset(palette, mode);
+      assert.deepEqual(readAppearanceState(), { mode, palette, appearance: "default", accent: "default" });
+      assert.equal(dom.dataset.palette, palette);
+      assert.equal(dom.dataset.theme, mode);
+      assert.equal(dom.events.length, eventCount + 1);
+    }
+  }
+  setThemePreset("green", "dark");
+  setThemePreference("system");
+  assert.equal(readAppearanceState().palette, "green");
+  setThemePreference("light");
+  assert.equal(dom.dataset.palette, "green");
+  removeDom();
+});
+
+test("绿色主题的两个基础模式和四种外观层都有相应 token，报告底色不被改写", () => {
+  const css = readFileSync(join(desktopRoot, "src", "styles", "tokens.css"), "utf8");
+  for (const mode of ["dark", "light"]) {
+    assert.ok(css.includes(`[data-theme="${mode}"][data-palette="green"] {`));
+    for (const appearance of ["soft", "contrast"]) {
+      assert.ok(css.includes(`[data-theme="${mode}"][data-palette="green"][data-appearance="${appearance}"]`));
+    }
+  }
+  assert.equal([...css.matchAll(/--ds-report-figure-bg\s*:/g)].length, 1);
+});
+
+test("存储不可用时命名主题仍即时应用", () => {
+  const dom = installDom({ storageBlocked: true });
+  setThemePreset("green", "light");
+  assert.equal(dom.dataset.palette, "green");
+  assert.equal(dom.dataset.theme, "light");
+  assert.equal(dom.storage.size, 0);
   removeDom();
 });

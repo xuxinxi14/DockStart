@@ -1,3 +1,7 @@
+import { getLocale } from "../i18n/language";
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLanguage } from "../i18n/language";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -299,7 +303,7 @@ function formatArchiveTime(value?: string | null): string {
   if (!value) return "时间未记录";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString("zh-CN", {
+  return parsed.toLocaleString(getLocale(), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -320,6 +324,7 @@ export default function BatchScreeningPanel({
   disabledReason = "",
   onBatchModeDetected,
 }: BatchScreeningPanelProps) {
+  useLanguage();
   const [state, setState] = useState<ScreeningState | null>(null);
   const [ligandImportPreview, setLigandImportPreview] = useState<LigandImportPreview | null>(null);
   const [selectedLigandCandidateIds, setSelectedLigandCandidateIds] = useState<Set<string>>(new Set());
@@ -570,9 +575,9 @@ export default function BatchScreeningPanel({
     let selectedPath: string | null = null;
     try {
       selectedPath = await save({
-        title: "导出批量筛选归档",
+        title: translate("导出批量筛选归档"),
         defaultPath: screeningArchiveExportDefaultName(archiveId),
-        filters: [{ name: "ZIP 压缩包", extensions: ["zip"] }],
+        filters: [{ name: translate("ZIP 压缩包"), extensions: ["zip"] }],
       });
     } catch (error) {
       if (
@@ -898,10 +903,10 @@ export default function BatchScreeningPanel({
     const selected = await open({
       multiple: !directory,
       directory,
-      title: directory ? "选择配体库文件夹" : "选择一个或多个配体",
+      title: translate(directory ? "选择配体库文件夹" : "选择一个或多个配体"),
       ...(directory
         ? {}
-        : { filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol"] }] }),
+        : { filters: [{ name: translate("配体结构"), extensions: ["pdbqt", "sdf", "mol"] }] }),
     });
     const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
     if (!files.length) return;
@@ -1097,7 +1102,7 @@ export default function BatchScreeningPanel({
     setBusy(true);
     setRawError("");
     try {
-      const parsed = parseResponse(await invoke<string>("export_screening_report", { projectDir }));
+      const parsed = parseResponse(await invoke<string>("export_screening_report", { projectDir, reportLanguage: getLanguage() }));
       if (!parsed.ok || !parsed.screening) {
         throw new Error(parsed.error?.message || "批量筛选实验记录生成失败。");
       }
@@ -1146,14 +1151,14 @@ export default function BatchScreeningPanel({
     <section className="run-cockpit-card batch-screening-panel" aria-labelledby="batch-screening-title">
       <div className="run-cockpit-section-heading">
         <div>
-          <span className="run-cockpit-kicker">{presentation === "results" ? "批量结果" : "多配体任务"}</span>
-          <h2 id="batch-screening-title">{presentation === "results" ? "配体排名、构象与实验记录" : "配体队列与批量运行"}</h2>
+          <span className="run-cockpit-kicker">{translate(presentation === "results" ? "批量结果" : "多配体任务")}</span>
+          <h2 id="batch-screening-title">{translate(presentation === "results" ? "配体排名、构象与实验记录" : "配体队列与批量运行")}</h2>
         </div>
-        <StatusBadge tone={tone(visibleStatus || "idle")}>{visibleStatusLabel}</StatusBadge>
+        <StatusBadge tone={tone(visibleStatus || "idle")}>{translate(visibleStatusLabel)}</StatusBadge>
       </div>
 
       <div className="batch-screening-content">
-        <div className="batch-screening-tabs" role="group" aria-label="批量筛选记录">
+        <div className="batch-screening-tabs" role="group" aria-label={translate("批量筛选记录")}>
           <button
             type="button"
             aria-pressed={panelTab === "current"}
@@ -1166,9 +1171,7 @@ export default function BatchScreeningPanel({
               setArchiveComparisonBusy(false);
               setPanelTab("current");
             }}
-          >
-            当前任务
-            {state ? <span>{statusLabels[state.status] || state.status}</span> : null}
+          >{translate("当前任务")}{state ? <span>{translate(statusLabels[state.status] || state.status)}</span> : null}
           </button>
           <button
             type="button"
@@ -1180,19 +1183,17 @@ export default function BatchScreeningPanel({
               setPanelTab("history");
               if (!archives.length) void refreshArchives(true);
             }}
-          >
-            历史归档
-            <span>{archives.length}</span>
+          >{translate("历史归档")}<span>{archives.length}</span>
           </button>
         </div>
 
-        {panelTab === "current" ? (
+        {translate(panelTab === "current" ? (
           <p className="batch-screening-intro">
-            {presentation === "results"
+            {translate(presentation === "results"
               ? "查看本次批量任务的完成情况、评分排名和逐配体最佳构象；历史归档可在相邻标签中核对。"
               : scoringProtocol === "ad4_maps"
                 ? "全部配体共用当前受体与标准 AutoDock4 maps，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"
-                : "全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。"}
+                : "全部配体共用上方受体、Box 与 Vina 参数，并按可恢复队列依次运行。CPU 表示每个配体任务的线程数。")}
           </p>
         ) : archiveComparison ? null : archiveDetail ? (
           <>
@@ -1205,22 +1206,20 @@ export default function BatchScreeningPanel({
                   setSelectedPoseItemId("");
                 }}
               >
-                <CaretLeft aria-hidden="true" size={16} />返回归档列表
-              </button>
+                <CaretLeft aria-hidden="true" size={16} />{translate("返回归档列表")}</button>
               <div>
-                <span>只读历史记录</span>
-                <strong>{archiveDetail.archive.screening_id || archiveDetail.archive.archive_id}</strong>
-                <small>
-                  归档于 {formatArchiveTime(archiveDetail.archive.archived_at)}
-                  {archiveDetail.archive.integrity === "state_verified" ? " · 状态快照已核对" : ""}
-                  {archiveDetail.attempt_integrity?.status === "verified" ? " · 逐次运行证据已核对" : ""}
+                <span>{translate("只读历史记录")}</span>
+                <strong>{translate(archiveDetail.archive.screening_id || archiveDetail.archive.archive_id)}</strong>
+                <small>{translate("归档于 ")}{translate(formatArchiveTime(archiveDetail.archive.archived_at))}
+                  {translate(archiveDetail.archive.integrity === "state_verified" ? " · 状态快照已核对" : "")}
+                  {translate(archiveDetail.attempt_integrity?.status === "verified" ? " · 逐次运行证据已核对" : "")}
                 </small>
               </div>
               <ActionButton
                 className="batch-screening-archive-heading-action"
                 variant="secondary"
                 disabled={Boolean(exportingArchiveId)}
-                aria-label={`导出 ${archiveDetail.archive.archive_id} ZIP`}
+                aria-label={translate("导出 {0} ZIP", [archiveDetail.archive.archive_id])}
                 onClick={(event) => void exportArchiveZip(
                   archiveDetail.archive.archive_id,
                   event.currentTarget,
@@ -1229,46 +1228,41 @@ export default function BatchScreeningPanel({
                 {exportingArchiveId === archiveDetail.archive.archive_id
                   ? <SpinnerGap className="run-monitor-spinner" size={15} />
                   : <DownloadSimple aria-hidden="true" size={16} />}
-                {exportingArchiveId === archiveDetail.archive.archive_id ? "正在导出…" : "导出 ZIP"}
+                {translate(exportingArchiveId === archiveDetail.archive.archive_id ? "正在导出…" : "导出 ZIP")}
               </ActionButton>
             </div>
             {archiveDetail.attempt_integrity?.status
               && !["verified", "not_applicable"].includes(archiveDetail.attempt_integrity.status) ? (
-              <p className="batch-screening-boundary" role="status">
-                该历史记录缺少部分逐次运行证据；可以读取，但不能视为完整验证。
-              </p>
+              <p className="batch-screening-boundary" role="status">{translate("该历史记录缺少部分逐次运行证据；可以读取，但不能视为完整验证。")}</p>
             ) : null}
           </>
         ) : (
           <div className="batch-screening-history-heading">
             <div>
-              <span>历史筛选</span>
-              <strong>已归档的批量任务</strong>
-              <small>归档内容只读，不会与当前任务的输入或输出混用。</small>
+              <span>{translate("历史筛选")}</span>
+              <strong>{translate("已归档的批量任务")}</strong>
+              <small>{translate("归档内容只读，不会与当前任务的输入或输出混用。")}</small>
             </div>
             <ActionButton variant="text" disabled={archiveListBusy} onClick={() => void refreshArchives()}>
-              {archiveListBusy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}
-              刷新归档
-            </ActionButton>
+              {archiveListBusy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}{translate("刷新归档")}</ActionButton>
           </div>
-        )}
+        ))}
 
         {panelTab === "history" && archiveExportResult ? (
-          <section className="batch-screening-export-result" role="status" aria-label="最近导出的批量归档">
+          <section className="batch-screening-export-result" role="status" aria-label={translate("最近导出的批量归档")}>
             <DownloadSimple aria-hidden="true" size={22} />
             <div className="batch-screening-export-result-copy">
-              <span>ZIP 已导出 · {archiveExportResult.archive_id}</span>
-              <strong title={archiveExportResult.zip_file}>{archiveExportResult.zip_file}</strong>
+              <span>{translate("ZIP 已导出 · ")}{translate(archiveExportResult.archive_id)}</span>
+              <strong title={translate(archiveExportResult.zip_file)}>{translate(archiveExportResult.zip_file)}</strong>
               <small>
-                {formatArchiveExportBytes(archiveExportResult.size_bytes)}
-                {" · "}
-                {archiveExportResult.entry_count} 个条目
-                {" · "}
-                {archiveExportIntegrityLabel(archiveExportResult.source_integrity)}
+                {translate(formatArchiveExportBytes(archiveExportResult.size_bytes))}
+                {translate(" · ")}
+                {archiveExportResult.entry_count}{translate(" 个条目")}{translate(" · ")}
+                {translate(archiveExportIntegrityLabel(archiveExportResult.source_integrity))}
               </small>
-              <code title={archiveExportResult.zip_sha256}>SHA256 {archiveExportResult.zip_sha256}</code>
+              <code title={translate(archiveExportResult.zip_sha256)}>SHA256 {archiveExportResult.zip_sha256}</code>
               {archiveExportResult.warnings.map((warning, index) => (
-                <em key={`${index}-${warning}`}>{warning}</em>
+                <em key={`${index}-${warning}`}>{translate(warning)}</em>
               ))}
             </div>
             <div className="batch-screening-export-result-actions">
@@ -1276,19 +1270,17 @@ export default function BatchScreeningPanel({
                 variant="text"
                 onClick={() => void copyArchiveExportValue(archiveExportResult.zip_file, "ZIP 路径")}
               >
-                <Copy aria-hidden="true" size={14} />复制路径
-              </ActionButton>
+                <Copy aria-hidden="true" size={14} />{translate("复制路径")}</ActionButton>
               <ActionButton
                 variant="text"
                 onClick={() => void copyArchiveExportValue(archiveExportResult.zip_sha256, "ZIP SHA256")}
               >
-                <Copy aria-hidden="true" size={14} />复制 SHA256
-              </ActionButton>
+                <Copy aria-hidden="true" size={14} />{translate("复制 SHA256")}</ActionButton>
             </div>
           </section>
         ) : null}
         {panelTab === "history" && archiveExportError ? (
-          <p className="batch-screening-export-error" role="alert">{archiveExportError}</p>
+          <p className="batch-screening-export-error" role="alert">{translate(archiveExportError)}</p>
         ) : null}
 
         {panelTab === "history" && archiveComparison ? (
@@ -1307,18 +1299,18 @@ export default function BatchScreeningPanel({
             aria-busy={Boolean(exportingArchiveId)}
             aria-live="polite"
           >
-            {archives.some((archive) => archive.valid) ? (
+            {translate(archives.some((archive) => archive.valid) ? (
               <div className="batch-screening-compare-toolbar">
                 <Scales aria-hidden="true" size={20} />
                 <div>
                   <strong>
-                    {comparisonSelection.length === 0
+                    {translate(comparisonSelection.length === 0
                       ? "选择两个归档进行比较"
                       : comparisonSelection.length === 1
                         ? "已选择基线，请再选择对照"
-                        : "基线与对照已选择"}
+                        : "基线与对照已选择")}
                   </strong>
-                  <span>配体按冻结输入 SHA256 匹配；差值固定为“对照－基线”。</span>
+                  <span>{translate("配体按冻结输入 SHA256 匹配；差值固定为“对照－基线”。")}</span>
                 </div>
                 <ActionButton
                   variant="secondary"
@@ -1328,14 +1320,14 @@ export default function BatchScreeningPanel({
                   {archiveComparisonBusy
                     ? <SpinnerGap className="run-monitor-spinner" size={15} />
                     : <Scales aria-hidden="true" size={16} />}
-                  {archiveComparisonBusy ? "正在核对…" : "比较所选批次"}
+                  {translate(archiveComparisonBusy ? "正在核对…" : "比较所选批次")}
                 </ActionButton>
               </div>
-            ) : null}
+            ) : null)}
             {archiveListBusy && !archives.length ? (
               <div className="batch-screening-archive-empty">
                 <SpinnerGap className="run-monitor-spinner" size={22} />
-                <span>正在读取历史归档…</span>
+                <span>{translate("正在读取历史归档…")}</span>
               </div>
             ) : archives.length ? visibleArchives.map((archive) => (
               <article
@@ -1357,47 +1349,46 @@ export default function BatchScreeningPanel({
                           )
                         }
                         onChange={() => toggleComparisonArchive(archive.archive_id)}
-                        aria-label={`选择 ${archive.screening_id || archive.archive_id} 用于批次比较`}
+                        aria-label={translate("选择 {0} 用于批次比较", [archive.screening_id || archive.archive_id])}
                       />
                       <span>
-                        {comparisonSelection[0] === archive.archive_id
+                        {translate(comparisonSelection[0] === archive.archive_id
                           ? "基线"
                           : comparisonSelection[1] === archive.archive_id
                             ? "对照"
-                            : "选择"}
+                            : "选择")}
                       </span>
                     </label>
                   ) : null}
                   <div>
-                    <span>{formatArchiveTime(archive.archived_at)}</span>
-                    <strong>{archive.screening_id || archive.archive_id}</strong>
+                    <span>{translate(formatArchiveTime(archive.archived_at))}</span>
+                    <strong>{translate(archive.screening_id || archive.archive_id)}</strong>
                     <code>{archive.archive_id}</code>
                   </div>
                   <StatusBadge tone={archive.valid ? tone(archive.status || "idle") : "error"}>
-                    {archive.valid ? statusLabels[archive.status || ""] || archive.status || "已归档" : "完整性异常"}
+                    {translate(archive.valid ? statusLabels[archive.status || ""] || archive.status || "已归档" : "完整性异常")}
                   </StatusBadge>
                 </div>
-                {archive.valid ? (
+                {translate(archive.valid ? (
                   <>
                     <div className="batch-screening-archive-stats">
-                      <span>配体 <strong>{archive.counts.total}</strong></span>
-                      <span>成功 <strong>{archive.counts.succeeded}</strong></span>
-                      <span>失败 <strong>{archive.counts.failed}</strong></span>
-                      <span>
-                        最佳评分{" "}
+                      <span>{translate("配体 ")}<strong>{archive.counts.total}</strong></span>
+                      <span>{translate("成功 ")}<strong>{archive.counts.succeeded}</strong></span>
+                      <span>{translate("失败 ")}<strong>{archive.counts.failed}</strong></span>
+                      <span>{translate("最佳评分")}{translate(" ")}
                         <strong>
-                          {typeof archive.best_affinity_kcal_mol === "number"
+                          {translate(typeof archive.best_affinity_kcal_mol === "number"
                             ? `${archive.best_affinity_kcal_mol.toFixed(3)} kcal/mol`
-                            : "—"}
+                            : "—")}
                         </strong>
                       </span>
                     </div>
                     <div className="batch-screening-archive-card-actions">
-                      <span>{archive.report_available ? "含实验记录" : "未生成实验记录"}</span>
+                      <span>{translate(archive.report_available ? "含实验记录" : "未生成实验记录")}</span>
                       <ActionButton
                         variant="secondary"
                         disabled={Boolean(exportingArchiveId) || archiveDetailBusy}
-                        aria-label={`导出 ${archive.archive_id} ZIP`}
+                        aria-label={translate("导出 {0} ZIP", [archive.archive_id])}
                         onClick={(event) => void exportArchiveZip(
                           archive.archive_id,
                           event.currentTarget,
@@ -1406,7 +1397,7 @@ export default function BatchScreeningPanel({
                         {exportingArchiveId === archive.archive_id
                           ? <SpinnerGap className="run-monitor-spinner" size={15} />
                           : <DownloadSimple aria-hidden="true" size={16} />}
-                        {exportingArchiveId === archive.archive_id ? "正在导出…" : "导出 ZIP"}
+                        {translate(exportingArchiveId === archive.archive_id ? "正在导出…" : "导出 ZIP")}
                       </ActionButton>
                       <ActionButton
                         variant="secondary"
@@ -1416,22 +1407,22 @@ export default function BatchScreeningPanel({
                         {loadingArchiveId === archive.archive_id
                           ? <SpinnerGap className="run-monitor-spinner" size={15} />
                           : null}
-                        {loadingArchiveId === archive.archive_id ? "正在打开…" : "查看结果"}
+                        {translate(loadingArchiveId === archive.archive_id ? "正在打开…" : "查看结果")}
                       </ActionButton>
                     </div>
                   </>
                 ) : (
-                  <p role="alert">{archive.error?.message || "归档状态或清单未通过完整性检查，已阻止打开。"}</p>
-                )}
+                  <p role="alert">{translate(archive.error?.message || "归档状态或清单未通过完整性检查，已阻止打开。")}</p>
+                ))}
               </article>
             )) : (
               <div className="batch-screening-archive-empty">
                 <TrayArrowDown size={24} />
-                <strong>还没有历史归档</strong>
-                <span>完成或取消当前批量任务后，可以将它归档到这里。</span>
+                <strong>{translate("还没有历史归档")}</strong>
+                <span>{translate("完成或取消当前批量任务后，可以将它归档到这里。")}</span>
               </div>
             )}
-            {archives.length > ARCHIVE_PAGE_SIZE ? (
+            {translate(archives.length > ARCHIVE_PAGE_SIZE ? (
               <footer className="batch-screening-pagination batch-screening-archive-pagination">
                 <span>
                   {archivePageStart + 1}–{Math.min(archivePageStart + visibleArchives.length, archives.length)} / {archives.length}
@@ -1441,7 +1432,7 @@ export default function BatchScreeningPanel({
                     type="button"
                     disabled={safeArchivePage <= 1}
                     onClick={() => setArchivePageNumber((current) => Math.max(1, current - 1))}
-                    aria-label="上一页归档"
+                    aria-label={translate("上一页归档")}
                   >
                     <CaretLeft size={16} />
                   </button>
@@ -1450,89 +1441,88 @@ export default function BatchScreeningPanel({
                     type="button"
                     disabled={safeArchivePage >= archivePageCount}
                     onClick={() => setArchivePageNumber((current) => Math.min(archivePageCount, current + 1))}
-                    aria-label="下一页归档"
+                    aria-label={translate("下一页归档")}
                   >
                     <CaretRight size={16} />
                   </button>
                 </div>
               </footer>
-            ) : null}
-            {archiveError ? <AdvancedDetails summary="查看历史归档诊断"><pre>{archiveError}</pre></AdvancedDetails> : null}
+            ) : null)}
+            {translate(archiveError ? <AdvancedDetails summary={translate("查看历史归档诊断")}><pre>{archiveError}</pre></AdvancedDetails> : null)}
           </div>
         ) : displayState ? (
           <>
             <div className="batch-screening-metrics">
-              <div><span>总数</span><strong>{counts.total}</strong></div>
-              <div><span>成功</span><strong>{counts.succeeded}</strong></div>
-              <div><span>待处理</span><strong>{counts.pending}</strong></div>
-              <div><span>失败</span><strong>{counts.failed}</strong></div>
+              <div><span>{translate("总数")}</span><strong>{counts.total}</strong></div>
+              <div><span>{translate("成功")}</span><strong>{counts.succeeded}</strong></div>
+              <div><span>{translate("待处理")}</span><strong>{counts.pending}</strong></div>
+              <div><span>{translate("失败")}</span><strong>{counts.failed}</strong></div>
             </div>
             {persistedInterruption ? (
               <div className="batch-screening-persisted-warning" role="alert">
                 <strong>
-                  {displayState?.last_integrity_error ? "队列因完整性检查中断" : "队列运行中断"}
+                  {translate(displayState?.last_integrity_error ? "队列因完整性检查中断" : "队列运行中断")}
                 </strong>
-                <span>{persistedInterruption.message || persistedInterruption.code || "请查看诊断后再恢复队列。"}</span>
+                <span>{persistedInterruption.message || persistedInterruption.code || translate("请查看诊断后再恢复队列。")}</span>
               </div>
             ) : null}
-            <section className="batch-screening-protocol" aria-label={panelTab === "history" ? "归档冻结协议" : "当前队列冻结协议"}>
+            <section className="batch-screening-protocol" aria-label={translate(panelTab === "history" ? "归档冻结协议" : "当前队列冻结协议")}>
               <header>
                 <div>
-                  <span>{panelTab === "history" ? "归档冻结协议" : "队列冻结协议"}</span>
-                  <strong>本次筛选使用的网格与搜索参数</strong>
+                  <span>{translate(panelTab === "history" ? "归档冻结协议" : "队列冻结协议")}</span>
+                  <strong>{translate("本次筛选使用的网格与搜索参数")}</strong>
                 </div>
                 <small>
-                  {frozenVinaHasAllAdvancedFields
+                  {translate(frozenVinaHasAllAdvancedFields
                     ? panelTab === "history"
                       ? "来自归档快照"
                       : "创建队列后不再随项目参数变化"
-                    : "旧记录未完整保存高级字段，以下按 Vina 兼容默认值解释"}
+                    : "旧记录未完整保存高级字段，以下按 Vina 兼容默认值解释")}
                 </small>
               </header>
               <dl className="batch-screening-protocol-core">
                 <div>
-                  <dt>Box 中心（Å）</dt>
+                  <dt>{translate("Box 中心（Å）")}</dt>
                   <dd>
-                    {(["x", "y", "z"] as const)
+                    {translate((["x", "y", "z"] as const)
                       .map((axis) => formatProtocolNumber(displayState.box?.[`center_${axis}`]))
-                      .join(" / ")}
+                      .join(" / "))}
                   </dd>
                 </div>
                 <div>
-                  <dt>Box 尺寸（Å）</dt>
+                  <dt>{translate("Box 尺寸（Å）")}</dt>
                   <dd>
-                    {(["x", "y", "z"] as const)
+                    {translate((["x", "y", "z"] as const)
                       .map((axis) => formatProtocolNumber(displayState.box?.[`size_${axis}`]))
-                      .join(" × ")}
+                      .join(" × "))}
                   </dd>
                 </div>
                 <div>
-                  <dt>评分协议</dt>
+                  <dt>{translate("评分协议")}</dt>
                   <dd>
-                    {formatScreeningProtocol(displayState.scoring_function ?? displayState.vina?.scoring)} · exhaustiveness{" "}
-                    {formatProtocolNumber(displayState.vina?.exhaustiveness)} · 构象{" "}
-                    {formatProtocolNumber(displayState.vina?.num_modes)} · 能量范围{" "}
-                    {formatProtocolNumber(displayState.vina?.energy_range)} kcal/mol
+                    {translate(formatScreeningProtocol(displayState.scoring_function ?? displayState.vina?.scoring))} · exhaustiveness{translate(" ")}
+                    {translate(formatProtocolNumber(displayState.vina?.exhaustiveness))}{translate(" · 构象")}{translate(" ")}
+                    {translate(formatProtocolNumber(displayState.vina?.num_modes))}{translate(" · 能量范围")}{translate(" ")}
+                    {translate(formatProtocolNumber(displayState.vina?.energy_range))} kcal/mol
                   </dd>
                 </div>
                 <div>
-                  <dt>执行</dt>
+                  <dt>{translate("执行")}</dt>
                   <dd>
-                    CPU {formatProtocolNumber(displayState.vina?.cpu)} · seed{" "}
-                    {!frozenVinaHasSeed
+                    CPU {translate(formatProtocolNumber(displayState.vina?.cpu))} · seed{translate(" ")}
+                    {translate(!frozenVinaHasSeed
                       ? "未记录"
                       : displayState.vina?.seed == null
                       ? "随机"
-                      : formatProtocolNumber(displayState.vina.seed)}{" "}
-                    · 重试 {formatProtocolNumber(displayState.max_retries)} · Top{" "}
-                    {formatProtocolNumber(displayState.top_n)}
+                      : formatProtocolNumber(displayState.vina.seed))}{translate(" ")}{translate("· 重试 ")}{translate(formatProtocolNumber(displayState.max_retries))} · Top{translate(" ")}
+                    {translate(formatProtocolNumber(displayState.top_n))}
                   </dd>
                 </div>
               </dl>
               <dl className="batch-screening-protocol-advanced">
                 {frozenAdvancedVinaSummary.map((item) => (
                   <div key={item.key}>
-                    <dt>{item.label}</dt>
+                    <dt>{translate(item.label)}</dt>
                     <dd>{item.value}</dd>
                   </div>
                 ))}
@@ -1540,37 +1530,37 @@ export default function BatchScreeningPanel({
             </section>
             {frozenProtocolWarnings.map((warning) => (
               <p className="batch-screening-persisted-warning" role="status" key={warning}>
-                {warning}
+                {translate(warning)}
               </p>
             ))}
-            {panelTab === "current" ? (
+            {translate(panelTab === "current" ? (
               <div className="batch-screening-actions">
-                {displayState.status === "ready" ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void run()}><Play size={16} weight="fill" />开始串行批量筛选</ActionButton> : null}
-                {displayState.status === "running" || displayState.status === "cancel_requested" ? <ActionButton variant="secondary" disabled={displayState.status === "cancel_requested"} onClick={() => void invokeStateCommand("request_screening_cancel")}><Stop size={16} />{displayState.status === "cancel_requested" ? "等待当前配体结束" : "安全取消"}</ActionButton> : null}
-                {["canceled", "interrupted"].includes(displayState.status) ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void invokeStateCommand("resume_screening")}><Play size={16} />恢复队列</ActionButton> : null}
-                {terminal(displayState.status) ? (
+                {displayState.status === "ready" ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void run()}><Play size={16} weight="fill" />{translate("开始串行批量筛选")}</ActionButton> : null}
+                {translate(displayState.status === "running" || displayState.status === "cancel_requested" ? <ActionButton variant="secondary" disabled={displayState.status === "cancel_requested"} onClick={() => void invokeStateCommand("request_screening_cancel")}><Stop size={16} />{translate(displayState.status === "cancel_requested" ? "等待当前配体结束" : "安全取消")}</ActionButton> : null)}
+                {["canceled", "interrupted"].includes(displayState.status) ? <ActionButton variant="primary" disabled={busy || disabled} onClick={() => void invokeStateCommand("resume_screening")}><Play size={16} />{translate("恢复队列")}</ActionButton> : null}
+                {translate(terminal(displayState.status) ? (
                   <ActionButton variant="secondary" disabled={busy} onClick={() => void exportReport()}>
-                    <FileText size={16} />{displayState.outputs?.report_md ? "更新实验记录" : "生成实验记录"}
+                    <FileText size={16} />{translate(displayState.outputs?.report_md ? "更新实验记录" : "生成实验记录")}
                   </ActionButton>
-                ) : null}
-                {terminal(displayState.status) ? <ActionButton variant="secondary" disabled={busy} onClick={() => void invokeStateCommand("archive_screening")}><TrayArrowDown size={16} />归档本次筛选</ActionButton> : null}
-                <ActionButton variant="text" disabled={busy} onClick={() => void refresh()}>{busy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}刷新状态</ActionButton>
+                ) : null)}
+                {terminal(displayState.status) ? <ActionButton variant="secondary" disabled={busy} onClick={() => void invokeStateCommand("archive_screening")}><TrayArrowDown size={16} />{translate("归档本次筛选")}</ActionButton> : null}
+                <ActionButton variant="text" disabled={busy} onClick={() => void refresh()}>{busy ? <SpinnerGap className="run-monitor-spinner" size={15} /> : null}{translate("刷新状态")}</ActionButton>
               </div>
-            ) : null}
+            ) : null)}
             {outputPaths.summary_csv ? (
               <div className="batch-screening-output">
                 <CheckCircle aria-hidden="true" size={18} weight="fill" />
                 <div>
-                  <strong>结果文件已写入项目</strong>
+                  <strong>{translate("结果文件已写入项目")}</strong>
                   {[
                     ["完整汇总", outputPaths.summary_csv],
                     ["Top N", outputPaths.top_n_csv],
                     ["实验记录", outputPaths.report_md],
                   ].filter((entry): entry is [string, string] => Boolean(entry[1])).map(([label, path]) => (
                     <span className="batch-screening-output-row" key={label}>
-                      <i>{label}</i>
+                      <i>{translate(label)}</i>
                       <code>{path}</code>
-                      <button type="button" onClick={() => void copyOutputPath(path)} title={`复制${label}路径`} aria-label={`复制${label}路径`}>
+                      <button type="button" onClick={() => void copyOutputPath(path)} title={translate("复制{0}路径", [translate(label)])} aria-label={translate("复制{0}路径", [translate(label)])}>
                         <Copy size={15} />
                       </button>
                     </span>
@@ -1581,13 +1571,13 @@ export default function BatchScreeningPanel({
             <section className="batch-screening-workspace" aria-labelledby="batch-screening-results-title">
               <header className="batch-screening-workspace-header">
                 <div>
-                  <span>{panelTab === "history" ? "归档结果" : "完整结果"}</span>
-                  <h3 id="batch-screening-results-title">{panelTab === "history" ? "历史配体结果" : "配体结果工作区"}</h3>
+                  <span>{translate(panelTab === "history" ? "归档结果" : "完整结果")}</span>
+                  <h3 id="batch-screening-results-title">{translate(panelTab === "history" ? "历史配体结果" : "配体结果工作区")}</h3>
                 </div>
                 <small>
-                  {displayedResultItems.length === allItems.length
+                  {translate(displayedResultItems.length === allItems.length
                     ? `共 ${allItems.length} 项`
-                    : `显示 ${displayedResultItems.length} / ${allItems.length} 项`}
+                    : `显示 ${displayedResultItems.length} / ${allItems.length} 项`)}
                 </small>
               </header>
 
@@ -1596,16 +1586,16 @@ export default function BatchScreeningPanel({
                   <MagnifyingGlass aria-hidden="true" size={17} />
                   <input
                     type="search"
-                    aria-label="搜索配体结果"
+                    aria-label={translate("搜索配体结果")}
                     value={resultQuery}
-                    placeholder="搜索配体名称、编号或错误"
+                    placeholder={translate("搜索配体名称、编号或错误")}
                     onChange={(event) => {
                       setResultQuery(event.target.value);
                       resetResultPage();
                     }}
                   />
                 </label>
-                <div className="batch-screening-status-filter" role="group" aria-label="结果状态筛选">
+                <div className="batch-screening-status-filter" role="group" aria-label={translate("结果状态筛选")}>
                   {([
                     ["all", "全部"],
                     ["succeeded", `成功 ${counts.succeeded}`],
@@ -1622,12 +1612,12 @@ export default function BatchScreeningPanel({
                         resetResultPage();
                       }}
                     >
-                      {label}
+                      {translate(label)}
                     </button>
                   ))}
                 </div>
                 <label className="batch-screening-sort">
-                  <span>排序</span>
+                  <span>{translate("排序")}</span>
                   <select
                     value={resultSort}
                     onChange={(event) => {
@@ -1635,10 +1625,10 @@ export default function BatchScreeningPanel({
                       resetResultPage();
                     }}
                   >
-                    <option value="score">最佳评分</option>
-                    <option value="order">导入顺序</option>
-                    <option value="name">配体名称</option>
-                    <option value="status">任务状态</option>
+                    <option value="score">{translate("最佳评分")}</option>
+                    <option value="order">{translate("导入顺序")}</option>
+                    <option value="name">{translate("配体名称")}</option>
+                    <option value="status">{translate("任务状态")}</option>
                   </select>
                 </label>
                 <label className="batch-screening-top-toggle">
@@ -1649,26 +1639,25 @@ export default function BatchScreeningPanel({
                       setTopOnly(event.target.checked);
                       resetResultPage();
                     }}
-                  />
-                  仅看 Top {displayState.top_n ?? 20}
+                  />{translate("仅看 Top ")}{displayState.top_n ?? 20}
                 </label>
               </div>
 
               <div
                 className="batch-screening-table-wrap"
                 role="region"
-                aria-label="配体结果表，可横向滚动"
+                aria-label={translate("配体结果表，可横向滚动")}
                 tabIndex={0}
               >
                 <table className="batch-screening-results">
                   <thead>
                     <tr>
-                      <th scope="col">排名 / 顺序</th>
-                      <th scope="col">配体</th>
-                      <th scope="col">状态</th>
-                      <th scope="col">尝试</th>
-                      <th scope="col">最佳评分</th>
-                      <th scope="col"><span aria-label="操作">操作</span></th>
+                      <th scope="col">{translate("排名 / 顺序")}</th>
+                      <th scope="col">{translate("配体")}</th>
+                      <th scope="col">{translate("状态")}</th>
+                      <th scope="col">{translate("尝试")}</th>
+                      <th scope="col">{translate("最佳评分")}</th>
+                      <th scope="col"><span aria-label={translate("操作")}>{translate("操作")}</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1678,15 +1667,15 @@ export default function BatchScreeningPanel({
                       return (
                         <tr key={item.item_id}>
                           <td>
-                            <strong>{rank ? `#${rank}` : "—"}</strong>
-                            <small>导入 {item.order ?? "—"}</small>
+                            <strong>{translate(rank ? `#${rank}` : "—")}</strong>
+                            <small>{translate("导入 ")}{translate(item.order ?? "—")}</small>
                           </td>
                           <td>
                             <span title={item.source_file || item.ligand_file || item.item_id}>{displayName}</span>
                             <small>{item.item_id}</small>
-                            {item.last_error ? <em title={item.last_error}>{item.last_error}</em> : null}
+                            {item.last_error ? <em title={translate(item.last_error)}>{translate(item.last_error)}</em> : null}
                           </td>
-                          <td><StatusBadge tone={tone(item.status)}>{statusLabels[item.status] || item.status}</StatusBadge></td>
+                          <td><StatusBadge tone={tone(item.status)}>{translate(statusLabels[item.status] || item.status)}</StatusBadge></td>
                           <td>{item.attempt_count ?? 0}</td>
                           <td>
                             {typeof item.best_affinity_kcal_mol === "number" && Number.isFinite(item.best_affinity_kcal_mol)
@@ -1704,8 +1693,7 @@ export default function BatchScreeningPanel({
                                   setSelectedPoseItemId(item.item_id);
                                 }}
                               >
-                                <Eye aria-hidden="true" size={16} />查看构象
-                              </button>
+                                <Eye aria-hidden="true" size={16} />{translate("查看构象")}</button>
                             ) : "—"}
                           </td>
                         </tr>
@@ -1713,7 +1701,7 @@ export default function BatchScreeningPanel({
                     })}
                     {!resultPage.items.length ? (
                       <tr className="batch-screening-empty-row">
-                        <td colSpan={6}>当前筛选条件下没有配体结果。</td>
+                        <td colSpan={6}>{translate("当前筛选条件下没有配体结果。")}</td>
                       </tr>
                     ) : null}
                   </tbody>
@@ -1721,13 +1709,13 @@ export default function BatchScreeningPanel({
               </div>
 
               <footer className="batch-screening-pagination">
-                <span>{resultPage.total ? `${resultPage.start}–${resultPage.end} / ${resultPage.total}` : "0 项"}</span>
+                <span>{translate(resultPage.total ? `${resultPage.start}–${resultPage.end} / ${resultPage.total}` : "0 项")}</span>
                 <div>
                   <button
                     type="button"
                     disabled={resultPage.page <= 1}
                     onClick={() => setResultPageNumber((current) => Math.max(1, current - 1))}
-                    aria-label="上一页"
+                    aria-label={translate("上一页")}
                   >
                     <CaretLeft size={16} />
                   </button>
@@ -1736,27 +1724,27 @@ export default function BatchScreeningPanel({
                     type="button"
                     disabled={resultPage.page >= resultPage.pageCount}
                     onClick={() => setResultPageNumber((current) => current + 1)}
-                    aria-label="下一页"
+                    aria-label={translate("下一页")}
                   >
                     <CaretRight size={16} />
                   </button>
                 </div>
               </footer>
             </section>
-            {displayState.outputs?.sdf && !displayState.outputs.sdf.generated ? <p className="batch-screening-boundary">未生成 SDF：{displayState.outputs.sdf.reason}</p> : null}
+            {displayState.outputs?.sdf && !displayState.outputs.sdf.generated ? <p className="batch-screening-boundary">{translate("未生成 SDF：")}{translate(displayState.outputs.sdf.reason)}</p> : null}
           </>
         ) : (
           <>
             <section className="batch-screening-import">
               <header>
                 <div>
-                  <span>配体库</span>
+                  <span>{translate("配体库")}</span>
                   <strong>
-                    {ligandImportPreview
+                    {translate(ligandImportPreview
                       ? `已选 ${selectedCandidateIds.length} / ${ligandImportPreview.counts.ready} 个可用配体`
-                      : "导入配体文件或文件夹"}
+                      : "导入配体文件或文件夹")}
                   </strong>
-                  <small>PDBQT 可直接加入；SDF 与 MOL 会逐条准备并列出失败记录。</small>
+                  <small>{translate("PDBQT 可直接加入；SDF 与 MOL 会逐条准备并列出失败记录。")}</small>
                 </div>
                 <div className="batch-screening-import-actions">
                   <ActionButton
@@ -1764,45 +1752,40 @@ export default function BatchScreeningPanel({
                     disabled={disabled || busy}
                     onClick={() => void chooseLigands(false)}
                   >
-                    <FolderOpen size={16} />
-                    选择文件
-                  </ActionButton>
+                    <FolderOpen size={16} />{translate("选择文件")}</ActionButton>
                   <ActionButton
                     variant="secondary"
                     disabled={disabled || busy}
                     onClick={() => void chooseLigands(true)}
                   >
-                    <FolderOpen size={16} />
-                    选择文件夹
-                  </ActionButton>
+                    <FolderOpen size={16} />{translate("选择文件夹")}</ActionButton>
                 </div>
               </header>
 
               {ligandImportPreview ? (
                 <>
-                  <div className="batch-screening-import-metrics" aria-label="配体导入统计">
-                    <div><span>记录</span><strong>{ligandImportPreview.counts.total}</strong></div>
-                    <div><span>可用</span><strong>{ligandImportPreview.counts.ready}</strong></div>
-                    <div><span>重复</span><strong>{ligandImportPreview.counts.duplicate}</strong></div>
-                    <div><span>需审查</span><strong>{ligandImportPreview.counts.reviewRequired}</strong></div>
-                    <div><span>失败</span><strong>{ligandImportPreview.counts.invalid}</strong></div>
-                    <div><span>已选</span><strong>{selectedCandidateIds.length}</strong></div>
+                  <div className="batch-screening-import-metrics" aria-label={translate("配体导入统计")}>
+                    <div><span>{translate("记录")}</span><strong>{ligandImportPreview.counts.total}</strong></div>
+                    <div><span>{translate("可用")}</span><strong>{ligandImportPreview.counts.ready}</strong></div>
+                    <div><span>{translate("重复")}</span><strong>{ligandImportPreview.counts.duplicate}</strong></div>
+                    <div><span>{translate("需审查")}</span><strong>{ligandImportPreview.counts.reviewRequired}</strong></div>
+                    <div><span>{translate("失败")}</span><strong>{ligandImportPreview.counts.invalid}</strong></div>
+                    <div><span>{translate("已选")}</span><strong>{selectedCandidateIds.length}</strong></div>
                   </div>
                   <div className="batch-screening-import-toolbar">
                     <span>
-                      {topologyCoverage?.status === "complete"
+                      {translate(topologyCoverage?.status === "complete"
                         ? `已选记录的原始拓扑已全部冻结（${topologyCoverage.verified}/${topologyCoverage.selected}）`
                         : topologyCoverage?.status === "partial"
                           ? `原始拓扑部分可追溯（${topologyCoverage.verified}/${topologyCoverage.selected}）`
-                          : "所选记录没有可验证的原始拓扑"}
+                          : "所选记录没有可验证的原始拓扑")}
                     </span>
                     <div>
                       <button
                         type="button"
                         disabled={busy || !retryableCandidateIds.length}
                         onClick={() => void retryPreparation()}
-                      >
-                        重试准备{retryableCandidateIds.length ? `（${retryableCandidateIds.length}）` : ""}
+                      >{translate("重试准备")}{translate(retryableCandidateIds.length ? `（${retryableCandidateIds.length}）` : "")}
                       </button>
                       <button
                         type="button"
@@ -1814,26 +1797,22 @@ export default function BatchScreeningPanel({
                             onBatchModeDetected?.();
                           }
                         }}
-                      >
-                        全选可用
-                      </button>
+                      >{translate("全选可用")}</button>
                       <button
                         type="button"
                         disabled={!selectedLigandCandidateIds.size}
                         onClick={() => setSelectedLigandCandidateIds(new Set())}
-                      >
-                        清空选择
-                      </button>
+                      >{translate("清空选择")}</button>
                     </div>
                   </div>
                   <div className="batch-screening-import-table-wrap">
                     <table className="batch-screening-import-table">
                       <thead>
                         <tr>
-                          <th aria-label="选择" />
-                          <th>配体</th>
-                          <th>来源</th>
-                          <th>状态</th>
+                          <th aria-label={translate("选择")} />
+                          <th>{translate("配体")}</th>
+                          <th>{translate("来源")}</th>
+                          <th>{translate("状态")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1842,7 +1821,7 @@ export default function BatchScreeningPanel({
                             <td>
                               <input
                                 type="checkbox"
-                                aria-label={`选择 ${candidate.displayName}`}
+                                aria-label={translate("选择 {0}", [candidate.displayName])}
                                 checked={selectedLigandCandidateIds.has(candidate.id)}
                                 disabled={candidate.status !== "ready" || !candidate.stagedFile}
                                 onChange={() => toggleImportedLigand(candidate.id)}
@@ -1850,33 +1829,31 @@ export default function BatchScreeningPanel({
                             </td>
                             <td>
                               <strong>{candidate.displayName}</strong>
-                              <small>{candidate.sourceFormat.toUpperCase()} · {ligandImportSizeLabel(candidate.sizeBytes)}</small>
+                              <small>{translate(candidate.sourceFormat.toUpperCase())} · {translate(ligandImportSizeLabel(candidate.sizeBytes))}</small>
                               <small>
-                                {candidate.chemicalFacts?.status === "verified"
+                                {translate(candidate.chemicalFacts?.status === "verified"
                                   ? `形式电荷 ${candidate.chemicalFacts.formalCharge} · 重原子 ${candidate.chemicalFacts.heavyAtomCount} · 可旋转键 ${candidate.chemicalFacts.rotatableBondCount}`
-                                  : "化学事实不可用"}
+                                  : "化学事实不可用")}
                               </small>
                             </td>
                             <td title={candidate.sourceFile}>
                               <strong>{candidate.originalName}</strong>
-                              <small>记录 #{candidate.recordIndex}</small>
+                              <small>{translate("记录 #")}{candidate.recordIndex}</small>
                             </td>
                             <td>
                               <span className={`batch-screening-import-status is-${candidate.status}`}>
-                                {ligandImportStatusLabel(candidate.status)}
+                                {translate(ligandImportStatusLabel(candidate.status))}
                               </span>
                               <small>
-                                {candidate.issue?.message
+                                {translate(candidate.issue?.message
                                   || (candidate.status === "duplicate"
                                     ? "与已保留记录相同"
-                                    : "可加入筛选队列")}
+                                    : "可加入筛选队列"))}
                               </small>
-                              {candidate.preparationAttempts.length ? (
-                                <small>
-                                  已准备 {candidate.preparationAttempts.length} 次
-                                  {candidate.retryable ? " · 可重试" : ""}
+                              {translate(candidate.preparationAttempts.length ? (
+                                <small>{translate("已准备 ")}{candidate.preparationAttempts.length}{translate(" 次")}{translate(candidate.retryable ? " · 可重试" : "")}
                                 </small>
-                              ) : null}
+                              ) : null)}
                             </td>
                           </tr>
                         ))}
@@ -1885,7 +1862,7 @@ export default function BatchScreeningPanel({
                   </div>
                   {ligandImportPreview.failureManifest ? (
                     <AdvancedDetails
-                      summary={`准备失败清单：${ligandImportPreview.failureManifest.failureCount} 条`}
+                      summary={translate("准备失败清单：{0} 条", [ligandImportPreview.failureManifest.failureCount])}
                     >
                       <dl className="batch-screening-protocol-list">
                         <div>
@@ -1911,28 +1888,28 @@ export default function BatchScreeningPanel({
               ) : null}
             </section>
             <div className="batch-screening-create-grid">
-              <label><span>单任务 CPU</span><input type="number" min={1} max={MAX_SCREENING_CPU} step={1} value={cpuPerTask} disabled={disabled || busy} onChange={(event) => setCpuPerTask(clampIntegerInput(event.target.value, 1, MAX_SCREENING_CPU, 1))} /><small>每次只运行一个配体</small></label>
-              <label><span>失败重试</span><input type="number" min={0} max={MAX_SCREENING_RETRIES} step={1} value={maxRetries} disabled={disabled || busy} onChange={(event) => setMaxRetries(clampIntegerInput(event.target.value, 0, MAX_SCREENING_RETRIES, 0))} /><small>只重试失败项</small></label>
-              <label><span>汇总 Top N</span><input type="number" min={1} max={MAX_SCREENING_LIGANDS} step={1} value={topN} disabled={disabled || busy} onChange={(event) => setTopN(clampIntegerInput(event.target.value, 1, MAX_SCREENING_LIGANDS, 1))} /><small>用于结果排行</small></label>
+              <label><span>{translate("单任务 CPU")}</span><input type="number" min={1} max={MAX_SCREENING_CPU} step={1} value={cpuPerTask} disabled={disabled || busy} onChange={(event) => setCpuPerTask(clampIntegerInput(event.target.value, 1, MAX_SCREENING_CPU, 1))} /><small>{translate("每次只运行一个配体")}</small></label>
+              <label><span>{translate("失败重试")}</span><input type="number" min={0} max={MAX_SCREENING_RETRIES} step={1} value={maxRetries} disabled={disabled || busy} onChange={(event) => setMaxRetries(clampIntegerInput(event.target.value, 0, MAX_SCREENING_RETRIES, 0))} /><small>{translate("只重试失败项")}</small></label>
+              <label><span>{translate("汇总 Top N")}</span><input type="number" min={1} max={MAX_SCREENING_LIGANDS} step={1} value={topN} disabled={disabled || busy} onChange={(event) => setTopN(clampIntegerInput(event.target.value, 1, MAX_SCREENING_LIGANDS, 1))} /><small>{translate("用于结果排行")}</small></label>
             </div>
-            <div className="batch-screening-library" aria-label="批量筛选高级 Vina 参数">
+            <div className="batch-screening-library" aria-label={translate("批量筛选高级 Vina 参数")}>
               <div>
-                <span>高级 Vina 参数</span>
-                <strong>6 项设置将在创建队列时冻结</strong>
+                <span>{translate("高级 Vina 参数")}</span>
+                <strong>{translate("6 项设置将在创建队列时冻结")}</strong>
                 <small>{advancedVinaSummary.map((item) => `${item.label} ${item.value}`).join(" · ")}</small>
-                <small>显式未结合体系能量只用于刚性单配体姿势评分，不进入批量筛选。</small>
+                <small>{translate("显式未结合体系能量只用于刚性单配体姿势评分，不进入批量筛选。")}</small>
               </div>
             </div>
             <div className="batch-screening-actions">
-              <ActionButton variant="secondary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void create()}>仅创建队列</ActionButton>
-              <ActionButton variant="primary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void createAndRun()}><Play size={16} weight="fill" />创建并开始对接</ActionButton>
+              <ActionButton variant="secondary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void create()}>{translate("仅创建队列")}</ActionButton>
+              <ActionButton variant="primary" disabled={disabled || busy || !receptorFile || !stagedFiles.length} onClick={() => void createAndRun()}><Play size={16} weight="fill" />{translate("创建并开始对接")}</ActionButton>
             </div>
           </>
         )}
 
-        {disabled && disabledReason ? <p className="batch-screening-boundary">{disabledReason}</p> : null}
-        {message ? <p className="batch-screening-message" role="status">{message}</p> : null}
-        {rawError ? <AdvancedDetails summary="查看批量筛选诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+        {disabled && disabledReason ? <p className="batch-screening-boundary">{translate(disabledReason)}</p> : null}
+        {message ? <p className="batch-screening-message" role="status">{translate(message)}</p> : null}
+        {rawError ? <AdvancedDetails summary={translate("查看批量筛选诊断")}><pre>{rawError}</pre></AdvancedDetails> : null}
       </div>
       {selectedPoseItem?.status === "succeeded" ? (
         <div
@@ -1952,22 +1929,22 @@ export default function BatchScreeningPanel({
           >
             <header>
               <div>
-                <span>批量筛选构象</span>
+                <span>{translate("批量筛选构象")}</span>
                 <h2 id="batch-screening-pose-title">{selectedPoseItem.display_label || screeningItemDisplayName(selectedPoseItem, displayLabels)}</h2>
                 <p>
-                  {selectedPoseItem.best_affinity_kcal_mol != null
+                  {translate(selectedPoseItem.best_affinity_kcal_mol != null
                     ? `最佳评分 ${selectedPoseItem.best_affinity_kcal_mol.toFixed(3)} kcal/mol`
-                    : "最佳输出构象"}
+                    : "最佳输出构象")}
                   <i aria-hidden="true">·</i>
                   {selectedPoseItem.item_id}
                 </p>
               </div>
-              <button type="button" autoFocus onClick={() => setSelectedPoseItemId("")} aria-label="关闭构象查看">
+              <button type="button" autoFocus onClick={() => setSelectedPoseItemId("")} aria-label={translate("关闭构象查看")}>
                 <X size={22} />
               </button>
             </header>
             <div className="batch-screening-pose-body">
-              <Suspense fallback={<div className="batch-screening-pose-loading"><SpinnerGap className="run-monitor-spinner" size={24} />正在加载 3D 查看器…</div>}>
+              <Suspense fallback={<div className="batch-screening-pose-loading"><SpinnerGap className="run-monitor-spinner" size={24} />{translate("正在加载 3D 查看器…")}</div>}>
                 <PoseStructurePreview
                   projectDir={projectDir}
                   screeningItemId={selectedPoseItem.item_id}
@@ -1980,28 +1957,28 @@ export default function BatchScreeningPanel({
             </div>
             <footer>
               <p id="batch-screening-pose-description">
-                {panelTab === "history"
+                {translate(panelTab === "history"
                   ? "显示所选归档冻结的受体与该配体最佳输出的 Mode 1；归档身份、路径和文件完整性会在加载前核对。"
-                  : "显示本次筛选冻结的受体与该配体最佳输出的 Mode 1；文件完整性会在加载前核对。"}
+                  : "显示本次筛选冻结的受体与该配体最佳输出的 Mode 1；文件完整性会在加载前核对。")}
               </p>
-              <ActionButton variant="secondary" onClick={() => setSelectedPoseItemId("")}>关闭</ActionButton>
+              <ActionButton variant="secondary" onClick={() => setSelectedPoseItemId("")}>{translate("关闭")}</ActionButton>
             </footer>
           </div>
         </div>
       ) : null}
       <OperationLoadingDialog
         open={Boolean(exportingArchiveId)}
-        title="正在导出批量筛选归档"
-        message="正在重新核对归档并写入 ZIP 文件。"
-        detail={`原归档不会被修改${exportingArchiveId ? ` · ${exportingArchiveId}` : ""}`}
+        title={translate("正在导出批量筛选归档")}
+        message={translate("正在重新核对归档并写入 ZIP 文件。")}
+        detail={translate(`原归档不会被修改${exportingArchiveId ? ` · ${exportingArchiveId}` : ""}`)}
       />
       <OperationLoadingDialog
         open={importingLigands || retryingPreparation}
-        title={retryingPreparation ? "正在重试配体准备" : "正在导入配体库"}
-        message={retryingPreparation
+        title={translate(retryingPreparation ? "正在重试配体准备" : "正在导入配体库")}
+        message={translate(retryingPreparation
           ? "正在重新准备可重试的失败记录并生成新的 staging revision。"
-          : "正在逐条读取、准备并核对配体记录。"}
-        detail="完成后可选择进入队列的配体"
+          : "正在逐条读取、准备并核对配体记录。")}
+        detail={translate("完成后可选择进入队列的配体")}
       />
     </section>
   );

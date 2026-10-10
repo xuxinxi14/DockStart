@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -13,6 +15,8 @@ import type {
   ViewerStructureResult,
 } from "../types";
 import { addOrientationAxes } from "./viewerSceneHelpers";
+import ReceptorTransparencyControl from "./ReceptorTransparencyControl";
+import { receptorOpacity, workspaceReceptorStyle } from "./receptorTransparency";
 import {
   load3Dmol,
   structureFingerprint,
@@ -54,6 +58,7 @@ export default function MultiLigandPosePreview({
   focusRequest = null,
   className = "",
 }: MultiLigandPosePreviewProps) {
+  useLanguage();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
   const viewerInitRef = useRef<Promise<ThreeDmolViewer | null> | null>(null);
@@ -71,6 +76,25 @@ export default function MultiLigandPosePreview({
   const [showSecond, setShowSecond] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
   const [isSpinning, setIsSpinning] = useState(false);
+  const [transparency, setTransparency] = useState(30);
+  const opacity = receptorOpacity(transparency);
+  const opacityRef = useRef(opacity);
+  opacityRef.current = opacity;
+
+  const applyReceptorStyle = useCallback((currentOpacity: number) => {
+    const model = receptorModelRef.current?.model;
+    model?.setStyle({}, workspaceReceptorStyle(currentOpacity, 0.09));
+    if (showReceptor && currentOpacity > 0) model?.show();
+    else model?.hide();
+  }, [showReceptor]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      applyReceptorStyle(opacity);
+      viewerRef.current?.render();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [applyReceptorStyle, opacity]);
 
   const ensureViewer = useCallback(async () => {
     if (viewerRef.current) return viewerRef.current;
@@ -125,10 +149,7 @@ export default function MultiLigandPosePreview({
       receptorModelRef.current,
       receptor,
       `${runId}:receptor:${receptor?.relative_path || ""}`,
-      {
-        cartoon: { color: "spectrum", opacity: 0.7 },
-        stick: { radius: 0.09, colorscheme: "Jmol" },
-      },
+      workspaceReceptorStyle(opacityRef.current, 0.09),
     );
     firstModelRef.current = replaceModel(
       viewer,
@@ -153,6 +174,7 @@ export default function MultiLigandPosePreview({
 
     if (showReceptor) receptorModelRef.current?.model.show();
     else receptorModelRef.current?.model.hide();
+    applyReceptorStyle(opacityRef.current);
     if (showFirst) firstModelRef.current?.model.show();
     else firstModelRef.current?.model.hide();
     if (showSecond) secondModelRef.current?.model.show();
@@ -168,6 +190,7 @@ export default function MultiLigandPosePreview({
     }
     viewer.render();
   }, [
+    applyReceptorStyle,
     ensureViewer,
     first,
     mode,
@@ -285,32 +308,40 @@ export default function MultiLigandPosePreview({
   return (
     <div
       className={`run-preview pose-structure-preview multi-ligand-pose-preview ${className}`.trim()}
-      aria-label={`联合构象 Mode ${mode} 3D 预览`}
+      aria-label={translate("联合构象 Mode {0} 3D 预览", [mode])}
       aria-busy={isBusy}
     >
-      <div className="run-preview-toolbar" aria-label="3D 视图工具">
-        <button type="button" onClick={() => zoom(1.18)} title="放大" aria-label="放大">
+      <div className="run-preview-toolbar" aria-label={translate("3D 视图工具")}>
+        <button type="button" onClick={() => zoom(1.18)} title={translate("放大")} aria-label={translate("放大")}>
           <MagnifyingGlassPlus size={18} />
         </button>
-        <button type="button" onClick={() => zoom(0.84)} title="缩小" aria-label="缩小">
+        <button type="button" onClick={() => zoom(0.84)} title={translate("缩小")} aria-label={translate("缩小")}>
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={() => void renderScene(true)} title="适应窗口" aria-label="适应窗口">
+        <button type="button" onClick={() => void renderScene(true)} title={translate("适应窗口")} aria-label={translate("适应窗口")}>
           <ArrowsOut size={18} />
         </button>
-        <button type="button" onClick={toggleSpin} title={isSpinning ? "停止旋转" : "自动旋转"} aria-label="旋转">
+        <button type="button" onClick={toggleSpin} title={translate(isSpinning ? "停止旋转" : "自动旋转")} aria-label={translate("旋转")}>
           {isSpinning ? <Pause size={18} /> : <Play size={18} />}
         </button>
         <button
           type="button"
           className={showAxes ? "is-active" : ""}
           onClick={() => setShowAxes((current) => !current)}
-          title={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
-          aria-label={showAxes ? "隐藏坐标轴" : "显示坐标轴"}
+          title={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
+          aria-label={translate(showAxes ? "隐藏坐标轴" : "显示坐标轴")}
           aria-pressed={showAxes}
         >
           <Crosshair size={18} />
         </button>
+      </div>
+      <div className="pose-transparency-controls">
+        <ReceptorTransparencyControl
+          value={transparency}
+          defaultValue={30}
+          onChange={setTransparency}
+          disabled={!(first?.receptor?.ok || second?.receptor?.ok) || !showReceptor}
+        />
       </div>
       <div
         ref={containerRef}
@@ -318,7 +349,7 @@ export default function MultiLigandPosePreview({
         style={{ height: "100%" }}
         role="img"
         tabIndex={0}
-        aria-label={`联合构象 Mode ${mode}。${firstLabel} 为青色，${secondLabel} 为橙色。`}
+        aria-label={translate("联合构象 Mode {0}。{1} 为青色，{2} 为橙色。", [mode, firstLabel, secondLabel])}
       />
       <div className="run-preview-legend">
         <button
@@ -327,9 +358,7 @@ export default function MultiLigandPosePreview({
           onClick={() => setShowReceptor((current) => !current)}
           aria-pressed={showReceptor}
         >
-          <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />
-          受体
-        </button>
+          <i className={`run-preview-dot receptor ${showReceptor ? "" : "muted"}`} />{translate("受体")}</button>
         <button
           type="button"
           className={`legend-toggle-btn ${showFirst ? "is-active" : "is-inactive"}`}
@@ -340,7 +369,7 @@ export default function MultiLigandPosePreview({
             className={`run-preview-dot ${showFirst ? "" : "muted"}`}
             style={{ backgroundColor: "#45d7e8" }}
           />
-          {firstLabel}
+          {translate(firstLabel)}
         </button>
         <button
           type="button"
@@ -352,13 +381,13 @@ export default function MultiLigandPosePreview({
             className={`run-preview-dot ${showSecond ? "" : "muted"}`}
             style={{ backgroundColor: "#ff9b52" }}
           />
-          {secondLabel}
+          {translate(secondLabel)}
         </button>
         <strong
           aria-live={messageTone === "error" ? "assertive" : "polite"}
           role={messageTone === "error" ? "alert" : "status"}
         >
-          {message}
+          {translate(message)}
         </strong>
       </div>
     </div>

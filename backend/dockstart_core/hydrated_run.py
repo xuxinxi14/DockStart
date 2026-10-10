@@ -55,6 +55,7 @@ from dockstart_core.project import (
     validate_vina_params,
 )
 from dockstart_core.settings import load_settings
+from dockstart_core.report_language import localized_report, rt
 
 MINIMUM_VINA_VERSION = "1.2.0"
 PROTOCOL_STABILITY = "experimental"
@@ -4510,6 +4511,7 @@ def _sanitized_command_for_report(command: Any) -> str:
     return json.dumps(sanitized, ensure_ascii=False)
 
 
+@localized_report
 def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, Any]:
     results = load_hydrated_results(project_dir, run_id)
     if not results.get("ok"):
@@ -4527,7 +4529,7 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
     axis_coverage = _mapping(grid_coverage.get("axis_coverage"))
     output_normalization = _mapping(metadata.get("output_normalization"))
     score_rows = [
-        "| 模式 | Raw AD4 affinity (kcal/mol) | 强水 | 弱水 | 置换水 |",
+        rt('| 模式 | Raw AD4 affinity (kcal/mol) | 强水 | 弱水 | 置换水 |'),
         "| ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in _list_of_mappings(results.get("modes")):
@@ -4554,14 +4556,14 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
         manifest_hashes = _mapping(provenance.get("manifest_hashes"))
         artifact_hashes = _mapping(provenance.get("artifact_sha256"))
         identity_rows = [
-            "| 对象 | run 内冻结文件 | 大小（bytes） | SHA256 |",
+            rt('| 对象 | run 内冻结文件 | 大小（bytes） | SHA256 |'),
             "| --- | --- | ---: | --- |",
         ]
         for label, key in (
-            ("原始配体", "raw_ligand"),
-            ("加氢配体", "added_h_ligand"),
-            ("水合 PDBQT 配体", "hydrated_ligand"),
-            ("刚性受体", "receptor"),
+            (rt('原始配体'), "raw_ligand"),
+            (rt('加氢配体'), "added_h_ligand"),
+            (rt('水合 PDBQT 配体'), "hydrated_ligand"),
+            (rt('刚性受体'), "receptor"),
         ):
             record = _mapping(verified_files.get(key))
             identity_rows.append(
@@ -4569,7 +4571,7 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
                 f"{record.get('size_bytes')} | `{record.get('sha256') or ''}` |"
             )
         tool_rows = [
-            "| 工具 | 版本 | 来源 | 路径 | 大小（bytes） | SHA256 |",
+            rt('| 工具 | 版本 | 来源 | 路径 | 大小（bytes） | SHA256 |'),
             "| --- | --- | --- | --- | ---: | --- |",
         ]
         for label, key in (
@@ -4581,19 +4583,16 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
         ):
             record = _mapping(toolchain.get(key))
             tool_rows.append(
-                f"| {label} | {record.get('version') or '未记录'} | "
-                f"{record.get('source') or '未记录'} | "
-                f"`{_private_tool_path(record.get('path'))}` | "
-                f"{record.get('size_bytes')} | `{record.get('sha256') or ''}` |"
+                f"| {label} | {record.get('version') or rt('未记录')} | {record.get('source') or rt('未记录')} | `{_private_tool_path(record.get('path'))}` | {record.get('size_bytes')} | `{record.get('sha256') or ''}` |"
             )
         map_rows = [
-            "| Map | 角色 | 大小（bytes） | SHA256 |",
+            rt('| Map | 角色 | 大小（bytes） | SHA256 |'),
             "| --- | --- | ---: | --- |",
         ]
         for name, role, key in (
-            ("OA", "W BEST 来源", "map:receptor.OA.map"),
-            ("HD", "W BEST 来源", "map:receptor.HD.map"),
-            ("W", "BEST 输出", "map:receptor.W.map"),
+            ("OA", rt('W BEST 来源'), "map:receptor.OA.map"),
+            ("HD", rt('W BEST 来源'), "map:receptor.HD.map"),
+            ("W", rt('BEST 输出'), "map:receptor.W.map"),
         ):
             record = _mapping(verified_files.get(key))
             map_rows.append(
@@ -4601,7 +4600,7 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
                 f"`{record.get('sha256') or ''}` |"
             )
         manifest_rows = [
-            "| 证据 | SHA256 |",
+            rt('| 证据 | SHA256 |'),
             "| --- | --- |",
             *[
                 f"| {key} | `{value}` |"
@@ -4633,21 +4632,19 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
             ],
         ]
         provenance_lines = [
-            "## 冻结溯源复核",
+            rt('## 冻结溯源复核'),
             "",
             (
-                "- 状态：完整并已验证（"
-                f"`schema v{provenance.get('schema_version')}` / "
-                f"`{provenance.get('contract_id')}`）"
+                rt('- 状态：完整并已验证（`schema v{0}` / `{1}`）', f"{provenance.get('schema_version')}", f"{provenance.get('contract_id')}")
             ),
-            "- 证据来源：仅当前 run 的冻结快照、manifest 与 metadata；未读取活动项目输入补写历史。",
-            "- 报告读取模式：只读；已重放水分子后处理并逐字节复核输出。",
+            rt('- 证据来源：仅当前 run 的冻结快照、manifest 与 metadata；未读取活动项目输入补写历史。'),
+            rt('- 报告读取模式：只读；已重放水分子后处理并逐字节复核输出。'),
             "",
-            "### 分子输入身份",
+            rt('### 分子输入身份'),
             "",
             *identity_rows,
             "",
-            "### 工具链身份",
+            rt('### 工具链身份'),
             "",
             *tool_rows,
             "",
@@ -4663,45 +4660,31 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
             *map_rows,
             "",
             (
-                "- W map 方法："
-                f"`{water_map.get('method') or ''}`，"
-                f"mode={water_parameters.get('mode')}，"
-                f"weight={water_parameters.get('weight')}，"
-                f"entropy={water_parameters.get('entropy')}，"
-                f"OA weight={water_parameters.get('oa_weight')}，"
-                f"HD weight={water_parameters.get('hd_weight')}。"
+                rt('- W map 方法：`{0}`，mode={1}，weight={2}，entropy={3}，OA weight={4}，HD weight={5}。', f"{water_map.get('method') or ''}", f"{water_parameters.get('mode')}", f"{water_parameters.get('weight')}", f"{water_parameters.get('entropy')}", f"{water_parameters.get('oa_weight')}", f"{water_parameters.get('hd_weight')}")
             ),
             "",
-            "### 水分子后处理合同",
+            rt('### 水分子后处理合同'),
             "",
             (
-                "- 算法："
-                f"`{postprocess.get('method') or ''}`；"
-                f"配体水与受体重叠距离严格小于 "
-                f"{postprocess_parameters.get('overlap_distance_angstrom')} Å 时置换。"
+                rt('- 算法：`{0}`；配体水与受体重叠距离严格小于 {1} Å 时置换。', f"{postprocess.get('method') or ''}", f"{postprocess_parameters.get('overlap_distance_angstrom')}")
             ),
             (
-                "- W map 采样：以最近网格点为中心，按 "
-                f"±{postprocess_parameters.get('map_sample_radius_angstrom')} Å "
-                f"（{postprocess_parameters.get('map_sample_radius_steps')} 个网格步长）"
-                "的裁剪索引立方体取最小值。"
+                rt('- W map 采样：以最近网格点为中心，按 ±{0} Å （{1} 个网格步长）的裁剪索引立方体取最小值。', f"{postprocess_parameters.get('map_sample_radius_angstrom')}", f"{postprocess_parameters.get('map_sample_radius_steps')}")
             ),
             (
-                "- 分类阈值：强水严格小于 "
-                f"{postprocess_parameters.get('strong_threshold')}；弱水严格小于 "
-                f"{postprocess_parameters.get('weak_threshold')}；其余置换。"
+                rt('- 分类阈值：强水严格小于 {0}；弱水严格小于 {1}；其余置换。', f"{postprocess_parameters.get('strong_threshold')}", f"{postprocess_parameters.get('weak_threshold')}")
             ),
-            "- affinity 与构象顺序保持 Vina 原始结果，不计算处理后 affinity。",
+            rt('- affinity 与构象顺序保持 Vina 原始结果，不计算处理后 affinity。'),
             "",
-            "### 命令与配置",
+            rt('### 命令与配置'),
             "",
-            f"- 配体准备：`{_sanitized_command_for_report(commands.get('ligand_preparation'))}`",
+            rt('- 配体准备：`{0}`', f"{_sanitized_command_for_report(commands.get('ligand_preparation'))}"),
             f"- AutoGrid4：`{_sanitized_command_for_report(commands.get('autogrid'))}`",
             f"- Vina：`{_sanitized_command_for_report(commands.get('vina'))}`",
             "",
             *manifest_rows,
             "",
-            "### Artifact 哈希索引",
+            rt('### Artifact 哈希索引'),
             "",
             *artifact_rows,
             "",
@@ -4712,13 +4695,12 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
             for item in provenance.get("missing_evidence") or []
         ]
         provenance_lines = [
-            "## 冻结溯源复核",
+            rt('## 冻结溯源复核'),
             "",
-            "> **旧版/部分溯源，只读。** "
-            "该历史 run 创建于完整冻结溯源合同之前；仅显示已记录且通过哈希复核的证据。",
+            rt('> **旧版/部分溯源，只读。** 该历史 run 创建于完整冻结溯源合同之前；仅显示已记录且通过哈希复核的证据。'),
             "",
-            "- 缺失证据不会从当前 project.json、活动输入或当前工具环境推断或补写。",
-            *[f"- 缺失：{item}" for item in missing],
+            rt('- 缺失证据不会从当前 project.json、活动输入或当前工具环境推断或补写。'),
+            *[rt('- 缺失：{0}', f'{item}') for item in missing],
             "",
         ]
     if grid_coverage:
@@ -4729,30 +4711,18 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
         )
         coverage_lines = [
             (
-                "- 请求 Box 中心（Å）："
-                f"X={requested_center.get('x')}，"
-                f"Y={requested_center.get('y')}，"
-                f"Z={requested_center.get('z')}"
+                rt('- 请求 Box 中心（Å）：X={0}，Y={1}，Z={2}', f"{requested_center.get('x')}", f"{requested_center.get('y')}", f"{requested_center.get('z')}")
             ),
             (
-                "- 请求 Box 尺寸（Å）："
-                f"X={requested_grid_size.get('x')}，"
-                f"Y={requested_grid_size.get('y')}，"
-                f"Z={requested_grid_size.get('z')}"
+                rt('- 请求 Box 尺寸（Å）：X={0}，Y={1}，Z={2}', f"{requested_grid_size.get('x')}", f"{requested_grid_size.get('y')}", f"{requested_grid_size.get('z')}")
             ),
             (
-                "- 实际网格尺寸（Å）："
-                f"X={effective_grid_size.get('x')}，"
-                f"Y={effective_grid_size.get('y')}，"
-                f"Z={effective_grid_size.get('z')}"
+                rt('- 实际网格尺寸（Å）：X={0}，Y={1}，Z={2}', f"{effective_grid_size.get('x')}", f"{effective_grid_size.get('y')}", f"{effective_grid_size.get('z')}")
             ),
             (
-                "- 各轴最小余量（Å）："
-                f"X={_mapping(axis_coverage.get('x')).get('minimum_margin_angstrom')}，"
-                f"Y={_mapping(axis_coverage.get('y')).get('minimum_margin_angstrom')}，"
-                f"Z={_mapping(axis_coverage.get('z')).get('minimum_margin_angstrom')}"
+                rt('- 各轴最小余量（Å）：X={0}，Y={1}，Z={2}', f"{_mapping(axis_coverage.get('x')).get('minimum_margin_angstrom')}", f"{_mapping(axis_coverage.get('y')).get('minimum_margin_angstrom')}", f"{_mapping(axis_coverage.get('z')).get('minimum_margin_angstrom')}")
             ),
-            "- 闭区间覆盖复核：通过",
+            rt('- 闭区间覆盖复核：通过'),
         ]
         grid = provenance_grid
         grid_points = _mapping(grid.get("grid_points"))
@@ -4769,72 +4739,65 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
             )
     else:
         coverage_lines = [
-            "- 该旧版 run 没有可完整复算的 Box/网格覆盖合同；不声明覆盖通过。",
+            rt('- 该旧版 run 没有可完整复算的 Box/网格覆盖合同；不声明覆盖通过。'),
         ]
     report_lines = [
-        "# DockStart 实验性水合 AD4 对接报告",
+        rt('# DockStart 实验性水合 AD4 对接报告'),
         "",
         f"- Run：`{run_id}`",
-        f"- 协议：`{HYDRATED_PROTOCOL_ID}`（Experimental）",
-        f"- Vina：{metadata.get('vina_version') or '未记录'}",
-        f"- Raw 输出：`{results.get('raw_output_file') or ''}`",
+        rt('- 协议：`{0}`（Experimental）', f'{HYDRATED_PROTOCOL_ID}'),
+        f"- Vina：{metadata.get('vina_version') or rt('未记录')}",
+        rt('- Raw 输出：`{0}`', f"{results.get('raw_output_file') or ''}"),
         *(
             [
                 (
-                    "- Vina 原始字节输出："
-                    f"`{output_normalization.get('raw_output_file') or ''}`"
+                    rt('- Vina 原始字节输出：`{0}`', f"{output_normalization.get('raw_output_file') or ''}")
                 ),
                 (
-                    "- 输出标准化："
-                    f"{output_normalization.get('status') or '未记录'}；"
-                    f"方法={output_normalization.get('method') or '未记录'}；"
-                    f"移除 NUL={output_normalization.get('nul_bytes_removed') or 0}"
+                    rt('- 输出标准化：{0}；方法={1}；移除 NUL={2}', f"{output_normalization.get('status') or rt('未记录')}", f"{output_normalization.get('method') or rt('未记录')}", f"{output_normalization.get('nul_bytes_removed') or 0}")
                 ),
                 (
-                    "- Vina 原始输出 SHA256："
-                    f"`{output_normalization.get('source_sha256') or ''}`"
+                    rt('- Vina 原始输出 SHA256：`{0}`', f"{output_normalization.get('source_sha256') or ''}")
                 ),
                 (
-                    "- 标准 PDBQT SHA256："
-                    f"`{output_normalization.get('normalized_sha256') or ''}`"
+                    rt('- 标准 PDBQT SHA256：`{0}`', f"{output_normalization.get('normalized_sha256') or ''}")
                 ),
             ]
             if output_normalization
             else []
         ),
-        f"- 保留水输出：`{results.get('retained_output_file') or ''}`",
-        f"- 去水配体输出：`{results.get('water_free_output_file') or ''}`",
+        rt('- 保留水输出：`{0}`', f"{results.get('retained_output_file') or ''}"),
+        rt('- 去水配体输出：`{0}`', f"{results.get('water_free_output_file') or ''}"),
         "",
         *provenance_lines,
-        "## 冻结 Box 与实际网格覆盖",
+        rt('## 冻结 Box 与实际网格覆盖'),
         "",
         *coverage_lines,
         "",
-        "## 评分语义",
+        rt('## 评分语义'),
         "",
-        "表中的 affinity 是 Vina 使用 AD4 maps 对含显式 W 原子的原始构象给出的原始评分。"
-        "水分子过滤只用于结构解释，不会产生或替换 affinity。",
+        rt('表中的 affinity 是 Vina 使用 AD4 maps 对含显式 W 原子的原始构象给出的原始评分。水分子过滤只用于结构解释，不会产生或替换 affinity。'),
         "",
-        "**处理后评分未计算。**",
+        rt('**处理后评分未计算。**'),
         "",
-        "该协议不用于虚拟筛选，也不支持跨配体、跨评分函数或跨协议直接比较分值。",
+        rt('该协议不用于虚拟筛选，也不支持跨配体、跨评分函数或跨协议直接比较分值。'),
         "",
-        "## 水分子汇总",
+        rt('## 水分子汇总'),
         "",
-        f"- 原始候选水：{summary.get('raw_water_count', 0)}",
-        f"- 保留水：{summary.get('retained_water_count', 0)}",
-        f"- 强水：{summary.get('strong_water_count', 0)}",
-        f"- 弱水：{summary.get('weak_water_count', 0)}",
-        f"- 置换水：{summary.get('displaced_water_count', 0)}",
+        rt('- 原始候选水：{0}', f"{summary.get('raw_water_count', 0)}"),
+        rt('- 保留水：{0}', f"{summary.get('retained_water_count', 0)}"),
+        rt('- 强水：{0}', f"{summary.get('strong_water_count', 0)}"),
+        rt('- 弱水：{0}', f"{summary.get('weak_water_count', 0)}"),
+        rt('- 置换水：{0}', f"{summary.get('displaced_water_count', 0)}"),
         "",
-        "## 构象结果",
+        rt('## 构象结果'),
         "",
         *score_rows,
         "",
-        "## 科学边界",
+        rt('## 科学边界'),
         "",
-        "Docking score 仅供结构结合趋势参考，不能替代实验验证。",
-        "水分子分类依赖当前受体、Box、AutoGrid W map 与固定阈值，只用于本次运行的结构解释。",
+        rt('Docking score 仅供结构结合趋势参考，不能替代实验验证。'),
+        rt('水分子分类依赖当前受体、Box、AutoGrid W map 与固定阈值，只用于本次运行的结构解释。'),
         "",
     ]
     return {
@@ -4844,7 +4807,7 @@ def build_hydrated_markdown_report(project_dir: str, run_id: str) -> dict[str, A
         "run_id": run_id,
         "metadata": metadata,
         "report_text": "\n".join(report_lines),
-        "message": "实验性水合 AD4 Markdown 报告内容已生成。",
+        "message": rt('实验性水合 AD4 Markdown 报告内容已生成。'),
         "error": None,
     }
 

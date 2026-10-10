@@ -1,3 +1,7 @@
+import { getLocale } from "../i18n/language";
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLanguage } from "../i18n/language";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -245,7 +249,7 @@ function formatTimestamp(value: string): string {
   if (!value) return "未记录";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString("zh-CN", {
+  return parsed.toLocaleString(getLocale(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -261,6 +265,7 @@ export default function ResultPage({
   onProjectChange,
   onOpenReportPage,
 }: ResultPageProps) {
+  useLanguage();
   const [project, setProject] = useState(initialProject);
   const [viewerMode, setViewerMode] = useState<number | null>(null);
   const [localPoseView, setLocalPoseView] = useState<LocalPoseView>("overlay");
@@ -489,6 +494,7 @@ export default function ResultPage({
       const rawPayload = await invoke<string>("export_markdown_report", {
         projectDir: project.project_dir,
         runId,
+        reportLanguage: getLanguage(),
       });
       applyResponse(
         parseProjectResponse(rawPayload),
@@ -589,8 +595,8 @@ export default function ResultPage({
     const selected = await open({
       multiple: false,
       directory: false,
-      title: "选择共晶参考配体",
-      filters: [{ name: "参考配体", extensions: ["sdf", "mol", "pdb", "pdbqt"] }],
+      title: translate("选择共晶参考配体"),
+      filters: [{ name: translate("参考配体"), extensions: ["sdf", "mol", "pdb", "pdbqt"] }],
     });
     if (!selected || Array.isArray(selected)) return;
     setIsBusy(true);
@@ -680,8 +686,8 @@ export default function ResultPage({
   return (
     <PageShell labelledBy="result-title" className="result-analysis-page">
       <PageHero
-        eyebrow="结果 · RESULT ANALYSIS"
-        title={runMode === "score_only"
+        eyebrow={translate("结果 · RESULT ANALYSIS")}
+        title={translate(runMode === "score_only"
           ? "当前姿势评分结果"
           : runMode === "local_only"
             ? "局部优化结果"
@@ -689,9 +695,9 @@ export default function ResultPage({
               ? "水合 AD4 对接结果"
             : isMultipleLigand
               ? "多配体共同对接结果"
-              : "对接结果分析"}
+              : "对接结果分析")}
         titleId="result-title"
-        description={runMode === "score_only"
+        description={translate(runMode === "score_only"
           ? "查看输入姿势的单点评分、能量分解与可复现运行记录。"
           : runMode === "local_only"
             ? "比较输入姿势与局部优化后姿势的评分、能量项和几何变化。"
@@ -701,83 +707,71 @@ export default function ResultPage({
               ? "查看两个配体在同一次联合搜索中生成的构象组、联合评分与可复现运行记录。"
             : isAd4Maps
               ? `查看 ${ad4ProtocolLabel} 对接构象、独立评分记录与可复现文件。`
-              : "查看与比较对接构象的评分与结构，访问运行记录并导出实验文件。"}
+              : "查看与比较对接构象的评分与结构，访问运行记录并导出实验文件。")}
         actions={
           <>
             <StatusBadge tone={status === "finished" ? "ok" : status === "failed" ? "error" : "warning"}>
-              {runStatusText[status] ?? "需检查"}
+              {runStatusText[status] ?? translate("需检查")}
             </StatusBadge>
-            <ActionButton variant="text" onClick={onBack}>返回工作台</ActionButton>
-            <ActionButton onClick={() => void reloadRunMetadata()} disabled={isBusy}>刷新结果</ActionButton>
+            <ActionButton variant="text" onClick={onBack}>{translate("返回工作台")}</ActionButton>
+            <ActionButton onClick={() => void reloadRunMetadata()} disabled={isBusy}>{translate("刷新结果")}</ActionButton>
           </>
         }
       />
 
-      <section className="result-run-strip" aria-label="运行摘要">
-        <div><Microscope aria-hidden="true" size={18} /><span>运行标识<strong>{runId}</strong></span></div>
-        <div><CheckCircle aria-hidden="true" size={18} weight="fill" /><span>状态<strong>{runStatusText[status] ?? status}</strong></span></div>
-        <div><Gauge aria-hidden="true" size={18} /><span>任务类型<strong>{runMode === "score_only" ? "仅评分" : runMode === "local_only" ? "局部优化" : isMultipleLigand ? "双配体联合搜索" : "全局对接"}</strong></span></div>
-        <div><Timer aria-hidden="true" size={18} /><span>运行耗时<strong>{elapsedSeconds === null || !Number.isFinite(elapsedSeconds) ? "未记录" : `${Math.round(elapsedSeconds)} 秒`}</strong></span></div>
-        <div><Clock aria-hidden="true" size={18} /><span>保存时间<strong>{formatTimestamp(finishedAt)}</strong></span></div>
+      <section className="result-run-strip" aria-label={translate("运行摘要")}>
+        <div><Microscope aria-hidden="true" size={18} /><span>{translate("运行标识")}<strong>{runId}</strong></span></div>
+        <div><CheckCircle aria-hidden="true" size={18} weight="fill" /><span>{translate("状态")}<strong>{translate(runStatusText[status] ?? status)}</strong></span></div>
+        <div><Gauge aria-hidden="true" size={18} /><span>{translate("任务类型")}<strong>{translate(runMode === "score_only" ? "仅评分" : runMode === "local_only" ? "局部优化" : isMultipleLigand ? "双配体联合搜索" : "全局对接")}</strong></span></div>
+        <div><Timer aria-hidden="true" size={18} /><span>{translate("运行耗时")}<strong>{translate(elapsedSeconds === null || !Number.isFinite(elapsedSeconds) ? "未记录" : `${Math.round(elapsedSeconds)} 秒`)}</strong></span></div>
+        <div><Clock aria-hidden="true" size={18} /><span>{translate("保存时间")}<strong>{translate(formatTimestamp(finishedAt))}</strong></span></div>
       </section>
 
-      {status !== "finished" ? (
-        <WarningCallout title="结果暂不可解析"><p>需要先完成 Vina 运行。</p></WarningCallout>
-      ) : null}
+      {translate(status !== "finished" ? (
+        <WarningCallout title={translate("结果暂不可解析")}><p>{translate("需要先完成 Vina 运行。")}</p></WarningCallout>
+      ) : null)}
       {isAd4Maps ? (
-        <WarningCallout title={`${ad4ProtocolLabel} 评分协议`}>
-          <p>本页评分来自 {ad4ProtocolLabel}；不要与 Vina 或 Vinardo 的分值直接横向比较。</p>
+        <WarningCallout title={translate("{0} 评分协议", [ad4ProtocolLabel])}>
+          <p>{translate("本页评分来自 ")}{translate(ad4ProtocolLabel)}{translate("；不要与 Vina 或 Vinardo 的分值直接横向比较。")}</p>
         </WarningCallout>
       ) : null}
       {isHydrated ? <HydratedProtocolScope /> : null}
-      {isMultipleLigand ? (
-        <WarningCallout title="联合构象与联合评分">
-          <p>
-            每个 Mode 同时包含两个配体，评分描述整个联合体系，不能拆分成单个配体的 affinity，
-            也不能与不同成员数量或不同成员组合的结果直接比较。
-          </p>
+      {translate(isMultipleLigand ? (
+        <WarningCallout title={translate("联合构象与联合评分")}>
+          <p>{translate("每个 Mode 同时包含两个配体，评分描述整个联合体系，不能拆分成单个配体的 affinity， 也不能与不同成员数量或不同成员组合的结果直接比较。")}</p>
           {multipleLigandMembers.length ? (
-            <p>
-              成员顺序：
-              {" "}
-              {multipleLigandMembers
+            <p>{translate("成员顺序：")}{translate(" ")}
+              {translate(multipleLigandMembers
                 .map((member) => member.display_name || member.source_name || member.member_id || `配体 ${member.member_index}`)
-                .join(" → ")}
+                .join(" → "))}
             </p>
           ) : null}
         </WarningCallout>
-      ) : null}
-      {isEvaluationMode ? (
-        <WarningCallout title={runMode === "score_only" ? "单点姿势评价" : "局部姿势优化"}>
-          <p>{evaluation?.scientific_note || (runMode === "score_only"
+      ) : null)}
+      {translate(isEvaluationMode ? (
+        <WarningCallout title={translate(runMode === "score_only" ? "单点姿势评价" : "局部姿势优化")}>
+          <p>{translate(evaluation?.scientific_note || (runMode === "score_only"
             ? "本次没有搜索或生成新构象；分值只描述输入姿势。"
-            : "本次只优化输入姿势附近的构象，不等同于全局对接。")}</p>
+            : "本次只优化输入姿势附近的构象，不等同于全局对接。"))}</p>
         </WarningCallout>
-      ) : null}
-      {isEvaluationMode ? (
-        <WarningCallout title="输入姿势确认记录">
+      ) : null)}
+      {translate(isEvaluationMode ? (
+        <WarningCallout title={translate("输入姿势确认记录")}>
           {poseInputAttestation ? (
-            <p>
-              用户于 {formatTimestamp(String(poseInputAttestation.confirmed_at || ""))} 确认输入姿势。
-              记录绑定运行受体 {shortSha256(poseInputAttestation.receptor_sha256)}
-              {poseInputAttestation.flex_sha256
+            <p>{translate("用户于 ")}{translate(formatTimestamp(String(poseInputAttestation.confirmed_at || "")))}{translate(" 确认输入姿势。 记录绑定运行受体 ")}{translate(shortSha256(poseInputAttestation.receptor_sha256))}
+              {translate(poseInputAttestation.flex_sha256
                 ? `、柔性侧链 ${shortSha256(poseInputAttestation.flex_sha256)}`
-                : ""}
-              与配体 {shortSha256(poseInputAttestation.ligand_sha256)}。
-              这是一项用户确认和文件完整性记录，不代表 DockStart 已自动验证坐标关系的科学有效性。
-            </p>
+                : "")}{translate("与配体 ")}{translate(shortSha256(poseInputAttestation.ligand_sha256))}{translate("。 这是一项用户确认和文件完整性记录，不代表 DockStart 已自动验证坐标关系的科学有效性。")}</p>
           ) : (
-            <p>
-              该历史评价运行未保存输入姿势确认记录；结果可以读取，但其坐标系前提无法由 DockStart 追溯核对。
-            </p>
+            <p>{translate("该历史评价运行未保存输入姿势确认记录；结果可以读取，但其坐标系前提无法由 DockStart 追溯核对。")}</p>
           )}
         </WarningCallout>
-      ) : null}
-      {unboundEnergyComparisonWarning ? (
-        <WarningCallout title="显式未结合态参考能量">
-          <p>{unboundEnergyComparisonWarning}</p>
+      ) : null)}
+      {translate(unboundEnergyComparisonWarning ? (
+        <WarningCallout title={translate("显式未结合态参考能量")}>
+          <p>{translate(unboundEnergyComparisonWarning)}</p>
         </WarningCallout>
-      ) : null}
+      ) : null)}
 
       {isHydrated && hydratedResults ? (
         <HydratedResultSummary
@@ -793,11 +787,11 @@ export default function ResultPage({
             <div className="result-pose-viewer">
               {scores.length || evaluation ? (
                 <>
-                  {runMode === "local_only" ? (
+                  {translate(runMode === "local_only" ? (
                     <div
                       className="result-pose-kind-switch"
                       role="radiogroup"
-                      aria-label="局部优化姿势视图"
+                      aria-label={translate("局部优化姿势视图")}
                       onKeyDown={handleLocalPoseViewKeyDown}
                     >
                       {canOverlayLocalPoses ? (
@@ -808,9 +802,7 @@ export default function ResultPage({
                           aria-checked={effectiveLocalPoseView === "overlay"}
                           tabIndex={effectiveLocalPoseView === "overlay" ? 0 : -1}
                           onClick={() => setLocalPoseView("overlay")}
-                        >
-                          叠合比较
-                        </button>
+                        >{translate("叠合比较")}</button>
                       ) : null}
                       <button
                         type="button"
@@ -819,9 +811,7 @@ export default function ResultPage({
                         aria-checked={effectiveLocalPoseView === "input"}
                         tabIndex={effectiveLocalPoseView === "input" ? 0 : -1}
                         onClick={() => setLocalPoseView("input")}
-                      >
-                        输入姿势
-                      </button>
+                      >{translate("输入姿势")}</button>
                       <button
                         type="button"
                         role="radio"
@@ -829,12 +819,10 @@ export default function ResultPage({
                         aria-checked={effectiveLocalPoseView === "optimized"}
                         tabIndex={effectiveLocalPoseView === "optimized" ? 0 : -1}
                         onClick={() => setLocalPoseView("optimized")}
-                      >
-                        优化后姿势
-                      </button>
+                      >{translate("优化后姿势")}</button>
                     </div>
-                  ) : null}
-                  <Suspense fallback={<div className="run-preview-loading">正在加载 3D 构象查看器…</div>}>
+                  ) : null)}
+                  <Suspense fallback={<div className="run-preview-loading">{translate("正在加载 3D 构象查看器…")}</div>}>
                     {isMultipleLigand ? (
                       <MultiLigandPosePreview
                         className="result-pose-preview"
@@ -875,68 +863,66 @@ export default function ResultPage({
                   </Suspense>
                 </>
               ) : (
-                <div className="result-pose-empty"><Microscope aria-hidden="true" size={28} /><span>{isEvaluationMode ? "解析评价结果后显示姿势" : "解析 scores 后显示构象"}</span></div>
+                <div className="result-pose-empty"><Microscope aria-hidden="true" size={28} /><span>{translate(isEvaluationMode ? "解析评价结果后显示姿势" : "解析 scores 后显示构象")}</span></div>
               )}
             </div>
 
             <div className="result-pose-ranking">
-              {isEvaluationMode ? (
+              {translate(isEvaluationMode ? (
                 <>
                   <header>
-                    <span>{runMode === "score_only" ? "输入姿势" : "优化前后评分"}</span>
-                    <strong>{runMode === "score_only" ? "单个结果" : "局部优化"}</strong>
+                    <span>{translate(runMode === "score_only" ? "输入姿势" : "优化前后评分")}</span>
+                    <strong>{translate(runMode === "score_only" ? "单个结果" : "局部优化")}</strong>
                   </header>
-                  {runMode === "local_only" ? (
+                  {translate(runMode === "local_only" ? (
                     <div className="result-local-comparison">
-                      <table aria-label="局部优化前后评分">
-                        <thead><tr><th>阶段</th><th>评分 (kcal/mol)</th></tr></thead>
+                      <table aria-label={translate("局部优化前后评分")}>
+                        <thead><tr><th>{translate("阶段")}</th><th>{translate("评分 (kcal/mol)")}</th></tr></thead>
                         <tbody>
-                          <tr><th scope="row">输入姿势</th><td>{formatMetric(inputScore)}</td></tr>
-                          <tr><th scope="row">优化后</th><td>{formatMetric(optimizedScore)}</td></tr>
-                          <tr className="is-delta"><th scope="row">Δ（优化后－输入）</th><td>{formatSignedMetric(scoreDelta)}</td></tr>
+                          <tr><th scope="row">{translate("输入姿势")}</th><td>{translate(formatMetric(inputScore))}</td></tr>
+                          <tr><th scope="row">{translate("优化后")}</th><td>{translate(formatMetric(optimizedScore))}</td></tr>
+                          <tr className="is-delta"><th scope="row">{translate("Δ（优化后－输入）")}</th><td>{translate(formatSignedMetric(scoreDelta))}</td></tr>
                         </tbody>
                       </table>
-                      {comparisonReason ? <p className="result-comparison-state">{comparisonReason}</p> : null}
-                      <small>负值仅表示当前评分数值降低，不代表真实结合能力提高。</small>
+                      {comparisonReason ? <p className="result-comparison-state">{translate(comparisonReason)}</p> : null}
+                      <small>{translate("负值仅表示当前评分数值降低，不代表真实结合能力提高。")}</small>
                       {canOverlayLocalPoses ? (
-                        <p className="result-local-overlay-note">
-                          3D 叠合直接显示本次 run 保存的输入坐标与优化后坐标，未对姿势进行额外对齐。
-                        </p>
+                        <p className="result-local-overlay-note">{translate("3D 叠合直接显示本次 run 保存的输入坐标与优化后坐标，未对姿势进行额外对齐。")}</p>
                       ) : null}
                       <dl className="result-local-geometry">
                         {finiteNumber(geometry?.heavy_atom_rmsd_aligned_angstrom) !== null ? (
-                          <div><dt>对齐后 RMSD（仅数值比较）</dt><dd>{formatAngstrom(geometry?.heavy_atom_rmsd_aligned_angstrom)}</dd></div>
+                          <div><dt>{translate("对齐后 RMSD（仅数值比较）")}</dt><dd>{translate(formatAngstrom(geometry?.heavy_atom_rmsd_aligned_angstrom))}</dd></div>
                         ) : null}
-                        <div><dt>未对齐重原子 RMSD</dt><dd>{formatAngstrom(geometry?.heavy_atom_rmsd_no_alignment_angstrom)}</dd></div>
-                        <div><dt>最大重原子位移</dt><dd>{formatAngstrom(geometry?.max_heavy_atom_displacement_angstrom)}</dd></div>
-                        <div><dt>匹配重原子</dt><dd>{finiteNumber(geometry?.heavy_atom_count) ?? "—"}</dd></div>
+                        <div><dt>{translate("未对齐重原子 RMSD")}</dt><dd>{translate(formatAngstrom(geometry?.heavy_atom_rmsd_no_alignment_angstrom))}</dd></div>
+                        <div><dt>{translate("最大重原子位移")}</dt><dd>{translate(formatAngstrom(geometry?.max_heavy_atom_displacement_angstrom))}</dd></div>
+                        <div><dt>{translate("匹配重原子")}</dt><dd>{translate(finiteNumber(geometry?.heavy_atom_count) ?? "—")}</dd></div>
                       </dl>
-                      {geometryReason ? <p className="result-comparison-state">{geometryReason}</p> : null}
+                      {geometryReason ? <p className="result-comparison-state">{translate(geometryReason)}</p> : null}
                     </div>
                   ) : (
                     <div className="result-evaluation-summary">
                       <span>
-                        {isAd4Maps
+                        {translate(isAd4Maps
                           ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 主要评分`
                           : scoringFunction === "vinardo"
                             ? "Vinardo 主要评分"
-                            : "Vina 主要评分"}
+                            : "Vina 主要评分")}
                       </span>
-                      <strong>{displayedPrimaryScore ?? "—"} <small>kcal/mol</small></strong>
+                      <strong>{translate(displayedPrimaryScore ?? "—")} <small>kcal/mol</small></strong>
                       <dl>
-                        <div><dt>范围</dt><dd>{evaluation?.autobox ? "按配体自动建立" : isAd4Maps ? ad4ProtocolLabel : "项目 Box"}</dd></div>
-                        <div><dt>评分函数</dt><dd>{evaluation?.scoring_function || scoringFunction}</dd></div>
-                        <div><dt>输出姿势</dt><dd>未生成</dd></div>
+                        <div><dt>{translate("范围")}</dt><dd>{translate(evaluation?.autobox ? "按配体自动建立" : isAd4Maps ? ad4ProtocolLabel : "项目 Box")}</dd></div>
+                        <div><dt>{translate("评分函数")}</dt><dd>{translate(evaluation?.scoring_function || scoringFunction)}</dd></div>
+                        <div><dt>{translate("输出姿势")}</dt><dd>{translate("未生成")}</dd></div>
                       </dl>
                     </div>
-                  )}
+                  ))}
                 </>
               ) : (
                 <>
-                  <header><span>{isMultipleLigand ? "联合构象列表" : "构象列表"}</span><strong>按评分排序</strong></header>
-                  <div className="result-ranking-head"><span>排名</span><span>构象</span><span>{isMultipleLigand ? "联合评分" : isHydrated ? "Raw AD4 affinity" : "评分"}</span><span>RMSD l.b.</span><span>RMSD u.b.</span></div>
+                  <header><span>{translate(isMultipleLigand ? "联合构象列表" : "构象列表")}</span><strong>{translate("按评分排序")}</strong></header>
+                  <div className="result-ranking-head"><span>{translate("排名")}</span><span>{translate("构象")}</span><span>{translate(isMultipleLigand ? "联合评分" : isHydrated ? "Raw AD4 affinity" : "评分")}</span><span>RMSD l.b.</span><span>RMSD u.b.</span></div>
                   <div className="result-ranking-list">
-                    {scores.map((score, index) => (
+                    {translate(scores.map((score, index) => (
                       <button
                         key={score.mode}
                         type="button"
@@ -949,21 +935,21 @@ export default function ResultPage({
                         }}
                         disabled={score.pose_available === false}
                         aria-pressed={effectiveSelectedMode === score.mode}
-                        title={score.pose_available === false ? "该评分行未写入 out.pdbqt，不能加载构象" : undefined}
+                        title={translate(score.pose_available === false ? "该评分行未写入 out.pdbqt，不能加载构象" : undefined)}
                       >
                         <span>{index + 1}</span>
                         <strong>
-                          {isMultipleLigand ? "联合 " : ""}Mode {score.mode}
-                          {score.pose_available === false ? " · 仅日志" : ""}
+                          {translate(isMultipleLigand ? "联合 " : "")}Mode {score.mode}
+                          {translate(score.pose_available === false ? " · 仅日志" : "")}
                         </strong>
-                        <span>{formatScoreValue(score.affinity_kcal_mol)}</span>
-                        <span>{formatScoreValue(score.rmsd_lb)}</span>
-                        <span>{formatScoreValue(score.rmsd_ub)}</span>
+                        <span>{translate(formatScoreValue(score.affinity_kcal_mol))}</span>
+                        <span>{translate(formatScoreValue(score.rmsd_lb))}</span>
+                        <span>{translate(formatScoreValue(score.rmsd_ub))}</span>
                       </button>
-                    ))}
+                    )))}
                   </div>
                 </>
-              )}
+              ))}
               <div className="result-pose-focus-action">
                 <ActionButton
                   variant="primary"
@@ -974,7 +960,7 @@ export default function ResultPage({
                   }))}
                 >
                   <Crosshair aria-hidden="true" size={17} />
-                  {runMode === "local_only"
+                  {translate(runMode === "local_only"
                     ? effectiveLocalPoseView === "overlay"
                       ? "定位到叠合姿势"
                       : effectiveLocalPoseView === "input"
@@ -982,102 +968,102 @@ export default function ResultPage({
                         : "定位到优化后姿势"
                     : isMultipleLigand
                       ? "定位到两个配体"
-                      : "定位到当前配体"}
+                      : "定位到当前配体")}
                 </ActionButton>
                 <small>
-                  {runMode === "local_only" && effectiveLocalPoseView === "overlay"
+                  {translate(runMode === "local_only" && effectiveLocalPoseView === "overlay"
                     ? "聚焦本次 run 的两份原始坐标；3D 视图不使用对齐变换。"
                     : isEvaluationMode
                       ? "只调整视角，不会改变当前姿势或评分。"
                       : isMultipleLigand
                         ? `将视角聚焦到联合 Mode ${effectiveSelectedMode} 的两个配体，不会改变构象或评分。`
-                        : `将视角聚焦到 Mode ${effectiveSelectedMode}，不会改变构象或评分。`}
+                        : `将视角聚焦到 Mode ${effectiveSelectedMode}，不会改变构象或评分。`)}
                 </small>
               </div>
-              {!isEvaluationMode ? (
+              {translate(!isEvaluationMode ? (
                 <p>
-                  {isMultipleLigand
+                  {translate(isMultipleLigand
                     ? "RMSD 描述整组联合构象相对 Mode 1 的差异；标为“仅日志”的评分行被 energy_range 排除，没有可加载的 out.pdbqt 构象。"
-                    : "RMSD 相对基于 Mode 1 的构象，仅用于本次输出内比较。"}
+                    : "RMSD 相对基于 Mode 1 的构象，仅用于本次输出内比较。")}
                 </p>
-              ) : null}
-              {!isEvaluationMode ? (
+              ) : null)}
+              {translate(!isEvaluationMode ? (
                 <p className="result-metric-hint">
                   <FieldHint
                     subject="评分与 RMSD"
-                    label="Affinity（评分）：Vina 给出的预测结合评分，单位 kcal/mol。数值越小通常代表预测结合越强，但只用于在同一次计算中比较候选构象，不能拿不同体系或不同条件的分数直接比较。RMSD：描述不同对接构象之间的结构差异。不要把 RMSD 简单理解成“越小就一定越好”，它只是衡量构象间偏离程度的参考指标。"
+                    label={translate("Affinity（评分）：Vina 给出的预测结合评分，单位 kcal/mol。数值越小通常代表预测结合越强，但只用于在同一次计算中比较候选构象，不能拿不同体系或不同条件的分数直接比较。RMSD：描述不同对接构象之间的结构差异。不要把 RMSD 简单理解成“越小就一定越好”，它只是衡量构象间偏离程度的参考指标。")}
                   />
-                  <span>评分与 RMSD 说明</span>
+                  <span>{translate("评分与 RMSD 说明")}</span>
                 </p>
-              ) : null}
+              ) : null)}
             </div>
           </section>
 
-          <nav className="result-tabs" aria-label="结果详情" onKeyDown={handleResultTabsKeyDown}>
-            <button className={detailTab === "scores" ? "active" : ""} type="button" aria-pressed={detailTab === "scores"} onClick={() => setDetailTab("scores")}>{runMode === "local_only" ? "优化前后能量" : isEvaluationMode ? "能量分解" : "评分"}</button>
-            <button className={detailTab === "run-files" ? "active" : ""} type="button" aria-pressed={detailTab === "run-files"} onClick={() => setDetailTab("run-files")}>运行日志与文件</button>
-            <button type="button" onClick={() => onOpenReportPage(project, runId)}>分析报告</button>
+          <nav className="result-tabs" aria-label={translate("结果详情")} onKeyDown={handleResultTabsKeyDown}>
+            <button className={detailTab === "scores" ? "active" : ""} type="button" aria-pressed={detailTab === "scores"} onClick={() => setDetailTab("scores")}>{translate(runMode === "local_only" ? "优化前后能量" : isEvaluationMode ? "能量分解" : "评分")}</button>
+            <button className={detailTab === "run-files" ? "active" : ""} type="button" aria-pressed={detailTab === "run-files"} onClick={() => setDetailTab("run-files")}>{translate("运行日志与文件")}</button>
+            <button type="button" onClick={() => onOpenReportPage(project, runId)}>{translate("分析报告")}</button>
           </nav>
 
           {detailTab === "scores" ? <section className="result-score-ledger">
             <div className="result-score-actions">
               <div>
-                <strong>{isEvaluationMode ? "evaluation.json" : "scores.csv"}</strong>
-                <span>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "尚未生成" : displayedScoresFile || "尚未生成"}</span>
+                <strong>{translate(isEvaluationMode ? "evaluation.json" : "scores.csv")}</strong>
+                <span>{(isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") : displayedScoresFile) || translate("尚未生成")}</span>
               </div>
               <div>
-                {isHydrated && !analysisReady ? (
+                {translate(isHydrated && !analysisReady ? (
                   <ActionButton
                     variant="primary"
                     disabled={isBusy || status !== "finished"}
                     onClick={() => void reloadScores()}
                   >
-                    {isBusy ? "读取中…" : "加载水合结果"}
+                    {translate(isBusy ? "读取中…" : "加载水合结果")}
                   </ActionButton>
                 ) : analysisReady ? (
                   <ActionButton variant="primary" disabled={!canGenerateReport} onClick={() => void generateDetailedReport()}>
-                    {isBusy ? "生成中…" : reportReady ? "重新生成分析" : "生成结果分析"}
+                    {translate(isBusy ? "生成中…" : reportReady ? "重新生成分析" : "生成结果分析")}
                   </ActionButton>
                 ) : (
                   <ActionButton variant="primary" disabled={!canAnalyzeResults} onClick={() => void analyzeResults()}>
-                    {isBusy ? "解析中…" : isEvaluationMode ? "解析能量分解" : "解析对接评分"}
+                    {translate(isBusy ? "解析中…" : isEvaluationMode ? "解析能量分解" : "解析对接评分")}
                   </ActionButton>
-                )}
-                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>重新加载</ActionButton>
+                ))}
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadScores()}>{translate("重新加载")}</ActionButton>
               </div>
             </div>
 
-            {runMode === "local_only" && evaluation ? (
+            {translate(runMode === "local_only" && evaluation ? (
               <>
                 <div className="scores-table-wrap result-energy-breakdown">
                   <table className="scores-table">
-                    <thead><tr><th>能量项</th><th>输入</th><th>优化后</th><th>Δ</th></tr></thead>
+                    <thead><tr><th>{translate("能量项")}</th><th>{translate("输入")}</th><th>{translate("优化后")}</th><th>Δ</th></tr></thead>
                     <tbody>
                       {localEnergyRows.map((term) => (
                         <tr key={term.key}>
-                          <td>{term.label}</td>
-                          <td>{formatMetric(term.inputValue)}</td>
-                          <td>{formatMetric(term.optimizedValue)}</td>
-                          <td>{formatSignedMetric(term.delta)}</td>
+                          <td>{translate(term.label)}</td>
+                          <td>{translate(formatMetric(term.inputValue))}</td>
+                          <td>{translate(formatMetric(term.optimizedValue))}</td>
+                          <td>{translate(formatSignedMetric(term.delta))}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
                 {!evaluation.input_energy_terms?.length ? (
-                  <p className="result-table-note">此次运行未记录输入姿势的能量分项，因此输入列和 Δ 不可用。</p>
+                  <p className="result-table-note">{translate("此次运行未记录输入姿势的能量分项，因此输入列和 Δ 不可用。")}</p>
                 ) : null}
               </>
             ) : isEvaluationMode && evaluation ? (
               <div className="scores-table-wrap result-energy-breakdown">
                 <table className="scores-table">
-                  <thead><tr><th>能量项</th><th>数值 (kcal/mol)</th><th>Vina 项号</th></tr></thead>
+                  <thead><tr><th>{translate("能量项")}</th><th>{translate("数值 (kcal/mol)")}</th><th>{translate("Vina 项号")}</th></tr></thead>
                   <tbody>
                     {evaluation.energy_terms.map((term) => (
                       <tr key={term.key}>
-                        <td>{term.label}</td>
-                        <td>{formatScoreValue(term.value_kcal_mol)}</td>
-                        <td>{term.term_number ?? "—"}</td>
+                        <td>{translate(term.label)}</td>
+                        <td>{translate(formatScoreValue(term.value_kcal_mol))}</td>
+                        <td>{translate(term.term_number ?? "—")}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1086,9 +1072,9 @@ export default function ResultPage({
             ) : scores.length ? (
               <div className="scores-table-wrap">
                 <table className="scores-table">
-                  <thead><tr><th>{isMultipleLigand ? "联合构象" : "构象"}</th><th>{isMultipleLigand ? "联合评分 kcal/mol" : isHydrated ? "Raw AD4 affinity kcal/mol" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 评分 kcal/mol` : "对接评分 kcal/mol"}</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
+                  <thead><tr><th>{translate(isMultipleLigand ? "联合构象" : "构象")}</th><th>{translate(isMultipleLigand ? "联合评分 kcal/mol" : isHydrated ? "Raw AD4 affinity kcal/mol" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 评分 kcal/mol` : "对接评分 kcal/mol")}</th><th>RMSD l.b. (Å)</th><th>RMSD u.b. (Å)</th></tr></thead>
                   <tbody>
-                    {scores.map((score) => (
+                    {translate(scores.map((score) => (
                       <tr
                         key={score.mode}
                         className={[
@@ -1099,106 +1085,104 @@ export default function ResultPage({
                           if (score.pose_available !== false) setViewerMode(score.mode);
                         }}
                         aria-disabled={score.pose_available === false}
-                        title={score.pose_available === false ? "该评分行未写入 out.pdbqt，不能加载构象" : undefined}
+                        title={translate(score.pose_available === false ? "该评分行未写入 out.pdbqt，不能加载构象" : undefined)}
                       >
-                        <td>Mode {score.mode}{score.pose_available === false ? "（仅日志）" : ""}</td><td>{formatScoreValue(score.affinity_kcal_mol)}</td><td>{formatScoreValue(score.rmsd_lb)}</td><td>{formatScoreValue(score.rmsd_ub)}</td>
+                        <td>Mode {score.mode}{translate(score.pose_available === false ? "（仅日志）" : "")}</td><td>{translate(formatScoreValue(score.affinity_kcal_mol))}</td><td>{translate(formatScoreValue(score.rmsd_lb))}</td><td>{translate(formatScoreValue(score.rmsd_ub))}</td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
-            ) : <p className="message-line">{isEvaluationMode ? "尚未加载 evaluation.json。" : "尚未加载 scores.csv。"}</p>}
+            ) : <p className="message-line">{translate(isEvaluationMode ? "尚未加载 evaluation.json。" : "尚未加载 scores.csv。")}</p>)}
 
-            <AdvancedDetails summary="运行与文件详情">
+            <AdvancedDetails summary={translate("运行与文件详情")}>
               <dl className="meta-list">
                 <div><dt>log.txt</dt><dd><code>{logPath}</code></dd></div>
                 {isEvaluationMode ? (
                   <>
-                    <div><dt>评价结果</dt><dd><code>{evaluationFile || metadataString(metadata, "evaluation_file") || "尚未生成"}</code></dd></div>
-                    <div><dt>{runMode === "local_only" ? "优化后姿势" : "输入姿势"}</dt><dd><code>{evaluation?.pose_file || metadataString(metadata, "pose_file") || "未记录"}</code></dd></div>
+                    <div><dt>{translate("评价结果")}</dt><dd><code>{evaluationFile || metadataString(metadata, "evaluation_file") || "尚未生成"}</code></dd></div>
+                    <div><dt>{translate(runMode === "local_only" ? "优化后姿势" : "输入姿势")}</dt><dd><code>{evaluation?.pose_file || metadataString(metadata, "pose_file") || "未记录"}</code></dd></div>
                   </>
                 ) : (
                   <>
-                    <div><dt>本次 scores</dt><dd><code>{displayedScoresFile || "尚未生成"}</code></dd></div>
-                    <div><dt>项目 scores</dt><dd><code>{displayedProjectScoresFile || "尚未生成"}</code></dd></div>
+                    <div><dt>{translate("本次 scores")}</dt><dd><code>{displayedScoresFile || "尚未生成"}</code></dd></div>
+                    <div><dt>{translate("项目 scores")}</dt><dd><code>{displayedProjectScoresFile || "尚未生成"}</code></dd></div>
                   </>
                 )}
-                <div><dt>解析时间</dt><dd>{displayedAnalyzedAt || "未记录"}</dd></div>
+                <div><dt>{translate("解析时间")}</dt><dd>{translate(displayedAnalyzedAt || "未记录")}</dd></div>
               </dl>
             </AdvancedDetails>
-            {message || rawError ? <CommandResultPanel title="结果状态" message={message} rawError={rawError} /> : null}
+            {message || rawError ? <CommandResultPanel title={translate("结果状态")} message={translate(message)} rawError={rawError} /> : null}
           </section> : (
-            <section className="result-score-ledger result-run-files" aria-label="运行日志与文件">
+            <section className="result-score-ledger result-run-files" aria-label={translate("运行日志与文件")}>
               <div className="result-score-actions">
-                <div><strong>{runId} · 可复现运行记录</strong><span>这里展示已保存记录；“刷新结果”才会重新读取磁盘。</span></div>
-                <ActionButton disabled={isBusy} onClick={() => void reloadRunMetadata()}>刷新运行文件</ActionButton>
+                <div><strong>{runId}{translate(" · 可复现运行记录")}</strong><span>{translate("这里展示已保存记录；“刷新结果”才会重新读取磁盘。")}</span></div>
+                <ActionButton disabled={isBusy} onClick={() => void reloadRunMetadata()}>{translate("刷新运行文件")}</ActionButton>
               </div>
               <dl className="result-run-file-grid">
-                <div><dt>运行状态</dt><dd>{runStatusText[status] ?? status}</dd></div>
-                <div><dt>任务类型</dt><dd>{runMode === "score_only" ? "仅评分" : runMode === "local_only" ? "局部优化" : isMultipleLigand ? "双配体联合搜索" : "全局对接"}</dd></div>
-                <div><dt>评分协议</dt><dd>{isAd4Maps ? ad4ProtocolLabel : scoringFunction === "vinardo" ? "Vinardo" : "Vina"}</dd></div>
-                <div><dt>Vina 版本</dt><dd>{vinaDisplay}</dd></div>
-                <div><dt>开始时间</dt><dd>{formatTimestamp(startedAt)}</dd></div>
-                <div><dt>结束时间</dt><dd>{formatTimestamp(metadataFinishedAt)}</dd></div>
-                <div><dt>配置文件</dt><dd><code>{metadataString(metadata, "config_file") || "未记录"}</code></dd></div>
-                <div><dt>{runMode === "score_only" ? "评价姿势" : runMode === "local_only" ? "优化后姿势" : "输出构象"}</dt><dd><code>{metadataString(metadata, runMode === "score_only" ? "pose_file" : "output_file") || "未记录"}</code></dd></div>
-                <div><dt>运行日志</dt><dd><code>{logPath}</code></dd></div>
-                <div><dt>{isEvaluationMode ? "评价结果" : "评分表"}</dt><dd><code>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "未生成" : displayedScoresFile || "未生成"}</code></dd></div>
+                <div><dt>{translate("运行状态")}</dt><dd>{translate(runStatusText[status] ?? status)}</dd></div>
+                <div><dt>{translate("任务类型")}</dt><dd>{translate(runMode === "score_only" ? "仅评分" : runMode === "local_only" ? "局部优化" : isMultipleLigand ? "双配体联合搜索" : "全局对接")}</dd></div>
+                <div><dt>{translate("评分协议")}</dt><dd>{translate(isAd4Maps ? ad4ProtocolLabel : scoringFunction === "vinardo" ? "Vinardo" : "Vina")}</dd></div>
+                <div><dt>{translate("Vina 版本")}</dt><dd>{translate(vinaDisplay)}</dd></div>
+                <div><dt>{translate("开始时间")}</dt><dd>{translate(formatTimestamp(startedAt))}</dd></div>
+                <div><dt>{translate("结束时间")}</dt><dd>{translate(formatTimestamp(metadataFinishedAt))}</dd></div>
+                <div><dt>{translate("配置文件")}</dt><dd><code>{metadataString(metadata, "config_file") || "未记录"}</code></dd></div>
+                <div><dt>{translate(runMode === "score_only" ? "评价姿势" : runMode === "local_only" ? "优化后姿势" : "输出构象")}</dt><dd><code>{metadataString(metadata, runMode === "score_only" ? "pose_file" : "output_file") || "未记录"}</code></dd></div>
+                <div><dt>{translate("运行日志")}</dt><dd><code>{logPath}</code></dd></div>
+                <div><dt>{translate(isEvaluationMode ? "评价结果" : "评分表")}</dt><dd><code>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "未生成" : displayedScoresFile || "未生成"}</code></dd></div>
               </dl>
-              <AdvancedDetails summary="完整 metadata 快照">
+              <AdvancedDetails summary={translate("完整 metadata 快照")}>
                 <pre>{metadata ? JSON.stringify(metadata, null, 2) : "尚未读取 metadata.json。"}</pre>
               </AdvancedDetails>
-              {message || rawError ? <CommandResultPanel title="运行文件状态" message={message} rawError={rawError} /> : null}
+              {message || rawError ? <CommandResultPanel title={translate("运行文件状态")} message={translate(message)} rawError={rawError} /> : null}
             </section>
           )}
         </main>
 
         <aside className="result-analysis-rail">
           <section className="result-selected-pose">
-            <span>{runMode === "local_only" ? "主要评价结果" : isEvaluationMode ? "姿势评价" : isMultipleLigand ? "所选联合构象" : isHydrated ? "水合 AD4 构象" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 构象` : "所选构象"}</span>
-            <strong>{isEvaluationMode ? (runMode === "score_only" ? "输入姿势" : "优化后评分") : `${isMultipleLigand ? "联合 " : ""}Mode ${effectiveSelectedMode}`}</strong>
-            <b>{isEvaluationMode ? displayedPrimaryScore ?? "—" : selectedScore ? formatScoreValue(selectedScore.affinity_kcal_mol) : displayedBestAffinity ?? "—"} <small>kcal/mol</small></b>
+            <span>{translate(runMode === "local_only" ? "主要评价结果" : isEvaluationMode ? "姿势评价" : isMultipleLigand ? "所选联合构象" : isHydrated ? "水合 AD4 构象" : isAd4Maps ? `${isAd4Zn ? "AutoDock4Zn" : "AutoDock4"} 构象` : "所选构象")}</span>
+            <strong>{translate(isEvaluationMode ? (runMode === "score_only" ? "输入姿势" : "优化后评分") : `${isMultipleLigand ? "联合 " : ""}Mode ${effectiveSelectedMode}`)}</strong>
+            <b>{translate(isEvaluationMode ? displayedPrimaryScore ?? "—" : selectedScore ? formatScoreValue(selectedScore.affinity_kcal_mol) : displayedBestAffinity ?? "—")} <small>kcal/mol</small></b>
           </section>
           <section className="result-output-files">
-            <h2>输出文件</h2>
+            <h2>{translate("输出文件")}</h2>
             <div><FileText aria-hidden="true" size={18} /><span><strong>log.txt</strong><small>{logPath}</small></span></div>
-            {runMode === "local_only" ? (
+            {translate(runMode === "local_only" ? (
               <div>
                 <FileText aria-hidden="true" size={18} />
                 <span>
-                  <strong>优化后姿势 PDBQT</strong>
-                  <small>{evaluation?.output_pose_file || metadataString(metadata, "output_file") || "未生成"}</small>
+                  <strong>{translate("优化后姿势 PDBQT")}</strong>
+                  <small>{evaluation?.output_pose_file || metadataString(metadata, "output_file") || translate("未生成")}</small>
                 </span>
               </div>
-            ) : null}
-            <div><FileText aria-hidden="true" size={18} /><span><strong>{isEvaluationMode ? "evaluation.json" : "scores.csv"}</strong><small>{isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") || "未生成" : displayedScoresFile || "未生成"}</small></span></div>
-            <div><FileText aria-hidden="true" size={18} /><span><strong>{isEvaluationMode ? "evaluation_report.md" : isMultipleLigand ? "multi_ligand_report.md" : isHydrated ? "hydrated_docking_report.md" : "docking_report.md"}</strong><small>{displayedReportFile || "未生成"}</small></span></div>
-            {runMode !== "score_only" && !isMultipleLigand ? <div><FileText aria-hidden="true" size={18} /><span><strong>{runMode === "local_only" ? "优化后姿势 SDF" : "poses.sdf"}</strong><small>{resultSdf || "未导出"}</small></span></div> : null}
+            ) : null)}
+            <div><FileText aria-hidden="true" size={18} /><span><strong>{translate(isEvaluationMode ? "evaluation.json" : "scores.csv")}</strong><small>{(isEvaluationMode ? evaluationFile || metadataString(metadata, "evaluation_file") : displayedScoresFile) || translate("未生成")}</small></span></div>
+            <div><FileText aria-hidden="true" size={18} /><span><strong>{translate(isEvaluationMode ? "evaluation_report.md" : isMultipleLigand ? "multi_ligand_report.md" : isHydrated ? "hydrated_docking_report.md" : "docking_report.md")}</strong><small>{displayedReportFile || translate("未生成")}</small></span></div>
+            {translate(runMode !== "score_only" && !isMultipleLigand ? <div><FileText aria-hidden="true" size={18} /><span><strong>{translate(runMode === "local_only" ? "优化后姿势 SDF" : "poses.sdf")}</strong><small>{resultSdf || translate("未导出")}</small></span></div> : null)}
           </section>
-          {!isEvaluationMode && !isMultipleLigand ? <section className="result-reference-rmsd">
-            <h2><Ruler aria-hidden="true" size={18} /> 共晶姿势验证</h2>
+          {translate(!isEvaluationMode && !isMultipleLigand ? <section className="result-reference-rmsd">
+            <h2><Ruler aria-hidden="true" size={18} />{translate(" 共晶姿势验证")}</h2>
             {referenceRmsd ? (
               <div className="result-reference-rmsd-value">
                 <span>Mode {referenceRmsd.mode}</span>
-                <strong>{referenceRmsd.rmsd_angstrom.toFixed(3)} Å</strong>
-                <small>{referenceRmsd.reference_source_name} · {referenceRmsd.heavy_atom_count} 个重原子</small>
+                <strong>{translate(referenceRmsd.rmsd_angstrom.toFixed(3))} Å</strong>
+                <small>{translate(referenceRmsd.reference_source_name)} · {referenceRmsd.heavy_atom_count}{translate(" 个重原子")}</small>
               </div>
             ) : (
-              <p>选择同一化学实体的共晶配体，计算重原子、对称性修正 RMSD。</p>
+              <p>{translate("选择同一化学实体的共晶配体，计算重原子、对称性修正 RMSD。")}</p>
             )}
             <ActionButton disabled={isBusy || !scores.length} onClick={() => void calculateReferenceRmsd()}>
-              {referenceRmsd ? "更换参考并重算" : "选择参考配体并计算"}
+              {translate(referenceRmsd ? "更换参考并重算" : "选择参考配体并计算")}
             </ActionButton>
-            <small>此值不同于列表中相对 Mode 1 的 RMSD；化学连接不一致时不会强行比较。</small>
-          </section> : null}
+            <small>{translate("此值不同于列表中相对 Mode 1 的 RMSD；化学连接不一致时不会强行比较。")}</small>
+          </section> : null)}
           <section className="result-rail-actions">
-            {runMode !== "score_only" && !isMultipleLigand ? <ActionButton disabled={isBusy || !resultSdf} title={resultSdf ? "打开实际导出的拓扑 SDF 所在目录" : "尚未记录可用的拓扑 SDF 输出"} onClick={() => void openOutputDirectory("result_sdf")}>
-              <FolderOpen aria-hidden="true" size={17} /> 打开拓扑 SDF 目录
-            </ActionButton> : null}
+            {translate(runMode !== "score_only" && !isMultipleLigand ? <ActionButton disabled={isBusy || !resultSdf} title={translate(resultSdf ? "打开实际导出的拓扑 SDF 所在目录" : "尚未记录可用的拓扑 SDF 输出")} onClick={() => void openOutputDirectory("result_sdf")}>
+              <FolderOpen aria-hidden="true" size={17} />{translate(" 打开拓扑 SDF 目录")}</ActionButton> : null)}
             <ActionButton variant="primary" disabled={isBusy} onClick={() => void openOutputDirectory("reports")}>
-              <FolderOpen aria-hidden="true" size={17} /> 打开报告目录
-            </ActionButton>
-            <ActionButton onClick={() => void copyOutputPath()}><FolderOpen aria-hidden="true" size={17} /> 复制输出路径</ActionButton>
+              <FolderOpen aria-hidden="true" size={17} />{translate(" 打开报告目录")}</ActionButton>
+            <ActionButton onClick={() => void copyOutputPath()}><FolderOpen aria-hidden="true" size={17} />{translate(" 复制输出路径")}</ActionButton>
           </section>
           <ScientificDisclaimer kind="score" />
         </aside>

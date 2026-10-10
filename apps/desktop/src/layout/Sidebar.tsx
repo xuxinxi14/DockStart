@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import {
   BookOpenText,
   ChartBar,
@@ -39,6 +41,7 @@ export type DistributionProfileStatus = {
 };
 
 function NavigationIcon({ page }: { page: PageId }) {
+  useLanguage();
   const props = { "aria-hidden": true, size: 20, weight: "regular" as const };
   switch (page) {
     case "home":
@@ -80,6 +83,7 @@ export default function Sidebar({
   onNavigate,
   onToggleCollapsed,
 }: SidebarProps) {
+  useLanguage();
   const hasProject = Boolean(project);
   const hydratedRunFinished = Boolean(
     project && hydratedRunSummaries(project).some((run) => run.status === "finished"),
@@ -121,25 +125,26 @@ export default function Sidebar({
   }
 
   function StateIcon({ state }: { state: SidebarNavigationState }) {
+  useLanguage();
     if (state === "ready") return <CheckCircle aria-hidden="true" size={16} weight="fill" />;
     if (state === "blocked") return <WarningCircle aria-hidden="true" size={16} weight="fill" />;
     return <Circle aria-hidden="true" size={16} weight="regular" />;
   }
 
   return (
-    <aside className="app-sidebar" aria-label="DockStart 主导航">
+    <aside className="app-sidebar" aria-label={translate("DockStart 主导航")}>
       <div className="sidebar-brand" data-tauri-drag-region>
         <img alt="" aria-hidden="true" className="sidebar-brand-mark" src="/dockstart-icon.png" />
         <span className="sidebar-brand-copy" data-tauri-drag-region>
           <strong>DockStart</strong>
-          <small>分子对接工作台</small>
+          <small>{translate("分子对接工作台")}</small>
         </span>
       </div>
       <nav className="sidebar-nav">
-        {visibleGroups.map((group) => (
+        {translate(visibleGroups.map((group) => (
           <div className="sidebar-group" key={group}>
-            {groupLabels[group] ? <span className="sidebar-group-title">{groupLabels[group]}</span> : null}
-            {navigationItems
+            {groupLabels[group] ? <span className="sidebar-group-title">{translate(groupLabels[group])}</span> : null}
+            {translate(navigationItems
               .filter((item) => item.group === group)
               .map((item) => {
                 const target = resolveNavigationTarget(item, hasProject);
@@ -154,19 +159,17 @@ export default function Sidebar({
                   hydratedRunFinished,
                   batchScreeningCompleted,
                 );
-                const itemLabel = item.label;
+                const itemLabel = translate(item.label);
                 return (
                   <Tooltip
                     className="sidebar-nav-tooltip"
                     key={item.id}
-                    label={`${itemLabel}：${requiresProjectBlocked ? "创建项目后启用" : item.description}`}
+                    label={translate("{0}：{1}", [itemLabel, translate(requiresProjectBlocked ? "创建项目后启用" : item.description)])}
                     placement="right"
                   >
                     <button
                       aria-current={active ? "page" : undefined}
-                      aria-label={`${itemLabel}，${
-                        state === "ready" ? "已完成" : state === "blocked" ? "需要处理" : "可进入"
-                      }`}
+                      aria-label={translate("{0}，{1}", [itemLabel, translate(state === "ready" ? "已完成" : state === "blocked" ? "需要处理" : "可进入")])}
                       className={`sidebar-nav-item ${active ? "active" : ""} ${state} ${
                         requiresProjectBlocked ? "project-required" : ""
                       }`.trim()}
@@ -176,33 +179,33 @@ export default function Sidebar({
                     >
                       <span className="sidebar-nav-icon"><NavigationIcon page={item.id} /></span>
                       <span className="sidebar-nav-copy">
-                        <strong>{itemLabel}</strong>
-                        <small>{requiresProjectBlocked ? "创建项目后启用" : item.description}</small>
+                        <strong>{translate(itemLabel)}</strong>
+                        <small>{translate(requiresProjectBlocked ? "创建项目后启用" : item.description)}</small>
                       </span>
                       <span className={`sidebar-nav-state ${state}`}><StateIcon state={state} /></span>
                     </button>
                   </Tooltip>
                 );
-              })}
+              }))}
           </div>
-        ))}
+        )))}
       </nav>
       <div className="sidebar-footer">
-        <Tooltip disabled={collapsed} label={distributionProfile.message}>
+        <Tooltip disabled={collapsed} label={translate(distributionProfile.message)}>
           <div className="sidebar-release-info">
-            <span className="sidebar-version">v{appVersion}</span>
+            <span className="sidebar-version">v{translate(appVersion)}</span>
             <span
               aria-live="polite"
               className={`sidebar-profile-badge ${distributionProfile.releaseProfile}`}
             >
-              {distributionProfile.displayName}
+              {translate(distributionProfile.displayName)}
             </span>
           </div>
         </Tooltip>
-        {onToggleCollapsed ? (
-          <Tooltip label={collapsed ? "展开侧边栏" : "收起侧边栏"} placement="right">
+        {translate(onToggleCollapsed ? (
+          <Tooltip label={translate(collapsed ? "展开侧边栏" : "收起侧边栏")} placement="right">
             <button
-              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+              aria-label={translate(collapsed ? "展开侧边栏" : "收起侧边栏")}
               className="sidebar-collapse-button"
               onClick={onToggleCollapsed}
               type="button"
@@ -210,7 +213,7 @@ export default function Sidebar({
               <SidebarSimple aria-hidden="true" mirrored={!collapsed} size={20} />
             </button>
           </Tooltip>
-        ) : null}
+        ) : null)}
       </div>
     </aside>
   );

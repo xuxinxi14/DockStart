@@ -251,3 +251,10 @@
 - Browser console reported zero errors and zero warnings. TypeScript/Vite build and focused frontend tests passed.
 
 final result: passed
+
+## v1.0.5 蓝色主题范围修正
+
+- 以 v1.0.4 源码为视觉基准，恢复原有蓝色深浅主题 token、导航分组、顶栏、运行页布局和 3D 分子表示。
+- 删除本地新增的灰绿主题覆盖样式、独立标题栏、页面操作门户和 3D 主题同步模块；旧设计核对截图不代表此候选版本。
+- 唯一新增用户功能为原有顶栏中的中文 / EN 切换，保留语言记忆、双语帮助检索及语言错误修复；不改变科学流程或项目数据格式。
+- 验证范围限于主题/布局源码对照、语言与主题定向检查、生产构建和 Basic / Assisted 安装包生成；未执行完整科学验收或安装/卸载流程。

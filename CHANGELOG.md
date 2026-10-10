@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.0.5
+
+- Added a Chinese/English switch in the existing upper-right toolbar, saved language preferences, localized UI messages and dates, and bilingual offline help search without resetting projects, forms, or running tasks.
+- Fixed prototype-key lookup errors and whitespace-prefixed translation templates; kept user-supplied ligand names, paths and run identifiers verbatim, with targeted regression checks.
+- Preserved the v1.0.4 blue light/dark palettes, navigation, workbench/result layouts, dialogs and ordinary molecular previews.
+- New reports follow the selected interface language; the report page can explicitly regenerate Chinese or English Markdown. Report regeneration updates only derived report hashes and retains their previous provenance records.
+- Improved report-only pose figures with white, antialiased orthographic views, a translucent gray receptor, local heavy-atom context within 5 Å, and an opaque purple ligand. These are geometric illustrations, not interaction analysis.
+- Added receptor transparency sliders to pose viewers and a shared control for report figures, without changing coordinates, scores, ligand visibility or camera orientation.
+- Added a collapsible report run-information rail that releases its width for the main content.
+- Added Ocean blue / Pine green Day and Night themes, retaining the existing blue default and saved light/dark preferences; system mode preserves the selected color family.
+- Updated application version fields to 1.0.5; no dependencies or project data schema changes.
+- Local preview installers: targeted language/theme checks and production builds; full scientific and installation gates skipped at the user's request.
+
 ## v1.0.4
 
 - Rebuilt the in-app help center around verified project/tool state, quick actions, offline topics and troubleshooting.

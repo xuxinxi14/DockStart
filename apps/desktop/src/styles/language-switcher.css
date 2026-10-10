@@ -1,0 +1,45 @@
+/* The language control uses the existing v1.0.4 blue-theme tokens only. */
+.language-switcher {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-text-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.language-switcher > svg {
+  margin-inline: 4px;
+  flex-shrink: 0;
+}
+
+.language-switcher button {
+  min-width: 32px;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--ds-text-secondary);
+  font-size: var(--ds-text-xs);
+  cursor: pointer;
+}
+
+.language-switcher button:hover {
+  background: var(--ds-surface-hover);
+  color: var(--ds-text-primary);
+}
+
+.language-switcher button[aria-pressed="true"] {
+  background: var(--ds-surface-selected);
+  color: var(--ds-accent);
+  font-weight: 650;
+}
+
+.language-switcher button:focus-visible {
+  outline: 2px solid var(--ds-focus-outline);
+  outline-offset: 2px;
+}

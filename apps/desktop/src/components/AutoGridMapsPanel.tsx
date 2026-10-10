@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
@@ -76,6 +78,7 @@ export default function AutoGridMapsPanel({
   onProjectChange,
   onStatusChange,
 }: AutoGridMapsPanelProps) {
+  useLanguage();
   const isAd4 = project.docking_protocol?.engine === "ad4_maps";
   const isAd4Zn = isAd4 && project.docking_protocol?.protocol_id === "ad4zn_beta";
   const isFlexible = (
@@ -288,25 +291,25 @@ export default function AutoGridMapsPanel({
       <div className="run-cockpit-section-heading">
         <div>
           <div className="field-hint-row">
-            <span className="run-cockpit-kicker">评分协议</span>
+            <span className="run-cockpit-kicker">{translate("评分协议")}</span>
             <FieldHint
               placement="bottom"
               subject="评分协议"
-              label="这里用于选择对接评分方式。第一次使用或进行普通 Vina 对接时，保持默认的 Vina / Vinardo 即可，本板块可以跳过，不需要生成或导入 maps。只有已经拥有 AutoDock4 maps，或需要明确复现 AutoDock4 / AD4Zn 协议时，才切换并完成对应网格设置。不同评分协议的分值不能直接比较。"
+              label={translate("这里用于选择对接评分方式。第一次使用或进行普通 Vina 对接时，保持默认的 Vina / Vinardo 即可，本板块可以跳过，不需要生成或导入 maps。只有已经拥有 AutoDock4 maps，或需要明确复现 AutoDock4 / AD4Zn 协议时，才切换并完成对应网格设置。不同评分协议的分值不能直接比较。")}
             />
           </div>
           <h2 id="ad4-maps-title">Vina / AutoDock4 Maps</h2>
         </div>
         <StatusBadge tone={isAd4 ? ((isAd4Zn ? ad4ZnReady : status?.ready) ? "ok" : "warning") : "info"}>
-          {isAd4
+          {translate(isAd4
             ? isAd4Zn
               ? ad4ZnReady ? "AutoDock4Zn beta 已就绪" : "AutoDock4Zn beta 未就绪"
               : status?.ready ? "AD4 maps 已就绪" : "AD4 maps 未就绪"
-            : "Vina / Vinardo"}
+            : "Vina / Vinardo")}
         </StatusBadge>
       </div>
 
-      <div className="ad4-protocol-tabs" role="group" aria-label="选择评分协议">
+      <div className="ad4-protocol-tabs" role="group" aria-label={translate("选择评分协议")}>
         <button
           type="button"
           className={!isAd4 ? "active" : ""}
@@ -341,10 +344,10 @@ export default function AutoGridMapsPanel({
         <>
           <div className="ad4-subprotocol-switch">
             <div>
-              <strong>AutoDock4 maps 协议</strong>
-              <small>标准 AD4 用于非金属体系；AD4Zn beta 只用于 Zn。</small>
+              <strong>{translate("AutoDock4 maps 协议")}</strong>
+              <small>{translate("标准 AD4 用于非金属体系；AD4Zn beta 只用于 Zn。")}</small>
             </div>
-            <div role="group" aria-label="选择 AutoDock4 maps 子协议">
+            <div role="group" aria-label={translate("选择 AutoDock4 maps 子协议")}>
               <button
                 type="button"
                 className={!isAd4Zn ? "active" : ""}
@@ -353,9 +356,7 @@ export default function AutoGridMapsPanel({
                 onClick={() => {
                   if (isAd4Zn) void switchProtocol("ad4_maps");
                 }}
-              >
-                标准 AD4
-              </button>
+              >{translate("标准 AD4")}</button>
               <button
                 type="button"
                 className={isAd4Zn ? "active" : ""}
@@ -388,65 +389,61 @@ export default function AutoGridMapsPanel({
           <div className={`ad4-maps-status ${status?.ready ? "ready" : "blocked"}`}>
             {status?.ready ? <CheckCircle aria-hidden="true" size={22} weight="fill" /> : <WarningCircle aria-hidden="true" size={22} weight="fill" />}
             <div>
-              <strong>{status?.ready ? `${status.map_set_id} 可用于运行` : "需要生成或导入完整 maps"}</strong>
+              <strong>{translate(status?.ready ? `${status.map_set_id} 可用于运行` : "需要生成或导入完整 maps")}</strong>
               <p>
-                {status?.ready && gridPoints
+                {translate(status?.ready && gridPoints
                   ? `${gridPoints.x} × ${gridPoints.y} × ${gridPoints.z} 点 · ${mapGrid?.spacing ?? "—"} Å · ${mapFiles.length} 个文件`
-                  : status?.issues?.[0] || status?.message || "正在读取 maps 状态。"}
+                  : status?.issues?.[0] || status?.message || "正在读取 maps 状态。")}
               </p>
             </div>
             <StatusBadge tone={status?.tool?.status === "ok" ? "ok" : "warning"}>
-              {`AutoGrid4 ${status?.tool?.status === "ok" ? status.tool.version || "可用" : "未配置"}`}
+              {translate("AutoGrid4 {0}", [translate(status?.tool?.status === "ok" ? status.tool.version || "可用" : "未配置")])}
             </StatusBadge>
           </div>
 
           {isFlexible ? (
-            <p className="ad4-inline-note" role="status">
-              有限柔性 AD4：AutoGrid4 使用柔性准备生成的刚性受体部分建立 maps；运行时会同时加载对应的柔性侧链文件。
-            </p>
+            <p className="ad4-inline-note" role="status">{translate("有限柔性 AD4：AutoGrid4 使用柔性准备生成的刚性受体部分建立 maps；运行时会同时加载对应的柔性侧链文件。")}</p>
           ) : null}
 
           {status && status.tool?.status !== "ok" ? (
-            <p className="ad4-inline-error" role="alert">
-              尚未配置可用的 AutoGrid4，当前不能生成 maps。请打开右上角“工具链”，配置 AutoGrid4 路径并重新检测；已有完整 maps 仍可从下方导入。
-            </p>
+            <p className="ad4-inline-error" role="alert">{translate("尚未配置可用的 AutoGrid4，当前不能生成 maps。请打开右上角“工具链”，配置 AutoGrid4 路径并重新检测；已有完整 maps 仍可从下方导入。")}</p>
           ) : null}
 
           {form ? (
             <>
               <div className="ad4-grid-fields">
                 <label>
-                  <span>网格间距（Å）</span>
+                  <span>{translate("网格间距（Å）")}</span>
                   <input value={form.spacing} disabled={disabled || Boolean(busyAction)} onChange={(event) => setForm({ ...form, spacing: event.target.value })} />
-                  <small>标准值 0.375</small>
+                  <small>{translate("标准值 0.375")}</small>
                 </label>
                 {(["x", "y", "z"] as const).map((axis) => (
                   <label key={axis}>
-                    <span>{axis.toUpperCase()} 轴点数</span>
+                    <span>{translate(axis.toUpperCase())}{translate(" 轴点数")}</span>
                     <input value={form[axis]} disabled={disabled || Boolean(busyAction)} onChange={(event) => setForm({ ...form, [axis]: event.target.value })} />
-                    <small>2–126 的偶数</small>
+                    <small>{translate("2–126 的偶数")}</small>
                   </label>
                 ))}
               </div>
               <div className="ad4-type-fields">
                 <label>
-                  <span>受体原子类型</span>
+                  <span>{translate("受体原子类型")}</span>
                   <input value={form.receptorTypes} disabled={disabled || Boolean(busyAction)} onChange={(event) => setForm({ ...form, receptorTypes: event.target.value })} />
                 </label>
                 <label>
-                  <span>配体原子类型</span>
+                  <span>{translate("配体原子类型")}</span>
                   <input value={form.ligandTypes} disabled={disabled || Boolean(busyAction)} onChange={(event) => setForm({ ...form, ligandTypes: event.target.value })} />
                 </label>
               </div>
               <label className="ad4-path-field">
-                <span>自定义参数文件（可选）</span>
+                <span>{translate("自定义参数文件（可选）")}</span>
                 <PathInput
                   value={form.parameterFile}
                   onChange={(value) => setForm({ ...form, parameterFile: value })}
                   disabled={disabled || Boolean(busyAction)}
                   mode="file"
-                  title="选择 AutoGrid 参数文件"
-                  placeholder="留空使用 AutoGrid4 默认参数库"
+                  title={translate("选择 AutoGrid 参数文件")}
+                  placeholder={translate("留空使用 AutoGrid4 默认参数库")}
                 />
               </label>
               <div className="ad4-map-actions">
@@ -454,61 +451,55 @@ export default function AutoGridMapsPanel({
                   variant="primary"
                   disabled={disabled || Boolean(busyAction) || !parsedGrid || status?.tool?.status !== "ok"}
                   onClick={() => void generate()}
-                >
-                  生成并校验 maps
-                </ActionButton>
-                <span>或</span>
+                >{translate("生成并校验 maps")}</ActionButton>
+                <span>{translate("或")}</span>
                 <PathInput
                   value={importFile}
                   onChange={setImportFile}
                   disabled={disabled || Boolean(busyAction)}
                   mode="file"
                   filters={[{ name: "AutoDock4 field", extensions: ["fld"] }]}
-                  title="选择 .maps.fld"
-                  placeholder="导入已有 .maps.fld（同目录需有 GPF 与全部 map 文件）"
-                  ariaLabel="待导入的 AutoDock4 maps field 文件"
+                  title={translate("选择 .maps.fld")}
+                  placeholder={translate("导入已有 .maps.fld（同目录需有 GPF 与全部 map 文件）")}
+                  ariaLabel={translate("待导入的 AutoDock4 maps field 文件")}
                 />
-                <ActionButton disabled={disabled || Boolean(busyAction) || !importFile.trim()} onClick={() => void importMaps()}>
-                  导入并校验
-                </ActionButton>
+                <ActionButton disabled={disabled || Boolean(busyAction) || !importFile.trim()} onClick={() => void importMaps()}>{translate("导入并校验")}</ActionButton>
               </div>
-              {!parsedGrid ? <p className="ad4-inline-error">间距须为 0.1–1.0 Å；每轴点数须为 2–126 的偶数。</p> : null}
+              {!parsedGrid ? <p className="ad4-inline-error">{translate("间距须为 0.1–1.0 Å；每轴点数须为 2–126 的偶数。")}</p> : null}
             </>
           ) : null}
 
-          <p className="ad4-license-note">
-            AutoGrid4 是外部 GPL 工具，不随 DockStart 安装包分发。标准 maps 协议仅开放非金属刚性受体。
-          </p>
-          {status?.manifest_file ? (
-            <AdvancedDetails summary="maps 记录">
+          <p className="ad4-license-note">{translate("AutoGrid4 是外部 GPL 工具，不随 DockStart 安装包分发。标准 maps 协议仅开放非金属刚性受体。")}</p>
+          {translate(status?.manifest_file ? (
+            <AdvancedDetails summary={translate("maps 记录")}>
               <dl className="ad4-manifest-details">
-                <div><dt>Manifest</dt><dd>{status.manifest_file}</dd></div>
-                <div><dt>Prefix</dt><dd>{status.maps_prefix}</dd></div>
-                <div><dt>来源</dt><dd>{status.manifest?.source || "未记录"}</dd></div>
-                <div><dt>配体类型</dt><dd>{status.manifest?.maps?.ligand_atom_types?.join(", ") || "未记录"}</dd></div>
+                <div><dt>Manifest</dt><dd>{translate(status.manifest_file)}</dd></div>
+                <div><dt>Prefix</dt><dd>{translate(status.maps_prefix)}</dd></div>
+                <div><dt>{translate("来源")}</dt><dd>{translate(status.manifest?.source || "未记录")}</dd></div>
+                <div><dt>{translate("配体类型")}</dt><dd>{translate(status.manifest?.maps?.ligand_atom_types?.join(", ") || "未记录")}</dd></div>
               </dl>
             </AdvancedDetails>
-          ) : null}
+          ) : null)}
             </div>
           )}
         </>
       )}
 
-      {isAd4 && !isAd4Zn && disabled && disabledReason ? <p className="ad4-disabled-reason">{disabledReason}</p> : null}
-      {message ? <p className="run-inline-message" role={rawError ? "alert" : "status"}>{message}</p> : null}
-      {rawError ? <AdvancedDetails className="diagnostic-details" summary="查看诊断"><pre>{rawError}</pre></AdvancedDetails> : null}
+      {isAd4 && !isAd4Zn && disabled && disabledReason ? <p className="ad4-disabled-reason">{translate(disabledReason)}</p> : null}
+      {message ? <p className="run-inline-message" role={rawError ? "alert" : "status"}>{translate(message)}</p> : null}
+      {rawError ? <AdvancedDetails className="diagnostic-details" summary={translate("查看诊断")}><pre>{rawError}</pre></AdvancedDetails> : null}
 
       <OperationLoadingDialog
         open={busyAction === "generate" || busyAction === "import"}
-        title={busyAction === "generate"
+        title={translate(busyAction === "generate"
           ? isAd4Zn ? "正在生成 AutoDock4Zn maps" : "正在生成 AutoDock4 maps"
-          : "正在导入并校验 maps"}
-        message={busyAction === "generate"
+          : "正在导入并校验 maps")}
+        message={translate(busyAction === "generate"
           ? isAd4Zn
             ? "AutoGrid4 正在使用 TZ 受体与 AD4Zn 参数计算网格文件。"
             : "AutoGrid4 正在计算网格文件，请等待完成。"
-          : "正在复制文件并核对受体、网格与 SHA256。"}
-        detail="窗口会在操作完成后自动关闭。"
+          : "正在复制文件并核对受体、网格与 SHA256。")}
+        detail={translate("窗口会在操作完成后自动关闭。")}
       />
     </section>
   );

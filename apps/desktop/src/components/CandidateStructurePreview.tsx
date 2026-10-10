@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowsOut, MagnifyingGlassMinus, MagnifyingGlassPlus } from "@phosphor-icons/react";
 import {
@@ -34,6 +36,7 @@ export default function CandidateStructurePreview({
   label,
   className = "",
 }: CandidateStructurePreviewProps) {
+  useLanguage();
   const isLigand = LIGAND_FORMATS.has(format.trim().toLowerCase());
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<ThreeDmolViewer | null>(null);
@@ -203,27 +206,27 @@ export default function CandidateStructurePreview({
   }, []);
 
   return (
-    <div className={`run-preview candidate-structure-preview ${className}`.trim()} aria-label={`${label} 3D 候选预览`}>
-      <div className="run-preview-toolbar" aria-label="候选 3D 视图工具">
-        <button type="button" onClick={() => zoom(1.18)} disabled={!content} title="放大" aria-label="放大候选结构">
+    <div className={`run-preview candidate-structure-preview ${className}`.trim()} aria-label={translate("{0} 3D 候选预览", [label])}>
+      <div className="run-preview-toolbar" aria-label={translate("候选 3D 视图工具")}>
+        <button type="button" onClick={() => zoom(1.18)} disabled={!content} title={translate("放大")} aria-label={translate("放大候选结构")}>
           <MagnifyingGlassPlus size={18} />
         </button>
-        <button type="button" onClick={() => zoom(0.84)} disabled={!content} title="缩小" aria-label="缩小候选结构">
+        <button type="button" onClick={() => zoom(0.84)} disabled={!content} title={translate("缩小")} aria-label={translate("缩小候选结构")}>
           <MagnifyingGlassMinus size={18} />
         </button>
-        <button type="button" onClick={fit} disabled={!content} title="适应窗口" aria-label="候选结构适应窗口">
+        <button type="button" onClick={fit} disabled={!content} title={translate("适应窗口")} aria-label={translate("候选结构适应窗口")}>
           <ArrowsOut size={18} />
         </button>
       </div>
       <div
-        aria-label={`${label} 的只读三维结构视图。可使用上方按钮缩放或适应窗口。`}
+        aria-label={translate("{0} 的只读三维结构视图。可使用上方按钮缩放或适应窗口。", [label])}
         className="run-preview-canvas"
         ref={containerRef}
         role="img"
       />
       <div className="run-preview-legend" aria-live="polite">
-        <span><i className={`run-preview-dot ${isLigand ? "ligand" : "receptor"}`} />候选结构</span>
-        <strong>{message}</strong>
+        <span><i className={`run-preview-dot ${isLigand ? "ligand" : "receptor"}`} />{translate("候选结构")}</span>
+        <strong>{translate(message)}</strong>
       </div>
     </div>
   );

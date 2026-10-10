@@ -1,3 +1,6 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLocale } from "../i18n/language";
 import {
   CaretRight,
   FolderOpen,
@@ -12,6 +15,7 @@ import { pageTitles, type NavigateHandler, type PageId } from "../navigation/pag
 import Tooltip from "../components/Tooltip";
 import type { ResolvedTheme, ThemeMode } from "../utils/themePreference";
 import WindowControls from "./WindowControls";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 
 type TopbarProps = {
   currentPage: PageId;
@@ -29,16 +33,16 @@ type TopbarProps = {
 function themeToggleLabel(theme: ResolvedTheme, themeMode: ThemeMode): string {
   const next = theme === "dark" ? "亮色" : "暗色";
   if (themeMode === "system") {
-    return `当前跟随系统（${theme === "dark" ? "深色" : "浅色"}），点击固定为${next}主题`;
+    return translate("当前跟随系统（{0}），点击固定为{1}主题", [translate(theme === "dark" ? "深色" : "浅色"), translate(next)]);
   }
-  return `切换到${next}主题`;
+  return translate("切换到{0}主题", [translate(next)]);
 }
 
 function formatSavedAt(value: string | undefined): string {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(getLocale(), {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -56,59 +60,60 @@ export default function Topbar({
   onNavigate,
   onOpenProject,
 }: TopbarProps) {
+  useLanguage();
   const hasProject = Boolean(project);
   return (
     <header className="app-topbar" data-tauri-drag-region>
       <div className="topbar-context" data-tauri-drag-region>
-        <span className="topbar-workspace-label">项目工作台</span>
+        <span className="topbar-workspace-label">{translate("项目工作台")}</span>
         <CaretRight aria-hidden="true" className="topbar-divider-icon" size={14} />
         <button className="topbar-project-button" onClick={() => onNavigate("home")} type="button">
-          <span className="topbar-project-name">{project?.project_name || "未加载项目"}</span>
-          <span className="topbar-project-stage">{pageTitles[currentPage]}</span>
+          <span className="topbar-project-name">{project?.project_name || translate("未加载项目")}</span>
+          <span className="topbar-project-stage">{translate(pageTitles[currentPage])}</span>
         </button>
       </div>
-      <Tooltip className="topbar-summary-tooltip" disabled={!hasProject} label={workflowSummary}>
+      <Tooltip className="topbar-summary-tooltip" disabled={!hasProject} label={translate(workflowSummary)}>
         <div className="topbar-summary" data-tauri-drag-region>
-          {hasProject ? (
+          {translate(hasProject ? (
             <>
               <ListChecks aria-hidden="true" size={17} weight="duotone" />
-              <span>{workflowSummary}</span>
-              <span className="topbar-save-indicator">
-                项目记录更新于 {formatSavedAt(project?.updated_at) || "当前会话"}
+              <span>{translate(workflowSummary)}</span>
+              <span className="topbar-save-indicator">{translate("项目记录更新于 ")}{translate(formatSavedAt(project?.updated_at) || "当前会话")}
               </span>
             </>
           ) : (
-            <span>选择一种开始方式，DockStart 会逐步引导。</span>
-          )}
+            <span>{translate("选择一种开始方式，DockStart 会逐步引导。")}</span>
+          ))}
         </div>
       </Tooltip>
       <div className="topbar-end">
-        <div className="topbar-actions" aria-label="工作区快捷操作">
-          <Tooltip className="topbar-action-tooltip" label="打开项目">
-            <button aria-label="打开项目" onClick={onOpenProject} type="button">
+        <div className="topbar-actions" aria-label={translate("工作区快捷操作")}>
+          <Tooltip className="topbar-action-tooltip" label={translate("打开项目")}>
+            <button aria-label={translate("打开项目")} onClick={onOpenProject} type="button">
               <FolderOpen aria-hidden="true" size={18} />
-              <span>打开项目</span>
+              <span>{translate("打开项目")}</span>
             </button>
           </Tooltip>
-          <Tooltip className="topbar-action-tooltip" label="查看工具链状态">
-            <button aria-label="工具链" onClick={() => onNavigate("toolchain-status")} type="button">
+          <Tooltip className="topbar-action-tooltip" label={translate("查看工具链状态")}>
+            <button aria-label={translate("工具链")} onClick={() => onNavigate("toolchain-status")} type="button">
               <Wrench aria-hidden="true" size={18} />
-              <span>工具链</span>
+              <span>{translate("工具链")}</span>
             </button>
           </Tooltip>
-          <Tooltip className="topbar-action-tooltip" label="打开帮助中心">
-            <button aria-label="帮助" onClick={() => onNavigate("help")} type="button">
+          <Tooltip className="topbar-action-tooltip" label={translate("打开帮助中心")}>
+            <button aria-label={translate("帮助")} onClick={() => onNavigate("help")} type="button">
               <Question aria-hidden="true" size={18} />
-              <span>帮助</span>
+              <span>{translate("帮助")}</span>
             </button>
           </Tooltip>
         </div>
-        <Tooltip label={themeToggleLabel(theme, themeMode)}>
+        <LanguageSwitcher />
+        <Tooltip label={translate(themeToggleLabel(theme, themeMode))}>
           <button
             className="topbar-theme-toggle"
             type="button"
             onClick={onToggleTheme}
-            aria-label="切换亮色或暗色主题"
+            aria-label={translate("切换亮色或暗色主题")}
             aria-pressed={theme === "light"}
           >
             {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}

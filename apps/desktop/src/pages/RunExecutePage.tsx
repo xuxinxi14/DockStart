@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
@@ -101,6 +103,7 @@ export default function RunExecutePage({
   onProjectChange,
   onOpenResultPage,
 }: RunExecutePageProps) {
+  useLanguage();
   const [project, setProject] = useState(initialProject);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [files, setFiles] = useState<RunFileStatus[]>([]);
@@ -337,18 +340,18 @@ export default function RunExecutePage({
   return (
     <PageShell labelledBy="run-execute-title">
       <PageHero
-        eyebrow="运行 Vina"
-        title={`执行${runModeLabel}`}
+        eyebrow={translate("运行 Vina")}
+        title={translate("执行{0}", [translate(runModeLabel)])}
         titleId="run-execute-title"
-        description={runMode === "score_only"
+        description={translate(runMode === "score_only"
           ? "运行已准备的仅评分命令，保存 stdout、stderr、log 和能量结果。"
           : runMode === "local_only"
             ? "先记录输入姿势评分，再运行局部优化；保存两阶段日志与 optimized.pdbqt。"
-            : "运行已准备的命令，保存 stdout、stderr、log 和 out 文件。"}
+            : "运行已准备的命令，保存 stdout、stderr、log 和 out 文件。")}
         actions={
           <>
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
-          <ActionButton onClick={() => void reloadRun()} disabled={isBusy}>刷新状态</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>{translate("返回")}</ActionButton>
+          <ActionButton onClick={() => void reloadRun()} disabled={isBusy}>{translate("刷新状态")}</ActionButton>
           </>
         }
       />
@@ -360,54 +363,53 @@ export default function RunExecutePage({
 
             <div className="status-strip">
               <article className="metric-card">
-                <span>运行记录</span>
+                <span>{translate("运行记录")}</span>
                 <strong>{runId}</strong>
               </article>
               <article className="metric-card">
-                <span>当前状态</span>
-                <strong>{runStatusText[status] ?? status}</strong>
-                <StatusBadge tone={toneForRun(status)}>{runStatusText[status] ?? "需检查"}</StatusBadge>
+                <span>{translate("当前状态")}</span>
+                <strong>{translate(runStatusText[status] ?? status)}</strong>
+                <StatusBadge tone={toneForRun(status)}>{translate(runStatusText[status] ?? "需检查")}</StatusBadge>
               </article>
               <article className="metric-card">
                 <span>exit code</span>
-                <strong>{exitCode === null ? "尚未产生" : exitCode}</strong>
+                <strong>{translate(exitCode === null ? "尚未产生" : exitCode)}</strong>
               </article>
             </div>
 
-            {disabledReason ? (
-              <WarningCallout title="暂不能执行">
-                <p>{disabledReason}</p>
+            {translate(disabledReason ? (
+              <WarningCallout title={translate("暂不能执行")}>
+                <p>{translate(disabledReason)}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
-            {status === "running" && !taskIsActive ? (
-              <WarningCallout title="已恢复未完成运行">
-                <p>该 run 的磁盘记录仍为 running，但当前窗口没有原后台任务内存。你可以刷新状态、等待外部 Vina 结束，或使用下方按钮安全取消；DockStart 不会并发启动第二个 run。</p>
+            {translate(status === "running" && !taskIsActive ? (
+              <WarningCallout title={translate("已恢复未完成运行")}>
+                <p>{translate("该 run 的磁盘记录仍为 running，但当前窗口没有原后台任务内存。你可以刷新状态、等待外部 Vina 结束，或使用下方按钮安全取消；DockStart 不会并发启动第二个 run。")}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
-            <SectionCard title="执行">
+            <SectionCard title={translate("执行")}>
               <div className="button-row">
                 <ActionButton variant="primary" disabled={!canExecute} onClick={() => void executeRun()}>
-                  {isBusy ? "执行中..." : `开始${runModeLabel}`}
+                  {translate(isBusy ? "执行中..." : `开始${runModeLabel}`)}
                 </ActionButton>
-                {runIsActive ? (
+                {translate(runIsActive ? (
                   <ActionButton variant="secondary" onClick={() => void cancelRun()}>
-                    {activeTask?.status === "queued" ? "取消排队" : "终止运行"}
+                    {translate(activeTask?.status === "queued" ? "取消排队" : "终止运行")}
                   </ActionButton>
-                ) : null}
+                ) : null)}
               </div>
-              <AdvancedDetails summary="命令与运行文件">
+              <AdvancedDetails summary={translate("命令与运行文件")}>
                 {executionPlanStages.length > 0 ? (
                   <div className="run-execution-plan">
                     {executionPlanStages.map((planStage, index) => (
                       <article className="file-card" key={planStage.id || planStage.label}>
-                        <span>阶段 {index + 1}</span>
-                        <strong>{planStage.label}</strong>
+                        <span>{translate("阶段 ")}{index + 1}</span>
+                        <strong>{translate(planStage.label)}</strong>
                         <pre>{JSON.stringify(planStage.command, null, 2)}</pre>
-                        <small>
-                          日志：{planStage.logFile || "未设置"}
-                          {planStage.outputFile ? ` · 输出：${planStage.outputFile}` : " · 不生成新姿势"}
+                        <small>{translate("日志：")}{planStage.logFile || translate("未设置")}
+                          {translate(planStage.outputFile ? ` · 输出：${planStage.outputFile}` : " · 不生成新姿势")}
                         </small>
                       </article>
                     ))}
@@ -419,56 +421,54 @@ export default function RunExecutePage({
                   {files.map((file) => (
                     <article className="file-card" key={file.key}>
                       <span>{file.name}</span>
-                      <strong>{file.path || "未设置"}</strong>
-                      <StatusBadge tone={toneForFile(file.status)}>{fileStatusText[file.status]}</StatusBadge>
+                      <strong>{file.path || translate("未设置")}</strong>
+                      <StatusBadge tone={toneForFile(file.status)}>{translate(fileStatusText[file.status])}</StatusBadge>
                     </article>
                   ))}
                 </div>
               </AdvancedDetails>
             </SectionCard>
 
-            {status === "finished" ? (
+            {translate(status === "finished" ? (
               <div className="next-step-strip">
                 <div>
-                  <strong>下一步：解析结果</strong>
-                  <p>{metadataString(metadata, "log_file") || "log.txt 已记录。"}</p>
+                  <strong>{translate("下一步：解析结果")}</strong>
+                    <p>{metadataString(metadata, "log_file") || translate("log.txt 已记录。")}</p>
                 </div>
-                <ActionButton variant="primary" onClick={() => onOpenResultPage(project, runId)}>
-                  查看{runModeLabel}结果
-                </ActionButton>
+                <ActionButton variant="primary" onClick={() => onOpenResultPage(project, runId)}>{translate("查看")}{translate(runModeLabel)}{translate("结果")}</ActionButton>
               </div>
-            ) : null}
+            ) : null)}
 
-            {status === "failed" ? (
-              <WarningCallout title="Vina 执行失败">
-                <p>{metadataString(metadata, "error_message") || "请查看 stderr 和 log。"}</p>
+            {translate(status === "failed" ? (
+              <WarningCallout title={translate("Vina 执行失败")}>
+                <p>{translate(metadataString(metadata, "error_message") || "请查看 stderr 和 log。")}</p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
-            <CommandResultPanel title="执行结果" message={message} rawError={rawError} />
+            <CommandResultPanel title={translate("执行结果")} message={translate(message)} rawError={rawError} />
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="运行状态">
+          <RightRailSection title={translate("运行状态")}>
             <dl className="mode-context-list">
               <div>
                 <dt>run</dt>
                 <dd>{runId}</dd>
               </div>
               <div>
-                <dt>状态</dt>
-                <dd>{runStatusText[status] ?? status}</dd>
+                <dt>{translate("状态")}</dt>
+                <dd>{translate(runStatusText[status] ?? status)}</dd>
               </div>
               <div>
                 <dt>exit code</dt>
-                <dd>{exitCode === null ? "未产生" : exitCode}</dd>
+                <dd>{translate(exitCode === null ? "未产生" : exitCode)}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="下一步">
-            <p>{status === "finished" ? (runMode === "dock" ? "解析结果并生成 scores.csv。" : "解析能量分解并生成 evaluation.json。") : "运行完成后进入结果页。"}</p>
+          <RightRailSection title={translate("下一步")}>
+            <p>{translate(status === "finished" ? (runMode === "dock" ? "解析结果并生成 scores.csv。" : "解析能量分解并生成 evaluation.json。") : "运行完成后进入结果页。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { SpinnerGap } from "@phosphor-icons/react";
@@ -53,6 +55,7 @@ export default function OperationLoadingDialog({
   actionLabel,
   onAction,
 }: OperationLoadingDialogProps) {
+  useLanguage();
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -151,10 +154,10 @@ export default function OperationLoadingDialog({
         <div className="operation-loading-copy">
           <h2 id={titleId}>{title}</h2>
           <p id={descriptionId}>{message}</p>
-          {detail ? <small>{detail}</small> : null}
+          {detail ? <small>{translate(detail)}</small> : null}
         </div>
         {actionLabel && onAction ? (
-          <ActionButton onClick={onAction}>{actionLabel}</ActionButton>
+          <ActionButton onClick={onAction}>{translate(actionLabel)}</ActionButton>
         ) : null}
       </div>
     </div>,

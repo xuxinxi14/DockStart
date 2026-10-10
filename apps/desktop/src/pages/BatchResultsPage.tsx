@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowClockwise } from "@phosphor-icons/react";
@@ -26,6 +28,7 @@ export default function BatchResultsPage({
   onBack,
   onOpenProjectHome,
 }: BatchResultsPageProps) {
+  useLanguage();
   const [probeState, setProbeState] = useState<"loading" | "available" | "empty" | "error">("loading");
   const [message, setMessage] = useState("");
   const requestRef = useRef(0);
@@ -70,15 +73,15 @@ export default function BatchResultsPage({
     return (
       <section className="project-page batch-results-empty-page">
         <EmptyState
-          title={probeState === "empty" ? "还没有批量筛选结果" : "批量筛选记录无法读取"}
+          title={translate(probeState === "empty" ? "还没有批量筛选结果" : "批量筛选记录无法读取")}
           description={probeState === "empty"
             ? `项目 ${project.project_name} 尚未创建批量筛选任务。`
             : message}
           action={(
             <>
-              <ActionButton variant="primary" onClick={onBack}>返回运行工作台</ActionButton>
-              <ActionButton onClick={() => void probe()}><ArrowClockwise size={16} />重新读取</ActionButton>
-              <ActionButton onClick={onOpenProjectHome}>回到项目总览</ActionButton>
+              <ActionButton variant="primary" onClick={onBack}>{translate("返回运行工作台")}</ActionButton>
+              <ActionButton onClick={() => void probe()}><ArrowClockwise size={16} />{translate("重新读取")}</ActionButton>
+              <ActionButton onClick={onOpenProjectHome}>{translate("回到项目总览")}</ActionButton>
             </>
           )}
         />
@@ -90,21 +93,20 @@ export default function BatchResultsPage({
     <PageShell labelledBy="batch-results-page-title" className="batch-results-page">
       <OperationLoadingDialog
         open={probeState === "loading"}
-        title="正在读取批量结果"
-        message="正在核对批量任务状态、评分汇总与构象文件。"
-        detail="不会重新运行对接。"
+        title={translate("正在读取批量结果")}
+        message={translate("正在核对批量任务状态、评分汇总与构象文件。")}
+        detail={translate("不会重新运行对接。")}
       />
       <PageHero
-        eyebrow="结果 · BATCH SCREENING"
-        title="多配体批量筛选结果"
+        eyebrow={translate("结果 · BATCH SCREENING")}
+        title={translate("多配体批量筛选结果")}
         titleId="batch-results-page-title"
-        description="按配体查看完成状态、评分排名、最佳构象、汇总文件和历史归档。"
+        description={translate("按配体查看完成状态、评分排名、最佳构象、汇总文件和历史归档。")}
         actions={(
           <>
             <ActionButton onClick={() => void probe()} disabled={probeState === "loading"}>
-              <ArrowClockwise size={16} />刷新结果
-            </ActionButton>
-            <ActionButton variant="text" onClick={onBack}>返回运行工作台</ActionButton>
+              <ArrowClockwise size={16} />{translate("刷新结果")}</ActionButton>
+            <ActionButton variant="text" onClick={onBack}>{translate("返回运行工作台")}</ActionButton>
           </>
         )}
       />

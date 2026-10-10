@@ -1,3 +1,6 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+
 type StatusTone = "ok" | "warning" | "error" | "muted" | "info";
 
 type StatusBadgeProps = {
@@ -6,5 +9,6 @@ type StatusBadgeProps = {
 };
 
 export default function StatusBadge({ children, tone = "muted" }: StatusBadgeProps) {
-  return <span className={`status-badge ui-status-${tone}`}>{children}</span>;
+  useLanguage();
+  return <span className={`status-badge ui-status-${tone}`}>{translate(children)}</span>;
 }

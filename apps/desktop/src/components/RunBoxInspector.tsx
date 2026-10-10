@@ -1,3 +1,6 @@
+import { getLocale } from "../i18n/language";
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { ArrowCounterClockwise, Crosshair, MouseScroll } from "@phosphor-icons/react";
 import type { DockStartProject } from "../types";
 import FieldHint from "./FieldHint";
@@ -82,8 +85,9 @@ export default function RunBoxInspector({
   onCenterOnReceptor,
   onReset,
 }: RunBoxInspectorProps) {
+  useLanguage();
   return (
-    <aside className={`run-box-inspector ${className}`.trim()} aria-label="搜索范围参数">
+    <aside className={`run-box-inspector ${className}`.trim()} aria-label={translate("搜索范围参数")}>
       <div className="run-inspector-title">
         <div>
           <span className="field-hint-row">
@@ -91,18 +95,18 @@ export default function RunBoxInspector({
             <FieldHint
               subject="搜索范围（Box）"
               placement="bottom"
-              label="搜索范围（Box）是 Vina 的搜索空间，用中心点（center）和边长（size）描述，单位均为 Å。它限定了 Vina 在哪里寻找可能的结合构象，并不等同于真实结合位点本身。Box 过小可能遗漏合理构象，过大则会扩大搜索范围和计算成本。"
+              label={translate("搜索范围（Box）是 Vina 的搜索空间，用中心点（center）和边长（size）描述，单位均为 Å。它限定了 Vina 在哪里寻找可能的结合构象，并不等同于真实结合位点本身。Box 过小可能遗漏合理构象，过大则会扩大搜索范围和计算成本。")}
             />
           </span>
-          <strong>{volume.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} Å³</strong>
+          <strong>{translate(volume.toLocaleString(getLocale(), { maximumFractionDigits: 1 }))} Å³</strong>
         </div>
         <StatusBadge tone={volume > 27000 ? "warning" : "ok"}>
-          {volume > 27000 ? "范围偏大" : "范围可用"}
+          {translate(volume > 27000 ? "范围偏大" : "范围可用")}
         </StatusBadge>
       </div>
 
       <div className="run-box-wheel-toolbar">
-        <div className="run-box-step-group" aria-label="滚轮调整步进">
+        <div className="run-box-step-group" aria-label={translate("滚轮调整步进")}>
           {boxWheelSteps.map((step) => (
             <button
               type="button"
@@ -112,19 +116,19 @@ export default function RunBoxInspector({
               aria-pressed={wheelStep === step.value}
               onClick={() => onWheelStepChange(step.value)}
             >
-              {step.label}<small>{step.value} Å</small>
+              {translate(step.label)}<small>{step.value} Å</small>
             </button>
           ))}
         </div>
         <p className={wheelBinding ? "is-bound" : ""} aria-live="polite">
           <MouseScroll aria-hidden="true" size={15} />
-          {wheelBinding ? `滚轮调整${runBoxFieldLabels[wheelBinding]}` : "未绑定时滚轮缩放视图"}
+          {translate(wheelBinding ? `滚轮调整${runBoxFieldLabels[wheelBinding]}` : "未绑定时滚轮缩放视图")}
         </p>
       </div>
 
-      <div className="run-box-display-controls" aria-label="三维显示清晰度">
+      <div className="run-box-display-controls" aria-label={translate("三维显示清晰度")}>
         <div>
-          <span>Box 线条</span>
+          <span>{translate("Box 线条")}</span>
           <div className="run-box-display-segment">
             {boxLineOptions.map((option) => (
               <button
@@ -135,13 +139,13 @@ export default function RunBoxInspector({
                 aria-pressed={boxLineThickness === option.value}
                 onClick={() => onBoxLineThicknessChange(option.value)}
               >
-                {option.label}
+                {translate(option.label)}
               </button>
             ))}
           </div>
         </div>
         <div>
-          <span>坐标轴间距</span>
+          <span>{translate("坐标轴间距")}</span>
           <div className="run-box-display-segment">
             {axisSpacingOptions.map((option) => (
               <button
@@ -152,7 +156,7 @@ export default function RunBoxInspector({
                 aria-pressed={axisSpacing === option.value}
                 onClick={() => onAxisSpacingChange(option.value)}
               >
-                {option.label}
+                {translate(option.label)}
               </button>
             ))}
           </div>
@@ -168,16 +172,16 @@ export default function RunBoxInspector({
           return (
             <div key={field.key} className={`run-box-field ${invalid ? "is-invalid" : ""} ${isBound ? "is-bound" : ""}`.trim()}>
               <div className="run-box-field-heading">
-                <label htmlFor={inputId}>{field.label} <small>Å</small></label>
+                <label htmlFor={inputId}>{translate(field.label)} <small>Å</small></label>
                 <button
                   type="button"
                   disabled={disabled}
                   aria-pressed={isBound}
-                  aria-label={`${isBound ? "解除" : "绑定"}${field.label}的鼠标滚轮调整`}
+                  aria-label={translate("{0}{1}的鼠标滚轮调整", [translate(isBound ? "解除" : "绑定"), translate(field.label)])}
                   onClick={() => onWheelBindingChange(isBound ? null : field.key)}
                 >
                   <MouseScroll aria-hidden="true" size={13} />
-                  {isBound ? "已绑定" : "绑定"}
+                  {translate(isBound ? "已绑定" : "绑定")}
                 </button>
               </div>
               <input
@@ -199,26 +203,22 @@ export default function RunBoxInspector({
             type="button"
             disabled={disabled || !canCenterOnReceptor}
             onClick={onCenterOnReceptor}
-            title={canCenterOnReceptor ? "使用受体原子坐标范围的中心，不改变 Box 尺寸" : "尚未读取到可用的受体坐标"}
+            title={translate(canCenterOnReceptor ? "使用受体原子坐标范围的中心，不改变 Box 尺寸" : "尚未读取到可用的受体坐标")}
           >
-            <Crosshair aria-hidden="true" size={15} />
-            定位到受体
-          </button>
+            <Crosshair aria-hidden="true" size={15} />{translate("定位到受体")}</button>
           <button
             type="button"
             disabled={disabled || !canReset}
             onClick={onReset}
-            title="恢复进入本页面时的 Box 参数"
+            title={translate("恢复进入本页面时的 Box 参数")}
           >
-            <ArrowCounterClockwise aria-hidden="true" size={15} />
-            重置参数
-          </button>
+            <ArrowCounterClockwise aria-hidden="true" size={15} />{translate("重置参数")}</button>
         </div>
-        <small>定位只更新中心 X / Y / Z，保留当前 Box 尺寸。</small>
-        {placementMessage ? <p className="run-box-placement-message" aria-live="polite">{placementMessage}</p> : null}
+        <small>{translate("定位只更新中心 X / Y / Z，保留当前 Box 尺寸。")}</small>
+        {placementMessage ? <p className="run-box-placement-message" aria-live="polite">{translate(placementMessage)}</p> : null}
       </div>
 
-      <p>搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋；点击上方“?”查看完整说明。</p>
+      <p>{translate("搜索范围只定义 Vina 的探索空间，不代表自动识别了真实结合口袋；点击上方“?”查看完整说明。")}</p>
     </aside>
   );
 }

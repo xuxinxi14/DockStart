@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
@@ -42,6 +44,7 @@ export default function VinaConfigPage({
   onProjectChange,
   onOpenRunPrepare,
 }: VinaConfigPageProps) {
+  useLanguage();
   const [project, setProject] = useState<DockStartProject>(initialProject);
   const [configText, setConfigText] = useState("");
   const [configFile, setConfigFile] = useState(initialProject.config?.vina_config_file ?? "");
@@ -118,15 +121,15 @@ export default function VinaConfigPage({
   return (
     <PageShell labelledBy="vina-config-title">
       <PageHero
-        eyebrow="运行对接"
-        title={runMode === "score_only" ? "生成姿势评分配置" : runMode === "local_only" ? "生成局部优化配置" : "生成运行配置"}
+        eyebrow={translate("运行对接")}
+        title={translate(runMode === "score_only" ? "生成姿势评分配置" : runMode === "local_only" ? "生成局部优化配置" : "生成运行配置")}
         titleId="vina-config-title"
-        description={runMode === "dock"
+        description={translate(runMode === "dock"
           ? "根据 PDBQT、Box 和 Vina 参数生成 vina_config.txt。"
-          : `根据 PDBQT、评分函数与 CPU 生成评价配置${autobox ? "；范围由当前配体自动建立" : "；范围使用项目 Box"}。`}
+          : `根据 PDBQT、评分函数与 CPU 生成评价配置${autobox ? "；范围由当前配体自动建立" : "；范围使用项目 Box"}。`)}
         actions={
           <>
-          <ActionButton variant="text" onClick={onBack}>返回</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>{translate("返回")}</ActionButton>
           </>
         }
       />
@@ -138,23 +141,23 @@ export default function VinaConfigPage({
 
             <div className="status-strip">
               <article className="metric-card">
-                <span>受体 PDBQT</span>
-                <strong>{project.receptor.file || "未导入"}</strong>
-                <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? "已完成" : "缺失"}</StatusBadge>
+                <span>{translate("受体 PDBQT")}</span>
+                <strong>{project.receptor.file || translate("未导入")}</strong>
+                <StatusBadge tone={project.receptor.file ? "ok" : "warning"}>{project.receptor.file ? translate("已完成") : translate("缺失")}</StatusBadge>
               </article>
               <article className="metric-card">
-                <span>配体 PDBQT</span>
-                <strong>{project.ligand.file || "未导入"}</strong>
-                <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? "已完成" : "缺失"}</StatusBadge>
+                <span>{translate("配体 PDBQT")}</span>
+                <strong>{project.ligand.file || translate("未导入")}</strong>
+                <StatusBadge tone={project.ligand.file ? "ok" : "warning"}>{project.ligand.file ? translate("已完成") : translate("缺失")}</StatusBadge>
               </article>
               <article className="metric-card">
-                <span>运行配置</span>
-                <strong>{configFile || "尚未生成"}</strong>
-                <StatusBadge tone={configFile ? "ok" : "muted"}>{configFile ? "已完成" : "未开始"}</StatusBadge>
+                <span>{translate("运行配置")}</span>
+                <strong>{configFile || translate("尚未生成")}</strong>
+                <StatusBadge tone={configFile ? "ok" : "muted"}>{translate(configFile ? "已完成" : "未开始")}</StatusBadge>
               </article>
             </div>
 
-            <SectionCard title="配置预览">
+            <SectionCard title={translate("配置预览")}>
               <pre className="config-preview">
                 {configText || (
                   autobox
@@ -163,32 +166,30 @@ export default function VinaConfigPage({
                 )}
               </pre>
               <div className="button-row end">
-                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadPreview()}>刷新预览</ActionButton>
+                <ActionButton variant="text" disabled={isBusy} onClick={() => void reloadPreview()}>{translate("刷新预览")}</ActionButton>
                 <ActionButton variant="primary" disabled={isBusy} onClick={() => void generateConfig()}>
-                  {isBusy ? "生成中..." : "生成运行配置"}
+                  {translate(isBusy ? "生成中..." : "生成运行配置")}
                 </ActionButton>
               </div>
             </SectionCard>
 
             <div className="next-step-strip">
               <div>
-                <strong>{canOpenRunPrepare ? "下一步：准备对接运行" : "先生成 vina_config.txt"}</strong>
-                <p>准备运行会保存运行编号、命令预览和配置快照。</p>
+                <strong>{translate(canOpenRunPrepare ? "下一步：准备对接运行" : "先生成 vina_config.txt")}</strong>
+                <p>{translate("准备运行会保存运行编号、命令预览和配置快照。")}</p>
               </div>
-              <ActionButton variant="primary" disabled={!canOpenRunPrepare} onClick={() => onOpenRunPrepare(project)}>
-                准备对接运行
-              </ActionButton>
+              <ActionButton variant="primary" disabled={!canOpenRunPrepare} onClick={() => onOpenRunPrepare(project)}>{translate("准备对接运行")}</ActionButton>
             </div>
 
-            {warnings.map((warning) => (
-              <WarningCallout key={warning} title="配置提示">
-                <p>{warning}</p>
+            {translate(warnings.map((warning) => (
+              <WarningCallout key={warning} title={translate("配置提示")}>
+                <p>{translate(warning)}</p>
               </WarningCallout>
-            ))}
+            )))}
 
-            <CommandResultPanel title="配置结果" message={message} rawError={rawError} />
+            <CommandResultPanel title={translate("配置结果")} message={translate(message)} rawError={rawError} />
             {configFile ? (
-              <AdvancedDetails summary="配置文件路径">
+              <AdvancedDetails summary={translate("配置文件路径")}>
                 <code>{configFile}</code>
               </AdvancedDetails>
             ) : null}
@@ -196,25 +197,25 @@ export default function VinaConfigPage({
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="配置状态">
+          <RightRailSection title={translate("配置状态")}>
             <dl className="mode-context-list">
               <div>
-                <dt>受体</dt>
-                <dd>{project.receptor.file ? "已导入" : "缺失"}</dd>
+                <dt>{translate("受体")}</dt>
+                <dd>{project.receptor.file ? translate("已导入") : translate("缺失")}</dd>
               </div>
               <div>
-                <dt>配体</dt>
-                <dd>{project.ligand.file ? "已导入" : "缺失"}</dd>
+                <dt>{translate("配体")}</dt>
+                <dd>{project.ligand.file ? translate("已导入") : translate("缺失")}</dd>
               </div>
               <div>
-                <dt>配置</dt>
-                <dd>{configFile ? "已生成" : "未生成"}</dd>
+                <dt>{translate("配置")}</dt>
+                <dd>{translate(configFile ? "已生成" : "未生成")}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="下一步">
-            <p>{canOpenRunPrepare ? "准备对接运行。" : "先生成 vina_config.txt。"}</p>
+          <RightRailSection title={translate("下一步")}>
+            <p>{translate(canOpenRunPrepare ? "准备对接运行。" : "先生成 vina_config.txt。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import StatusBadge from "./StatusBadge";
 import type { VinaRunMode } from "../types";
 
@@ -45,13 +47,14 @@ function stepsFor(runMode: VinaRunMode): WorkflowStep[] {
 }
 
 export default function VinaWorkflowBar({ current, runId, runMode = "dock" }: VinaWorkflowBarProps) {
+  useLanguage();
   const steps = stepsFor(runMode);
   const currentIndex = steps.findIndex((step) => step.id === current);
 
   return (
     <nav className="vina-workflow-bar" aria-label="Vina workflow">
       <ol>
-        {steps.map((step, index) => {
+        {translate(steps.map((step, index) => {
           const isCurrent = step.id === current;
           const isDone = currentIndex > index;
           const tone = isCurrent ? "info" : isDone ? "ok" : "muted";
@@ -59,15 +62,15 @@ export default function VinaWorkflowBar({ current, runId, runMode = "dock" }: Vi
             <li key={step.id} className={isCurrent ? "current" : ""}>
               <div>
                 <span>{index + 1}</span>
-                <strong>{step.label}</strong>
+                <strong>{translate(step.label)}</strong>
               </div>
-              <p>{step.description}</p>
-              <StatusBadge tone={tone}>{isCurrent ? "当前步骤" : isDone ? "已通过" : "待进行"}</StatusBadge>
+              <p>{translate(step.description)}</p>
+              <StatusBadge tone={tone}>{translate(isCurrent ? "当前步骤" : isDone ? "已通过" : "待进行")}</StatusBadge>
             </li>
           );
-        })}
+        }))}
       </ol>
-      {runId ? <p className="vina-workflow-run">运行记录：{runId}</p> : null}
+      {runId ? <p className="vina-workflow-run">{translate("运行记录：")}{runId}</p> : null}
     </nav>
   );
 }

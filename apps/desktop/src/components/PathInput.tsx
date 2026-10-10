@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -54,6 +56,7 @@ export default function PathInput({
   ariaLabel,
   ariaDescribedBy,
 }: PathInputProps) {
+  useLanguage();
   const generatedId = useId().replace(/:/g, "");
   const feedbackId = `${id ?? `path-input-${generatedId}`}-picker-feedback`;
   const [pickerError, setPickerError] = useState("");
@@ -68,8 +71,8 @@ export default function PathInput({
       const selected = await open({
         directory: mode === "directory",
         multiple: false,
-        filters: mode === "file" ? filters : undefined,
-        title: pickerTitle,
+        filters: mode === "file" ? filters?.map(filter => ({ ...filter, name: translate(filter.name) })) : undefined,
+        title: translate(pickerTitle),
       });
       if (selected === null || selected === undefined) {
         return;
@@ -95,7 +98,7 @@ export default function PathInput({
         <input
           autoComplete="off"
           aria-describedby={describedBy}
-          aria-label={ariaLabel}
+          aria-label={translate(ariaLabel)}
           className="path-input-field"
           disabled={disabled}
           id={id}
@@ -103,26 +106,24 @@ export default function PathInput({
             setPickerError("");
             onChange(event.target.value);
           }}
-          placeholder={placeholder}
+          placeholder={translate(placeholder)}
           spellCheck={false}
           type="text"
           value={value}
         />
         <button
           aria-describedby={pickerError ? feedbackId : undefined}
-          aria-label={pickerTitle}
+          aria-label={translate(pickerTitle)}
           className="secondary-button path-input-button"
           disabled={disabled}
           onClick={() => void pickPath()}
-          title={pickerTitle}
+          title={translate(pickerTitle)}
           type="button"
-        >
-          选择…
-        </button>
+        >{translate("选择…")}</button>
       </div>
       {pickerError ? (
         <p className="message-line" id={feedbackId} role="alert">
-          {pickerError}
+          {translate(pickerError)}
         </p>
       ) : null}
     </div>

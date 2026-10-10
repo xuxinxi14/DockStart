@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import type { ReactNode } from "react";
 import AdvancedDetails from "./AdvancedDetails";
 import DocumentationLink from "./DocumentationLink";
@@ -22,7 +24,7 @@ type ErrorRecoveryPanelProps = {
 };
 
 export default function ErrorRecoveryPanel({
-  title = "操作失败",
+  title = translate("操作失败"),
   message,
   error,
   suggestion,
@@ -30,6 +32,7 @@ export default function ErrorRecoveryPanel({
   action,
   className = "",
 }: ErrorRecoveryPanelProps) {
+  useLanguage();
   const displayedTitle = error?.title || title;
   const displayedMessage = error?.message || message || "操作未完成，请根据建议检查后重试。";
   const displayedSuggestion = error?.suggestion || suggestion;
@@ -40,17 +43,17 @@ export default function ErrorRecoveryPanel({
 
   return (
     <section className={`error-recovery-panel ${className}`.trim()} role="alert">
-      <strong>{displayedTitle}</strong>
-      <p>{displayedMessage}</p>
-      {displayedSuggestion ? <p>{displayedSuggestion}</p> : null}
+      <strong>{translate(displayedTitle)}</strong>
+      <p>{translate(displayedMessage)}</p>
+      {displayedSuggestion ? <p>{translate(displayedSuggestion)}</p> : null}
       {error?.code ? <code>{error.code}</code> : null}
-      {topic ? <AdvancedDetails summary={`排查说明：${topic.title}`}>
-        <ol>{topic.steps.map(step => <li key={step}>{step}</li>)}</ol>
-        <DocumentationLink url={topicUrl(topic)}>查看对应排错文档</DocumentationLink>
+      {topic ? <AdvancedDetails summary={translate("排查说明：{0}", [translate(topic.title)])}>
+        <ol>{topic.steps.map(step => <li key={step}>{translate(step)}</li>)}</ol>
+        <DocumentationLink url={topicUrl(topic)}>{translate("查看对应排错文档")}</DocumentationLink>
       </AdvancedDetails> : null}
-      {action ? <div>{action}</div> : null}
+      {action ? <div>{translate(action)}</div> : null}
       {displayedRawError ? (
-        <AdvancedDetails summary="错误详情">
+        <AdvancedDetails summary={translate("错误详情")}>
           <pre>{displayedRawError}</pre>
         </AdvancedDetails>
       ) : null}

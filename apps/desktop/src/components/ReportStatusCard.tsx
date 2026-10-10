@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import StatusBadge from "./StatusBadge";
 
 type ReportStatusCardProps = {
@@ -6,13 +8,14 @@ type ReportStatusCardProps = {
 };
 
 export default function ReportStatusCard({ status, path }: ReportStatusCardProps) {
+  useLanguage();
   return (
     <article className="unified-status-card report-status-card">
       <div className="report-status-card-copy">
-        <strong>Markdown 报告</strong>
-        <p>{path || "报告导出后会显示路径。"}</p>
+        <strong>{translate("Markdown 报告")}</strong>
+        <p>{path || translate("报告导出后会显示路径。")}</p>
       </div>
-      <StatusBadge tone={status === "exported" ? "ok" : "warning"}>{status === "exported" ? "已导出" : "待导出"}</StatusBadge>
+      <StatusBadge tone={status === "exported" ? "ok" : "warning"}>{translate(status === "exported" ? "已导出" : "待导出")}</StatusBadge>
     </article>
   );
 }

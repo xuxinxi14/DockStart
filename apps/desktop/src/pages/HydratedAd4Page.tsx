@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import {
   ArrowClockwise,
   ChartBar,
@@ -138,10 +140,11 @@ function WorkflowStep({
   detail,
   actions,
 }: WorkflowStepProps) {
+  useLanguage();
   return (
     <article className="hydrated-workflow-step">
       <span aria-hidden="true" className="hydrated-step-index">
-        {String(index).padStart(2, "0")}
+        {translate(String(index).padStart(2, "0"))}
       </span>
       <div className="hydrated-step-body">
         <div className="hydrated-step-heading">
@@ -149,10 +152,10 @@ function WorkflowStep({
             <h2>{title}</h2>
             <p>{description}</p>
           </div>
-          <StatusBadge tone={tone}>{status}</StatusBadge>
+          <StatusBadge tone={tone}>{translate(status)}</StatusBadge>
         </div>
-        {detail ? <div className="hydrated-step-detail">{detail}</div> : null}
-        {actions ? <div className="hydrated-step-actions">{actions}</div> : null}
+        {detail ? <div className="hydrated-step-detail">{translate(detail)}</div> : null}
+        {actions ? <div className="hydrated-step-actions">{translate(actions)}</div> : null}
       </div>
     </article>
   );
@@ -197,6 +200,7 @@ export default function HydratedAd4Page({
   onOpenRunExecute,
   onOpenToolchain,
 }: HydratedAd4PageProps) {
+  useLanguage();
   const [status, setStatus] = useState<HydratedStatusSuccess | null>(null);
   const [preflight, setPreflight] =
     useState<HydratedRunPreflightSuccess | null>(null);
@@ -564,10 +568,10 @@ export default function HydratedAd4Page({
   return (
     <PageShell className="hydrated-ad4-page" labelledBy="hydrated-ad4-title">
       <PageHero
-        eyebrow="实验协议 · Experimental"
-        title="水合 AutoDock4 对接"
+        eyebrow={translate("实验协议 · Experimental")}
+        title={translate("水合 AutoDock4 对接")}
         titleId="hydrated-ad4-title"
-        description="为单一配体准备显式水位点和 W map，在刚性受体上执行全局 AD4 对接。"
+        description={translate("为单一配体准备显式水位点和 W map，在刚性受体上执行全局 AD4 对接。")}
         actions={
           <>
             <StatusBadge
@@ -580,10 +584,10 @@ export default function HydratedAd4Page({
               }
             >
               {status?.preparation_ready && status.maps_ready
-                ? "输入与 maps 已就绪"
+                ? translate("输入与 maps 已就绪")
                 : status
-                  ? "尚未完成准备"
-                  : "正在读取状态"}
+                  ? translate("尚未完成准备")
+                  : translate("正在读取状态")}
             </StatusBadge>
             <ActionButton
               disabled={Boolean(busyAction)}
@@ -600,12 +604,8 @@ export default function HydratedAd4Page({
                 />
               ) : (
                 <ArrowClockwise aria-hidden="true" size={17} />
-              )}
-              刷新
-            </ActionButton>
-            <ActionButton variant="text" onClick={onBack}>
-              返回运行工作台
-            </ActionButton>
+              )}{translate("刷新")}</ActionButton>
+            <ActionButton variant="text" onClick={onBack}>{translate("返回运行工作台")}</ActionButton>
           </>
         }
       />
@@ -615,18 +615,16 @@ export default function HydratedAd4Page({
           <div className="main-panel-content">
             <HydratedProtocolScope />
 
-            {autoGridCheck.status === "missing" || autoGridCheck.status === "error" ? (
-              <WarningCallout title="水合 AD4 需要 AutoGrid4">
+            {translate(autoGridCheck.status === "missing" || autoGridCheck.status === "error" ? (
+              <WarningCallout title={translate("水合 AD4 需要 AutoGrid4")}>
                 <div className="hydrated-autogrid-warning">
-                  <p>{autoGridCheck.message} 配置完成前不会启动 maps 生成。</p>
+                  <p>{translate(autoGridCheck.message)}{translate(" 配置完成前不会启动 maps 生成。")}</p>
                   {onOpenToolchain ? (
-                    <ActionButton variant="secondary" onClick={onOpenToolchain}>
-                      打开工具链配置
-                    </ActionButton>
+                    <ActionButton variant="secondary" onClick={onOpenToolchain}>{translate("打开工具链配置")}</ActionButton>
                   ) : null}
                 </div>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
             <section
               aria-labelledby="hydrated-overview-title"
@@ -634,52 +632,52 @@ export default function HydratedAd4Page({
             >
               <div className="hydrated-section-heading">
                 <div>
-                  <span>状态概览</span>
-                  <h2 id="hydrated-overview-title">当前协议输入</h2>
+                  <span>{translate("状态概览")}</span>
+                  <h2 id="hydrated-overview-title">{translate("当前协议输入")}</h2>
                 </div>
-                <small>所有产物独立保存，不覆盖标准配体或 maps。</small>
+                <small>{translate("所有产物独立保存，不覆盖标准配体或 maps。")}</small>
               </div>
               <div className="hydrated-metrics">
                 <article>
-                  <span>原始配体</span>
-                  <strong>{rawLigand ? fileName(rawLigand) : "未记录"}</strong>
+                  <span>{translate("原始配体")}</span>
+                  <strong>{rawLigand ? fileName(rawLigand) : translate("未记录")}</strong>
                   <small>
-                    {availability.rawLigandSupported
+                    {translate(availability.rawLigandSupported
                       ? "SDF / MOL"
-                      : "需要 SDF 或 MOL"}
+                      : "需要 SDF 或 MOL")}
                   </small>
                 </article>
                 <article>
-                  <span>水合位点</span>
-                  <strong>{countText(waterCount)}</strong>
-                  <small>准备后记录的 W 原子</small>
+                  <span>{translate("水合位点")}</span>
+                  <strong>{translate(countText(waterCount))}</strong>
+                  <small>{translate("准备后记录的 W 原子")}</small>
                 </article>
                 <article>
                   <span>Maps</span>
-                  <strong>{mapSetId || "未生成"}</strong>
-                  <small>{status?.maps_ready ? "含 W.map" : "等待生成"}</small>
+                  <strong>{translate(mapSetId || "未生成")}</strong>
+                  <small>{translate(status?.maps_ready ? "含 W.map" : "等待生成")}</small>
                 </article>
                 <article>
-                  <span>当前 run</span>
-                  <strong>{selectedRun?.runId || "未创建"}</strong>
+                  <span>{translate("当前 run")}</span>
+                  <strong>{selectedRun?.runId || translate("未创建")}</strong>
                   <small>
-                    {selectedRun
+                    {translate(selectedRun
                       ? runStatusLabels[selectedRun.status]
                         || selectedRun.status
-                      : "等待运行前检查"}
+                      : "等待运行前检查")}
                   </small>
                 </article>
               </div>
             </section>
 
             <section
-              aria-label="水合 AD4 工作流"
+              aria-label={translate("水合 AD4 工作流")}
               className="hydrated-workflow"
             >
               <WorkflowStep
                 index={1}
-                title="准备水合配体"
-                description="从当前单配体的 SDF 或 MOL 生成独立水合 PDBQT，并记录输入与产物哈希。"
+                title={translate("准备水合配体")}
+                description={translate("从当前单配体的 SDF 或 MOL 生成独立水合 PDBQT，并记录输入与产物哈希。")}
                 status={ligandStatus}
                 tone={
                   status?.preparation_ready
@@ -692,20 +690,20 @@ export default function HydratedAd4Page({
                   status?.manifest ? (
                     <dl className="hydrated-inline-facts">
                       <div>
-                        <dt>记录</dt>
+                        <dt>{translate("记录")}</dt>
                         <dd>
-                          {status.active_ligand_manifest || "未记录"}
+                          {status.active_ligand_manifest || translate("未记录")}
                         </dd>
                       </div>
                       <div>
-                        <dt>水位点</dt>
+                        <dt>{translate("水位点")}</dt>
                         <dd>{countText(waterCount)}</dd>
                       </div>
                     </dl>
                   ) : (
                     <p>
                       {availability.reasons.prepareLigand
-                      || "已有记录仍可重新准备；新的有效记录会成为当前水合输入。"}
+                      || translate("已有记录仍可重新准备；新的有效记录会成为当前水合输入。")}
                     </p>
                   )
                 }
@@ -717,16 +715,16 @@ export default function HydratedAd4Page({
                   >
                     <Drop aria-hidden="true" size={17} weight="duotone" />
                     {status?.preparation_ready
-                      ? "重新准备水合配体"
-                      : "准备水合配体"}
+                      ? translate("重新准备水合配体")
+                      : translate("准备水合配体")}
                   </ActionButton>
                 }
               />
 
               <WorkflowStep
                 index={2}
-                title="生成水合 AD4 maps"
-                description="使用当前刚性受体、项目 Box 和水合配体原子类型生成完整 AD4 maps 与 W map。"
+                title={translate("生成水合 AD4 maps")}
+                description={translate("使用当前刚性受体、项目 Box 和水合配体原子类型生成完整 AD4 maps 与 W map。")}
                 status={mapsStatus}
                 tone={
                   status?.maps_ready
@@ -740,12 +738,12 @@ export default function HydratedAd4Page({
                     <dl className="hydrated-inline-facts">
                       <div>
                         <dt>Map set</dt>
-                        <dd>{mapSetId || "未记录"}</dd>
+                        <dd>{mapSetId || translate("未记录")}</dd>
                       </div>
                       <div>
                         <dt>Manifest</dt>
                         <dd>
-                          {status.active_maps_manifest || "未记录"}
+                          {status.active_maps_manifest || translate("未记录")}
                         </dd>
                       </div>
                     </dl>
@@ -753,10 +751,10 @@ export default function HydratedAd4Page({
                     <p>
                       {!autoGridReady
                         ? autoGridCheck.status === "checking"
-                          ? "正在检测 AutoGrid4。"
-                          : "尚未配置 AutoGrid4；请先打开工具链配置。"
+                          ? translate("正在检测 AutoGrid4。")
+                          : translate("尚未配置 AutoGrid4；请先打开工具链配置。")
                         : availability.reasons.generateMaps
-                          || `AutoGrid4 ${autoGridCheck.version || "已配置"}；生成过程会校验全部 map 文件。`}
+                          || translate(`AutoGrid4 ${autoGridCheck.version || "已配置"}；生成过程会校验全部 map 文件。`)}
                     </p>
                   )
                 }
@@ -767,32 +765,32 @@ export default function HydratedAd4Page({
                   >
                     <GridFour aria-hidden="true" size={17} />
                     {status?.maps_ready
-                      ? "重新生成 maps"
-                      : "生成并校验 maps"}
+                      ? translate("重新生成 maps")
+                      : translate("生成并校验 maps")}
                   </ActionButton>
                 }
               />
 
               <WorkflowStep
                 index={3}
-                title="运行前检查"
-                description="核对水合配体、maps、Vina 1.2.x 能力、项目参数和活动运行守卫。"
+                title={translate("运行前检查")}
+                description={translate("核对水合配体、maps、Vina 1.2.x 能力、项目参数和活动运行守卫。")}
                 status={preflightReady ? "检查通过" : "待检查"}
                 tone={preflightReady ? "ok" : "muted"}
                 detail={
                   preflight ? (
                     <dl className="hydrated-inline-facts">
                       <div>
-                        <dt>下一 run</dt>
+                        <dt>{translate("下一 run")}</dt>
                         <dd>{preflight.next_run_id}</dd>
                       </div>
                       <div>
                         <dt>Vina</dt>
-                        <dd>{preflight.vina_binary.name || "已校验"}</dd>
+                        <dd>{preflight.vina_binary.name || translate("已校验")}</dd>
                       </div>
                     </dl>
                   ) : (
-                    <p>{availability.reasons.checkRun || "准备完成后执行检查。"}</p>
+                    <p>{availability.reasons.checkRun || translate("准备完成后执行检查。")}</p>
                   )
                 }
                 actions={
@@ -801,16 +799,14 @@ export default function HydratedAd4Page({
                     onClick={() => void checkRun()}
                     title={availability.reasons.checkRun || undefined}
                   >
-                    <ShieldCheck aria-hidden="true" size={17} />
-                    运行前检查
-                  </ActionButton>
+                    <ShieldCheck aria-hidden="true" size={17} />{translate("运行前检查")}</ActionButton>
                 }
               />
 
               <WorkflowStep
                 index={4}
-                title="创建并执行 run"
-                description="冻结当前协议输入后，进入现有 Vina 执行页启动、监控或取消任务。"
+                title={translate("创建并执行 run")}
+                description={translate("冻结当前协议输入后，进入现有 Vina 执行页启动、监控或取消任务。")}
                 status={
                   selectedRun
                     ? runStatusLabels[selectedRun.status]
@@ -823,7 +819,7 @@ export default function HydratedAd4Page({
                 detail={
                   runs.length ? (
                     <label className="hydrated-run-selector">
-                      <span>水合运行记录</span>
+                      <span>{translate("水合运行记录")}</span>
                       <select
                         disabled={Boolean(busyAction)}
                         onChange={(event) => {
@@ -842,7 +838,7 @@ export default function HydratedAd4Page({
                       </select>
                     </label>
                   ) : (
-                    <p>{availability.reasons.prepareRun || "尚未创建水合 run。"}</p>
+                    <p>{availability.reasons.prepareRun || translate("尚未创建水合 run。")}</p>
                   )
                 }
                 actions={
@@ -853,17 +849,14 @@ export default function HydratedAd4Page({
                       title={availability.reasons.prepareRun || undefined}
                       variant="primary"
                     >
-                      <Play aria-hidden="true" size={17} weight="fill" />
-                      创建 run 并进入执行页
-                    </ActionButton>
+                      <Play aria-hidden="true" size={17} weight="fill" />{translate("创建 run 并进入执行页")}</ActionButton>
                     {selectedRun ? (
                       <ActionButton
                         disabled={Boolean(busyAction)}
                         onClick={() =>
                           onOpenRunExecute(project, selectedRun.runId)
                         }
-                      >
-                        打开 {selectedRun.runId}
+                      >{translate("打开")}{selectedRun.runId}
                       </ActionButton>
                     ) : null}
                   </>
@@ -872,8 +865,8 @@ export default function HydratedAd4Page({
 
               <WorkflowStep
                 index={5}
-                title="读取水合结果"
-                description="在 run 完成后核对 raw AD4 affinity、RMSD 与每个构象的保留、强、弱和置换水记录。"
+                title={translate("读取水合结果")}
+                description={translate("在 run 完成后核对 raw AD4 affinity、RMSD 与每个构象的保留、强、弱和置换水记录。")}
                 status={
                   results
                     ? "已加载"
@@ -891,7 +884,7 @@ export default function HydratedAd4Page({
                 detail={
                   <p>
                     {availability.reasons.loadResults
-                    || "评分保持为 raw hydrated AD4 affinity；水分子后处理不生成新评分。"}
+                    || translate("评分保持为 raw hydrated AD4 affinity；水分子后处理不生成新评分。")}
                   </p>
                 }
                 actions={
@@ -900,22 +893,20 @@ export default function HydratedAd4Page({
                     onClick={() => void loadResults()}
                     title={availability.reasons.loadResults || undefined}
                   >
-                    <ChartBar aria-hidden="true" size={17} />
-                    加载水合结果
-                  </ActionButton>
+                    <ChartBar aria-hidden="true" size={17} />{translate("加载水合结果")}</ActionButton>
                 }
               />
             </section>
 
-            {preflight?.warnings?.length ? (
-              <WarningCallout title="运行前提示">
+            {translate(preflight?.warnings?.length ? (
+              <WarningCallout title={translate("运行前提示")}>
                 <ul className="hydrated-message-list">
                   {preflight.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
+                    <li key={warning}>{translate(warning)}</li>
                   ))}
                 </ul>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
             {results ? (
               <section
@@ -925,41 +916,39 @@ export default function HydratedAd4Page({
                 <div className="hydrated-section-heading">
                   <div>
                     <span>{results.run_id}</span>
-                    <h2 id="hydrated-results-title">水分子分类结果</h2>
+                    <h2 id="hydrated-results-title">{translate("水分子分类结果")}</h2>
                   </div>
-                  <StatusBadge tone="warning">
-                    处理后评分未计算
-                  </StatusBadge>
+                  <StatusBadge tone="warning">{translate("处理后评分未计算")}</StatusBadge>
                 </div>
                 <div className="hydrated-water-summary">
                   <article>
-                    <span>原始候选水</span>
+                    <span>{translate("原始候选水")}</span>
                     <strong>
-                      {countText(results.water_summary.raw_water_count)}
+                      {translate(countText(results.water_summary.raw_water_count))}
                     </strong>
                   </article>
                   <article>
-                    <span>保留水</span>
+                    <span>{translate("保留水")}</span>
                     <strong>
-                      {countText(results.water_summary.retained_water_count)}
+                      {translate(countText(results.water_summary.retained_water_count))}
                     </strong>
                   </article>
                   <article>
-                    <span>强水</span>
+                    <span>{translate("强水")}</span>
                     <strong>
-                      {countText(results.water_summary.strong_water_count)}
+                      {translate(countText(results.water_summary.strong_water_count))}
                     </strong>
                   </article>
                   <article>
-                    <span>弱水</span>
+                    <span>{translate("弱水")}</span>
                     <strong>
-                      {countText(results.water_summary.weak_water_count)}
+                      {translate(countText(results.water_summary.weak_water_count))}
                     </strong>
                   </article>
                   <article>
-                    <span>置换水</span>
+                    <span>{translate("置换水")}</span>
                     <strong>
-                      {countText(results.water_summary.displaced_water_count)}
+                      {translate(countText(results.water_summary.displaced_water_count))}
                     </strong>
                   </article>
                 </div>
@@ -970,9 +959,9 @@ export default function HydratedAd4Page({
                         <th scope="col">Mode</th>
                         <th scope="col">Raw AD4 affinity</th>
                         <th scope="col">RMSD lower</th>
-                        <th scope="col">强水</th>
-                        <th scope="col">弱水</th>
-                        <th scope="col">置换水</th>
+                        <th scope="col">{translate("强水")}</th>
+                        <th scope="col">{translate("弱水")}</th>
+                        <th scope="col">{translate("置换水")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -982,37 +971,37 @@ export default function HydratedAd4Page({
                           <td>{mode.raw_affinity_kcal_mol} kcal/mol</td>
                           <td>{mode.rmsd_lb} Å</td>
                           <td>
-                            {countText(
+                            {translate(countText(
                               mode.water_summary.strong_water_count,
-                            )}
+                            ))}
                           </td>
                           <td>
-                            {countText(
+                            {translate(countText(
                               mode.water_summary.weak_water_count,
-                            )}
+                            ))}
                           </td>
                           <td>
-                            {countText(
+                            {translate(countText(
                               mode.water_summary.displaced_water_count,
-                            )}
+                            ))}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <AdvancedDetails summary="结果文件">
+                <AdvancedDetails summary={translate("结果文件")}>
                   <dl className="hydrated-result-files">
                     <div>
-                      <dt>Raw 输出</dt>
+                      <dt>{translate("Raw 输出")}</dt>
                       <dd>{results.raw_output_file}</dd>
                     </div>
                     <div>
-                      <dt>保留水输出</dt>
+                      <dt>{translate("保留水输出")}</dt>
                       <dd>{results.retained_output_file}</dd>
                     </div>
                     <div>
-                      <dt>去水配体输出</dt>
+                      <dt>{translate("去水配体输出")}</dt>
                       <dd>{results.water_free_output_file}</dd>
                     </div>
                   </dl>
@@ -1026,104 +1015,93 @@ export default function HydratedAd4Page({
                 className="hydrated-inline-notice"
                 role="status"
               >
-                {notice}
+                {translate(notice)}
               </p>
             ) : null}
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="流程门禁">
+          <RightRailSection title={translate("流程门禁")}>
             <ol className="hydrated-gate-list">
               <li className={status?.preparation_ready ? "ready" : ""}>
                 {status?.preparation_ready ? (
                   <CheckCircle aria-hidden="true" weight="fill" />
                 ) : (
                   <WarningCircle aria-hidden="true" weight="fill" />
-                )}
-                水合配体
-              </li>
+                )}{translate("水合配体")}</li>
               <li className={status?.maps_ready ? "ready" : ""}>
                 {status?.maps_ready ? (
                   <CheckCircle aria-hidden="true" weight="fill" />
                 ) : (
                   <WarningCircle aria-hidden="true" weight="fill" />
-                )}
-                AD4 maps 与 W.map
-              </li>
+                )}{translate("AD4 maps 与 W.map")}</li>
               <li className={preflightReady ? "ready" : ""}>
                 {preflightReady ? (
                   <CheckCircle aria-hidden="true" weight="fill" />
                 ) : (
                   <WarningCircle aria-hidden="true" weight="fill" />
-                )}
-                运行前检查
-              </li>
+                )}{translate("运行前检查")}</li>
               <li className={selectedRun?.status === "finished" ? "ready" : ""}>
                 {selectedRun?.status === "finished" ? (
                   <CheckCircle aria-hidden="true" weight="fill" />
                 ) : (
                   <WarningCircle aria-hidden="true" weight="fill" />
-                )}
-                完成水合 run
-              </li>
+                )}{translate("完成水合 run")}</li>
             </ol>
           </RightRailSection>
 
-          <RightRailSection title="当前绑定">
+          <RightRailSection title={translate("当前绑定")}>
             <dl className="hydrated-context-list">
               <div>
-                <dt>受体</dt>
-                <dd>{project.receptor.file || "未准备"}</dd>
+                <dt>{translate("受体")}</dt>
+                <dd>{project.receptor.file || translate("未准备")}</dd>
               </div>
               <div>
-                <dt>原始配体</dt>
-                <dd>{rawLigand || "未记录"}</dd>
+                <dt>{translate("原始配体")}</dt>
+                <dd>{translate(rawLigand || "未记录")}</dd>
               </div>
               <div>
-                <dt>Box 中心</dt>
+                <dt>{translate("Box 中心")}</dt>
                 <dd>
-                  {project.box.center_x}, {project.box.center_y},{" "}
+                  {project.box.center_x}, {project.box.center_y},{translate(" ")}
                   {project.box.center_z} Å
                 </dd>
               </div>
               <div>
-                <dt>Box 尺寸</dt>
+                <dt>{translate("Box 尺寸")}</dt>
                 <dd>
-                  {project.box.size_x} × {project.box.size_y} ×{" "}
+                  {project.box.size_x} × {project.box.size_y} ×{translate(" ")}
                   {project.box.size_z} Å
                 </dd>
               </div>
             </dl>
           </RightRailSection>
 
-          {protocolIssues.length ? (
-            <RightRailSection title="需要处理">
+          {translate(protocolIssues.length ? (
+            <RightRailSection title={translate("需要处理")}>
               <ul className="hydrated-issue-list">
                 {protocolIssues.slice(0, 5).map((issue) => (
-                  <li key={issue}>{issue}</li>
+                  <li key={issue}>{translate(issue)}</li>
                 ))}
               </ul>
               {protocolIssues.length > 5 ? (
-                <small>另有 {protocolIssues.length - 5} 项，请刷新后复核。</small>
+                <small>{translate("另有 ")}{protocolIssues.length - 5}{translate(" 项，请刷新后复核。")}</small>
               ) : null}
             </RightRailSection>
-          ) : null}
+          ) : null)}
 
-          <RightRailSection title="评分说明">
-            <p>
-              affinity 是含显式 W 原子的原始 AD4 评分，只用于同一 run
-              内构象排序。水分子过滤不会替换该分值。
-            </p>
+          <RightRailSection title={translate("评分说明")}>
+            <p>{translate("affinity 是含显式 W 原子的原始 AD4 评分，只用于同一 run 内构象排序。水分子过滤不会替换该分值。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>
 
       <OperationLoadingDialog
         detail={loadingCopy?.detail}
-        message={loadingCopy?.message ?? ""}
+        message={translate(loadingCopy?.message ?? "")}
         open={Boolean(loadingCopy)}
-        title={loadingCopy?.title ?? ""}
+        title={translate(loadingCopy?.title ?? "")}
       />
     </PageShell>
   );

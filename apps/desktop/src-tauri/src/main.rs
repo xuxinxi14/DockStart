@@ -1847,10 +1847,19 @@ async fn load_vina_evaluation(project_dir: String, run_id: String) -> String {
 }
 
 #[tauri::command]
-async fn export_markdown_report(project_dir: String, run_id: String) -> String {
+async fn export_markdown_report(
+    project_dir: String,
+    run_id: String,
+    report_language: Option<String>,
+) -> String {
     match run_backend_module_async(
         "dockstart_core.project",
-        vec!["export-report".to_string(), project_dir, run_id],
+        vec![
+            "export-report".to_string(),
+            project_dir,
+            run_id,
+            report_language.unwrap_or_else(|| "zh-CN".to_string()),
+        ],
     )
     .await
     {
@@ -1860,13 +1869,22 @@ async fn export_markdown_report(project_dir: String, run_id: String) -> String {
 }
 
 #[tauri::command]
-async fn export_multiple_ligand_markdown_report(project_dir: String, run_id: String) -> String {
+async fn export_multiple_ligand_markdown_report(
+    project_dir: String,
+    run_id: String,
+    report_language: Option<String>,
+) -> String {
     if let Err(error) = validate_run_directory(&project_dir, &run_id) {
         return fallback_project_error_json("多配体共同对接运行目录校验失败。", &error);
     }
     match run_backend_module_async(
         "dockstart_core.multiple_ligands",
-        vec!["report".to_string(), project_dir, run_id],
+        vec![
+            "report".to_string(),
+            project_dir,
+            run_id,
+            report_language.unwrap_or_else(|| "zh-CN".to_string()),
+        ],
     )
     .await
     {
@@ -2530,10 +2548,16 @@ async fn archive_screening(project_dir: String) -> String {
 }
 
 #[tauri::command]
-async fn export_screening_report(project_dir: String) -> String {
+async fn export_screening_report(project_dir: String, report_language: Option<String>) -> String {
     match run_backend_module_async(
         "dockstart_core.screening",
-        vec!["report".to_string(), "--project".to_string(), project_dir],
+        vec![
+            "report".to_string(),
+            "--project".to_string(),
+            project_dir,
+            "--report-language".to_string(),
+            report_language.unwrap_or_else(|| "zh-CN".to_string()),
+        ],
     )
     .await
     {
@@ -3921,7 +3945,11 @@ fn start_preparation_task(
 }
 
 #[tauri::command]
-fn start_screening_task(app: tauri::AppHandle, project_dir: String) -> String {
+fn start_screening_task(
+    app: tauri::AppHandle,
+    project_dir: String,
+    report_language: Option<String>,
+) -> String {
     let project_key = normalized_project_key(&project_dir);
     start_background_job(
         app,
@@ -3933,6 +3961,8 @@ fn start_screening_task(app: tauri::AppHandle, project_dir: String) -> String {
                 "run".to_string(),
                 "--project".to_string(),
                 project_dir.clone(),
+                "--report-language".to_string(),
+                report_language.unwrap_or_else(|| "zh-CN".to_string()),
             ],
             project_dir,
             run_id: String::new(),
@@ -4188,6 +4218,7 @@ async fn start_multiple_ligand_task(
     app: tauri::AppHandle,
     project_dir: String,
     run_id: String,
+    report_language: Option<String>,
 ) -> String {
     if let Err(error) = validate_run_directory(&project_dir, &run_id) {
         return fallback_project_error_json(
@@ -4215,7 +4246,12 @@ async fn start_multiple_ligand_task(
                 kind: "multiple-ligand".to_string(),
                 key: format!("multiple-ligand|{project_key}|{}", run_id.to_lowercase()),
                 module: "dockstart_core.multiple_ligands".to_string(),
-                args: vec!["run".to_string(), project_dir.clone(), run_id.clone()],
+                args: vec![
+                    "run".to_string(),
+                    project_dir.clone(),
+                    run_id.clone(),
+                    report_language.unwrap_or_else(|| "zh-CN".to_string()),
+                ],
                 project_dir,
                 run_id,
                 target: "simultaneous_multi_ligand".to_string(),

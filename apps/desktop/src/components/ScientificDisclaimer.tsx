@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 type DisclaimerKind = "score" | "preparation" | "viewer" | "general";
 
 type ScientificDisclaimerProps = {
@@ -12,5 +14,6 @@ const text: Record<DisclaimerKind, string> = {
 };
 
 export default function ScientificDisclaimer({ kind = "general" }: ScientificDisclaimerProps) {
-  return <p className="scientific-disclaimer">{text[kind]}</p>;
+  useLanguage();
+  return <p className="scientific-disclaimer">{translate(text[kind])}</p>;
 }

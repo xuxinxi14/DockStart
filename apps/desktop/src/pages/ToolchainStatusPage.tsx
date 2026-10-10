@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ActionButton from "../components/ActionButton";
@@ -456,6 +458,7 @@ function modeAvailabilityText(value: boolean): string {
 }
 
 export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings }: ToolchainStatusPageProps) {
+  useLanguage();
   const [status, setStatus] = useState<ToolchainStatusResponse | null>(null);
   const [repair, setRepair] = useState<ToolchainRepairSuggestionsResponse | null>(null);
   const [diagnostic, setDiagnostic] = useState<PostInstallCheckResponse | null>(null);
@@ -561,25 +564,25 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
     <PageShell labelledBy="toolchain-status-title" className="toolchain-status-page">
       <OperationLoadingDialog
         open={isLoading || isDiagnosticLoading}
-        title={isDiagnosticLoading ? "正在运行本机自检" : "正在检测工具链"}
-        message={isDiagnosticLoading
+        title={translate(isDiagnosticLoading ? "正在运行本机自检" : "正在检测工具链")}
+        message={translate(isDiagnosticLoading
           ? "正在核对随附资源、运行环境与示例状态。"
-          : "正在加载 Vina、AutoGrid4、Python、RDKit 与 Meeko。"}
-        detail="首次加载科学工具时可能需要更长时间。"
+          : "正在加载 Vina、AutoGrid4、Python、RDKit 与 Meeko。")}
+        detail={translate("首次加载科学工具时可能需要更长时间。")}
       />
       <PageHero
-        eyebrow="支持"
-        title="配置工具链"
+        eyebrow={translate("支持")}
+        title={translate("配置工具链")}
         titleId="toolchain-status-title"
-        description="确认 Vina、AutoGrid4 和 Python 工具链是否可用。"
+        description={translate("确认 Vina、AutoGrid4 和 Python 工具链是否可用。")}
         actions={
           <>
-          <ActionButton variant="text" type="button" onClick={onBack}>返回</ActionButton>
+          <ActionButton variant="text" type="button" onClick={onBack}>{translate("返回")}</ActionButton>
           {onOpenSettings ? (
-            <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>配置路径</ActionButton>
+            <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>{translate("配置路径")}</ActionButton>
           ) : null}
           <ActionButton variant="primary" type="button" onClick={() => void loadStatus(true)} disabled={isLoading}>
-            {isLoading ? "检测中..." : "重新检测"}
+            {isLoading ? translate("检测中...") : translate("重新检测")}
           </ActionButton>
           </>
         }
@@ -595,40 +598,36 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               <div className="tool-card-header">
                 <div>
                   <h2>AutoDock Vina</h2>
-                  <p>执行对接所需的外部命令行工具。</p>
+                  <p>{translate("执行对接所需的外部命令行工具。")}</p>
                 </div>
                 <StatusBadge tone={statusTone(status.active_vina?.status)}>
-                  {statusText[status.active_vina?.status ?? "unknown"]}
+                  {translate(statusText[status.active_vina?.status ?? "unknown"])}
                 </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
-                  <dt>来源</dt>
-                  <dd>{sourceText[status.active_source] ?? sourceText.unknown}</dd>
+                  <dt>{translate("来源")}</dt>
+                  <dd>{translate(sourceText[status.active_source] ?? sourceText.unknown)}</dd>
                 </div>
                 <div>
-                  <dt>版本</dt>
-                  <dd>{status.active_vina?.version || status.bundled_vina.version || "未获取"}</dd>
+                  <dt>{translate("版本")}</dt>
+                  <dd>{translate(status.active_vina?.version || status.bundled_vina.version || "未获取")}</dd>
                 </div>
                 <div>
-                  <dt>路径</dt>
+                  <dt>{translate("路径")}</dt>
                   <dd>{pathOrEmpty(status.active_vina?.path || status.bundled_vina.path)}</dd>
                 </div>
                 <div>
-                  <dt>建议</dt>
-                  <dd>{status.active_vina?.message || status.first_run_guidance?.recommended_action || "状态正常时即可继续创建项目。"}</dd>
+                  <dt>{translate("建议")}</dt>
+                  <dd>{translate(status.active_vina?.message || status.first_run_guidance?.recommended_action || "状态正常时即可继续创建项目。")}</dd>
                 </div>
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
-                    配置 Vina 路径
-                  </ActionButton>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>{translate("配置 Vina 路径")}</ActionButton>
                 ) : null}
                 {onOpenHelp ? (
-                  <ActionButton variant="text" type="button" onClick={onOpenHelp}>
-                    查看工具链说明
-                  </ActionButton>
+                  <ActionButton variant="text" type="button" onClick={onOpenHelp}>{translate("查看工具链说明")}</ActionButton>
                 ) : null}
               </div>
             </article>
@@ -637,55 +636,51 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               <div className="tool-card-header">
                 <div>
                   <h2>Python + RDKit + Meeko</h2>
-                  <p>从原始结构生成 Vina 输入文件时需要这些 Python 工具。</p>
+                  <p>{translate("从原始结构生成 Vina 输入文件时需要这些 Python 工具。")}</p>
                 </div>
                 <StatusBadge tone={statusTone(status.resolved_python?.status)}>
-                  {statusText[status.resolved_python?.status ?? "unknown"]}
+                  {translate(statusText[status.resolved_python?.status ?? "unknown"])}
                 </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
-                  <dt>Python 来源</dt>
-                  <dd>{sourceText[status.python_source] ?? sourceText.unknown}</dd>
+                  <dt>{translate("Python 来源")}</dt>
+                  <dd>{translate(sourceText[status.python_source] ?? sourceText.unknown)}</dd>
                 </div>
                 <div>
-                  <dt>Python 路径</dt>
+                  <dt>{translate("Python 路径")}</dt>
                   <dd>{pathOrEmpty(status.resolved_python?.path)}</dd>
                 </div>
                 <div>
                   <dt>RDKit</dt>
                   <dd>
                     <StatusBadge tone={statusTone(status.rdkit_for_python?.status)}>
-                      {statusText[status.rdkit_for_python?.status ?? "unknown"]}
+                      {translate(statusText[status.rdkit_for_python?.status ?? "unknown"])}
                     </StatusBadge>
-                    <span className="inline-meta">{status.rdkit_for_python?.version || "未获取版本"}</span>
+                    <span className="inline-meta">{translate(status.rdkit_for_python?.version || "未获取版本")}</span>
                   </dd>
                 </div>
                 <div>
                   <dt>Meeko</dt>
                   <dd>
                     <StatusBadge tone={statusTone(status.meeko_for_python?.status)}>
-                      {statusText[status.meeko_for_python?.status ?? "unknown"]}
+                      {translate(statusText[status.meeko_for_python?.status ?? "unknown"])}
                     </StatusBadge>
-                    <span className="inline-meta">{status.meeko_for_python?.version || "未获取版本"}</span>
+                    <span className="inline-meta">{translate(status.meeko_for_python?.version || "未获取版本")}</span>
                   </dd>
                 </div>
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
-                    配置 Python
-                  </ActionButton>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>{translate("配置 Python")}</ActionButton>
                 ) : null}
-                <ActionButton variant="text" type="button" onClick={copyPythonPath}>
-                  复制 Python 路径
-                </ActionButton>
+                <ActionButton variant="text" type="button" onClick={copyPythonPath}>{translate("复制 Python 路径")}</ActionButton>
               </div>
-              {copyMessage ? <p className="placeholder-note">{copyMessage}</p> : null}
+              {copyMessage ? <p className="placeholder-note">{translate(copyMessage)}</p> : null}
               <p className="placeholder-note">
-                {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
+                {translate(status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
                   ? "Assisted 本地候选已随附固定 RDKit/Meeko；兼容的用户配置 Python 仍优先。运行时不会联网改环境。"
-                  : "当前安装包不含 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。"}
+                  : "当前安装包不含 RDKit/Meeko；可配置独立 Python。运行时不会联网安装或修改系统环境。")}
               </p>
             </article>
 
@@ -693,111 +688,109 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
               <div className="tool-card-header">
                 <div>
                   <h2>AutoGrid4</h2>
-                  <p>为 AutoDock4 maps、AD4Zn 与水合 AD4 生成网格。</p>
+                  <p>{translate("为 AutoDock4 maps、AD4Zn 与水合 AD4 生成网格。")}</p>
                 </div>
                 <StatusBadge tone={statusTone(status.autogrid4?.status)}>
-                  {statusText[status.autogrid4?.status ?? "unknown"]}
+                  {translate(statusText[status.autogrid4?.status ?? "unknown"])}
                 </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
-                  <dt>来源</dt>
-                  <dd>{sourceText[status.autogrid4_source] ?? sourceText.unknown}</dd>
+                  <dt>{translate("来源")}</dt>
+                  <dd>{translate(sourceText[status.autogrid4_source] ?? sourceText.unknown)}</dd>
                 </div>
                 <div>
-                  <dt>版本</dt>
-                  <dd>{status.autogrid4?.version || "未获取"}</dd>
+                  <dt>{translate("版本")}</dt>
+                  <dd>{translate(status.autogrid4?.version || "未获取")}</dd>
                 </div>
                 <div>
-                  <dt>路径</dt>
+                  <dt>{translate("路径")}</dt>
                   <dd>{pathOrEmpty(status.autogrid4?.path)}</dd>
                 </div>
                 <div>
-                  <dt>影响范围</dt>
-                  <dd>{status.autogrid4?.message || "缺失时仅 AutoDock4 maps 相关协议不可用。"}</dd>
+                  <dt>{translate("影响范围")}</dt>
+                  <dd>{translate(status.autogrid4?.message || "缺失时仅 AutoDock4 maps 相关协议不可用。")}</dd>
                 </div>
               </dl>
               <div className="toolbar">
                 {onOpenSettings ? (
-                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>
-                    配置 AutoGrid4 路径
-                  </ActionButton>
+                  <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>{translate("配置 AutoGrid4 路径")}</ActionButton>
                 ) : null}
               </div>
-              <p className="placeholder-note">外部 GPL 工具，不随 DockStart 安装包分发；缺失不影响 Vina / Vinardo 对接。</p>
+              <p className="placeholder-note">{translate("外部 GPL 工具，不随 DockStart 安装包分发；缺失不影响 Vina / Vinardo 对接。")}</p>
             </article>
 
             <article className="tool-card toolchain-wizard-card">
               <div className="tool-card-header">
                 <div>
-                  <h2>随附资源</h2>
+                  <h2>{translate("随附资源")}</h2>
                   <p>
-                    {status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
+                    {translate(status.manifest.includes_bundled_meeko === true && status.manifest.includes_bundled_rdkit === true
                       ? "Assisted 包随附 Vina，以及独立、可替换的 RDKit/Meeko Python 工具环境。"
-                      : "Basic 包随附 Vina 和 DockStart 运行所需的 Python，但不含 RDKit/Meeko。"}
+                      : "Basic 包随附 Vina 和 DockStart 运行所需的 Python，但不含 RDKit/Meeko。")}
                   </p>
                 </div>
                 <StatusBadge tone={packageStatusTone(status.bundled_vina.package_status)}>
-                  {packageStatusText[status.bundled_vina.package_status]}
+                  {translate(packageStatusText[status.bundled_vina.package_status])}
                 </StatusBadge>
               </div>
               <dl className="tool-meta">
                 <div>
-                  <dt>随附 Vina</dt>
-                  <dd>{booleanText(status.bundled_vina.exists)}，{status.bundled_vina.version || "未获取版本"}</dd>
+                  <dt>{translate("随附 Vina")}</dt>
+                  <dd>{translate(booleanText(status.bundled_vina.exists))}，{translate(status.bundled_vina.version || "未获取版本")}</dd>
                 </div>
                 <div>
-                  <dt>随附 Python（应用运行）</dt>
-                  <dd>{booleanText(status.bundled_python.exists)}，{status.bundled_python.version || "未获取版本"}</dd>
+                  <dt>{translate("随附 Python（应用运行）")}</dt>
+                  <dd>{translate(booleanText(status.bundled_python.exists))}，{translate(status.bundled_python.version || "未获取版本")}</dd>
                 </div>
                 <div>
-                  <dt>许可证记录</dt>
-                  <dd>{booleanText(status.licenses.third_party_notices_exists)}</dd>
+                  <dt>{translate("许可证记录")}</dt>
+                  <dd>{translate(booleanText(status.licenses.third_party_notices_exists))}</dd>
                 </div>
                 <div>
-                  <dt>资源完整度</dt>
-                  <dd>{status.message || "暂无说明。"}</dd>
+                  <dt>{translate("资源完整度")}</dt>
+                  <dd>{translate(status.message || "暂无说明。")}</dd>
                 </div>
               </dl>
             </article>
           </div>
 
           <details className="technical-details toolchain-resource-details">
-            <summary>随附资源技术详情</summary>
+            <summary>{translate("随附资源技术详情")}</summary>
             <dl className="tool-meta">
               <div>
                 <dt>runtime_mode</dt>
-                <dd>{status.runtime_mode}</dd>
+                <dd>{translate(status.runtime_mode)}</dd>
               </div>
               <div>
                 <dt>resource_dir</dt>
-                <dd>{pathOrEmpty(status.resource_dir)}</dd>
+                <dd>{translate(pathOrEmpty(status.resource_dir))}</dd>
               </div>
               <div>
                 <dt>toolchain_root</dt>
-                <dd>{pathOrEmpty(status.toolchain_root)}</dd>
+                <dd>{translate(pathOrEmpty(status.toolchain_root))}</dd>
               </div>
               <div>
                 <dt>manifest</dt>
-                <dd>{pathOrEmpty(status.manifest_file)}（{booleanText(status.manifest_exists)}）</dd>
+                <dd>{translate(pathOrEmpty(status.manifest_file))}（{translate(booleanText(status.manifest_exists))}）</dd>
               </div>
               <div>
                 <dt>Vina sha256</dt>
-                <dd aria-label={status.bundled_vina.sha256 || "未记录"}>{shortHash(status.bundled_vina.sha256)}</dd>
+                <dd aria-label={translate(status.bundled_vina.sha256 || "未记录")}>{translate(shortHash(status.bundled_vina.sha256))}</dd>
               </div>
               <div>
                 <dt>Python sha256</dt>
-                <dd aria-label={status.bundled_python.sha256 || "未记录"}>{shortHash(status.bundled_python.sha256)}</dd>
+                <dd aria-label={translate(status.bundled_python.sha256 || "未记录")}>{translate(shortHash(status.bundled_python.sha256))}</dd>
               </div>
               <div>
                 <dt>manifest sha256</dt>
-                <dd aria-label={status.bundled_python_integrity?.manifest_sha256 || "未记录"}>
-                  {shortHash(status.bundled_python_integrity?.manifest_sha256 ?? "")}
+                <dd aria-label={translate(status.bundled_python_integrity?.manifest_sha256 || "未记录")}>
+                  {translate(shortHash(status.bundled_python_integrity?.manifest_sha256 ?? ""))}
                 </dd>
               </div>
               <div>
                 <dt>Vina LICENSE</dt>
-                <dd>{pathOrEmpty(status.bundled_vina_integrity?.license_path)}</dd>
+                <dd>{translate(pathOrEmpty(status.bundled_vina_integrity?.license_path))}</dd>
               </div>
             </dl>
             {status.manifest_error ? <pre>{status.manifest_error}</pre> : null}
@@ -805,76 +798,72 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
             {status.bundled_python.raw_error ? <pre>{status.bundled_python.raw_error}</pre> : null}
           </details>
 
-          <section className="mode-panel" aria-label="工具链对使用模式的影响">
+          <section className="mode-panel" aria-label={translate("工具链对使用模式的影响")}>
             <div className="mode-panel-header">
               <div>
-                <span className="eyebrow">模式影响</span>
-                <strong>缺什么，只影响对应路径</strong>
+                <span className="eyebrow">{translate("模式影响")}</span>
+                <strong>{translate("缺什么，只影响对应路径")}</strong>
               </div>
               <StatusBadge tone={statusTone(status.active_vina?.status)}>
-                {status.active_vina?.status === "ok" ? "Basic Mode 可用" : "Basic Mode 需 Vina"}
+                {translate(status.active_vina?.status === "ok" ? "Basic Mode 可用" : "Basic Mode 需 Vina")}
               </StatusBadge>
             </div>
             <div className="compact-grid">
               <article className="metric-card">
                 <span>Basic Mode</span>
-                <strong>{status.active_vina?.status === "ok" ? "可继续已有 PDBQT docking" : "需要先配置 Vina"}</strong>
-                <p>只依赖 AutoDock Vina 和用户已有 receptor/ligand PDBQT。</p>
+                <strong>{translate(status.active_vina?.status === "ok" ? "可继续已有 PDBQT docking" : "需要先配置 Vina")}</strong>
+                <p>{translate("只依赖 AutoDock Vina 和用户已有 receptor/ligand PDBQT。")}</p>
               </article>
               <article className="metric-card">
                 <span>Assisted Mode</span>
                 <strong>
-                  {status.rdkit_for_python?.status === "ok" && status.meeko_for_python?.status === "ok"
+                  {translate(status.rdkit_for_python?.status === "ok" && status.meeko_for_python?.status === "ok"
                     ? "可尝试 raw → PDBQT"
-                    : "需要补齐 RDKit / Meeko"}
+                    : "需要补齐 RDKit / Meeko")}
                 </strong>
-                <p>用于自动准备 PDBQT；缺失时不影响 Basic Mode。</p>
+                <p>{translate("用于自动准备 PDBQT；缺失时不影响 Basic Mode。")}</p>
               </article>
             </div>
           </section>
 
-          <section className="mode-panel" aria-label="工具链修复建议">
+          <section className="mode-panel" aria-label={translate("工具链修复建议")}>
             <div className="mode-panel-header">
               <div>
-                <span className="eyebrow">修复建议</span>
-                <strong>缺什么，就先修对应路径</strong>
+                <span className="eyebrow">{translate("修复建议")}</span>
+                <strong>{translate("缺什么，就先修对应路径")}</strong>
               </div>
               {onOpenHelp ? (
-                <ActionButton variant="text" type="button" onClick={onOpenHelp}>
-                  查看详细教程
-                </ActionButton>
+                <ActionButton variant="text" type="button" onClick={onOpenHelp}>{translate("查看详细教程")}</ActionButton>
               ) : null}
             </div>
             {repair?.suggestions.length ? (
               <div className="compact-grid">
                 {repair.suggestions.map((suggestion: ToolchainRepairSuggestion) => (
                   <article className="metric-card" key={suggestion.issue}>
-                    <span>{suggestion.affected_mode}</span>
-                    <strong>{suggestion.recommended_fix}</strong>
-                    <p>{suggestion.explanation}</p>
+                    <span>{translate(suggestion.affected_mode)}</span>
+                    <strong>{translate(suggestion.recommended_fix)}</strong>
+                    <p>{translate(suggestion.explanation)}</p>
                     <StatusBadge tone={severityTone(suggestion.severity)}>
-                      {severityText[suggestion.severity] ?? "提示"}
+                      {translate(severityText[suggestion.severity] ?? "提示")}
                     </StatusBadge>
                     {suggestion.manual_steps.length ? (
                       <details className="technical-details">
-                        <summary>手动步骤</summary>
+                        <summary>{translate("手动步骤")}</summary>
                         <ol>
                           {suggestion.manual_steps.map((step) => (
-                            <li key={step}>{step}</li>
+                            <li key={step}>{translate(step)}</li>
                           ))}
                         </ol>
                       </details>
                     ) : null}
                     {suggestion.copyable_commands.length ? (
                       <details className="technical-details">
-                        <summary>可复制命令</summary>
+                        <summary>{translate("可复制命令")}</summary>
                         <div className="command-list">
                           {suggestion.copyable_commands.map((command) => (
                             <div className="command-row" key={command}>
                               <code>{command}</code>
-                              <ActionButton variant="text" type="button" onClick={() => void copyCommand(command)}>
-                                复制命令
-                              </ActionButton>
+                              <ActionButton variant="text" type="button" onClick={() => void copyCommand(command)}>{translate("复制命令")}</ActionButton>
                             </div>
                           ))}
                         </div>
@@ -884,70 +873,68 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                 ))}
               </div>
             ) : (
-              <p className="placeholder-note">{repair?.message || "暂无需要修复的关键工具链问题。"}</p>
+              <p className="placeholder-note">{translate(repair?.message || "暂无需要修复的关键工具链问题。")}</p>
             )}
-            <p className="placeholder-note">这些建议不会自动安装工具，也不会修改系统 PATH。请确认命令含义后手动执行。</p>
+            <p className="placeholder-note">{translate("这些建议不会自动安装工具，也不会修改系统 PATH。请确认命令含义后手动执行。")}</p>
           </section>
 
-          <section className="mode-panel" aria-label="安装后自检">
+          <section className="mode-panel" aria-label={translate("安装后自检")}>
             <div className="mode-panel-header">
               <div>
-                <span className="eyebrow">安装后自检</span>
-                <strong>一键确认当前安装能完成哪条路径</strong>
+                <span className="eyebrow">{translate("安装后自检")}</span>
+                <strong>{translate("一键确认当前安装能完成哪条路径")}</strong>
               </div>
               <div className="toolbar">
                 <ActionButton variant="secondary" type="button" onClick={() => void runDiagnostic()} disabled={isDiagnosticLoading}>
-                  {isDiagnosticLoading ? "检查中..." : "运行自检"}
+                  {translate(isDiagnosticLoading ? "检查中..." : "运行自检")}
                 </ActionButton>
-                <ActionButton variant="text" type="button" onClick={() => void exportDiagnostic()} disabled={isDiagnosticLoading}>
-                  导出诊断报告
-                </ActionButton>
+                <ActionButton variant="text" type="button" onClick={() => void exportDiagnostic()} disabled={isDiagnosticLoading}>{translate("导出诊断报告")}</ActionButton>
               </div>
             </div>
-            {diagnostic ? (
+            {translate(diagnostic ? (
               <>
                 <div className="compact-grid">
                   <article className="metric-card">
                     <span>Basic Mode</span>
-                    <strong>{modeAvailabilityText(diagnostic.modes.basic_mode_available)}</strong>
-                    <p>已有 PDBQT 的最低依赖路径。</p>
+                    <strong>{translate(modeAvailabilityText(diagnostic.modes.basic_mode_available))}</strong>
+                    <p>{translate("已有 PDBQT 的最低依赖路径。")}</p>
                   </article>
                   <article className="metric-card">
                     <span>Assisted Mode</span>
-                    <strong>{modeAvailabilityText(diagnostic.modes.assisted_mode_available)}</strong>
-                    <p>raw 文件自动准备 PDBQT。</p>
+                    <strong>{translate(modeAvailabilityText(diagnostic.modes.assisted_mode_available))}</strong>
+                    <p>{translate("raw 文件自动准备 PDBQT。")}</p>
                   </article>
                   <article className="metric-card">
                     <span>Demo Mode</span>
-                    <strong>{modeAvailabilityText(diagnostic.modes.demo_mode_available)}</strong>
-                    <p>示例项目数量：{diagnostic.demo_projects.count}</p>
+                    <strong>{translate(modeAvailabilityText(diagnostic.modes.demo_mode_available))}</strong>
+                    <p>{translate("示例项目数量：")}{diagnostic.demo_projects.count}</p>
                   </article>
                   <article className="metric-card">
-                    <span>推荐下一步</span>
-                    <strong>{diagnostic.modes.recommended_mode}</strong>
-                    <p>{diagnostic.modes.next_action}</p>
+                    <span>{translate("推荐下一步")}</span>
+                    <strong>{translate(diagnostic.modes.recommended_mode)}</strong>
+                    <p>{translate(diagnostic.modes.next_action)}</p>
                   </article>
                 </div>
                 {diagnostic.issues.length ? (
                   <details className="technical-details">
-                    <summary>需要关注的问题</summary>
+                    <summary>{translate("需要关注的问题")}</summary>
                     <ul>
                       {diagnostic.issues.map((issue) => (
-                        <li key={issue}>{issue}</li>
+                        <li key={issue}>{translate(issue)}</li>
                       ))}
                     </ul>
                   </details>
                 ) : null}
                 <details className="technical-details">
-                  <summary>诊断技术详情</summary>
+                  <summary>{translate("诊断技术详情")}</summary>
                   <dl className="tool-meta">
                     <div>
-                      <dt>版本</dt>
-                      <dd>{diagnostic.app_version}</dd>
+                      <dt>{translate("版本")}</dt>
+                      <dd>{translate(diagnostic.app_version)}</dd>
                     </div>
                     <div>
-                      <dt>系统</dt>
-                      <dd>{diagnostic.os.system} {diagnostic.os.release} {diagnostic.os.machine}</dd>
+                      <dt>{translate("系统")}</dt>
+                      <dd>{translate(diagnostic.os.system)} {translate(diagnostic.os.release)} {translate(diagnostic.os.machine)}</dd>
                     </div>
                     <div>
                       <dt>settings</dt>
@@ -955,82 +942,82 @@ export default function ToolchainStatusPage({ onBack, onOpenHelp, onOpenSettings
                     </div>
                     <div>
                       <dt>resource_dir</dt>
-                      <dd>{diagnostic.paths.resource_dir || "未设置"}</dd>
+                      <dd>{diagnostic.paths.resource_dir || translate("未设置")}</dd>
                     </div>
                   </dl>
-                  <p className="placeholder-note">{diagnostic.privacy_note}</p>
+                  <p className="placeholder-note">{translate(diagnostic.privacy_note)}</p>
                 </details>
               </>
             ) : (
-              <p className="placeholder-note">点击“运行自检”后，会显示当前安装是否满足 Basic / Assisted / Demo Mode。</p>
-            )}
+              <p className="placeholder-note">{translate("点击“运行自检”后，会显示当前安装是否满足 Basic / Assisted / Demo Mode。")}</p>
+            ))}
             {diagnosticReport?.report_file ? (
-              <p className="message-line">诊断报告已导出：{diagnosticReport.report_file}</p>
+              <p className="message-line">{translate("诊断报告已导出：")}{translate(diagnosticReport.report_file)}</p>
             ) : null}
           </section>
 
           {status.error ? (
             <div className="warning-note">
-              {status.error.message}
-              {status.error.suggestion ? ` ${status.error.suggestion}` : ""}
+              {translate(status.error.message)}
+              {translate(status.error.suggestion ? ` ${status.error.suggestion}` : "")}
             </div>
           ) : null}
 
           {status.warnings.length ? (
             <details className="technical-details">
-              <summary>检查提示</summary>
-              <strong>工具链检查提示</strong>
+              <summary>{translate("检查提示")}</summary>
+              <strong>{translate("工具链检查提示")}</strong>
               <ul>
                 {status.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
+                  <li key={warning}>{translate(warning)}</li>
                 ))}
               </ul>
             </details>
           ) : null}
               </>
             ) : (
-              <p className="placeholder-note">正在读取工具链状态...</p>
+              <p className="placeholder-note">{translate("正在读取工具链状态...")}</p>
             )}
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="当前可用性">
+          <RightRailSection title={translate("当前可用性")}>
             <dl className="mode-context-list">
               <div>
                 <dt>Vina</dt>
-                <dd>{statusText[status?.active_vina?.status ?? "unknown"]}</dd>
+                <dd>{translate(statusText[status?.active_vina?.status ?? "unknown"])}</dd>
               </div>
               <div>
                 <dt>Python</dt>
-                <dd>{statusText[status?.resolved_python?.status ?? "unknown"]}</dd>
+                <dd>{translate(statusText[status?.resolved_python?.status ?? "unknown"])}</dd>
               </div>
               <div>
                 <dt>RDKit</dt>
-                <dd>{statusText[status?.rdkit_for_python?.status ?? "unknown"]}</dd>
+                <dd>{translate(statusText[status?.rdkit_for_python?.status ?? "unknown"])}</dd>
               </div>
               <div>
                 <dt>Meeko</dt>
-                <dd>{statusText[status?.meeko_for_python?.status ?? "unknown"]}</dd>
+                <dd>{translate(statusText[status?.meeko_for_python?.status ?? "unknown"])}</dd>
               </div>
               <div>
                 <dt>AutoGrid4</dt>
-                <dd>{statusText[status?.autogrid4?.status ?? "unknown"]}</dd>
+                <dd>{translate(statusText[status?.autogrid4?.status ?? "unknown"])}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="路径影响">
-            <p>基础模式主要依赖 Vina；结构准备还需要 Python、RDKit 和 Meeko。AutoGrid4 只影响 AutoDock4 maps 相关协议。</p>
+          <RightRailSection title={translate("路径影响")}>
+            <p>{translate("基础模式主要依赖 Vina；结构准备还需要 Python、RDKit 和 Meeko。AutoGrid4 只影响 AutoDock4 maps 相关协议。")}</p>
           </RightRailSection>
 
-          <RightRailSection title="操作">
+          <RightRailSection title={translate("操作")}>
             <div className="button-row">
               {onOpenSettings ? (
-                <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>配置路径</ActionButton>
+                <ActionButton variant="secondary" type="button" onClick={onOpenSettings}>{translate("配置路径")}</ActionButton>
               ) : null}
               {onOpenHelp ? (
-                <ActionButton variant="text" type="button" onClick={onOpenHelp}>查看帮助</ActionButton>
+                <ActionButton variant="text" type="button" onClick={onOpenHelp}>{translate("查看帮助")}</ActionButton>
               ) : null}
             </div>
           </RightRailSection>

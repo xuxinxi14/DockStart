@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -53,6 +55,7 @@ export default function ImportPdbqtPage({
   onOpenBoxSetup,
   onProjectChange,
 }: ImportPdbqtPageProps) {
+  useLanguage();
   const [project, setProject] = useState<DockStartProject>(initialProject);
   const [receptorPath, setReceptorPath] = useState("");
   const [ligandPaths, setLigandPaths] = useState<string[]>([]);
@@ -184,8 +187,8 @@ export default function ImportPdbqtPage({
     const selected = await open({
       directory: false,
       multiple: true,
-      title: "选择一个或多个配体 PDBQT",
-      filters: [{ name: "AutoDock PDBQT", extensions: ["pdbqt"] }],
+      title: translate("选择一个或多个配体 PDBQT"),
+      filters: [{ name: translate("AutoDock PDBQT"), extensions: ["pdbqt"] }],
     });
     const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
     if (files.length) setLigandPaths(files);
@@ -201,33 +204,33 @@ export default function ImportPdbqtPage({
     return (
       <article className="task-card" data-layout="task-card">
         <div className="section-card-header">
-          <h2>{isReceptor ? "受体 PDBQT" : "配体 PDBQT"}</h2>
-          <StatusBadge tone={isReady ? "ok" : "warning"}>{isReady ? "已完成" : "缺失"}</StatusBadge>
+          <h2>{translate(isReceptor ? "受体 PDBQT" : "配体 PDBQT")}</h2>
+          <StatusBadge tone={isReady ? "ok" : "warning"}>{translate(isReady ? "已完成" : "缺失")}</StatusBadge>
         </div>
-        <p className="muted-path">{isReady ? fileText(fileRef) : "未导入可用 PDBQT"}</p>
+        <p className="muted-path">{translate(isReady ? fileText(fileRef) : "未导入可用 PDBQT")}</p>
         {isReceptor ? (
           <PathInput
             value={sourcePath}
             onChange={setReceptorPath}
             mode="file"
-            title="选择受体 PDBQT 文件"
-            placeholder="选择 receptor.pdbqt"
-            ariaLabel="受体 PDBQT 源文件路径"
+            title={translate("选择受体 PDBQT 文件")}
+            placeholder={translate("选择 receptor.pdbqt")}
+            ariaLabel={translate("受体 PDBQT 源文件路径")}
             filters={[{ name: "PDBQT", extensions: ["pdbqt"] }]}
           />
         ) : (
           <div className="multi-ligand-file-picker">
-            <ActionButton onClick={() => void chooseLigands()}>选择一个或多个 PDBQT</ActionButton>
+            <ActionButton onClick={() => void chooseLigands()}>{translate("选择一个或多个 PDBQT")}</ActionButton>
             <span>
-              {ligandPaths.length
+              {translate(ligandPaths.length
                 ? `已选择 ${ligandPaths.length} 个文件；导入后按可用配体数量决定单配体或批量筛选`
-                : "可选择一个或多个文件；只有实际可用配体不少于 2 个时才进入批量筛选"}
+                : "可选择一个或多个文件；只有实际可用配体不少于 2 个时才进入批量筛选")}
             </span>
-            {ligandPaths.length ? <code title={ligandPaths.join("\n")}>{ligandPaths.map((path) => path.split(/[\\/]/).pop()).join("、")}</code> : null}
+            {ligandPaths.length ? <code title={translate(ligandPaths.join("\n"))}>{ligandPaths.map((path) => path.split(/[\\/]/).pop()).join("、")}</code> : null}
           </div>
         )}
         <ActionButton variant="primary" disabled={isBusy || !sourcePath.trim()} onClick={() => void importFile(role)}>
-          {isReceptor ? "导入受体" : ligandPaths.length > 1 ? `导入 ${ligandPaths.length} 个配体` : "导入配体"}
+          {translate(isReceptor ? "导入受体" : ligandPaths.length > 1 ? `导入 ${ligandPaths.length} 个配体` : "导入配体")}
         </ActionButton>
       </article>
     );
@@ -237,20 +240,20 @@ export default function ImportPdbqtPage({
     <PageShell labelledBy="import-pdbqt-title">
       <OperationLoadingDialog
         open={Boolean(busyOperation)}
-        title={busyOperation?.title ?? ""}
-        message={busyOperation?.message ?? ""}
-        detail="文件只会写入当前项目。"
+        title={translate(busyOperation?.title ?? "")}
+        message={translate(busyOperation?.message ?? "")}
+        detail={translate("文件只会写入当前项目。")}
       />
       <PageHero
-        eyebrow="Vina 输入"
-        title="导入已有 PDBQT"
+        eyebrow={translate("Vina 输入")}
+        title={translate("导入已有 PDBQT")}
         titleId="import-pdbqt-title"
-        description="适合已经准备好 receptor.pdbqt 与 ligand.pdbqt 的用户；如果只有原始结构，可切换到在线搜索或格式转换。"
+        description={translate("适合已经准备好 receptor.pdbqt 与 ligand.pdbqt 的用户；如果只有原始结构，可切换到在线搜索或格式转换。")}
         actions={
           <>
-          <ActionButton variant="primary" onClick={() => onOpenStructureFetch(project)}>在线搜索 / 导入原始结构</ActionButton>
-          <ActionButton variant="text" onClick={onBack}>返回格式转换</ActionButton>
-          <ActionButton onClick={() => void reloadProject()} disabled={isBusy}>刷新项目</ActionButton>
+          <ActionButton variant="primary" onClick={() => onOpenStructureFetch(project)}>{translate("在线搜索 / 导入原始结构")}</ActionButton>
+          <ActionButton variant="text" onClick={onBack}>{translate("返回格式转换")}</ActionButton>
+          <ActionButton onClick={() => void reloadProject()} disabled={isBusy}>{translate("刷新项目")}</ActionButton>
           </>
         }
       />
@@ -258,8 +261,8 @@ export default function ImportPdbqtPage({
       <BodyGrid>
         <MainPanel>
           <div className="main-panel-content">
-            <WarningCallout title="PDBQT 是 Vina 输入">
-              <p>raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。</p>
+            <WarningCallout title={translate("PDBQT 是 Vina 输入")}>
+              <p>{translate("raw 文件需要先准备成 PDBQT，才能进入 Box 和运行步骤。")}</p>
             </WarningCallout>
 
             <BasicModeGuide compact primaryLabel="导入 PDBQT 后设置搜索范围" />
@@ -271,45 +274,43 @@ export default function ImportPdbqtPage({
 
             <div className="next-step-strip">
               <div>
-                <strong>{readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体"}</strong>
-                <p>只有 PDB/CIF、SDF/MOL？切换到原始结构入口并转换为 PDBQT。</p>
+                <strong>{translate(readyForBox ? "下一步：设置搜索范围" : "先补全受体和配体")}</strong>
+                <p>{translate("只有 PDB/CIF、SDF/MOL？切换到原始结构入口并转换为 PDBQT。")}</p>
               </div>
               <div className="button-row end">
-                <ActionButton onClick={() => onOpenStructureFetch(project)}>在线搜索或导入原始结构</ActionButton>
-                <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>
-                  设置搜索范围
-                </ActionButton>
+                <ActionButton onClick={() => onOpenStructureFetch(project)}>{translate("在线搜索或导入原始结构")}</ActionButton>
+                <ActionButton variant="primary" disabled={!readyForBox} onClick={() => onOpenBoxSetup(project)}>{translate("设置搜索范围")}</ActionButton>
               </div>
             </div>
 
-            {message ? <p className="message-line">{message}</p> : null}
+            {message ? <p className="message-line">{translate(message)}</p> : null}
             {rawError ? (
               <AdvancedDetails>
                 <pre>{rawError}</pre>
               </AdvancedDetails>
             ) : null}
-            <SectionCard title="技术说明">
-              <p>导入时文件会复制到项目 prepared 目录，并更新 project.json。</p>
+            <SectionCard title={translate("技术说明")}>
+              <p>{translate("导入时文件会复制到项目 prepared 目录，并更新 project.json。")}</p>
             </SectionCard>
           </div>
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="输入状态">
+          <RightRailSection title={translate("输入状态")}>
             <dl className="mode-context-list">
               <div>
-                <dt>受体</dt>
-                <dd>{readyFiles.receptor ? "已导入" : "缺失"}</dd>
+                <dt>{translate("受体")}</dt>
+                <dd>{translate(readyFiles.receptor ? "已导入" : "缺失")}</dd>
               </div>
               <div>
-                <dt>配体</dt>
-                <dd>{readyFiles.ligand ? "已导入" : "缺失"}</dd>
+                <dt>{translate("配体")}</dt>
+                <dd>{translate(readyFiles.ligand ? "已导入" : "缺失")}</dd>
               </div>
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="下一步">
-            <p>{readyForBox ? "进入搜索范围设置。" : "先补全受体和配体 PDBQT。"}</p>
+          <RightRailSection title={translate("下一步")}>
+            <p>{translate(readyForBox ? "进入搜索范围设置。" : "先补全受体和配体 PDBQT。")}</p>
           </RightRailSection>
         </RightRail>
       </BodyGrid>

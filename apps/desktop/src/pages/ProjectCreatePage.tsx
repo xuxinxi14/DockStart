@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -234,7 +236,7 @@ function projectFromResponse(response: ProjectResponse, fallbackMessage: string)
 }
 
 export default function ProjectCreatePage({
-  backLabel = "返回",
+  backLabel = translate("返回"),
   openExistingRequestKey = 0,
   onOpenExistingRequestHandled,
   startMode,
@@ -244,6 +246,7 @@ export default function ProjectCreatePage({
   onStartModeChange,
   onTaskIntentChange,
 }: ProjectCreatePageProps) {
+  useLanguage();
   const [projectName, setProjectName] = useState("demo_project");
   const [baseDir, setBaseDir] = useState("");
   const [receptorPdbqtPath, setReceptorPdbqtPath] = useState("");
@@ -488,7 +491,7 @@ export default function ProjectCreatePage({
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "选择已有 DockStart 项目目录",
+        title: translate("选择已有 DockStart 项目目录"),
       });
       const projectDir = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
       if (!projectDir) return;
@@ -516,7 +519,7 @@ export default function ProjectCreatePage({
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "选择示例保存目录",
+        title: translate("选择示例保存目录"),
       });
       const nextDir = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
       if (nextDir) {
@@ -542,8 +545,8 @@ export default function ProjectCreatePage({
     const selected = await open({
       directory: false,
       multiple: !single,
-      title: single ? "选择一个配体结构" : "选择一个或多个配体结构",
-      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
+      title: translate(single ? "选择一个配体结构" : "选择一个或多个配体结构"),
+      filters: [{ name: translate("配体结构"), extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
     });
     const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
     setUnifiedLigandPaths(files);
@@ -553,8 +556,8 @@ export default function ProjectCreatePage({
     const selected = await open({
       directory: false,
       multiple: false,
-      title: "更改配体结构",
-      filters: [{ name: "配体结构", extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
+      title: translate("更改配体结构"),
+      filters: [{ name: translate("配体结构"), extensions: ["pdbqt", "sdf", "mol", "mol2"] }],
     });
     const replacement = Array.isArray(selected) ? selected[0] ?? "" : selected ?? "";
     if (!replacement) return;
@@ -569,10 +572,10 @@ export default function ProjectCreatePage({
 
   const renderSelectedLigandFiles = (paths: string[]) => {
     if (!paths.length) {
-      return <span className="ligand-selection-empty">尚未选择</span>;
+      return <span className="ligand-selection-empty">{translate("尚未选择")}</span>;
     }
     return (
-      <ul className="selected-ligand-files" aria-label="已选择的配体文件">
+      <ul className="selected-ligand-files" aria-label={translate("已选择的配体文件")}>
         {paths.map((path, index) => {
           const fileName = fileNameFromPath(path);
           return (
@@ -588,18 +591,14 @@ export default function ProjectCreatePage({
                   onClick={() => void replaceLigandFile(index)}
                   variant="text"
                 >
-                  <PencilSimple aria-hidden="true" size={15} />
-                  更改
-                </ActionButton>
+                  <PencilSimple aria-hidden="true" size={15} />{translate("更改")}</ActionButton>
                 <ActionButton
                   aria-label={`删除配体文件 ${fileName}`}
                   className="selected-ligand-file-remove"
                   onClick={() => removeLigandFile(index)}
                   variant="text"
                 >
-                  <Trash aria-hidden="true" size={15} />
-                  删除
-                </ActionButton>
+                  <Trash aria-hidden="true" size={15} />{translate("删除")}</ActionButton>
               </span>
             </li>
           );
@@ -656,14 +655,14 @@ export default function ProjectCreatePage({
       return (
         <div className="main-panel-section">
           <div className="main-panel-section-header">
-            <h2>示例项目</h2>
-            <p>选择一个示例，复制到你的工作区。示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。</p>
+            <h2>{translate("示例项目")}</h2>
+            <p>{translate("选择一个示例，复制到你的工作区。示例只用于学习 DockStart 操作流程，不用于药效判断或科研结论。")}</p>
           </div>
           <div className="demo-project-list">
             {demos.length === 0 ? (
-              <div className="demo-project-empty">未检测到示例资源。请检查 resources/examples 是否随应用打包。</div>
+              <div className="demo-project-empty">{translate("未检测到示例资源。请检查 resources/examples 是否随应用打包。")}</div>
             ) : null}
-            {demos.map((demo) => {
+            {translate(demos.map((demo) => {
               const disabled = isBusy || !demo.exists;
               const missingText = demo.missing_files.length > 0 ? demo.missing_files.slice(0, 3).join("、") : "";
               return (
@@ -677,27 +676,27 @@ export default function ProjectCreatePage({
                 >
                   <span className="demo-project-card-copy">
                     <span className="demo-project-title-row">
-                      <strong>{demo.title}</strong>
-                      {demo.tags.length > 0 ? (
-                        <span className="demo-project-tags" aria-label="示例标签">
+                      <strong>{translate(demo.title)}</strong>
+                      {translate(demo.tags.length > 0 ? (
+                        <span className="demo-project-tags" aria-label={translate("示例标签")}>
                           {demo.tags.map((tag) => (
-                            <span className="demo-project-tag" key={tag}>{tag}</span>
+                            <span className="demo-project-tag" key={tag}>{translate(tag)}</span>
                           ))}
                         </span>
-                      ) : null}
+                      ) : null)}
                     </span>
-                    <small>{demo.description}</small>
-                    <small className="demo-project-hint">{demo.exists ? demoToolHint(demo) : "示例资源未找到"}</small>
+                    <small>{translate(demo.description)}</small>
+                    <small className="demo-project-hint">{translate(demo.exists ? demoToolHint(demo) : "示例资源未找到")}</small>
                     {!demo.exists && missingText ? (
-                      <small className="demo-project-warning">缺少：{missingText}</small>
+                      <small className="demo-project-warning">{translate("缺少：")}{translate(missingText)}</small>
                     ) : null}
                   </span>
                   <span className="secondary-button demo-project-card-action">
-                    {demo.exists ? demo.button_label : "示例资源未找到"}
+                    {translate(demo.exists ? demo.button_label : "示例资源未找到")}
                   </span>
                 </button>
               );
-            })}
+            }))}
           </div>
         </div>
       );
@@ -706,16 +705,16 @@ export default function ProjectCreatePage({
     return (
       <div className="main-panel-section">
         <div className="main-panel-section-header">
-          <h2>项目信息</h2>
+          <h2>{translate("项目信息")}</h2>
           <p>
-            {isEvaluationTask
+            {translate(isEvaluationTask
               ? "选择项目保存位置，并提供处在同一受体坐标系中的受体与配体结构。"
-              : "受体与配体可以分别选择 PDBQT 或原始结构；DockStart 会按各自格式继续处理。"}
+              : "受体与配体可以分别选择 PDBQT 或原始结构；DockStart 会按各自格式继续处理。")}
           </p>
         </div>
         <div className="form-panel create-mode-form">
           <div className="form-field" data-layout="form-row">
-            <label htmlFor="project-name">项目名称</label>
+            <label htmlFor="project-name">{translate("项目名称")}</label>
             <input
               autoComplete="off"
               id="project-name"
@@ -724,24 +723,24 @@ export default function ProjectCreatePage({
               type="text"
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}
-              placeholder="例如 demo_project"
+              placeholder={translate("例如 demo_project")}
             />
           </div>
 
           <div className="form-field" data-layout="form-row">
-            <label htmlFor="base-dir">保存目录</label>
+            <label htmlFor="base-dir">{translate("保存目录")}</label>
             <PathInput
               id="base-dir"
               value={baseDir}
               onChange={setBaseDir}
               mode="directory"
-              title="选择项目保存目录"
-              placeholder="选择项目的父目录"
+              title={translate("选择项目保存目录")}
+              placeholder={translate("选择项目的父目录")}
             />
           </div>
 
           <div className="form-field" data-layout="form-row">
-            <label htmlFor="receptor-structure">受体结构</label>
+            <label htmlFor="receptor-structure">{translate("受体结构")}</label>
             <PathInput
               id="receptor-structure"
               value={receptorStructurePath}
@@ -751,47 +750,45 @@ export default function ProjectCreatePage({
                 setReceptorRawPath(kind === "raw" ? path : "");
               }}
               mode="file"
-              title="选择受体 PDBQT / PDB / CIF"
-              placeholder="选择 PDBQT、PDB 或 CIF"
+              title={translate("选择受体 PDBQT / PDB / CIF")}
+              placeholder={translate("选择 PDBQT、PDB 或 CIF")}
               filters={[{ name: "受体结构", extensions: ["pdbqt", "pdb", "cif"] }]}
             />
-            <small className="form-field-hint">PDBQT 直接使用；PDB/CIF 会在下一步提供转换。</small>
+            <small className="form-field-hint">{translate("PDBQT 直接使用；PDB/CIF 会在下一步提供转换。")}</small>
           </div>
 
           <div className="form-field" data-layout="form-row">
-            <label>配体结构</label>
+            <label>{translate("配体结构")}</label>
             <div className="multi-ligand-file-picker">
               <ActionButton onClick={() => void pickLigandFiles(isEvaluationTask)}>
-                {isEvaluationTask ? "选择一个配体结构" : "选择一个或多个配体结构"}
+                {translate(isEvaluationTask ? "选择一个配体结构" : "选择一个或多个配体结构")}
               </ActionButton>
               {renderSelectedLigandFiles(ligandStructurePaths)}
-              {ligandStructurePaths.length ? (
+              {translate(ligandStructurePaths.length ? (
                 <span className="ligand-selection-summary">
-                  {isEvaluationTask
+                  {translate(isEvaluationTask
                     ? ligandStructurePaths.length === 1
                       ? "已选择 1 个待评价结构"
                       : "姿势评分与局部优化一次只能使用一个配体"
-                    : `已选择 ${ligandStructurePaths.length} 个文件；PDBQT 直接使用，SDF/MOL/MOL2 按需转换`}
+                    : `已选择 ${ligandStructurePaths.length} 个文件；PDBQT 直接使用，SDF/MOL/MOL2 按需转换`)}
                 </span>
-              ) : null}
+              ) : null)}
             </div>
           </div>
 
           {isEvaluationTask ? (
             <div className="pose-context-note" role="note">
-              <strong>坐标系要求</strong>
-              <p>配体应已位于当前受体中的待评价位置；{selectedTask.label}不会搜索新的结合位点。原始结构转换后仍需复核坐标。</p>
+              <strong>{translate("坐标系要求")}</strong>
+              <p>{translate("配体应已位于当前受体中的待评价位置；")}{translate(selectedTask.label)}{translate("不会搜索新的结合位点。原始结构转换后仍需复核坐标。")}</p>
             </div>
           ) : null}
 
           <div className="button-row end">
             {!isEvaluationTask ? (
-              <ActionButton disabled={isBusy || !projectName.trim() || !baseDir.trim()} onClick={() => void createProject(true)}>
-                在线搜索结构
-              </ActionButton>
+              <ActionButton disabled={isBusy || !projectName.trim() || !baseDir.trim()} onClick={() => void createProject(true)}>{translate("在线搜索结构")}</ActionButton>
             ) : null}
             <ActionButton variant="primary" disabled={isBusy || !canCreate} onClick={() => void createProject()}>
-              {isBusy ? "处理中..." : currentTaskCopy?.primaryLabel ?? currentConfig.primaryLabel}
+              {translate(isBusy ? "处理中..." : currentTaskCopy?.primaryLabel ?? currentConfig.primaryLabel)}
             </ActionButton>
           </div>
         </div>
@@ -803,20 +800,18 @@ export default function ProjectCreatePage({
     <PageShell className="project-create-workbench" labelledBy="project-create-title">
       <OperationLoadingDialog
         open={Boolean(busyOperation)}
-        title={busyOperation?.title ?? ""}
-        message={busyOperation?.message ?? ""}
-        detail="完成前请保持 DockStart 打开。"
+        title={translate(busyOperation?.title ?? "")}
+        message={translate(busyOperation?.message ?? "")}
+        detail={translate("完成前请保持 DockStart 打开。")}
       />
       <PageHero
-        eyebrow="项目"
-        title={currentTaskCopy?.title ?? currentConfig.title}
+        eyebrow={translate("项目")}
+        title={translate(currentTaskCopy?.title ?? currentConfig.title)}
         titleId="project-create-title"
-        description={currentTaskCopy?.subtitle ?? currentConfig.subtitle}
+        description={translate(currentTaskCopy?.subtitle ?? currentConfig.subtitle)}
         actions={
           <>
-          <ActionButton variant="text" onClick={() => void pickAndLoadExistingProject()}>
-            打开已有项目
-          </ActionButton>
+          <ActionButton variant="text" onClick={() => void pickAndLoadExistingProject()}>{translate("打开已有项目")}</ActionButton>
           <ActionButton variant="text" onClick={onBack}>{backLabel}</ActionButton>
           </>
         }
@@ -827,8 +822,8 @@ export default function ProjectCreatePage({
           {startMode !== "demo" ? (
             <section className="project-task-intent-picker" aria-labelledby="project-task-intent-title">
               <header className="project-task-intent-heading">
-                <h2 id="project-task-intent-title">本次任务</h2>
-                <p>先判断是否已有可信的配体姿势，再选择 Vina 要执行的计算。</p>
+                <h2 id="project-task-intent-title">{translate("本次任务")}</h2>
+                <p>{translate("先判断是否已有可信的配体姿势，再选择 Vina 要执行的计算。")}</p>
               </header>
               <div className="project-task-intent-options" role="radiogroup" aria-labelledby="project-task-intent-title">
                 {projectTaskOptions.map((option) => {
@@ -850,8 +845,8 @@ export default function ProjectCreatePage({
                         value={option.id}
                       />
                       <span>
-                        <strong>{option.label}</strong>
-                        <small id={descriptionId}>{option.description}</small>
+                        <strong>{translate(option.label)}</strong>
+                        <small id={descriptionId}>{translate(option.description)}</small>
                       </span>
                     </label>
                   );
@@ -861,12 +856,12 @@ export default function ProjectCreatePage({
           ) : null}
           <section className="project-source-picker" aria-labelledby="project-source-picker-title">
             <div className="project-source-picker-heading">
-              <strong id="project-source-picker-title">输入来源</strong>
+              <strong id="project-source-picker-title">{translate("输入来源")}</strong>
             </div>
           <ModeTabs
             active={effectiveStartMode}
             id="project-mode-tabs"
-            label="选择开始方式"
+            label={translate("选择开始方式")}
             onChange={(mode) => {
               resetFeedback();
               onStartModeChange(mode);
@@ -894,7 +889,7 @@ export default function ProjectCreatePage({
           >
           {renderModeForm()}
 
-          {message ? <p className="message-line">{message}</p> : null}
+          {message ? <p className="message-line">{translate(message)}</p> : null}
           {rawError ? (
             <AdvancedDetails>
               <pre>{rawError}</pre>
@@ -904,58 +899,58 @@ export default function ProjectCreatePage({
         </MainPanel>
 
         <RightRail>
-          <RightRailSection title="当前路径">
+          <RightRailSection title={translate("当前路径")}>
             <dl className="mode-context-list">
               <div>
-                <dt>当前路径</dt>
+                <dt>{translate("当前路径")}</dt>
                 <dd>
-                  {effectiveStartMode === "assisted"
+                  {translate(effectiveStartMode === "assisted"
                     ? `结构文件 → 按格式准备${isEvaluationTask ? ` → ${selectedTask.label}` : ""}`
-                    : currentTaskCopy?.currentPath ?? currentConfig.currentPath}
+                    : currentTaskCopy?.currentPath ?? currentConfig.currentPath)}
                 </dd>
               </div>
               <div>
-                <dt>下一步</dt>
+                <dt>{translate("下一步")}</dt>
                 <dd>
-                  {currentTaskCopy?.nextStep ?? currentConfig.nextStep}
+                  {translate(currentTaskCopy?.nextStep ?? currentConfig.nextStep)}
                 </dd>
               </div>
               {startMode !== "demo" ? (
                 <div>
-                  <dt>本次任务</dt>
-                  <dd>{taskIntentLabel(effectiveTaskIntent)}</dd>
+                  <dt>{translate("本次任务")}</dt>
+                  <dd>{translate(taskIntentLabel(effectiveTaskIntent))}</dd>
                 </div>
               ) : null}
               <div>
-                <dt>需要</dt>
-                <dd>{currentConfig.requirement}</dd>
+                <dt>{translate("需要")}</dt>
+                <dd>{translate(currentConfig.requirement)}</dd>
               </div>
             </dl>
           </RightRailSection>
 
           {startMode === "demo" ? (
-            <RightRailSection title="复制到">
+            <RightRailSection title={translate("复制到")}>
               <div className="compact-project-open-form demo-destination-form">
                 <div className="form-field" data-layout="form-row">
-                  <label htmlFor="demo-base-dir">工作区目录</label>
+                  <label htmlFor="demo-base-dir">{translate("工作区目录")}</label>
                   <PathInput
                     id="demo-base-dir"
                     value={baseDir}
                     onChange={setBaseDir}
                     mode="directory"
-                    title="选择示例保存目录"
-                    placeholder="选择保存示例的父目录"
+                    title={translate("选择示例保存目录")}
+                    placeholder={translate("选择保存示例的父目录")}
                   />
                 </div>
               </div>
             </RightRailSection>
           ) : null}
 
-          {startMode === "demo" ? (
-            <RightRailSection title="复制规则">
-              <p>复制为新项目；若目录已存在，自动生成不冲突名称。</p>
+          {translate(startMode === "demo" ? (
+            <RightRailSection title={translate("复制规则")}>
+              <p>{translate("复制为新项目；若目录已存在，自动生成不冲突名称。")}</p>
             </RightRailSection>
-          ) : null}
+          ) : null)}
         </RightRail>
       </BodyGrid>
     </PageShell>

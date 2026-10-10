@@ -1,8 +1,14 @@
-:root {
+:root,
+[data-theme="dark"][data-palette] {
   color-scheme: dark;
 
   /* Theme primitives: color literals live here and nowhere else in the UI. */
   --ds-color-transparent: rgba(0, 0, 0, 0);
+
+  /* Paper-like scientific figures are independent of the workspace theme. */
+  --ds-report-figure-bg: #ffffff;
+  --ds-report-receptor-color: #aebbc7;
+  --ds-report-figure-text: #34465a;
 
   /* Deep-blue workspace with explicit luminance steps. Background, panel,
      raised card and inset control must remain visibly distinct at a glance. */
@@ -256,7 +262,8 @@
   --ds-space-12: var(--ds-space-7);
 }
 
-:root[data-theme="light"] {
+:root[data-theme="light"],
+[data-theme="light"][data-palette] {
   color-scheme: light;
 
   /* Cool laboratory daylight: all application chrome becomes light. Only
@@ -364,6 +371,113 @@
   --ds-border: var(--ds-border-default);
 }
 
+/* Optional pine palette. Blue tokens above remain the unchanged default.
+   Scientific canvas/figure and status colors retain their own semantics. */
+[data-theme="dark"][data-palette="green"] {
+  --ds-bg-app: #071C18;
+  --ds-bg-workspace: #0A231E;
+  --ds-surface-panel: #143D32;
+  --ds-surface-raised: #205343;
+  --ds-surface-input: #0F3028;
+  --ds-surface-hover: #28614F;
+  --ds-surface-selected: #2A7257;
+  --ds-nav-bg: #041712;
+  --ds-topbar-bg: #071F19;
+  --ds-statusbar-bg: #041712;
+  --ds-rail-bg: #10362C;
+  --ds-rail-bg-hover: #1F5140;
+  --ds-border-strong: #78A693;
+  --ds-border-default: #527F6C;
+  --ds-border-subtle: #365E4D;
+  --ds-divider: #446F5C;
+  --ds-rail-border: #527F6C;
+  --ds-rail-divider: #365E4D;
+  --ds-window-border: #527F6C;
+  --ds-text-strong: #F5FCF8;
+  --ds-text-primary: #EAF6EE;
+  --ds-text-secondary: #CDDED3;
+  --ds-text-muted: #ADC5B7;
+  --ds-text-disabled: #849F90;
+  --ds-rail-text-strong: var(--ds-text-strong);
+  --ds-rail-text-primary: var(--ds-text-primary);
+  --ds-rail-text-secondary: var(--ds-text-secondary);
+  --ds-rail-text-muted: var(--ds-text-muted);
+  --ds-brand: #237857;
+  --ds-brand-hover: #2C8964;
+  --ds-brand-active: #1B6046;
+  --ds-brand-soft: #204C3B;
+  --ds-brand-border: #609E7E;
+  --ds-brand-on-dark: #85D5B1;
+  --ds-brand-selection: rgba(35, 120, 87, 0.72);
+  --ds-brand-hover-on-dark: rgba(75, 145, 110, 0.24);
+  --ds-brand-border-on-dark: rgba(125, 187, 155, 0.42);
+  --ds-accent: #85D5B1;
+  --ds-accent-hover: #B1E8CC;
+  --ds-focus-outline: #8ACBA9;
+  --ds-focus-ring: rgba(138, 203, 169, 0.24);
+  --ds-focus-ring-strong: rgba(138, 203, 169, 0.42);
+  --ds-code-bg: #0A2620;
+  --ds-tooltip-bg: #10362C;
+  --ds-tooltip-border: #78A693;
+  --ds-modal-backdrop: rgba(3, 22, 16, 0.72);
+  --ds-scrollbar-on-light: #648E7A;
+  --ds-navy-800: #184C39;
+  --ds-navy-700: #206849;
+}
+
+[data-theme="light"][data-palette="green"] {
+  --ds-bg-app: #E3F0E8;
+  --ds-bg-workspace: #F0F7F2;
+  --ds-surface-panel: #FBFDFC;
+  --ds-surface-raised: #E0EFE6;
+  --ds-surface-input: #F9FCFA;
+  --ds-surface-hover: #CAE4D6;
+  --ds-surface-selected: #B8DBC9;
+  --ds-nav-bg: #E3F0E8;
+  --ds-topbar-bg: #F7FBF8;
+  --ds-statusbar-bg: #E3F0E8;
+  --ds-rail-bg: #F3F9F5;
+  --ds-rail-bg-hover: #DAECE1;
+  --ds-border-strong: #7B9E8B;
+  --ds-border-default: #98B9A6;
+  --ds-border-subtle: #BDD6C7;
+  --ds-divider: #A8C4B4;
+  --ds-rail-border: #91B5A0;
+  --ds-rail-divider: #BDD6C7;
+  --ds-window-border: #7B9E8B;
+  --ds-text-strong: #0E261C;
+  --ds-text-primary: #17392C;
+  --ds-text-secondary: #385F4C;
+  --ds-text-muted: #476756;
+  --ds-text-disabled: #648172;
+  --ds-rail-text-strong: var(--ds-text-strong);
+  --ds-rail-text-primary: var(--ds-text-primary);
+  --ds-rail-text-secondary: var(--ds-text-secondary);
+  --ds-rail-text-muted: var(--ds-text-muted);
+  --ds-brand: #246A4F;
+  --ds-brand-hover: #1B563F;
+  --ds-brand-active: #154632;
+  --ds-brand-soft: #D7ECDF;
+  --ds-brand-border: #659C7E;
+  --ds-brand-selection: rgba(36, 106, 79, 0.17);
+  --ds-brand-on-dark: #85D5B1;
+  --ds-brand-hover-on-dark: rgba(75, 145, 110, 0.24);
+  --ds-brand-border-on-dark: rgba(125, 187, 155, 0.42);
+  --ds-accent: #205E45;
+  --ds-accent-hover: #174C36;
+  --ds-focus-outline: #286D50;
+  --ds-focus-ring: rgba(40, 109, 80, 0.20);
+  --ds-focus-ring-strong: rgba(40, 109, 80, 0.36);
+  --ds-code-bg: #102E23;
+  --ds-tooltip-bg: #10362C;
+  --ds-tooltip-border: #78A693;
+  --ds-modal-backdrop: rgba(11, 44, 27, 0.28);
+  --ds-bg-subtle: #DCEEE2;
+  --ds-scrollbar-on-light: #799C86;
+  --ds-navy-800: #184C39;
+  --ds-navy-700: #206849;
+}
+
 /* =====================================================================
    Appearance and accent layers.
    ---------------------------------------------------------------------
@@ -394,7 +508,7 @@
    Lower glare without losing legibility: backgrounds lift, the blue cast
    turns neutral, borders and dividers step back, text stops being pure
    white. Every text pair still clears WCAG AA comfortably. */
-[data-theme="dark"][data-appearance="soft"] {
+[data-theme="dark"][data-appearance="soft"]:not([data-palette="green"]) {
   --ds-bg-app: #10202E;
   --ds-bg-workspace: #162835;
   --ds-surface-panel: #1E3342;
@@ -437,7 +551,7 @@
   --ds-shadow-sticky: 0 -10px 24px rgba(6, 12, 20, 0.10);
 }
 
-[data-theme="light"][data-appearance="soft"] {
+[data-theme="light"][data-appearance="soft"]:not([data-palette="green"]) {
   --ds-bg-app: #E4EBEF;
   --ds-bg-workspace: #EFF4F7;
   --ds-surface-panel: #FAFCFD;
@@ -480,7 +594,7 @@
    deeper surfaces, so structure survives glare, projectors and low-quality
    panels. Status and scientific colours are deliberately untouched — they
    are semantic, not decorative. */
-[data-theme="dark"][data-appearance="contrast"] {
+[data-theme="dark"][data-appearance="contrast"]:not([data-palette="green"]) {
   --ds-bg-app: #00060C;
   --ds-bg-workspace: #000B14;
   --ds-surface-panel: #06131F;
@@ -527,7 +641,7 @@
   --ds-focus-ring-strong: rgba(168, 216, 245, 0.72);
 }
 
-[data-theme="light"][data-appearance="contrast"] {
+[data-theme="light"][data-appearance="contrast"]:not([data-palette="green"]) {
   --ds-bg-app: #FFFFFF;
   --ds-bg-workspace: #F2F8FB;
   --ds-surface-panel: #FFFFFF;
@@ -564,6 +678,79 @@
   --ds-focus-outline: #0A4A70;
   --ds-focus-ring: rgba(10, 74, 112, 0.28);
   --ds-focus-ring-strong: rgba(10, 74, 112, 0.52);
+}
+
+/* Optional appearance refinements preserve the pine color family. */
+[data-theme="dark"][data-palette="green"][data-appearance="soft"] {
+  --ds-bg-app: #14251F;
+  --ds-bg-workspace: #1A3027;
+  --ds-surface-panel: #254034;
+  --ds-surface-raised: #305041;
+  --ds-surface-input: #20392E;
+  --ds-surface-hover: #3A5E4B;
+  --ds-surface-selected: #426B54;
+  --ds-nav-bg: #10211B;
+  --ds-topbar-bg: #172B22;
+  --ds-statusbar-bg: #10211B;
+  --ds-rail-bg: #21392E;
+  --ds-rail-bg-hover: #305041;
+  --ds-text-strong: #EFF7F1;
+}
+[data-theme="light"][data-palette="green"][data-appearance="soft"] {
+  --ds-bg-app: #E8EFEA;
+  --ds-bg-workspace: #F2F7F3;
+  --ds-surface-panel: #FBFDFC;
+  --ds-surface-raised: #E6F0E9;
+  --ds-surface-input: #F9FCFA;
+  --ds-surface-hover: #D7E7DD;
+  --ds-surface-selected: #C8DFD1;
+  --ds-nav-bg: #E8EFEA;
+  --ds-topbar-bg: #F8FBF9;
+  --ds-statusbar-bg: #E8EFEA;
+  --ds-rail-bg: #F5F9F6;
+  --ds-rail-bg-hover: #E4EEE7;
+}
+[data-theme="dark"][data-palette="green"][data-appearance="contrast"] {
+  --ds-bg-app: #010B06;
+  --ds-bg-workspace: #04140C;
+  --ds-surface-panel: #0B2317;
+  --ds-surface-raised: #163D29;
+  --ds-surface-input: #071A10;
+  --ds-nav-bg: #010B06;
+  --ds-topbar-bg: #04140C;
+  --ds-statusbar-bg: #010B06;
+  --ds-rail-bg: #0A2115;
+  --ds-border-strong: #B1D6BF;
+  --ds-border-default: #8AB69C;
+  --ds-border-subtle: #669279;
+  --ds-divider: #7AA98C;
+  --ds-rail-border: #8AB69C;
+  --ds-rail-divider: #669279;
+  --ds-text-strong: #FFFFFF;
+  --ds-text-primary: #FFFFFF;
+  --ds-text-secondary: #DDEFE4;
+  --ds-text-muted: #C0D9CA;
+}
+[data-theme="light"][data-palette="green"][data-appearance="contrast"] {
+  --ds-bg-app: #FFFFFF;
+  --ds-bg-workspace: #F2FAF5;
+  --ds-surface-panel: #FFFFFF;
+  --ds-surface-raised: #EAF4EE;
+  --ds-surface-input: #FFFFFF;
+  --ds-nav-bg: #F2FAF5;
+  --ds-topbar-bg: #FFFFFF;
+  --ds-statusbar-bg: #F2FAF5;
+  --ds-rail-bg: #F8FCF9;
+  --ds-border-strong: #395E48;
+  --ds-border-default: #2E4E3B;
+  --ds-border-subtle: #567B63;
+  --ds-divider: #476D53;
+  --ds-rail-border: #395E48;
+  --ds-rail-divider: #567B63;
+  --ds-text-strong: #000000;
+  --ds-text-primary: #06180D;
+  --ds-text-secondary: #173B26;
+  --ds-text-muted: #294B36;
 }
 
 /* --- Accent ------------------------------------------------------------

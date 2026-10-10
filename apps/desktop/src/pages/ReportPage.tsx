@@ -1,6 +1,11 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
+import { getLanguage, type Language } from "../i18n/language";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen } from "@phosphor-icons/react";
+import { CaretDoubleLeft, CaretDoubleRight, FolderOpen } from "@phosphor-icons/react";
+import ReceptorTransparencyControl from "../components/ReceptorTransparencyControl";
+import { DEFAULT_REPORT_RECEPTOR_TRANSPARENCY } from "../components/receptorTransparency";
 import ActionButton from "../components/ActionButton";
 import AdvancedDetails from "../components/AdvancedDetails";
 import CommandResultPanel from "../components/CommandResultPanel";
@@ -159,6 +164,9 @@ function geometryMappingLabel(value: string | undefined): string {
 }
 
 export default function ReportPage({ project: initialProject, runId, onBack, onProjectChange }: ReportPageProps) {
+  const language = useLanguage();
+  const [reportLanguage, setReportLanguage] = useState<Language>(getLanguage);
+  useEffect(() => setReportLanguage(language), [language]);
   const [project, setProject] = useState(initialProject);
   const [metadata, setMetadata] = useState<Record<string, unknown> | null>(null);
   const [evaluation, setEvaluation] = useState<VinaEvaluation | null>(null);
@@ -176,6 +184,8 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   const [previewPath, setPreviewPath] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [showRunContext, setShowRunContext] = useState(true);
+  const [receptorTransparency, setReceptorTransparency] = useState(DEFAULT_REPORT_RECEPTOR_TRANSPARENCY);
 
   const runMode = reportRunMode(metadata, project);
   const isEvaluation = runMode !== "dock";
@@ -389,6 +399,7 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
       const rawPayload = await invoke<string>("export_markdown_report", {
         projectDir: project.project_dir,
         runId,
+        reportLanguage,
       });
       const response = parseProjectResponse(rawPayload);
       const exported = applyResponse(
@@ -437,8 +448,8 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
 
   const markdownPreview = (
     <SectionCard
-      title="Markdown 阅读预览"
-      description="以安全的只读阅读视图渲染实际保存的报告；不会执行 Markdown 中的 HTML 或脚本。"
+      title={translate("Markdown 阅读预览")}
+      description={translate("以安全的只读阅读视图渲染实际保存的报告；不会执行 Markdown 中的 HTML 或脚本。")}
       className="report-markdown-preview-section"
     >
       <MarkdownPreview
@@ -453,11 +464,11 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
   return (
     <PageShell labelledBy="report-title">
       <PageHero
-        eyebrow="结果与报告"
-        title={modeTitle}
+        eyebrow={translate("结果与报告")}
+        title={translate(modeTitle)}
         titleId="report-title"
         description={
-          runMode === "score_only"
+          translate(runMode === "score_only"
             ? "生成包含当前输入姿势评分、能量项、评价范围、输入哈希与可复现记录的 Markdown 报告。"
             : runMode === "local_only"
               ? "生成包含输入与优化后评分、几何变化、两阶段日志和可复现记录的 Markdown 报告。"
@@ -465,14 +476,20 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                 ? "生成两个配体共同搜索的成员顺序、联合构象评分、输入哈希与可复现记录。联合评分不会拆分为单个成员贡献。"
               : isAd4Maps
                 ? `生成独立的 ${ad4ProtocolLabel} 评分、网格、输入哈希与可复现记录。`
-                : "生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。"
+                : "生成包含评分统计、构象离散度、结构事实、运行参数与可复现记录的 Markdown 报告。")
         }
         actions={
-          <ActionButton variant="text" onClick={onBack}>返回结果</ActionButton>
+          <>
+            <ActionButton aria-controls="report-run-context" aria-expanded={showRunContext} onClick={() => setShowRunContext(current => !current)}>
+              {showRunContext ? <CaretDoubleRight aria-hidden="true" size={16} /> : <CaretDoubleLeft aria-hidden="true" size={16} />}
+              {translate(showRunContext ? "收起运行信息" : "展开运行信息")}
+            </ActionButton>
+            <ActionButton variant="text" onClick={onBack}>{translate("返回结果")}</ActionButton>
+          </>
         }
       />
 
-      <BodyGrid>
+      <BodyGrid className={`report-body-grid${showRunContext ? "" : " is-context-collapsed"}`}>
         <MainPanel>
           <div className="main-panel-content">
             <VinaWorkflowBar current="report" runId={runId} runMode={runMode} />
@@ -480,56 +497,68 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
             <div className="next-step-strip report-action-strip">
               <div>
                 <strong>
-                  {hasExportedReport
+                  {translate(hasExportedReport
                     ? `${modeTitle}已生成`
                     : hasAnalysis
                       ? `${analysisLabel} 已就绪，可以生成报告`
-                      : "请先返回结果页完成分析"}
+                      : "请先返回结果页完成分析")}
                 </strong>
                 <p>
                   {hasExportedReport
                     ? displayedProjectReportFile
-                    : hasAnalysis
+                    : translate(hasAnalysis
                       ? "报告将沿用结果页已解析的数据，并保存到项目 reports 目录。"
-                      : `报告依赖结果页生成的 ${analysisLabel}；完成解析后再回到这里。`}
+                      : `报告依赖结果页生成的 ${analysisLabel}；完成解析后再回到这里。`)}
                 </p>
               </div>
               <div className="button-row">
                 <StatusBadge tone={hasExportedReport ? "ok" : hasAnalysis ? "warning" : "muted"}>
-                  {hasExportedReport ? "已生成" : hasAnalysis ? "待生成" : "等待分析"}
+                  {translate(hasExportedReport ? "已生成" : hasAnalysis ? "待生成" : "等待分析")}
                 </StatusBadge>
+                <label className="report-language-picker">
+                  <span>{translate("报告语言")}</span>
+                  <select value={reportLanguage} onChange={(event) => setReportLanguage(event.target.value as Language)} disabled={isBusy}>
+                    <option value="zh-CN">中文 / Chinese</option>
+                    <option value="en-US">English</option>
+                  </select>
+                </label>
                 <ActionButton variant="primary" disabled={isBusy || !canExport} onClick={() => void exportReport()}>
-                  {isBusy
+                  {translate(isBusy
                     ? "处理中..."
                     : hasExportedReport
-                      ? "重新生成报告"
-                      : "生成报告"}
+                      ? reportLanguage === "en-US" ? "重新生成英文报告" : "重新生成中文报告"
+                      : reportLanguage === "en-US" ? "生成英文报告" : "生成中文报告")}
                 </ActionButton>
                 <ActionButton disabled={isBusy} onClick={() => void openReportDirectory()}>
-                  <FolderOpen aria-hidden="true" size={17} /> 打开报告目录
-                </ActionButton>
-                <ActionButton variant="text" onClick={() => void reloadReportStatus()} disabled={isBusy}>刷新</ActionButton>
+                  <FolderOpen aria-hidden="true" size={17} />{translate(" 打开报告目录")}</ActionButton>
+                <ActionButton variant="text" onClick={() => void reloadReportStatus()} disabled={isBusy}>{translate("刷新")}</ActionButton>
               </div>
             </div>
 
-            {message || rawError ? <CommandResultPanel title="报告操作" message={message} rawError={rawError} /> : null}
+            {message || rawError ? <CommandResultPanel title={translate("报告操作")} message={translate(message)} rawError={rawError} /> : null}
 
             {runMode === "dock" && !isMultipleLigand && !isHydrated && topPoseScores.length ? (
               <SectionCard
-                title="排名靠前的对接姿势"
-                description={`展示 scores.csv 中前 ${topPoseScores.length} 个可读取构象；视图自动聚焦配体所在区域。`}
+                title={translate("排名靠前的对接姿势")}
+                description={translate("展示 scores.csv 中前 {0} 个可读取构象；视图自动聚焦配体所在区域。", [topPoseScores.length])}
                 className="report-pose-gallery-section"
               >
+                <div className="report-pose-controls">
+                  <ReceptorTransparencyControl value={receptorTransparency} defaultValue={DEFAULT_REPORT_RECEPTOR_TRANSPARENCY} onChange={setReceptorTransparency} />
+                  <span>{translate("仅调整受体显示，配体保持不透明。")}</span>
+                </div>
                 <div className="report-pose-gallery">
                   {topPoseScores.map((score) => (
                     <article className="report-pose-card" key={score.mode}>
                       <header>
                         <strong>Mode {score.mode}</strong>
-                        <span>{formatMetric(score.affinity_kcal_mol, 2)} kcal/mol</span>
+                        <span>{translate(formatMetric(score.affinity_kcal_mol, 2))} kcal/mol</span>
                       </header>
-                      <Suspense fallback={<div className="report-pose-loading">正在加载构象…</div>}>
+                      <Suspense fallback={<div className="report-pose-loading">{translate("正在加载构象…")}</div>}>
                         <PoseStructurePreview
                           compact
+                          presentation="report"
+                          receptorTransparency={receptorTransparency}
                           className="report-pose-preview"
                           projectDir={project.project_dir}
                           runId={runId}
@@ -538,91 +567,86 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                         />
                       </Suspense>
                       <footer>
-                        <span>RMSD 下界 {formatMetric(score.rmsd_lb, 2)} Å</span>
-                        <span>上界 {formatMetric(score.rmsd_ub, 2)} Å</span>
+                        <span>{translate("RMSD 下界 ")}{translate(formatMetric(score.rmsd_lb, 2))} Å</span>
+                        <span>{translate("上界 ")}{translate(formatMetric(score.rmsd_ub, 2))} Å</span>
                       </footer>
                     </article>
                   ))}
                 </div>
-                <p className="report-pose-gallery-note">
-                  图中结构来自本次运行的受体与对应输出构象，仅用于检查姿势位置和方向，不代表相互作用分析或实验结合证据。
-                </p>
+                <p className="report-pose-gallery-note">{translate("灰色半透明受体用于显示空间背景，紫色配体突出当前构象；受体棒状结构仅显示配体周围 5 Å 内的重原子。距离范围不表示相互作用或实验结合证据。")}</p>
               </SectionCard>
             ) : null}
 
             {hasExportedReport ? markdownPreview : null}
 
-            {!hasAnalysis ? (
-              <WarningCallout title="分析报告暂不可生成">
+            {translate(!hasAnalysis ? (
+              <WarningCallout title={translate("分析报告暂不可生成")}>
                 <p>
-                  {isEvaluation
+                  {translate(isEvaluation
                     ? "请先完成姿势评价，并在结果页解析 evaluation.json。"
                     : isMultipleLigand
                       ? "请先完成多配体共同对接，并确认联合 scores.csv 已生成。"
-                      : "请先完成对接，并在结果页解析 scores.csv。"}
+                      : "请先完成对接，并在结果页解析 scores.csv。")}
                 </p>
               </WarningCallout>
-            ) : null}
-            {isMultipleLigand ? (
-              <WarningCallout title="报告使用联合构象评分">
-                <p>
-                  每个 Mode 同时包含两个配体，评分属于完整联合体系。报告不会把该分数拆成两个成员的
-                  affinity，也不会把不同成员数量或不同成员组合的结果视为可直接比较。
-                </p>
+            ) : null)}
+            {translate(isMultipleLigand ? (
+              <WarningCallout title={translate("报告使用联合构象评分")}>
+                <p>{translate("每个 Mode 同时包含两个配体，评分属于完整联合体系。报告不会把该分数拆成两个成员的 affinity，也不会把不同成员数量或不同成员组合的结果视为可直接比较。")}</p>
               </WarningCallout>
-            ) : null}
-            {isAd4Maps ? (
-              <WarningCallout title="协议间评分不可直接比较">
+            ) : null)}
+            {translate(isAd4Maps ? (
+              <WarningCallout title={translate("协议间评分不可直接比较")}>
                 <p>
-                  {isEvaluation
+                  {translate(isEvaluation
                     ? `本次评价使用 ${ad4ProtocolLabel}；其分值不能与 Vina / Vinardo 分值直接比较。`
-                    : `${ad4ProtocolLabel} 报告与 Vina / Vinardo 项目报告分开保存。`}
+                    : `${ad4ProtocolLabel} 报告与 Vina / Vinardo 项目报告分开保存。`)}
                 </p>
               </WarningCallout>
-            ) : null}
+            ) : null)}
 
             {runMode === "local_only" ? (
-              <SectionCard title="局部优化对比" className="report-local-comparison">
+              <SectionCard title={translate("局部优化对比")} className="report-local-comparison">
                 {evaluation ? (
                   <>
                     <div className="report-local-comparison-grid">
                       <section aria-labelledby="report-local-score-title">
-                        <h3 id="report-local-score-title">评分变化</h3>
+                        <h3 id="report-local-score-title">{translate("评分变化")}</h3>
                         <table className="report-local-score-table">
-                          <thead><tr><th>阶段</th><th>评分 (kcal/mol)</th></tr></thead>
+                          <thead><tr><th>{translate("阶段")}</th><th>{translate("评分 (kcal/mol)")}</th></tr></thead>
                           <tbody>
-                            <tr><th scope="row">输入姿势</th><td>{formatMetric(inputScore)}</td></tr>
-                            <tr><th scope="row">优化后</th><td>{formatMetric(optimizedScore)}</td></tr>
-                            <tr className="is-delta"><th scope="row">Δ（优化后－输入）</th><td>{formatSignedMetric(scoreDelta)}</td></tr>
+                            <tr><th scope="row">{translate("输入姿势")}</th><td>{translate(formatMetric(inputScore))}</td></tr>
+                            <tr><th scope="row">{translate("优化后")}</th><td>{translate(formatMetric(optimizedScore))}</td></tr>
+                            <tr className="is-delta"><th scope="row">{translate("Δ（优化后－输入）")}</th><td>{translate(formatSignedMetric(scoreDelta))}</td></tr>
                           </tbody>
                         </table>
-                        {comparisonReason ? <p className="report-local-unavailable">{comparisonReason}</p> : null}
-                        <small>负值仅表示当前评分数值降低，不代表真实结合能力提高。</small>
+                        {comparisonReason ? <p className="report-local-unavailable">{translate(comparisonReason)}</p> : null}
+                        <small>{translate("负值仅表示当前评分数值降低，不代表真实结合能力提高。")}</small>
                       </section>
 
                       <section aria-labelledby="report-local-geometry-title">
-                        <h3 id="report-local-geometry-title">几何变化</h3>
+                        <h3 id="report-local-geometry-title">{translate("几何变化")}</h3>
                         <dl className="report-local-geometry-list">
                           {finiteNumber(geometry?.heavy_atom_rmsd_aligned_angstrom) !== null ? (
-                            <div><dt>对齐后重原子 RMSD</dt><dd>{formatAngstrom(geometry?.heavy_atom_rmsd_aligned_angstrom)}</dd></div>
+                            <div><dt>{translate("对齐后重原子 RMSD")}</dt><dd>{translate(formatAngstrom(geometry?.heavy_atom_rmsd_aligned_angstrom))}</dd></div>
                           ) : null}
-                          <div><dt>未对齐重原子 RMSD</dt><dd>{formatAngstrom(geometry?.heavy_atom_rmsd_no_alignment_angstrom)}</dd></div>
-                          <div><dt>平均重原子位移</dt><dd>{formatAngstrom(geometry?.mean_heavy_atom_displacement_angstrom)}</dd></div>
-                          <div><dt>最大重原子位移</dt><dd>{formatAngstrom(geometry?.max_heavy_atom_displacement_angstrom)}</dd></div>
-                          <div><dt>质心位移</dt><dd>{formatAngstrom(geometry?.centroid_displacement_angstrom)}</dd></div>
-                          <div><dt>匹配重原子</dt><dd>{finiteNumber(geometry?.heavy_atom_count) ?? "—"}</dd></div>
-                          <div><dt>匹配方法</dt><dd>{geometryMappingLabel(geometry?.matched_by || geometry?.mapping_method)}</dd></div>
+                          <div><dt>{translate("未对齐重原子 RMSD")}</dt><dd>{translate(formatAngstrom(geometry?.heavy_atom_rmsd_no_alignment_angstrom))}</dd></div>
+                          <div><dt>{translate("平均重原子位移")}</dt><dd>{translate(formatAngstrom(geometry?.mean_heavy_atom_displacement_angstrom))}</dd></div>
+                          <div><dt>{translate("最大重原子位移")}</dt><dd>{translate(formatAngstrom(geometry?.max_heavy_atom_displacement_angstrom))}</dd></div>
+                          <div><dt>{translate("质心位移")}</dt><dd>{translate(formatAngstrom(geometry?.centroid_displacement_angstrom))}</dd></div>
+                          <div><dt>{translate("匹配重原子")}</dt><dd>{translate(finiteNumber(geometry?.heavy_atom_count) ?? "—")}</dd></div>
+                          <div><dt>{translate("匹配方法")}</dt><dd>{translate(geometryMappingLabel(geometry?.matched_by || geometry?.mapping_method))}</dd></div>
                         </dl>
-                        {geometryReason ? <p className="report-local-unavailable">{geometryReason}</p> : null}
+                        {geometryReason ? <p className="report-local-unavailable">{translate(geometryReason)}</p> : null}
                       </section>
                     </div>
 
                     <section className="report-local-stages" aria-labelledby="report-local-stages-title">
-                      <h3 id="report-local-stages-title">执行阶段</h3>
+                      <h3 id="report-local-stages-title">{translate("执行阶段")}</h3>
                       {stages.length ? (
                         <div className="scores-table-wrap">
                           <table className="scores-table">
-                            <thead><tr><th>阶段</th><th>状态</th><th>退出码</th><th>评分</th><th>耗时</th><th>记录</th></tr></thead>
+                            <thead><tr><th>{translate("阶段")}</th><th>{translate("状态")}</th><th>{translate("退出码")}</th><th>{translate("评分")}</th><th>{translate("耗时")}</th><th>{translate("记录")}</th></tr></thead>
                             <tbody>
                               {stages.map((stage, index) => {
                                 const stageScore = finiteNumber(stage.score_kcal_mol)
@@ -635,11 +659,11 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                                   || "—";
                                 return (
                                   <tr key={`${stageIdentity(stage) || "stage"}-${index}`}>
-                                    <td>{stageLabel(stage, index)}</td>
-                                    <td>{stageStatusLabel(stage)}</td>
-                                    <td>{finiteNumber(stage.exit_code) ?? "—"}</td>
-                                    <td>{formatMetric(stageScore)}</td>
-                                    <td>{stageElapsed(stage)}</td>
+                                    <td>{translate(stageLabel(stage, index))}</td>
+                                    <td>{translate(stageStatusLabel(stage))}</td>
+                                    <td>{translate(finiteNumber(stage.exit_code) ?? "—")}</td>
+                                    <td>{translate(formatMetric(stageScore))}</td>
+                                    <td>{translate(stageElapsed(stage))}</td>
                                     <td><code>{evidence}</code></td>
                                   </tr>
                                 );
@@ -648,13 +672,13 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                           </table>
                         </div>
                       ) : (
-                        <p className="report-local-unavailable">此次运行未记录分阶段执行数据。</p>
+                        <p className="report-local-unavailable">{translate("此次运行未记录分阶段执行数据。")}</p>
                       )}
                     </section>
                   </>
                 ) : (
                   <p className="report-local-unavailable">
-                    {hasAnalysis ? "evaluation.json 已存在，但局部优化对比数据尚未加载。" : "完成结果解析后显示优化前后对比。"}
+                    {translate(hasAnalysis ? "evaluation.json 已存在，但局部优化对比数据尚未加载。" : "完成结果解析后显示优化前后对比。")}
                   </p>
                 )}
               </SectionCard>
@@ -667,16 +691,20 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
                 {[analysisStatus, runReportStatus, projectReportStatus].filter(Boolean).map((file) => (
                   <div key={file!.key}>
                     <dt>{file!.name}</dt>
-                    <dd><code>{file!.path}</code> · {fileStatusText[file!.status]}</dd>
+                    <dd><code>{file!.path}</code> · {translate(fileStatusText[file!.status])}</dd>
                   </div>
                 ))}
                 <div>
-                  <dt>运行内报告</dt>
+                  <dt>{translate("运行内报告")}</dt>
                   <dd><code>{displayedReportFile}</code></dd>
                 </div>
                 <div>
-                  <dt>导出时间</dt>
-                  <dd>{displayedReportedAt || "未记录"}</dd>
+                  <dt>{translate("导出时间")}</dt>
+                  <dd>{translate(displayedReportedAt || "未记录")}</dd>
+                </div>
+                <div>
+                  <dt>{translate("报告语言")}</dt>
+                  <dd>{metadataString(metadata, "report_language") === "en-US" ? "English" : translate("中文")}</dd>
                 </div>
               </dl>
             </AdvancedDetails>
@@ -685,49 +713,51 @@ export default function ReportPage({ project: initialProject, runId, onBack, onP
           </div>
         </MainPanel>
 
+        <div id="report-run-context" className="report-run-context" hidden={!showRunContext}>
         <RightRail>
-          <RightRailSection title="本次运行">
+          <RightRailSection title={translate("本次运行")}>
             <dl className="mode-context-list">
               <div>
                 <dt>run</dt>
                 <dd>{runId}</dd>
               </div>
               <div>
-                <dt>任务类型</dt>
-                <dd>{runTaskLabel}</dd>
+                <dt>{translate("任务类型")}</dt>
+                <dd>{translate(runTaskLabel)}</dd>
               </div>
               {isAd4Maps ? (
                 <div>
-                  <dt>评分协议</dt>
-                  <dd>{ad4ProtocolLabel}</dd>
+                  <dt>{translate("评分协议")}</dt>
+                  <dd>{translate(ad4ProtocolLabel)}</dd>
                 </div>
               ) : null}
               {isMultipleLigand ? (
                 <div>
-                  <dt>运行协议</dt>
-                  <dd>多配体共同对接（实验性）</dd>
+                  <dt>{translate("运行协议")}</dt>
+                  <dd>{translate("多配体共同对接（实验性）")}</dd>
                 </div>
               ) : null}
             </dl>
           </RightRailSection>
 
-          <RightRailSection title="输出位置">
+          <RightRailSection title={translate("输出位置")}>
             <p>{displayedProjectReportFile}</p>
-            {displayedReportedAt ? <small>生成时间：{displayedReportedAt}</small> : null}
+            {displayedReportedAt ? <small>{translate("生成时间：")}{translate(displayedReportedAt)}</small> : null}
           </RightRailSection>
 
-          <RightRailSection title="科学边界">
+          <RightRailSection title={translate("科学边界")}>
             <p>
-              {runMode === "local_only"
+              {translate(runMode === "local_only"
                 ? "报告会保留两阶段评分、日志与几何比较；不可用的量会注明原因。"
                 : isEvaluation
                   ? "报告记录当前输入姿势的评分与能量项，不代表完成了全局构象搜索。"
                   : isMultipleLigand
                     ? "报告记录两个成员的固定顺序与联合构象评分，不提供单个成员的独立评分贡献。"
-                    : "报告提供统计汇总、结构事实和可复现记录；不会把 docking score 解释为真实结合或药效证据。"}
+                    : "报告提供统计汇总、结构事实和可复现记录；不会把 docking score 解释为真实结合或药效证据。")}
             </p>
           </RightRailSection>
         </RightRail>
+        </div>
       </BodyGrid>
     </PageShell>
   );

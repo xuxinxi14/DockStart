@@ -1,4 +1,5 @@
 import type { PageId } from "../navigation/pages";
+import { translate } from "../i18n/translate.ts";
 
 export const DOCUMENTATION_URL = "https://xuxinxi14.github.io/DockStart-Docs/";
 export type HelpTopic = {
@@ -46,7 +47,8 @@ export function searchDocumentationUrl(query: string): string {
 export function searchHelpTopics(query: string): HelpTopic[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return helpTopics.filter(topic => {
-    const text = [topic.title, topic.summary, topic.skip, ...topic.steps, ...topic.keywords].join(" ").toLowerCase();
+    const messages = [topic.title, topic.summary, topic.skip, ...topic.steps, ...topic.keywords];
+    const text = messages.flatMap(message => [message, translate(message, undefined, "en-US")]).join(" ").toLowerCase();
     return terms.every(term => text.includes(term));
   });
 }
@@ -63,11 +65,11 @@ export function helpTopicForError(code: string): HelpTopic {
 }
 export function helpTopicForSubject(subject: string): HelpTopic | undefined {
   const rules: Array<[RegExp, string]> = [
-    [/评分协议|maps|网格/i, "maps"], [/柔性|残基/, "flexible"], [/大环/, "macrocycle"],
-    [/搜索彻底|构象数量|能量范围|CPU|随机种子|exhaustiveness|num_modes|energy_range|seed|spacing|verbosity|max_evals|min_rmsd|no_refine|force_even_voxels/i, "parameters"],
-    [/Box|搜索范围|中心坐标|箱体|尺寸/i, "box"], [/RMSD|结合能|亲和力/i, "results"],
-    [/受体|配体|结构审查|质子化|电荷/, "structure"], [/Python|Vina 路径|工具链/i, "toolchain"],
-    [/运行模式|姿势评分|局部优化/, "tasks"],
+    [/评分协议|maps|网格|scoring protocol|grid/i, "maps"], [/柔性|残基|flexible|residue/i, "flexible"], [/大环|macrocycle/i, "macrocycle"],
+    [/搜索彻底|构象数量|能量范围|CPU|随机种子|exhaustiveness|num_modes|energy_range|seed|spacing|verbosity|max_evals|min_rmsd|no_refine|force_even_voxels|number of poses/i, "parameters"],
+    [/Box|搜索范围|中心坐标|箱体|尺寸|search space|dimensions|center/i, "box"], [/RMSD|结合能|亲和力|binding energy|affinity/i, "results"],
+    [/受体|配体|结构审查|质子化|电荷|receptor|ligand|structure review|protonation|charge/i, "structure"], [/Python|Vina 路径|工具链|toolchain/i, "toolchain"],
+    [/运行模式|姿势评分|局部优化|run mode|pose scoring|local optimization/i, "tasks"],
   ];
   const id = rules.find(([pattern]) => pattern.test(subject))?.[1];
   return helpTopics.find(topic => topic.id === id);

@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { createElement, useMemo, type ReactNode } from "react";
 import { Eye, LockSimple } from "@phosphor-icons/react";
 import {
@@ -28,33 +30,34 @@ function alignmentClass(alignment: MarkdownAlignment): string | undefined {
 }
 
 export default function MarkdownPreview({ content, path, loading = false, error = "" }: MarkdownPreviewProps) {
+  useLanguage();
   const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
   const pathParts = path.split(/[\\/]/).filter(Boolean);
   const filename = pathParts[pathParts.length - 1] || "Markdown 报告";
 
   return (
-    <section className="markdown-reading-view" aria-label="Markdown 报告只读预览" aria-busy={loading}>
+    <section className="markdown-reading-view" aria-label={translate("Markdown 报告只读预览")} aria-busy={loading}>
       <header className="markdown-reading-toolbar">
         <span className="markdown-reading-icon"><Eye aria-hidden="true" size={18} /></span>
         <div>
-          <span>报告阅读视图</span>
+          <span>{translate("报告阅读视图")}</span>
           <strong>{filename}</strong>
-          <small>{path || "尚未生成报告文件"}</small>
+          <small>{path || translate("尚未生成报告文件")}</small>
         </div>
-        <span className="markdown-reading-lock"><LockSimple aria-hidden="true" size={13} /> 只读</span>
+        <span className="markdown-reading-lock"><LockSimple aria-hidden="true" size={13} />{translate(" 只读")}</span>
       </header>
 
       {loading ? (
-        <div className="markdown-reading-state">正在读取报告并核对项目路径…</div>
+        <div className="markdown-reading-state">{translate("正在读取报告并核对项目路径…")}</div>
       ) : error ? (
         <div className="markdown-reading-state is-error">
-          <strong>无法显示报告预览</strong>
-          <p>{error}</p>
+          <strong>{translate("无法显示报告预览")}</strong>
+          <p>{translate(error)}</p>
         </div>
       ) : !content.trim() ? (
         <div className="markdown-reading-state">
-          <strong>尚无可预览的 Markdown 报告</strong>
-          <p>生成报告后，这里会以只读阅读视图显示实际保存的文件内容。</p>
+          <strong>{translate("尚无可预览的 Markdown 报告")}</strong>
+          <p>{translate("生成报告后，这里会以只读阅读视图显示实际保存的文件内容。")}</p>
         </div>
       ) : (
         <article className="markdown-reading-document">

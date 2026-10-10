@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { useState } from "react";
 import { ArrowSquareOut, Copy } from "@phosphor-icons/react";
 import { openExternalUrl } from "../utils/externalLink";
@@ -5,6 +7,7 @@ import { openExternalUrl } from "../utils/externalLink";
 export default function DocumentationLink({ url, children = "阅读完整说明", className = "" }: {
   url: string; children?: React.ReactNode; className?: string;
 }) {
+  useLanguage();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [notice, setNotice] = useState("");
@@ -22,11 +25,11 @@ export default function DocumentationLink({ url, children = "阅读完整说明"
   }
   return <span className={`documentation-link ${className}`.trim()}>
     <button type="button" className="text-button inline" disabled={busy} onClick={() => void open()}>
-      {busy ? "正在打开…" : children}<ArrowSquareOut size={14} aria-hidden="true" />
+      {busy ? translate("正在打开…") : children}<ArrowSquareOut size={14} aria-hidden="true" />
     </button>
     {failed ? <span className="documentation-link-fallback" role="status">
-      <span>{notice}</span><input aria-label="文档地址，可手动复制" readOnly value={url} onFocus={event => event.target.select()} />
-      <button type="button" className="text-button inline" onClick={() => void copy()}><Copy size={14} aria-hidden="true" />复制地址</button>
+      <span>{translate(notice)}</span><input aria-label={translate("文档地址，可手动复制")} readOnly value={url} onFocus={event => event.target.select()} />
+      <button type="button" className="text-button inline" onClick={() => void copy()}><Copy size={14} aria-hidden="true" />{translate("复制地址")}</button>
     </span> : null}
   </span>;
 }

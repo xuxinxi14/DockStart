@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import { Question } from "@phosphor-icons/react";
 import { useState } from "react";
 import Tooltip from "./Tooltip";
@@ -28,13 +30,14 @@ export default function FieldHint({
   placement = "right",
   className = "",
 }: FieldHintProps) {
-  const accessibleLabel = buildFieldHintLabel(subject);
+  useLanguage();
+  const accessibleLabel = buildFieldHintLabel(translate(subject));
   const [expanded, setExpanded] = useState(false);
   const topic = helpTopicForSubject(subject);
   return (
     <>
     <Tooltip className={`ds-field-hint-tooltip ${className}`.trim()} label={label} placement={placement}>
-      <button aria-label={accessibleLabel} className="ds-field-hint" type="button" onClick={() => { if (topic) setExpanded(true); }}>
+      <button aria-label={translate(accessibleLabel)} className="ds-field-hint" type="button" onClick={() => { if (topic) setExpanded(true); }}>
         <Question aria-hidden="true" size={15} weight="regular" />
       </button>
     </Tooltip>

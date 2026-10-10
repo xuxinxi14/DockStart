@@ -1,3 +1,5 @@
+import { translate } from "./i18n/translate";
+import { useLanguage } from "./i18n/useLanguage";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
@@ -47,6 +49,7 @@ function projectStateKey(project: DockStartProject): string {
 }
 
 export default function App() {
+  useLanguage();
   const [currentPage, setCurrentPage] = useState<PageId>(readStartupPage);
   const [currentProject, setCurrentProject] = useState<DockStartProject | null>(null);
   const [currentRunId, setCurrentRunId] = useState("");
@@ -293,7 +296,7 @@ export default function App() {
     if (currentPage === "project-create") {
       return (
         <ProjectCreatePage
-          backLabel={currentProject ? "返回当前项目" : "返回帮助"}
+          backLabel={translate(currentProject ? "返回当前项目" : "返回帮助")}
           openExistingRequestKey={openProjectRequestKey}
           onOpenExistingRequestHandled={acknowledgeOpenProjectRequest}
           startMode={projectStartMode}
@@ -531,7 +534,7 @@ export default function App() {
       {navigationNotice ? (
         <div className="navigation-guard-notice" role="status">
           <WarningCircle aria-hidden="true" size={20} weight="fill" />
-          <span>{navigationNotice}</span>
+          <span>{translate(navigationNotice)}</span>
         </div>
       ) : null}
       <Suspense
@@ -540,8 +543,8 @@ export default function App() {
             <section aria-live="polite" className="page-loading-state" role="status">
               <SpinnerGap aria-hidden="true" className="page-loading-indicator" size={24} weight="bold" />
               <div>
-                <strong>正在打开工作区</strong>
-                <p>正在打开当前页面。</p>
+                <strong>{translate("正在打开工作区")}</strong>
+                <p>{translate("正在打开当前页面。")}</p>
               </div>
             </section>
           </DelayedPending>

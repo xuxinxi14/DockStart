@@ -67,6 +67,7 @@ from dockstart_core.project import (
     validate_vina_runtime_capabilities,
 )
 from dockstart_core.settings import load_settings
+from dockstart_core.report_language import get_report_language, localized_report, rt
 from dockstart_core.viewer import _viewer_content
 from dockstart_core.viewer_models import ViewerStructureResult
 
@@ -4758,42 +4759,42 @@ def _build_report(
         else []
     )
     lines = [
-        f"# {PROTOCOL_NAME}报告",
+        rt('# {0}报告', rt(PROTOCOL_NAME)),
         "",
         f"- Run：`{_report_value(metadata.get('run_id'))}`",
-        f"- 状态：{_report_value(metadata.get('status'))}",
-        f"- 评分协议：{'标准 AutoDock4 maps' if is_ad4 else 'Vina / Vinardo'}",
-        f"- 评分函数：{_report_value(metadata.get('scoring_function'))}",
-        f"- Vina 版本：{_report_value(execution_vina.get('version'))}",
+        rt('- 状态：{0}', f"{_report_value(metadata.get('status'))}"),
+        rt('- 评分协议：{0}', f"{(rt('标准 AutoDock4 maps') if is_ad4 else 'Vina / Vinardo')}"),
+        rt('- 评分函数：{0}', f"{_report_value(metadata.get('scoring_function'))}"),
+        rt('- Vina 版本：{0}', f"{_report_value(execution_vina.get('version'))}"),
         *(
             [
-                f"- maps 集合：`{_report_value(ad4_maps_snapshot.get('map_set_id'))}`",
-                f"- maps 前缀：`{_report_value(ad4_maps_snapshot.get('prefix'))}`",
-                f"- maps 文件数：{len(ad4_maps_snapshot.get('files') or [])}",
+                rt('- maps 集合：`{0}`', f"{_report_value(ad4_maps_snapshot.get('map_set_id'))}"),
+                rt('- maps 前缀：`{0}`', f"{_report_value(ad4_maps_snapshot.get('prefix'))}"),
+                rt('- maps 文件数：{0}', f"{len(ad4_maps_snapshot.get('files') or [])}"),
             ]
             if is_ad4
             else []
         ),
-        f"- 联合构象数量：{len(joint_manifest.get('available_modes') or [])}",
+        rt('- 联合构象数量：{0}', f"{len(joint_manifest.get('available_modes') or [])}"),
         "",
-        "## 时间",
+        rt('## 时间'),
         "",
-        "| 字段 | 值 |",
+        rt('| 字段 | 值 |'),
         "|---|---|",
-        f"| 创建时间 | {_markdown_cell(_report_value(metadata.get('created_at')))} |",
-        f"| 开始时间 | {_markdown_cell(_report_value(metadata.get('started_at')))} |",
-        f"| 结束时间 | {_markdown_cell(_report_value(metadata.get('finished_at')))} |",
-        f"| 用时（秒） | {_report_value(metadata.get('duration_seconds'))} |",
+        rt('| 创建时间 | {0} |', f"{_markdown_cell(_report_value(metadata.get('created_at')))}"),
+        rt('| 开始时间 | {0} |', f"{_markdown_cell(_report_value(metadata.get('started_at')))}"),
+        rt('| 结束时间 | {0} |', f"{_markdown_cell(_report_value(metadata.get('finished_at')))}"),
+        rt('| 用时（秒） | {0} |', f"{_report_value(metadata.get('duration_seconds'))}"),
         "",
-        "## 协议边界",
+        rt('## 协议边界'),
         "",
-        "本报告来自一次 Vina 搜索中的两个配体共同优化，不是串行批量筛选。",
-        JOINT_SCORE_DISCLAIMER,
-        "当前实验版本仅支持两个唯一 PDBQT 配体、刚性受体、Vina/Vinardo 或标准 AutoDock4 maps 评分，以及全局搜索。",
+        rt('本报告来自一次 Vina 搜索中的两个配体共同优化，不是串行批量筛选。'),
+        rt(JOINT_SCORE_DISCLAIMER),
+        rt('当前实验版本仅支持两个唯一 PDBQT 配体、刚性受体、Vina/Vinardo 或标准 AutoDock4 maps 评分，以及全局搜索。'),
         "",
-        "## 对接箱体",
+        rt('## 对接箱体'),
         "",
-        "| 参数 | 冻结值 |",
+        rt('| 参数 | 冻结值 |'),
         "|---|---:|",
     ]
     for key, value in box.items():
@@ -4803,48 +4804,46 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## 搜索复杂度门禁",
+            rt('## 搜索复杂度门禁'),
             "",
-            "| 字段 | 冻结值 |",
+            rt('| 字段 | 冻结值 |'),
             "|---|---:|",
             (
-                "| 两个刚体自由度 | "
-                f"{_report_value(search_complexity.get('rigid_body_dof'))} |"
+                rt('| 两个刚体自由度 | {0} |', f"{_report_value(search_complexity.get('rigid_body_dof'))}")
             ),
             (
-                "| PDBQT BRANCH 记录总数 | "
+                rt('| PDBQT BRANCH 记录总数 | ')
                 + _report_value(
                     search_complexity.get("total_branch_records")
                 )
                 + " |"
             ),
             (
-                "| Vina 忽略的退化叶 BRANCH | "
+                rt('| Vina 忽略的退化叶 BRANCH | ')
                 + _report_value(
                     search_complexity.get("total_degenerate_branches")
                 )
                 + " |"
             ),
             (
-                "| 合计有效搜索扭转 | "
+                rt('| 合计有效搜索扭转 | ')
                 + _report_value(
                     search_complexity.get("total_search_torsions")
                 )
                 + " |"
             ),
             (
-                "| PDBQT 声明 TORSDOF 合计 | "
+                rt('| PDBQT 声明 TORSDOF 合计 | ')
                 + _report_value(
                     search_complexity.get("total_declared_torsdof")
                 )
                 + " |"
             ),
             (
-                "| 合计显式搜索自由度 | "
-                f"{_report_value(search_complexity.get('total_search_dof'))} |"
+                rt('| 合计显式搜索自由度 | {0} |', f"{_report_value(search_complexity.get('total_search_dof'))}")
             ),
             (
-                "| 实验协议可搜索扭转上限 | "
+                rt('| 实验协议可搜索扭转上限 | ')
                 + _report_value(
                     search_complexity.get(
                         "maximum_experimental_total_search_torsions"
@@ -4853,7 +4852,7 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 单成员原子数上限 | "
+                rt('| 单成员原子数上限 | ')
                 + _report_value(
                     search_complexity.get(
                         "maximum_experimental_member_atoms"
@@ -4862,7 +4861,7 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 单成员文件字节上限 | "
+                rt('| 单成员文件字节上限 | ')
                 + _report_value(
                     search_complexity.get(
                         "maximum_experimental_member_bytes"
@@ -4876,21 +4875,13 @@ def _build_report(
             ),
             "",
             (
-                "搜索维度按 Vina 实际生成的非退化 PDBQT segment "
-                "计数；只有轴端原子且没有子分支的叶 BRANCH 不产生"
-                "搜索扭转。TORSDOF 只作为来源声明记录，不是搜索"
-                "维度，Vina/Vinardo 也不直接用它计算扭转项。该"
-                "上限是 DockStart 当前实验协议边界，不是 Vina 硬上限。"
+                rt('搜索维度按 Vina 实际生成的非退化 PDBQT segment 计数；只有轴端原子且没有子分支的叶 BRANCH 不产生搜索扭转。TORSDOF 只作为来源声明记录，不是搜索维度，Vina/Vinardo 也不直接用它计算扭转项。该上限是 DockStart 当前实验协议边界，不是 Vina 硬上限。')
             ),
             "",
-            "## Box 几何覆盖门禁",
+            rt('## Box 几何覆盖门禁'),
             "",
             (
-                "| 成员 | X 尺寸 / 同轴余量 (Å) | "
-                "Y 尺寸 / 同轴余量 (Å) | "
-                "Z 尺寸 / 同轴余量 (Å) | "
-                "刚性重原子直径 / 有效网格对角线余量 (Å) | "
-                "源坐标在请求 Box 内 |"
+                rt('| 成员 | X 尺寸 / 同轴余量 (Å) | Y 尺寸 / 同轴余量 (Å) | Z 尺寸 / 同轴余量 (Å) | 刚性重原子直径 / 有效网格对角线余量 (Å) | 源坐标在请求 Box 内 |')
             ),
             "|---:|---:|---:|---:|---:|---|",
         ]
@@ -4939,12 +4930,12 @@ def _build_report(
             "",
             _report_value(box_coverage.get("interpretation")),
             "",
-            "## 输出构象 Box 覆盖复核",
+            rt('## 输出构象 Box 覆盖复核'),
             "",
-            "| 字段 | 值 |",
+            rt('| 字段 | 值 |'),
             "|---|---|",
             (
-                "| 实际网格尺寸 (Å) | "
+                rt('| 实际网格尺寸 (Å) | ')
                 + _markdown_cell(
                     json.dumps(
                         output_box_coverage.get(
@@ -4958,7 +4949,7 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 坐标舍入容差 (Å) | "
+                rt('| 坐标舍入容差 (Å) | ')
                 + _report_value(
                     output_box_coverage.get(
                         "coordinate_rounding_tolerance_angstrom"
@@ -4967,14 +4958,14 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 已复核联合构象数 | "
+                rt('| 已复核联合构象数 | ')
                 + _report_value(
                     output_box_coverage.get("audited_model_count")
                 )
                 + " |"
             ),
             (
-                "| 全部可移动重原子位于实际网格内 | "
+                rt('| 全部可移动重原子位于实际网格内 | ')
                 + _report_value(
                     output_box_coverage.get(
                         "all_output_movable_heavy_atoms_inside_effective_grid"
@@ -4983,7 +4974,7 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 全部输出原子（含氢）位于实际网格内 | "
+                rt('| 全部输出原子（含氢）位于实际网格内 | ')
                 + _report_value(
                     output_box_coverage.get(
                         "all_output_atoms_inside_effective_grid"
@@ -4992,7 +4983,7 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 仅氢越界的成员构象数 | "
+                rt('| 仅氢越界的成员构象数 | ')
                 + _report_value(
                     output_box_coverage.get(
                         "hydrogen_outside_effective_grid_pose_count"
@@ -5002,8 +4993,7 @@ def _build_report(
             ),
             "",
             (
-                "| Mode | 成员 | X 重原子最小余量 (Å) | "
-                "Y 重原子最小余量 (Å) | Z 重原子最小余量 (Å) |"
+                rt('| Mode | 成员 | X 重原子最小余量 (Å) | Y 重原子最小余量 (Å) | Z 重原子最小余量 (Å) |')
             ),
             "|---:|---:|---:|---:|---:|",
         ]
@@ -5043,33 +5033,33 @@ def _build_report(
             "",
             _report_value(output_box_coverage.get("interpretation")),
             "",
-            "## Vina 输出文本完整性",
+            rt('## Vina 输出文本完整性'),
             "",
-            "| 字段 | 值 |",
+            rt('| 字段 | 值 |'),
             "|---|---|",
             (
-                "| 状态 | "
+                rt('| 状态 | ')
                 + _report_value(
                     output_normalization.get("status")
                 )
                 + " |"
             ),
             (
-                "| 方法 | "
+                rt('| 方法 | ')
                 + _report_value(
                     output_normalization.get("method")
                 )
                 + " |"
             ),
             (
-                "| 原始输出已改变 | "
+                rt('| 原始输出已改变 | ')
                 + _report_value(
                     output_normalization.get("changed")
                 )
                 + " |"
             ),
             (
-                "| 检测 / 移除 NUL 字节 | "
+                rt('| 检测 / 移除 NUL 字节 | ')
                 + _report_value(
                     output_normalization.get("nul_bytes_detected")
                 )
@@ -5080,21 +5070,21 @@ def _build_report(
                 + " |"
             ),
             (
-                "| 原始输出归档 | `"
+                rt('| 原始输出归档 | `')
                 + _report_value(
                     output_normalization.get("raw_output_file")
                 )
                 + "` |"
             ),
             (
-                "| 原始 SHA256 | `"
+                rt('| 原始 SHA256 | `')
                 + _report_value(
                     output_normalization.get("source_sha256")
                 )
                 + "` |"
             ),
             (
-                "| 规范化 SHA256 | `"
+                rt('| 规范化 SHA256 | `')
                 + _report_value(
                     output_normalization.get("normalized_sha256")
                 )
@@ -5111,9 +5101,9 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## 完整冻结 Vina 参数",
+            rt('## 完整冻结 Vina 参数'),
             "",
-            "| 参数 | 冻结值 |",
+            rt('| 参数 | 冻结值 |'),
             "|---|---|",
         ]
     )
@@ -5124,13 +5114,13 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## 实际命令",
+            rt('## 实际命令'),
             "",
             "```json",
             json.dumps(command, ensure_ascii=False),
             "```",
             "",
-            "## multiple_ligands 能力证据",
+            rt('## multiple_ligands 能力证据'),
             "",
             "```json",
             json.dumps(
@@ -5140,11 +5130,10 @@ def _build_report(
             ),
             "```",
             "",
-            "## 冻结成员",
+            rt('## 冻结成员'),
             "",
             (
-                "| 顺序 | 名称 | 原子数 | 重原子数 | BRANCH 记录 | "
-                "有效扭转 | 退化叶分支 | TORSDOF 声明 | SHA256 |"
+                rt('| 顺序 | 名称 | 原子数 | 重原子数 | BRANCH 记录 | 有效扭转 | 退化叶分支 | TORSDOF 声明 | SHA256 |')
             ),
             "|---:|---|---:|---:|---:|---:|---:|---:|---|",
         ]
@@ -5170,13 +5159,13 @@ def _build_report(
         )
     hash_rows: list[tuple[str, str, Any, Any]] = [
         (
-            "受体输入",
+            rt('受体输入'),
             _report_value(metadata.get("receptor_file")),
             receptor_snapshot.get("sha256"),
             receptor_snapshot.get("size_bytes"),
         ),
         (
-            "配置快照",
+            rt('配置快照'),
             _report_value(metadata.get("config_file")),
             config_snapshot.get("sha256"),
             config_snapshot.get("size_bytes"),
@@ -5187,7 +5176,7 @@ def _build_report(
             continue
         hash_rows.append(
             (
-                f"配体成员 {index}",
+                rt('配体成员 {0}', f'{index}'),
                 _report_value(snapshot.get("relative_path")),
                 snapshot.get("sha256"),
                 snapshot.get("size_bytes"),
@@ -5196,13 +5185,13 @@ def _build_report(
     hash_rows.extend(
         [
             (
-                "联合输出",
+                rt('联合输出'),
                 _report_value(metadata.get("output_file")),
                 output_snapshot.get("sha256"),
                 output_snapshot.get("size_bytes"),
             ),
             (
-                "Vina 二进制",
+                rt('Vina 二进制'),
                 _report_value(execution_vina.get("path")),
                 execution_vina.get("sha256"),
                 execution_vina.get("size_bytes"),
@@ -5212,9 +5201,9 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## 完整性证据",
+            rt('## 完整性证据'),
             "",
-            "| 产物 | 路径 | SHA256 | 字节数 |",
+            rt('| 产物 | 路径 | SHA256 | 字节数 |'),
             "|---|---|---|---:|",
         ]
     )
@@ -5234,9 +5223,9 @@ def _build_report(
     lines.extend(
         [
             "",
-            "## 联合评分",
+            rt('## 联合评分'),
             "",
-            "| Mode | 联合 affinity (kcal/mol) | RMSD l.b. | RMSD u.b. | 构象可加载 |",
+            rt('| Mode | 联合 affinity (kcal/mol) | RMSD l.b. | RMSD u.b. | 构象可加载 |'),
             "|---:|---:|---:|---:|---|",
         ]
     )
@@ -5249,7 +5238,7 @@ def _build_report(
                     _report_value(score.get("joint_affinity_kcal_mol")),
                     _report_value(score.get("rmsd_lb")),
                     _report_value(score.get("rmsd_ub")),
-                    "是" if score.get("pose_available") else "否",
+                    rt('是') if score.get("pose_available") else rt('否'),
                 ]
             )
             + " |"
@@ -5258,15 +5247,14 @@ def _build_report(
         [
             "",
             (
-                "stdout 评分表可能包含因 energy_range 过滤而未写入 out.pdbqt 的模式；"
-                "“构象可加载”只以 out.pdbqt 中实际存在且通过成员校验的 MODEL 为准。"
+                rt('stdout 评分表可能包含因 energy_range 过滤而未写入 out.pdbqt 的模式；“构象可加载”只以 out.pdbqt 中实际存在且通过成员校验的 MODEL 为准。')
             ),
-            "RMSD 表示整个两配体联合构象相对最佳联合模式的差异，不是任一成员的单独 RMSD。",
+            rt('RMSD 表示整个两配体联合构象相对最佳联合模式的差异，不是任一成员的单独 RMSD。'),
             "",
-            "## 科学说明",
+            rt('## 科学说明'),
             "",
-            SCIENTIFIC_DISCLAIMER,
-            "共同对接结果不能直接证明协同结合、同时占位、药效、安全性或临床价值。",
+            rt(SCIENTIFIC_DISCLAIMER),
+            rt('共同对接结果不能直接证明协同结合、同时占位、药效、安全性或临床价值。'),
             "",
         ]
     )
@@ -6591,6 +6579,7 @@ def _execute_multiple_ligand_run_impl(
             ),
         })
         finished["artifacts"] = artifacts
+        finished["report_language"] = get_report_language()
         report_text = _build_report(finished, joint_manifest)
         _safe_atomic_write_text(
             project_root,
@@ -6776,6 +6765,7 @@ def _execute_multiple_ligand_run_impl(
     }
 
 
+@localized_report
 def execute_multiple_ligand_run(
     project_dir: str,
     run_id: str,
@@ -7226,6 +7216,7 @@ def load_multiple_ligand_pose(
     }
 
 
+@localized_report
 def build_multiple_ligand_markdown_report(
     project_dir: str,
     run_id: str,
@@ -7267,6 +7258,7 @@ def build_multiple_ligand_markdown_report(
     }
 
 
+@localized_report
 def export_multiple_ligand_markdown_report(
     project_dir: str,
     run_id: str,
@@ -7307,6 +7299,7 @@ def export_multiple_ligand_markdown_report(
         current["artifacts"] = artifacts
         current["report_file"] = relative
         current["reported_at"] = reported_at
+        current["report_language"] = get_report_language()
         return current
 
     try:
@@ -7472,7 +7465,7 @@ def main() -> None:
                 )
             )
             return
-        _print_json(execute_multiple_ligand_run(sys.argv[2], sys.argv[3]))
+        _print_json(execute_multiple_ligand_run(sys.argv[2], sys.argv[3], report_language=sys.argv[4] if len(sys.argv) > 4 else None))
         return
     if command == "status":
         if len(sys.argv) < 4:
@@ -7546,6 +7539,7 @@ def main() -> None:
             export_multiple_ligand_markdown_report(
                 sys.argv[2],
                 sys.argv[3],
+                report_language=sys.argv[4] if len(sys.argv) > 4 else None,
             )
         )
         return

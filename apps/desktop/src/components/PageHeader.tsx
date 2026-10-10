@@ -1,3 +1,5 @@
+import { translate } from "../i18n/translate";
+import { useLanguage } from "../i18n/useLanguage";
 import type { ReactNode } from "react";
 
 type PageHeaderProps = {
@@ -8,16 +10,17 @@ type PageHeaderProps = {
 };
 
 export default function PageHeader({ eyebrow, title, description, actions }: PageHeaderProps) {
+  useLanguage();
   const visibleEyebrow = eyebrow && !/Page$/.test(eyebrow) ? eyebrow : "";
 
   return (
     <header className="page-header">
       <div>
-        {visibleEyebrow ? <p className="eyebrow">{visibleEyebrow}</p> : null}
+        {visibleEyebrow ? <p className="eyebrow">{translate(visibleEyebrow)}</p> : null}
         <h1>{title}</h1>
         {description ? <p>{description}</p> : null}
       </div>
-      {actions ? <div className="page-header-actions">{actions}</div> : null}
+      {actions ? <div className="page-header-actions">{translate(actions)}</div> : null}
     </header>
   );
 }
