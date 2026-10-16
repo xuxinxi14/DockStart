@@ -539,6 +539,15 @@
   font-size: 11px;
 }
 
+/* 结构审查明细也是 .preparation-target-row 的子项，必须跨满三列，
+   否则会被网格放到"第二行第一列"、只占约 275px 宽，右侧留出大片空白。 */
+.preparation-target-row > .prep-structure-review-details {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-top: 1px solid var(--ds-on-dark-border-default);
+  padding: 14px 20px 18px;
+}
+
 .preparation-target-review-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

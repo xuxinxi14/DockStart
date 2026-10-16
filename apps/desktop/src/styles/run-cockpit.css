@@ -2140,6 +2140,105 @@
   font-size: 10px;
 }
 
+/* 准备页专用：结构审查明细改为「一项一行、整行占满」，并放大字号便于阅读。
+   不改动运行页原有的两列卡片。 */
+.prep-structure-review-rows {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.prep-structure-review-rows .run-structure-review-item {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  box-sizing: border-box;
+  gap: 5px;
+  padding: 10px 12px;
+}
+
+/* 名称靠左、状态徽章靠右 */
+.prep-structure-review-rows .run-structure-review-item > div {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.prep-structure-review-rows .run-structure-review-item strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+/* 名称与「?」提示图标同一行；图标复用项目已有的 FieldHint 组件。 */
+.prep-structure-review-rows .prep-structure-review-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 准备页：结构审查明细里的「转换时去除组分」开关。
+   复用后端已有的 meeko_receptor_controls.deleted_residues 通道。 */
+.prep-structure-deletion {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 6px;
+  background: var(--ds-surface-input);
+  padding: 10px 12px;
+}
+
+.prep-structure-deletion > header {
+  display: grid;
+  gap: 2px;
+}
+
+.prep-structure-deletion > header strong {
+  color: var(--ds-text-primary);
+  font-size: 12px;
+}
+
+.prep-structure-deletion > header span {
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.prep-structure-deletion-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+}
+
+.prep-structure-deletion-row small {
+  color: var(--ds-text-muted);
+  font-size: 11px;
+}
+
+.prep-structure-deletion-note {
+  margin: 2px 0 0;
+  color: var(--ds-text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.prep-structure-review-rows .prep-structure-review-body {
+  display: grid;
+  gap: 3px;
+}
+
+.prep-structure-review-rows .prep-structure-review-body p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.prep-structure-review-rows .prep-structure-review-body small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
 .run-parameter-save-row {
   display: flex;
   align-items: center;

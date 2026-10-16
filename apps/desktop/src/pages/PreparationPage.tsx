@@ -49,6 +49,7 @@ import {
 } from "../utils/screeningLigandImport";
 import { readDockingWorkspaceMode, writeDockingWorkspaceMode } from "../utils/dockingMode";
 import { structureInputKind } from "../utils/structureInput";
+import { structureReviewHint } from "../utils/structureReviewHints";
 
 const StructureMiniPreview = lazy(() => import("../components/StructureMiniPreview"));
 
@@ -201,6 +202,13 @@ export default function PreparationPage({
   const [overwriteLigand, setOverwriteLigand] = useState(false);
   const [badResidueReviewConfirmed, setBadResidueReviewConfirmed] = useState(false);
   const [receptorAltlocSelections, setReceptorAltlocSelections] = useState<Record<string, string>>({});
+  // 受体转换时要去除的组分（水 / 金属 / 非聚合物）。直接存后端需要的条目本身，
+  // 因为发起转换的回调与渲染函数体不在同一作用域，无法在那里现算。
+  // 后端此前已实现 meeko_receptor_controls.deleted_residues 的严格校验、
+  // 审计与测试，但准备页一直传空数组；这里只是把该通道接到界面上。
+  const [receptorDeletions, setReceptorDeletions] = useState<
+    Array<{ selector: string; expected_component_id: string; reason: string }>
+  >([]);
   const [macrocycleMode, setMacrocycleMode] = useState<MacrocyclePreparationMode>("standard");
   const [macrocycleOptions, setMacrocycleOptions] = useState<MacrocycleReviewOptions>(
     defaultMacrocycleReviewOptions,
@@ -796,9 +804,11 @@ export default function PreparationPage({
           alternate_locations: receptorAltlocSelections,
         }
       : undefined;
+    // 这里原本只在存在替代构象时发送 receptor_controls；现在只要用户勾选了
+    // 要删除的组分也要发送，否则删除选择不会生效。
     const reviewedAltlocOptions = target === "receptor"
       && detectedBadResidues.length === 0
-      && detectedAltlocs.length > 0
+      && (detectedAltlocs.length > 0 || receptorDeletions.length > 0)
       ? {
           protocol: "meeko_receptor_controls",
           receptor_controls: {
@@ -806,7 +816,7 @@ export default function PreparationPage({
             allow_bad_res: false,
             alternate_locations: receptorAltlocSelections,
             template_assignments: {},
-            deleted_residues: [],
+            deleted_residues: receptorDeletions,
           },
         }
       : undefined;
@@ -1011,6 +1021,32 @@ export default function PreparationPage({
     const preparedSize = preparedFile?.size ?? 0;
     const shouldLoadPreview = isReady && previewRequested[target];
     const review: StructureReviewPayload | undefined = response?.structure_review;
+    // 结构审查按「是否需要人工确认」分组：后端已用
+    // status in {"warning","unknown"} 定义 requires_manual_review，
+    // 这里保持一致，先只摊开需要人工确认的项，通过的项收进二级折叠里。
+    const reviewChecks = review?.checks ?? [];
+    const reviewNeedsAttention = reviewChecks.filter((check) => check.status !== "ok");
+    const reviewPassedChecks = reviewChecks.filter((check) => check.status === "ok");
+    const renderStructureReviewCheck = (check: (typeof reviewChecks)[number]) => {
+      const hint = structureReviewHint(check.key);
+      return (
+        <article key={check.key} className={`run-structure-review-item ${check.status}`}>
+          <div>
+            <span className="prep-structure-review-name">
+              <strong>{translate(check.name)}</strong>
+              {hint ? <FieldHint subject={check.name} label={translate(hint)} placement="right" /> : null}
+            </span>
+            <StatusBadge tone={check.status === "ok" ? "ok" : "warning"}>
+              {translate(check.status === "ok" ? "已读取" : check.status === "unknown" ? "需人工确认" : "需复核")}
+            </StatusBadge>
+          </div>
+          <div className="prep-structure-review-body">
+            <p>{translate(check.message)}</p>
+            {check.evidence ? <small>{translate("依据：")}{translate(check.evidence)}</small> : null}
+          </div>
+        </article>
+      );
+    };
     const receptorFacts = factRecord(review?.receptor);
     const receptorRawFacts = factRecord(receptorFacts.raw);
     const receptorPdbqtFacts = factRecord(receptorFacts.pdbqt);
@@ -1032,6 +1068,53 @@ export default function PreparationPage({
     const receptorRawAvailable = Object.keys(receptorRawFacts).length > 0;
     const receptorIonComponents = factArray(receptorRawFacts.ion_non_polymer_components);
     const receptorAltlocs = factArray(receptorRawFacts.alternate_locations);
+    // 可去除组分的候选清单：复用审查事实里已有的 ion_non_polymer_components，
+    // 不新增解析逻辑。selector 用后端 parse_flexible_residue 接受的 "链:残基号"。
+    // reason 必须匹配 ^[a-z][a-z0-9_]{0,63}$，这里用后端自身测试里出现过的稳定标识。
+    const deletionCandidates = receptorIonComponents.flatMap((item) => {
+      const component = factRecord(item);
+      const chain = String(component.chain ?? "");
+      const residueNumber = String(component.residue_number ?? "");
+      const residueName = String(component.residue_name ?? "").toUpperCase();
+      const kind = String(component.kind ?? "");
+      if (!chain || !residueNumber || !residueName) return [];
+      return [{
+        selector: `${chain}:${residueNumber}`,
+        residueName,
+        kind,
+        reason: kind === "water" ? "water" : kind === "metal" ? "other_reviewed" : "co_crystal_ligand",
+      }];
+    });
+    const selectedDeletionSelectors = new Set(receptorDeletions.map((item) => item.selector));
+    // 按组分汇总成三个开关。水可能有几百个，逐项勾选对初学者不可用，
+    // 因此以"组分"为单位选择；金属与非标准残基本来就少，同样按组分开关即可。
+    const deletionGroups = [
+      { kind: "water", label: "转换时去除水分子" },
+      { kind: "metal", label: "转换时去除金属离子" },
+      { kind: "non_polymer", label: "转换时去除非标准残基与辅因子" },
+    ]
+      .map((group) => ({
+        ...group,
+        items: deletionCandidates.filter((item) => item.kind === group.kind),
+      }))
+      .filter((group) => group.items.length > 0);
+    const toggleDeletionGroup = (items: typeof deletionCandidates) => {
+      const allSelected = items.every((item) => selectedDeletionSelectors.has(item.selector));
+      setReceptorDeletions((previous) => {
+        const withoutGroup = previous.filter(
+          (entry) => !items.some((item) => item.selector === entry.selector),
+        );
+        if (allSelected) return withoutGroup;
+        return [
+          ...withoutGroup,
+          ...items.map((item) => ({
+            selector: item.selector,
+            expected_component_id: item.residueName,
+            reason: item.reason,
+          })),
+        ];
+      });
+    };
     const receptorPartialCharge = factNumber(receptorPdbqtFacts, "partial_charge_sum");
     const receptorActiveTorsions = factNumber(receptorPdbqtFacts, "active_torsions");
     const receptorRepresentations = factArray(receptorFacts.representations);
@@ -1360,6 +1443,56 @@ export default function PreparationPage({
               >{translate("确认并重新转换")}</ActionButton>
             </footer>
           </section>
+        ) : null}
+        {review?.checks?.length ? (
+          <AdvancedDetails className="prep-structure-review-details" summary={translate("结构审查明细 · {0} 项警告", [review.warning_count])}>
+            {isReceptor && deletionGroups.length ? (
+              <section className="prep-structure-deletion" aria-label={translate("转换时去除组分")}>
+                <header>
+                  <strong>{translate("转换时去除下列组分（可选）")}</strong>
+                  <span>{translate("默认全部保留。勾选后会从受体 PDBQT 中删除，并记录在准备记录里以便追溯。")}</span>
+                </header>
+                {deletionGroups.map((group) => (
+                  <label key={group.kind} className="prep-structure-deletion-row">
+                    <input
+                      type="checkbox"
+                      checked={group.items.every((item) => selectedDeletionSelectors.has(item.selector))}
+                      onChange={() => toggleDeletionGroup(group.items)}
+                    />
+                    <span>
+                      {translate(group.label)}
+                      <small>
+                        {" "}
+                        {group.items.length}{translate("个")}
+                        {" · "}
+                        {[...new Set(group.items.map((item) => item.residueName))].join(" / ")}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+                {deletionGroups.some((group) => group.kind === "non_polymer") ? (
+                  <p className="prep-structure-deletion-note">
+                    {translate("注意：如果结构中仍有准备工具不认识的残基（例如糖基、特殊配体），只勾选去除水分子仍然会导致转换失败；需要把它们一并去除，或另外提供残基模板。")}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
+            {reviewNeedsAttention.length ? (
+              <div className="run-structure-review-grid prep-structure-review-rows">
+                {reviewNeedsAttention.map(renderStructureReviewCheck)}
+              </div>
+            ) : (
+              <p className="run-science-note">{translate("本次结构审查没有需要人工确认的项目。")}</p>
+            )}
+            {reviewPassedChecks.length ? (
+              <AdvancedDetails summary={translate("已通过的检查 · {0} 项", [reviewPassedChecks.length])}>
+                <div className="run-structure-review-grid prep-structure-review-rows">
+                  {reviewPassedChecks.map(renderStructureReviewCheck)}
+                </div>
+              </AdvancedDetails>
+            ) : null}
+            <p className="run-science-note">{translate(review.disclaimer)}</p>
+          </AdvancedDetails>
         ) : null}
       </article>
     );
